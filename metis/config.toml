@@ -4,7 +4,7 @@ namespace = "default"
 
 # Container image the worker Pod will execute.
 # TODO: figure out how to tag this properly in kind x_x
-worker_image = "sha256:33a46e062d9ea6efb93120f88e013b4d6fb6269a7820b034b21c2cb05381cc71"
+worker_image = "sha256:d3ad0cd5552bd1fd08e688d4919a6f8d8a56c9102b6929de84e63ec6c52228f8"
 
 [kubernetes]
 # Path to the kubeconfig file with cluster credentials.

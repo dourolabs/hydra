@@ -35,5 +35,7 @@ WORKDIR ${APP_HOME}
 # Copy the build context (current directory) into the image.
 COPY . ${APP_HOME}
 
+ENTRYPOINT ["./scripts/codex-entrypoint.sh"]
+
 # Default to an interactive shell so users can run Codex CLI commands.
 CMD ["bash"]
