@@ -1,0 +1,12 @@
+Kubernetes setup
+
+(requires docker to be running)
+
+```
+kind create cluster --name local-dev
+```
+
+To delete the cluster
+```
+kind delete cluster --name local-dev
+```
