@@ -37,6 +37,8 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default = "default_worker_image")]
     pub worker_image: String,
+    #[serde(default, rename = "OPENAI_API_KEY")]
+    pub openai_api_key: Option<String>,
 }
 
 impl Default for MetisSection {
@@ -44,6 +46,7 @@ impl Default for MetisSection {
         Self {
             namespace: default_namespace(),
             worker_image: default_worker_image(),
+            openai_api_key: None,
         }
     }
 }

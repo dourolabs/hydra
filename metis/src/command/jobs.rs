@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, build_kube_client};
+use crate::config::{build_kube_client, AppConfig};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use k8s_openapi::api::batch::v1::{Job, JobStatus};

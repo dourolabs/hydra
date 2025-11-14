@@ -1,9 +1,9 @@
+use super::{expand_path, non_empty, KubernetesSection};
 use anyhow::{Context, Result};
 use kube::{
     config::{KubeConfigOptions, Kubeconfig},
     Client,
 };
-use super::{expand_path, non_empty, KubernetesSection};
 
 pub async fn build_kube_client(kube_cfg: &KubernetesSection) -> Result<Client> {
     let kubeconfig_path = expand_path(&kube_cfg.config_path);

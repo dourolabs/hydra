@@ -1,10 +1,10 @@
-use crate::config::{AppConfig, build_kube_client};
-use anyhow::{bail, Result};
+use crate::config::{build_kube_client, AppConfig};
+use anyhow::{anyhow, bail, Result};
 use futures::io::AsyncReadExt;
 use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec},
-        core::v1::{Container, Pod, PodSpec, PodTemplateSpec},
+        core::v1::{Container, EnvVar, Pod, PodSpec, PodTemplateSpec},
     },
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
 };
@@ -14,6 +14,7 @@ use kube::{
 };
 use std::{
     collections::BTreeMap,
+    env,
     io::{self, Write},
     time::Duration,
 };
@@ -25,6 +26,14 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
     let worker_image = config.metis.worker_image.clone();
     let job_name = format!("metis-worker-{}", Uuid::new_v4().hyphenated());
     let client = build_kube_client(&config.kubernetes).await?;
+
+    let openai_api_key = env::var("OPENAI_API_KEY")
+        .ok()
+        .or_else(|| config.metis.openai_api_key.clone())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow!("OPENAI_API_KEY is not set. Provide it via the environment or config.toml.")
+        })?;
 
     let jobs: Api<Job> = Api::namespaced(client.clone(), &namespace);
     let pods: Api<Pod> = Api::namespaced(client, &namespace);
@@ -57,6 +66,11 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
                             "exec".into(),
                             "print hello world".into(),
                         ]),
+                        env: Some(vec![EnvVar {
+                            name: "OPENAI_API_KEY".to_string(),
+                            value: Some(openai_api_key),
+                            ..Default::default()
+                        }]),
                         ..Default::default()
                     }],
                     restart_policy: Some("Never".into()),

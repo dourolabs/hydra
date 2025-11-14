@@ -6,6 +6,9 @@ namespace = "default"
 # TODO: figure out how to tag this properly in kind x_x
 worker_image = "sha256:f0abcebf89ba2f5cbc34153daa01b4b42b59ca7149d7f5a3393a6e1d86862844"
 
+# Optional fallback if the OPENAI_API_KEY environment variable is unset.
+OPENAI_API_KEY = ""
+
 [kubernetes]
 # Path to the kubeconfig file with cluster credentials.
 config_path = "~/.kube/config"
