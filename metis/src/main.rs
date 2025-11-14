@@ -30,6 +30,18 @@ enum Commands {
         /// Wait for the job to complete and stream its logs.
         #[arg(short = 'w', long = "wait")]
         wait: bool,
+
+        /// Branch or commit to use as the starting point for the job.
+        #[arg(long = "from", value_name = "REV")]
+        from: Option<String>,
+
+        /// Prompt to execute, captured as trailing varargs.
+        #[arg(
+            value_name = "PROMPT",
+            trailing_var_arg = true,
+            num_args = 1..
+        )]
+        prompt: Vec<String>,
     },
     /// List all Metis jobs in the configured namespace.
     Jobs,
@@ -54,7 +66,9 @@ async fn main() -> Result<()> {
     let app_config = AppConfig::load(&config_path)?;
 
     match cli.command {
-        Commands::Spawn { wait } => command::spawn::run(&app_config, wait).await?,
+        Commands::Spawn { wait, from, prompt } => {
+            command::spawn::run(&app_config, wait, from, prompt).await?
+        }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
         Commands::Cleanup => command::cleanup::run(&app_config).await?,

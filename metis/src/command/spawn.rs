@@ -21,12 +21,24 @@ use std::{
 use tokio::time::sleep;
 use uuid::Uuid;
 
-pub async fn run(config: &AppConfig, wait: bool) -> Result<()> {
+pub async fn run(
+    config: &AppConfig,
+    wait: bool,
+    from_git_rev_arg: Option<String>,
+    prompt_parts: Vec<String>,
+) -> Result<()> {
+    let prompt = if prompt_parts.is_empty() {
+        bail!("prompt is required")
+    } else {
+        prompt_parts.join(" ")
+    };
+
     let namespace = config.metis.namespace.clone();
     let worker_image = config.metis.worker_image.clone();
     let job_uuid = Uuid::new_v4().hyphenated().to_string();
     let job_name = format!("metis-worker-{}", job_uuid.clone());
     let client = build_kube_client(&config.kubernetes).await?;
+    let from_git_rev = from_git_rev_arg;
 
     let openai_api_key = env::var("OPENAI_API_KEY")
         .ok()
@@ -61,13 +73,33 @@ pub async fn run(config: &AppConfig, wait: bool) -> Result<()> {
                         args: Some(vec![
                             "codex".into(),
                             "exec".into(),
-                            "print hello world".into(),
+                            "--dangerously-bypass-approvals-and-sandbox".into(),
+                            prompt,
                         ]),
-                        env: Some(vec![EnvVar {
-                            name: "OPENAI_API_KEY".to_string(),
-                            value: Some(openai_api_key),
-                            ..Default::default()
-                        }]),
+                        env: {
+                            let mut vars = vec![
+                                EnvVar {
+                                    name: "OPENAI_API_KEY".to_string(),
+                                    value: Some(openai_api_key),
+                                    ..Default::default()
+                                },
+                                EnvVar {
+                                    name: "METIS_ID".to_string(),
+                                    value: Some(job_uuid.clone()),
+                                    ..Default::default()
+                                },
+                            ];
+
+                            if let Some(from_git_rev) = &from_git_rev {
+                                vars.push(EnvVar {
+                                    name: "FROM_GIT_REV".to_string(),
+                                    value: Some(from_git_rev.clone()),
+                                    ..Default::default()
+                                });
+                            }
+
+                            Some(vars)
+                        },
                         ..Default::default()
                     }],
                     restart_policy: Some("Never".into()),
