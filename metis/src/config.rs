@@ -33,8 +33,6 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default = "default_worker_image")]
     pub worker_image: String,
-    #[serde(default = "default_worker_label")]
-    pub worker_label: String,
 }
 
 impl Default for MetisSection {
@@ -42,7 +40,6 @@ impl Default for MetisSection {
         Self {
             namespace: default_namespace(),
             worker_image: default_worker_image(),
-            worker_label: default_worker_label(),
         }
     }
 }
@@ -92,10 +89,6 @@ fn default_namespace() -> String {
 
 fn default_worker_image() -> String {
     "metis-codex:latest".to_string()
-}
-
-fn default_worker_label() -> String {
-    "worker".to_string()
 }
 
 fn default_kubeconfig_path() -> String {

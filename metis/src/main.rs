@@ -15,10 +15,8 @@ use kube::{
     config::{KubeConfigOptions, Kubeconfig},
     Api, Client, Error as KubeError,
 };
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
+use uuid::Uuid;
 
 /// Top-level CLI options for the metis tool.
 #[derive(Parser)]
@@ -63,14 +61,17 @@ async fn main() -> Result<()> {
 async fn run_spawn(config: &AppConfig, label: Option<String>) -> Result<()> {
     let namespace = config.metis.namespace.clone();
     let worker_image = config.metis.worker_image.clone();
-    let resolved_label = label.unwrap_or_else(|| config.metis.worker_label.clone());
-    let job_name = normalize_job_name(&resolved_label);
+    let job_name = format!("metis-worker-{}", Uuid::new_v4().hyphenated());
     let client = build_kube_client(&config.kubernetes).await?;
 
     let jobs: Api<Job> = Api::namespaced(client, &namespace);
 
     let mut metadata_labels = BTreeMap::new();
     metadata_labels.insert("metis-worker".to_string(), job_name.clone());
+    // TODO: this isn't really necessary but let's leave it for now.
+    if let Some(custom_label) = label.filter(|value| !value.trim().is_empty()) {
+        metadata_labels.insert("metis-label".to_string(), custom_label);
+    }
 
     let job = Job {
         metadata: ObjectMeta {
@@ -89,10 +90,9 @@ async fn run_spawn(config: &AppConfig, label: Option<String>) -> Result<()> {
                         name: "metis-worker".to_string(),
                         image: Some(worker_image),
                         command: Some(vec![
-                            "perl".into(),
-                            "-Mbignum=bpi".into(),
-                            "-wle".into(),
-                            "print bpi(2000)".into(),
+                            "codex".into(),
+                            "exec".into(),
+                            "print hello world".into(),
                         ]),
                         ..Default::default()
                     }],
@@ -158,32 +158,4 @@ async fn build_kube_client(kube_cfg: &KubernetesSection) -> Result<Client> {
 
     Client::try_from(client_config)
         .context("Failed to construct Kubernetes client from configuration")
-}
-
-fn normalize_job_name(source: &str) -> String {
-    let mut normalized: String = source
-        .to_lowercase()
-        .chars()
-        .map(|c| match c {
-            'a'..='z' | '0'..='9' | '-' => c,
-            _ => '-',
-        })
-        .collect();
-
-    while normalized.starts_with('-') {
-        normalized.remove(0);
-    }
-    while normalized.ends_with('-') {
-        normalized.pop();
-    }
-
-    if normalized.is_empty() {
-        normalized.push_str("worker");
-    }
-
-    if normalized.len() > 63 {
-        normalized.truncate(63);
-    }
-
-    normalized
 }
