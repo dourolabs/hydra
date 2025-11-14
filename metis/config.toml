@@ -1,0 +1,24 @@
+[metis]
+# Namespace the CLI uses when creating Jobs.
+namespace = "default"
+
+# Container image the worker Pod will execute.
+# TODO: figure out how to tag this properly in kind x_x
+worker_image = "sha256:33a46e062d9ea6efb93120f88e013b4d6fb6269a7820b034b21c2cb05381cc71"
+
+# Optional default label applied to spawned workers.
+worker_label = "worker"
+
+[kubernetes]
+# Path to the kubeconfig file with cluster credentials.
+config_path = "~/.kube/config"
+
+# Context within the kubeconfig to select (kubectl config get-contexts).
+context = "kind-local-dev"
+
+# Friendly cluster name; purely informational for tooling.
+cluster_name = "kind-local-dev"
+
+# Optional explicit API server endpoint; leave blank to use kubeconfig default.
+api_server = ""
+
