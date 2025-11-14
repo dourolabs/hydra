@@ -24,7 +24,8 @@ use uuid::Uuid;
 pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Result<()> {
     let namespace = config.metis.namespace.clone();
     let worker_image = config.metis.worker_image.clone();
-    let job_name = format!("metis-worker-{}", Uuid::new_v4().hyphenated());
+    let uuid = Uuid::new_v4().hyphenated();
+    let job_name = format!("metis-worker-{}", &uuid);
     let client = build_kube_client(&config.kubernetes).await?;
 
     let openai_api_key = env::var("OPENAI_API_KEY")
@@ -39,7 +40,7 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
     let pods: Api<Pod> = Api::namespaced(client, &namespace);
 
     let mut metadata_labels = BTreeMap::new();
-    metadata_labels.insert("metis-worker".to_string(), job_name.clone());
+    metadata_labels.insert("metis-id".to_string(), format!("{}", uuid.clone()));
     // TODO: this isn't really necessary but let's leave it for now.
     if let Some(custom_label) = label.filter(|value| !value.trim().is_empty()) {
         metadata_labels.insert("metis-label".to_string(), custom_label);
@@ -61,7 +62,7 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
                     containers: vec![Container {
                         name: "metis-worker".to_string(),
                         image: Some(worker_image),
-                        command: Some(vec![
+                        args: Some(vec![
                             "codex".into(),
                             "exec".into(),
                             "print hello world".into(),
@@ -117,7 +118,7 @@ async fn wait_for_job_completion(jobs: &Api<Job>, pods: &Api<Pod>, job_name: &st
     println!("Waiting for job '{}' to start running...", job_name);
     let pod_name = wait_for_pod_name(pods, job_name).await?;
 
-    stream_pod_logs(pods, &pod_name).await?;
+    stream_pod_logs(pods, &pod_name, true).await?;
 
     let job = wait_for_terminal_job_state(jobs, job_name).await?;
     if let Some(status) = job.status {
@@ -135,24 +136,55 @@ async fn wait_for_job_completion(jobs: &Api<Job>, pods: &Api<Pod>, job_name: &st
     bail!("Job '{}' completed without a final status.", job_name);
 }
 
-async fn wait_for_pod_name(pods: &Api<Pod>, job_name: &str) -> Result<String> {
+pub(crate) async fn wait_for_pod_name(pods: &Api<Pod>, job_name: &str) -> Result<String> {
     let selector = format!("job-name={job_name}");
     let lp = ListParams::default().labels(&selector);
 
     loop {
         let pod_list = pods.list(&lp).await?;
-        if let Some(pod_name) = pod_list.items.into_iter().find_map(|pod| pod.metadata.name) {
-            println!("Streaming logs from pod '{}'...", pod_name);
-            return Ok(pod_name);
+        if let Some(mut pod) = pod_list
+            .items
+            .into_iter()
+            .find(|pod| pod.metadata.name.is_some())
+        {
+            let pod_name = pod.metadata.name.take().expect("pod name missing");
+            println!("Found pod '{}' for job '{}'.", pod_name, job_name);
+
+            if let Some(phase) = pod.status.and_then(|status| status.phase) {
+                match phase.as_str() {
+                    "Running" => {
+                        println!("Pod '{}' is running.", pod_name);
+                        return Ok(pod_name);
+                    }
+                    "Failed" | "Succeeded" => {
+                        bail!(
+                            "Pod '{}' reached terminal phase '{}' before running.",
+                            pod_name,
+                            phase
+                        );
+                    }
+                    _ => {
+                        println!(
+                            "Pod '{}' is currently in phase '{}'. Waiting for it to run...",
+                            pod_name, phase
+                        );
+                    }
+                }
+            } else {
+                println!(
+                    "Pod '{}' status not yet available. Waiting for it to run...",
+                    pod_name
+                );
+            }
         }
 
         sleep(Duration::from_secs(1)).await;
     }
 }
 
-async fn stream_pod_logs(pods: &Api<Pod>, pod_name: &str) -> Result<()> {
+pub(crate) async fn stream_pod_logs(pods: &Api<Pod>, pod_name: &str, follow: bool) -> Result<()> {
     let mut log_params = LogParams::default();
-    log_params.follow = true;
+    log_params.follow = follow;
 
     let mut log_stream = pods.log_stream(pod_name, &log_params).await?;
     let mut buffer = vec![0u8; 1024];

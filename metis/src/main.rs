@@ -37,6 +37,16 @@ enum Commands {
     },
     /// List all Metis jobs in the configured namespace.
     Jobs,
+    /// Show logs for an existing Metis job.
+    Logs {
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "JOB_ID")]
+        job: String,
+
+        /// Stream logs if the job is still running.
+        #[arg(short = 'w', long = "watch")]
+        watch: bool,
+    },
 }
 
 #[tokio::main]
@@ -48,6 +58,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Spawn { label, wait } => command::spawn::run(&app_config, label, wait).await?,
         Commands::Jobs => command::jobs::run(&app_config).await?,
+        Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
     }
 
     Ok(())
