@@ -1,4 +1,5 @@
 FROM ubuntu:22.04
+ARG NODE_VERSION=22
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APP_HOME=/opt/app \
@@ -15,9 +16,19 @@ RUN apt-get update \
         git \
         nodejs \
         npm \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @openai/codex 
+    && rm -rf /var/lib/apt/lists/*
 
+# install nvm
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+# set env
+ENV NVM_DIR=/root/.nvm
+
+# install node
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex"
+
+# set ENTRYPOINT for reloading nvm-environment
+ENTRYPOINT ["bash", "-c", "source $NVM_DIR/nvm.sh && exec \"$@\"", "--"]
 
 WORKDIR ${APP_HOME}
 
