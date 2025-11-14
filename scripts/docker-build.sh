@@ -1,0 +1,1 @@
+docker build -t metis-codex:latest -f ./images/Dockerfile .
