@@ -21,11 +21,11 @@ use std::{
 use tokio::time::sleep;
 use uuid::Uuid;
 
-pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Result<()> {
+pub async fn run(config: &AppConfig, wait: bool) -> Result<()> {
     let namespace = config.metis.namespace.clone();
     let worker_image = config.metis.worker_image.clone();
-    let uuid = Uuid::new_v4().hyphenated();
-    let job_name = format!("metis-worker-{}", &uuid);
+    let job_uuid = Uuid::new_v4().hyphenated().to_string();
+    let job_name = format!("metis-worker-{}", job_uuid.clone());
     let client = build_kube_client(&config.kubernetes).await?;
 
     let openai_api_key = env::var("OPENAI_API_KEY")
@@ -40,11 +40,7 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
     let pods: Api<Pod> = Api::namespaced(client, &namespace);
 
     let mut metadata_labels = BTreeMap::new();
-    metadata_labels.insert("metis-id".to_string(), format!("{}", uuid.clone()));
-    // TODO: this isn't really necessary but let's leave it for now.
-    if let Some(custom_label) = label.filter(|value| !value.trim().is_empty()) {
-        metadata_labels.insert("metis-label".to_string(), custom_label);
-    }
+    metadata_labels.insert("metis-id".to_string(), job_uuid.clone());
 
     let job = Job {
         metadata: ObjectMeta {
@@ -108,15 +104,20 @@ pub async fn run(config: &AppConfig, label: Option<String>, wait: bool) -> Resul
     }
 
     if wait {
-        wait_for_job_completion(&jobs, &pods, &job_name).await?;
+        wait_for_job_completion(&jobs, &pods, &job_name, &job_uuid).await?;
     }
 
     Ok(())
 }
 
-async fn wait_for_job_completion(jobs: &Api<Job>, pods: &Api<Pod>, job_name: &str) -> Result<()> {
+async fn wait_for_job_completion(
+    jobs: &Api<Job>,
+    pods: &Api<Pod>,
+    job_name: &str,
+    job_uuid: &str,
+) -> Result<()> {
     println!("Waiting for job '{}' to start running...", job_name);
-    let pod_name = wait_for_pod_name(pods, job_name).await?;
+    let pod_name = wait_for_pod_name(pods, job_name, job_uuid).await?;
 
     stream_pod_logs(pods, &pod_name, true).await?;
 
@@ -136,7 +137,11 @@ async fn wait_for_job_completion(jobs: &Api<Job>, pods: &Api<Pod>, job_name: &st
     bail!("Job '{}' completed without a final status.", job_name);
 }
 
-pub(crate) async fn wait_for_pod_name(pods: &Api<Pod>, job_name: &str) -> Result<String> {
+pub(crate) async fn wait_for_pod_name(
+    pods: &Api<Pod>,
+    job_name: &str,
+    job_uuid: &str,
+) -> Result<String> {
     let selector = format!("job-name={job_name}");
     let lp = ListParams::default().labels(&selector);
 
@@ -148,12 +153,12 @@ pub(crate) async fn wait_for_pod_name(pods: &Api<Pod>, job_name: &str) -> Result
             .find(|pod| pod.metadata.name.is_some())
         {
             let pod_name = pod.metadata.name.take().expect("pod name missing");
-            println!("Found pod '{}' for job '{}'.", pod_name, job_name);
+            println!("Found pod for job '{}'.", job_uuid);
 
             if let Some(phase) = pod.status.and_then(|status| status.phase) {
                 match phase.as_str() {
                     "Running" => {
-                        println!("Pod '{}' is running.", pod_name);
+                        println!("Job '{}' pod is running.", job_uuid);
                         return Ok(pod_name);
                     }
                     "Failed" | "Succeeded" => {
@@ -165,15 +170,15 @@ pub(crate) async fn wait_for_pod_name(pods: &Api<Pod>, job_name: &str) -> Result
                     }
                     _ => {
                         println!(
-                            "Pod '{}' is currently in phase '{}'. Waiting for it to run...",
-                            pod_name, phase
+                            "Job '{}' pod is currently in phase '{}'. Waiting for it to run...",
+                            job_uuid, phase
                         );
                     }
                 }
             } else {
                 println!(
-                    "Pod '{}' status not yet available. Waiting for it to run...",
-                    pod_name
+                    "Job '{}' pod status not yet available. Waiting for it to run...",
+                    job_uuid
                 );
             }
         }

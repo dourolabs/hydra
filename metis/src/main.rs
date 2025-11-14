@@ -27,10 +27,6 @@ struct Cli {
 enum Commands {
     /// Spawn a new orchestration worker.
     Spawn {
-        /// Optional label to attach to the spawned worker.
-        #[arg(short, long, value_name = "LABEL")]
-        label: Option<String>,
-
         /// Wait for the job to complete and stream its logs.
         #[arg(short = 'w', long = "wait")]
         wait: bool,
@@ -47,6 +43,8 @@ enum Commands {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
+    /// Delete completed or failed Metis jobs.
+    Cleanup,
 }
 
 #[tokio::main]
@@ -56,9 +54,10 @@ async fn main() -> Result<()> {
     let app_config = AppConfig::load(&config_path)?;
 
     match cli.command {
-        Commands::Spawn { label, wait } => command::spawn::run(&app_config, label, wait).await?,
+        Commands::Spawn { wait } => command::spawn::run(&app_config, wait).await?,
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
+        Commands::Cleanup => command::cleanup::run(&app_config).await?,
     }
 
     Ok(())
