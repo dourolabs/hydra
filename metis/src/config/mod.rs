@@ -1,3 +1,7 @@
+pub mod kube;
+
+pub use kube::build_kube_client;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{

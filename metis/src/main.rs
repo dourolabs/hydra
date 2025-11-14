@@ -1,6 +1,5 @@
 mod command;
 mod config;
-mod kube;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

@@ -1,0 +1,1 @@
+Every CLI command should be implemented in its own file under the command/ module.
