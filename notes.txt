@@ -40,3 +40,4 @@ kind delete cluster --name local-dev
 1. Fix the deployment process, and specifically how configuration information is passed to the deployed services. E.g. there are env variables in service.sh that aren't wired up.
 2. imagePullPolicy: IfNotPresent is dangerous with the latest tag. this only works due to the current local development setup where the image is pushed into kind.
 3. Dockerfiles shouldn't run services as root 
+4. the git repo management is super hacky
