@@ -159,7 +159,6 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/output` to retrieve the recorded agent output.
-    #[allow(dead_code)]
     pub async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {

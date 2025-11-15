@@ -56,6 +56,12 @@ enum Commands {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
+    /// Retrieve the recorded output for a completed job.
+    Output {
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "JOB_ID")]
+        job: String,
+    },
 }
 
 #[tokio::main]
@@ -70,6 +76,7 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
+        Commands::Output { job } => command::output::run(&app_config, job).await?,
     }
 
     Ok(())
