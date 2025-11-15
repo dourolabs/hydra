@@ -1,4 +1,4 @@
-FROM rust:1.68.1 as planner
+FROM rust:1.88.0 as planner
 RUN cargo install cargo-chef
 
 WORKDIR /app
@@ -7,7 +7,7 @@ COPY . .
 # Prepare a build plan ("recipe")
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM rust:1.68.1 AS builder
+FROM rust:1.88.0 AS builder
 RUN cargo install cargo-chef
 
 # Copy the build plan from the previous Docker stage

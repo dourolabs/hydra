@@ -1,3 +1,4 @@
+mod client;
 mod command;
 mod config;
 
@@ -55,8 +56,6 @@ enum Commands {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
-    /// Delete completed or failed Metis jobs.
-    Cleanup,
 }
 
 #[tokio::main]
@@ -71,7 +70,6 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
-        Commands::Cleanup => command::cleanup::run(&app_config).await?,
     }
 
     Ok(())
