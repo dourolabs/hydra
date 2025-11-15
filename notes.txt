@@ -12,12 +12,28 @@ kind delete cluster --name local-dev
 ```
 
 
+## Building & Running
+
+```cargo build``` in the top level will build all projects.
+
+
+`./scripts/docker-build.sh` will build docker images for codex and metis-server, and additionally push those images into kind's image repository.
+
+`./scripts/service.sh` lets you start/stop/restart the server inside the kubernetes cluster. Typical usage is:
+
+`./scripts/service.sh start` 
+`./scripts/service.sh status` -- this will print out a URL that you can use with the metis cli to run commands against the server
+
+
+`./scripts/docker-build.sh && ./scripts/service.sh restart` -- redeploy the current version of the code to the cluster. Note the URL from status above stays the same.
+
+`./scripts/service.sh destroy` -- tear down the services in the cluster.
+
+
+
 ## Next steps
 
-1. metis-server needs to run inside the kubernetes cluster, and other kubernetes jobs need to be able to communicate with it.
 2. then we need to add endpoint(s) to metis-server where jobs can post results back to the server. The main result we want to capture at the moment is a patch for a changeset produced by the job.
-3. 
-
 
 ## TODOs
 
