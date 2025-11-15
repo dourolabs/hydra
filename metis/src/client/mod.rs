@@ -44,19 +44,24 @@ impl MetisClient {
     }
 
     /// Expose the underlying HTTP client for advanced operations.
+    #[allow(dead_code)]
     pub fn http_client(&self) -> &HttpClient {
         &self.http
     }
 
     /// Expose the resolved base URL used for requests.
+    #[allow(dead_code)]
     pub fn base_url(&self) -> &Url {
         &self.base_url
     }
 
     /// Call the `/health` endpoint and return the reported status string.
+    #[allow(dead_code)]
     pub async fn health(&self) -> Result<String> {
+        #[allow(dead_code)]
         #[derive(Deserialize)]
         struct HealthResponse {
+            #[allow(dead_code)]
             status: String,
         }
 

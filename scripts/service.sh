@@ -29,6 +29,19 @@ DEFAULT_KUBE_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
 SERVER_KUBECONFIG_CONTEXT="${SERVER_KUBECONFIG_CONTEXT:-${DEFAULT_KUBE_CONTEXT}}"
 SERVER_KUBERNETES_CLUSTER_NAME="${SERVER_KUBERNETES_CLUSTER_NAME:-${SERVER_KUBECONFIG_CONTEXT}}"
 SERVER_KUBERNETES_API_SERVER="${SERVER_KUBERNETES_API_SERVER:-}"
+SERVER_KUBERNETES_IN_CLUSTER="${SERVER_KUBERNETES_IN_CLUSTER:-true}"
+
+if [[ "${SERVER_KUBERNETES_IN_CLUSTER}" != "true" && "${SERVER_KUBERNETES_IN_CLUSTER}" != "false" ]]; then
+  echo "SERVER_KUBERNETES_IN_CLUSTER must be 'true' or 'false' (received '${SERVER_KUBERNETES_IN_CLUSTER}')." >&2
+  exit 1
+fi
+
+if [[ "${SERVER_KUBERNETES_IN_CLUSTER}" == "true" ]]; then
+  SERVER_KUBECONFIG_PATH=""
+  SERVER_KUBECONFIG_CONTEXT=""
+  SERVER_KUBERNETES_CLUSTER_NAME=""
+  SERVER_KUBERNETES_API_SERVER=""
+fi
 
 echo "Command:                  ${COMMAND}"
 echo "Namespace:                ${NAMESPACE}"
@@ -52,6 +65,7 @@ worker_image = "${CLIENT_IMAGE}"
 OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
 
 [kubernetes]
+in_cluster = ${SERVER_KUBERNETES_IN_CLUSTER}
 config_path = "${SERVER_KUBECONFIG_PATH}"
 context = "${SERVER_KUBECONFIG_CONTEXT}"
 cluster_name = "${SERVER_KUBERNETES_CLUSTER_NAME}"
@@ -83,6 +97,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # Allow reading pod logs (subresource needed for `kubectl logs`)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "watch"]
   # Allow managing Jobs (if you choose to create Jobs that run client pods)
   - apiGroups: ["batch"]
     resources: ["jobs"]

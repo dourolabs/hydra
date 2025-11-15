@@ -53,6 +53,8 @@ impl Default for MetisSection {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct KubernetesSection {
+    #[serde(default)]
+    pub in_cluster: bool,
     #[serde(default = "default_kubeconfig_path")]
     pub config_path: String,
     #[serde(default)]
@@ -66,6 +68,7 @@ pub struct KubernetesSection {
 impl Default for KubernetesSection {
     fn default() -> Self {
         Self {
+            in_cluster: false,
             config_path: default_kubeconfig_path(),
             context: String::new(),
             cluster_name: String::new(),
