@@ -17,39 +17,103 @@ use kube::{
 use metis_common::logs::LogsQuery;
 use std::convert::Infallible;
 use tokio::time::{Duration, sleep};
+use tracing::{error, info};
 
 pub async fn get_job_logs(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Result<Response, ApiError> {
+    let watch_requested = query.watch.unwrap_or(false);
     let job_id = job_id.trim();
+    info!(
+        job_id = %job_id,
+        watch = watch_requested,
+        "get_job_logs invoked"
+    );
     if job_id.is_empty() {
+        error!("get_job_logs received an empty job_id");
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
     let job_id = job_id.to_string();
 
     let config = state.config;
     let namespace = config.metis.namespace.clone();
-    let client = build_kube_client(&config.kubernetes)
-        .await
-        .map_err(ApiError::internal)?;
+    let client = build_kube_client(&config.kubernetes).await.map_err(|err| {
+        error!(error = ?err, "failed to build Kubernetes client for get_job_logs");
+        ApiError::internal(err)
+    })?;
 
     let jobs: Api<Job> = Api::namespaced(client.clone(), &namespace);
     let pods: Api<Pod> = Api::namespaced(client, &namespace);
 
-    let job = find_job_by_metis_id(&jobs, &job_id).await?;
-    let job_name = job.metadata.name.clone().ok_or_else(|| {
-        ApiError::internal(anyhow!("Job '{}' is missing a Kubernetes name.", job_id))
-    })?;
+    let job = match find_job_by_metis_id(&jobs, &job_id).await {
+        Ok(job) => job,
+        Err(err) => {
+            error!(job_id = %job_id, error = ?err, "failed to find job by Metis ID");
+            return Err(err);
+        }
+    };
+    let job_name = match job.metadata.name.clone() {
+        Some(name) => name,
+        None => {
+            let err = ApiError::internal(anyhow!("Job '{}' is missing a Kubernetes name.", job_id));
+            error!(job_id = %job_id, error = ?err, "job missing Kubernetes name");
+            return Err(err);
+        }
+    };
 
-    let pod_name = wait_for_pod_name(&pods, &job_name, &job_id).await?;
-    let watch = query.watch.unwrap_or(false);
+    let pod_name = match wait_for_pod_name(&pods, &job_name, &job_id).await {
+        Ok(name) => name,
+        Err(err) => {
+            error!(
+                job_id = %job_id,
+                job_name = %job_name,
+                error = ?err,
+                "failed while waiting for pod name"
+            );
+            return Err(err);
+        }
+    };
 
-    if watch {
-        stream_logs_sse(pods, pod_name, job_is_running(&job)).await
+    if watch_requested {
+        info!(
+            job_id = %job_id,
+            job_name = %job_name,
+            pod_name = %pod_name,
+            "streaming job logs via SSE"
+        );
+        match stream_logs_sse(pods, pod_name, job_is_running(&job)).await {
+            Ok(response) => Ok(response),
+            Err(err) => {
+                error!(
+                    job_id = %job_id,
+                    job_name = %job_name,
+                    error = ?err,
+                    "failed to stream logs via SSE"
+                );
+                Err(err)
+            }
+        }
     } else {
-        fetch_logs(&pods, &pod_name).await
+        info!(
+            job_id = %job_id,
+            job_name = %job_name,
+            pod_name = %pod_name,
+            "fetching job logs once"
+        );
+        match fetch_logs(&pods, &pod_name).await {
+            Ok(response) => Ok(response),
+            Err(err) => {
+                error!(
+                    job_id = %job_id,
+                    job_name = %job_name,
+                    error = ?err,
+                    "failed to fetch logs"
+                );
+                Err(err)
+            }
+        }
     }
 }
 

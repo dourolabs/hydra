@@ -8,6 +8,7 @@ use axum::{
 };
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -16,6 +17,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
     let state = AppState {
@@ -30,11 +33,10 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    let addr = listener.local_addr()?;
 
-    println!(
-        "metis-server listening on http://{}",
-        listener.local_addr()?
-    );
+    info!("metis-server listening on http://{}", addr);
+    println!("metis-server listening on http://{}", addr);
 
     axum::serve(listener, app).await?;
 
@@ -42,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn health_check() -> Json<serde_json::Value> {
+    info!("health_check invoked");
     Json(json!({ "status": "ok" }))
 }
 

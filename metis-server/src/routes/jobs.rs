@@ -23,14 +23,17 @@ use kube::{
 use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use std::{collections::BTreeMap, env};
+use tracing::{error, info};
 use uuid::Uuid;
 
 pub async fn create_job(
     State(state): State<AppState>,
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<CreateJobResponse>, ApiError> {
+    info!("create_job invoked");
     let prompt = payload.prompt.trim().to_string();
     if prompt.is_empty() {
+        error!("create_job received an empty prompt");
         return Err(ApiError::bad_request("prompt is required"));
     }
 
@@ -39,10 +42,15 @@ pub async fn create_job(
     let worker_image = config.metis.worker_image.clone();
     let job_uuid = Uuid::new_v4().hyphenated().to_string();
     let job_name = format!("metis-worker-{}", job_uuid);
-    let openai_api_key = resolve_openai_key(&config)?;
-    let client = build_kube_client(&config.kubernetes)
-        .await
-        .map_err(ApiError::internal)?;
+    let openai_api_key = resolve_openai_key(&config).map_err(|err| {
+        error!(error = ?err, "failed to resolve OPENAI_API_KEY for create_job");
+        err
+    })?;
+    info!(job_uuid = %job_uuid, namespace = %namespace, "creating Kubernetes job");
+    let client = build_kube_client(&config.kubernetes).await.map_err(|err| {
+        error!(error = ?err, "failed to build Kubernetes client for create_job");
+        ApiError::internal(err)
+    })?;
 
     let jobs: Api<Job> = Api::namespaced(client, &namespace);
     let metadata_labels = build_metadata_labels(&job_uuid);
@@ -91,6 +99,12 @@ pub async fn create_job(
     match jobs.create(&pp, &job).await {
         Ok(created) => {
             let display_name = created.metadata.name.clone().unwrap_or(job_name.clone());
+            info!(
+                job_uuid = %job_uuid,
+                job_name = %display_name,
+                namespace = %namespace,
+                "job created successfully"
+            );
 
             Ok(Json(CreateJobResponse {
                 job_id: job_uuid,
@@ -98,33 +112,49 @@ pub async fn create_job(
                 namespace,
             }))
         }
-        Err(KubeError::Api(err)) if err.code == 409 => Err(ApiError::conflict(format!(
-            "Job '{}' already exists in namespace '{}'",
-            job_name, namespace
-        ))),
-        Err(err) => Err(ApiError::internal(err)),
+        Err(KubeError::Api(err)) if err.code == 409 => {
+            error!(
+                job_name = %job_name,
+                namespace = %namespace,
+                code = err.code,
+                "job already exists"
+            );
+            Err(ApiError::conflict(format!(
+                "Job '{}' already exists in namespace '{}'",
+                job_name, namespace
+            )))
+        }
+        Err(err) => {
+            error!(job_name = %job_name, error = ?err, "failed to create job in Kubernetes");
+            Err(ApiError::internal(err))
+        }
     }
 }
 
 pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
+    info!("list_jobs invoked");
     let config = state.config;
     let namespace = config.metis.namespace.clone();
-    let client = build_kube_client(&config.kubernetes)
-        .await
-        .map_err(ApiError::internal)?;
+    let client = build_kube_client(&config.kubernetes).await.map_err(|err| {
+        error!(error = ?err, "failed to build Kubernetes client for list_jobs");
+        ApiError::internal(err)
+    })?;
 
     let jobs_api: Api<Job> = Api::namespaced(client, &namespace);
     let mut jobs = jobs_api
         .list(&ListParams::default().labels("metis-id"))
         .await
-        .map_err(ApiError::internal)?
+        .map_err(|err| {
+            error!(error = ?err, namespace = %namespace, "failed to list jobs from Kubernetes");
+            ApiError::internal(err)
+        })?
         .into_iter()
         .collect::<Vec<_>>();
 
     jobs.sort_by(|a, b| job_reference_time(b).cmp(&job_reference_time(a)));
     let now = Utc::now();
 
-    let summaries = jobs
+    let summaries: Vec<JobSummary> = jobs
         .into_iter()
         .map(|job| JobSummary {
             id: job_metis_id(&job).unwrap_or_else(|| "<unknown>".to_string()),
@@ -132,6 +162,12 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
             runtime: job_runtime(&job, now).map(format_duration),
         })
         .collect();
+
+    info!(
+        namespace = %namespace,
+        job_count = summaries.len(),
+        "list_jobs completed successfully"
+    );
 
     Ok(Json(ListJobsResponse {
         namespace,
