@@ -20,7 +20,7 @@ use kube::{
     Api, Error as KubeError,
     api::{ListParams, PostParams},
 };
-use serde::{Deserialize, Serialize};
+use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use std::{collections::BTreeMap, env};
 use uuid::Uuid;
@@ -126,8 +126,7 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     let summaries = jobs
         .into_iter()
         .map(|job| JobSummary {
-            id: job_metis_id(&job)
-                .unwrap_or_else(|| "<unknown>".to_string()),
+            id: job_metis_id(&job).unwrap_or_else(|| "<unknown>".to_string()),
             status: job_status(&job).to_string(),
             runtime: job_runtime(&job, now).map(format_duration),
         })
@@ -137,33 +136,6 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         namespace,
         jobs: summaries,
     }))
-}
-
-#[derive(Deserialize)]
-pub struct CreateJobRequest {
-    pub prompt: String,
-    #[serde(default)]
-    pub from_git_rev: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct CreateJobResponse {
-    pub job_id: String,
-    pub job_name: String,
-    pub namespace: String,
-}
-
-#[derive(Serialize)]
-pub struct ListJobsResponse {
-    pub namespace: String,
-    pub jobs: Vec<JobSummary>,
-}
-
-#[derive(Serialize)]
-pub struct JobSummary {
-    pub id: String,
-    pub status: String,
-    pub runtime: Option<String>,
 }
 
 #[derive(Debug)]

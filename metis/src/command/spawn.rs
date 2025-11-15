@@ -1,25 +1,17 @@
-use crate::config::{build_kube_client, AppConfig};
-use anyhow::{anyhow, bail, Result};
+use crate::{
+    client::MetisClient,
+    config::{build_kube_client, AppConfig},
+};
+use anyhow::{bail, Result};
 use futures::io::AsyncReadExt;
-use k8s_openapi::{
-    api::{
-        batch::v1::{Job, JobSpec},
-        core::v1::{Container, EnvVar, Pod, PodSpec, PodTemplateSpec},
-    },
-    apimachinery::pkg::apis::meta::v1::ObjectMeta,
-};
+use k8s_openapi::api::{batch::v1::Job, core::v1::Pod};
 use kube::{
-    api::{ListParams, LogParams, PostParams},
-    Api, Error as KubeError,
+    api::{ListParams, LogParams},
+    Api,
 };
-use std::{
-    collections::BTreeMap,
-    env,
-    io::{self, Write},
-    time::Duration,
-};
+use metis_common::jobs::CreateJobRequest;
+use std::{io::{self, Write}, time::Duration};
 use tokio::time::sleep;
-use uuid::Uuid;
 
 pub async fn run(
     config: &AppConfig,
@@ -33,110 +25,27 @@ pub async fn run(
         prompt_parts.join(" ")
     };
 
-    let namespace = config.metis.namespace.clone();
-    let worker_image = config.metis.worker_image.clone();
-    let job_uuid = Uuid::new_v4().hyphenated().to_string();
-    let job_name = format!("metis-worker-{}", job_uuid.clone());
-    let client = build_kube_client(&config.kubernetes).await?;
-    let from_git_rev = from_git_rev_arg;
-
-    let openai_api_key = env::var("OPENAI_API_KEY")
-        .ok()
-        .or_else(|| config.metis.openai_api_key.clone())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            anyhow!("OPENAI_API_KEY is not set. Provide it via the environment or config.toml.")
-        })?;
-
-    let jobs: Api<Job> = Api::namespaced(client.clone(), &namespace);
-    let pods: Api<Pod> = Api::namespaced(client, &namespace);
-
-    let mut metadata_labels = BTreeMap::new();
-    metadata_labels.insert("metis-id".to_string(), job_uuid.clone());
-
-    let job = Job {
-        metadata: ObjectMeta {
-            name: Some(job_name.clone()),
-            labels: Some(metadata_labels.clone()),
-            ..Default::default()
-        },
-        spec: Some(JobSpec {
-            template: PodTemplateSpec {
-                metadata: Some(ObjectMeta {
-                    labels: Some(metadata_labels),
-                    ..Default::default()
-                }),
-                spec: Some(PodSpec {
-                    containers: vec![Container {
-                        name: "metis-worker".to_string(),
-                        image: Some(worker_image),
-                        args: Some(vec![
-                            "codex".into(),
-                            "exec".into(),
-                            "--dangerously-bypass-approvals-and-sandbox".into(),
-                            prompt,
-                        ]),
-                        env: {
-                            let mut vars = vec![
-                                EnvVar {
-                                    name: "OPENAI_API_KEY".to_string(),
-                                    value: Some(openai_api_key),
-                                    ..Default::default()
-                                },
-                                EnvVar {
-                                    name: "METIS_ID".to_string(),
-                                    value: Some(job_uuid.clone()),
-                                    ..Default::default()
-                                },
-                            ];
-
-                            if let Some(from_git_rev) = &from_git_rev {
-                                vars.push(EnvVar {
-                                    name: "FROM_GIT_REV".to_string(),
-                                    value: Some(from_git_rev.clone()),
-                                    ..Default::default()
-                                });
-                            }
-
-                            Some(vars)
-                        },
-                        ..Default::default()
-                    }],
-                    restart_policy: Some("Never".into()),
-                    ..Default::default()
-                }),
-            },
-            backoff_limit: Some(0),
-            ..Default::default()
-        }),
-        ..Default::default()
+    let client = MetisClient::from_config(config)?;
+    let request = CreateJobRequest {
+        prompt,
+        from_git_rev: from_git_rev_arg,
     };
+    let response = client.create_job(&request).await?;
+    let job_id = response.job_id;
+    let job_name = response.job_name;
+    let namespace = response.namespace;
 
-    let pp = PostParams::default();
-
-    match jobs.create(&pp, &job).await {
-        Ok(created) => {
-            let display_name = created
-                .metadata
-                .name
-                .clone()
-                .unwrap_or_else(|| job_name.clone());
-            println!(
-                "Spawned Kubernetes job '{}' in namespace '{}'.",
-                display_name, namespace
-            );
-        }
-        Err(KubeError::Api(err)) if err.code == 409 => {
-            println!(
-                "Job '{}' already exists in namespace '{}'.",
-                job_name, namespace
-            );
-        }
-        Err(err) => return Err(err.into()),
-    }
+    println!(
+        "Requested Metis job '{}' (id {}) in namespace '{}'.",
+        job_name, job_id, namespace
+    );
 
     if wait {
-        wait_for_job_completion(&jobs, &pods, &job_name, &job_uuid).await?;
+        let kube_client = build_kube_client(&config.kubernetes).await?;
+        let jobs: Api<Job> = Api::namespaced(kube_client.clone(), &namespace);
+        let pods: Api<Pod> = Api::namespaced(kube_client, &namespace);
+
+        wait_for_job_completion(&jobs, &pods, &job_name, &job_id).await?;
     }
 
     Ok(())

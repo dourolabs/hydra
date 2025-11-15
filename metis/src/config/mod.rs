@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub metis: MetisSection,
     #[serde(default)]
     pub kubernetes: KubernetesSection,
+    #[serde(default)]
+    pub server: ServerSection,
 }
 
 impl AppConfig {
@@ -63,6 +65,20 @@ pub struct KubernetesSection {
     pub api_server: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ServerSection {
+    #[serde(default = "default_metis_server_url")]
+    pub url: String,
+}
+
+impl Default for ServerSection {
+    fn default() -> Self {
+        Self {
+            url: default_metis_server_url(),
+        }
+    }
+}
+
 impl Default for KubernetesSection {
     fn default() -> Self {
         Self {
@@ -100,4 +116,8 @@ fn default_worker_image() -> String {
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
+}
+
+fn default_metis_server_url() -> String {
+    "http://localhost:8080".to_string()
 }

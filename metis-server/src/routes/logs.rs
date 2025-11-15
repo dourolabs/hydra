@@ -14,15 +14,9 @@ use kube::{
     Api,
     api::{ListParams, LogParams},
 };
-use serde::Deserialize;
+use metis_common::logs::LogsQuery;
 use std::convert::Infallible;
 use tokio::time::{Duration, sleep};
-
-#[derive(Default, Deserialize)]
-pub struct LogsQuery {
-    #[serde(default)]
-    watch: Option<bool>,
-}
 
 pub async fn get_job_logs(
     State(state): State<AppState>,
