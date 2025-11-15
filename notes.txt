@@ -1,4 +1,4 @@
-Kubernetes setup
+## Kubernetes setup
 
 (requires docker to be running)
 
@@ -10,3 +10,15 @@ To delete the cluster
 ```
 kind delete cluster --name local-dev
 ```
+
+
+## Next steps
+
+1. metis-server needs to run inside the kubernetes cluster, and other kubernetes jobs need to be able to communicate with it.
+2. then we need to add endpoint(s) to metis-server where jobs can post results back to the server. The main result we want to capture at the moment is a patch for a changeset produced by the job.
+3. 
+
+
+## TODOs
+
+1. Fix the deployment process, and specifically how configuration information is passed to the deployed services

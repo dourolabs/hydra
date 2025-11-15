@@ -1210,18 +1210,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "chrono",
  "clap",
  "futures",
- "k8s-openapi",
- "kube",
  "metis-common",
  "reqwest",
  "serde",
  "shellexpand",
  "tokio",
  "toml",
- "uuid",
 ]
 
 [[package]]

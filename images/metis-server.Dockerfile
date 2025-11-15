@@ -22,7 +22,9 @@ COPY . .
 
 RUN cargo build
 
-# ENTRYPOINT ["./scripts/codex-entrypoint.sh"]
+ENV CONFIG_PATH=./metis-server/config.toml
+
+ENTRYPOINT ["./metis-server/target/debug/metis-server"]
 
 # Default to an interactive shell so users can run Codex CLI commands.
 # CMD ["bash"]
