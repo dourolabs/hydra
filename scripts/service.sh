@@ -16,6 +16,19 @@ SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
 # - LoadBalancer (default) for managed clusters (GKE/EKS/AKS, etc.)
 # - NodePort for bare metal / kind / minikube
 SERVER_SERVICE_TYPE="${SERVER_SERVICE_TYPE:-LoadBalancer}"
+SERVER_CONFIGMAP_NAME="${SERVER_CONFIGMAP_NAME:-metis-server-config}"
+SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/metis}"
+SERVER_CONFIG_FILE_NAME="${SERVER_CONFIG_FILE_NAME:-config.toml}"
+SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
+
+# Config generation defaults (can be overridden by env vars)
+SERVER_OPENAI_API_KEY="${SERVER_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+DEFAULT_KUBECONFIG_PATH="${KUBECONFIG:-~/.kube/config}"
+SERVER_KUBECONFIG_PATH="${SERVER_KUBECONFIG_PATH:-${DEFAULT_KUBECONFIG_PATH}}"
+DEFAULT_KUBE_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
+SERVER_KUBECONFIG_CONTEXT="${SERVER_KUBECONFIG_CONTEXT:-${DEFAULT_KUBE_CONTEXT}}"
+SERVER_KUBERNETES_CLUSTER_NAME="${SERVER_KUBERNETES_CLUSTER_NAME:-${SERVER_KUBECONFIG_CONTEXT}}"
+SERVER_KUBERNETES_API_SERVER="${SERVER_KUBERNETES_API_SERVER:-}"
 
 echo "Command:                  ${COMMAND}"
 echo "Namespace:                ${NAMESPACE}"
@@ -23,10 +36,28 @@ echo "Server image:             ${SERVER_IMAGE}"
 echo "Client image:             ${CLIENT_IMAGE}"
 echo "Server replicas (start):  ${SERVER_REPLICAS}"
 echo "Server service type:      ${SERVER_SERVICE_TYPE}"
+echo "Server config ConfigMap:  ${SERVER_CONFIGMAP_NAME}"
+echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
+echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
 echo
 
 # Make sure kubectl works
 kubectl version >/dev/null
+
+generate_server_config() {
+  cat <<EOF
+[metis]
+namespace = "${NAMESPACE}"
+worker_image = "${CLIENT_IMAGE}"
+OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
+
+[kubernetes]
+config_path = "${SERVER_KUBECONFIG_PATH}"
+context = "${SERVER_KUBECONFIG_CONTEXT}"
+cluster_name = "${SERVER_KUBERNETES_CLUSTER_NAME}"
+api_server = "${SERVER_KUBERNETES_API_SERVER}"
+EOF
+}
 
 apply_manifests() {
   cat <<EOF | kubectl apply -f -
@@ -71,6 +102,15 @@ roleRef:
   kind: Role
   name: server-pod-manager
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${SERVER_CONFIGMAP_NAME}
+  namespace: ${NAMESPACE}
+data:
+  ${SERVER_CONFIG_FILE_NAME}: |
+$(generate_server_config | sed 's/^/    /')
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -97,6 +137,8 @@ spec:
             # So the server can know which image to use for client pods
             - name: CLIENT_IMAGE
               value: ${CLIENT_IMAGE}
+            - name: METIS_CONFIG
+              value: ${SERVER_METIS_CONFIG_PATH}
             # Namespace in which to spawn the clients
             - name: TARGET_NAMESPACE
               valueFrom:
@@ -105,6 +147,14 @@ spec:
             # How clients can reach the server via Cluster DNS
             - name: SERVER_SERVICE_HOSTNAME
               value: "server.${NAMESPACE}.svc.cluster.local"
+          volumeMounts:
+            - name: server-config
+              mountPath: ${SERVER_CONFIG_MOUNT_PATH}
+              readOnly: true
+      volumes:
+        - name: server-config
+          configMap:
+            name: ${SERVER_CONFIGMAP_NAME}
 ---
 apiVersion: v1
 kind: Service
@@ -152,15 +202,57 @@ case "${COMMAND}" in
     kubectl get pods -n "${NAMESPACE}" || true
     ;;
 
+  status)
+    echo "Checking server status..."
+
+    control_plane_ip="$(kubectl get nodes -o wide | awk 'NR>1 && $3 ~ /control-plane/ {print $6; exit}')"
+    if [[ -z "${control_plane_ip}" ]]; then
+      control_plane_ip="$(kubectl get nodes -o wide | awk 'NR==2 {print $6}')"
+    fi
+
+    svc_output="$(kubectl get svc server -n "${NAMESPACE}" 2>/dev/null || true)"
+    server_port="$(kubectl get svc server -n "${NAMESPACE}" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)"
+
+    if [[ -z "${server_port}" ]]; then
+      server_port="$(kubectl get svc server -n "${NAMESPACE}" -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || true)"
+    fi
+
+    if [[ -n "${control_plane_ip}" && -n "${server_port}" ]]; then
+      echo "server is running on http://${control_plane_ip}:${server_port}"
+    else
+      echo "Unable to determine server endpoint."
+    fi
+
+    if [[ -n "${svc_output}" ]]; then
+      echo
+      echo "${svc_output}"
+    else
+      echo "Service 'server' not found in namespace ${NAMESPACE}."
+    fi
+    ;;
+
   destroy)
     echo "Destroying namespace '${NAMESPACE}' (this will delete server, clients, RBAC, services, etc.)..."
     kubectl delete namespace "${NAMESPACE}" --ignore-not-found
     echo "Namespace '${NAMESPACE}' deleted (if it existed)."
     ;;
 
+  restart)
+    echo "Restarting server..."
+    echo "- Scaling existing pods down to 0..."
+    scale_server 0
+    echo "- Reapplying manifests to pick up new definitions..."
+    apply_manifests
+    echo "- Scaling server back to ${SERVER_REPLICAS} replica(s)..."
+    scale_server "${SERVER_REPLICAS}"
+    echo
+    echo "Restart complete. Current resources:"
+    kubectl get pods,svc -n "${NAMESPACE}"
+    ;;
+
   *)
     echo "Unknown command: ${COMMAND}"
-    echo "Usage: $0 [start|stop|destroy]"
+    echo "Usage: $0 [start|stop|status|restart|destroy]"
     exit 1
     ;;
 esac

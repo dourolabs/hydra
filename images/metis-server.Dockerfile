@@ -23,6 +23,7 @@ COPY . .
 RUN cargo build
 
 ENV METIS_CONFIG=./metis-server/config.toml
+ENV RUST_LOG=info
 
 ENTRYPOINT ["./target/debug/metis-server"]
 

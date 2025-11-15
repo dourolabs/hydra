@@ -17,3 +17,5 @@ toml = "0.8"
 uuid = { version = "1.10", features = ["v4"] }
 chrono = { version = "0.4", features = ["clock"] }
 metis-common = { path = "../metis-common" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
