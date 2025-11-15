@@ -20,7 +20,9 @@ use kube::{
     Api, Error as KubeError,
     api::{ListParams, PostParams},
 };
-use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
+use metis_common::jobs::{
+    CreateJobRequest, CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse,
+};
 use serde_json::json;
 use std::{collections::BTreeMap, env};
 use tracing::{error, info};
@@ -81,11 +83,7 @@ pub async fn create_job(
                             "--dangerously-bypass-approvals-and-sandbox".into(),
                             prompt.clone(),
                         ]),
-                        env: build_env_vars(
-                            &job_uuid,
-                            &openai_api_key,
-                            payload.from_git_rev.as_deref(),
-                        ),
+                        env: build_env_vars(&job_uuid, &openai_api_key),
                         ..Default::default()
                     }],
                     restart_policy: Some("Never".into()),
@@ -228,11 +226,7 @@ fn build_metadata_labels(job_uuid: &str) -> BTreeMap<String, String> {
     metadata_labels
 }
 
-fn build_env_vars(
-    job_uuid: &str,
-    openai_api_key: &str,
-    from_git_rev: Option<&str>,
-) -> Option<Vec<EnvVar>> {
+fn build_env_vars(job_uuid: &str, openai_api_key: &str) -> Option<Vec<EnvVar>> {
     let mut vars = vec![
         EnvVar {
             name: "OPENAI_API_KEY".to_string(),
@@ -245,16 +239,6 @@ fn build_env_vars(
             ..Default::default()
         },
     ];
-
-    if let Some(rev) = from_git_rev {
-        if !rev.trim().is_empty() {
-            vars.push(EnvVar {
-                name: "FROM_GIT_REV".to_string(),
-                value: Some(rev.trim().to_string()),
-                ..Default::default()
-            });
-        }
-    }
 
     Some(vars)
 }

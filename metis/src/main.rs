@@ -36,6 +36,22 @@ enum Commands {
         #[arg(long = "from", value_name = "REV")]
         from: Option<String>,
 
+        /// Git repository URL to clone when providing --from.
+        #[arg(long = "repo-url", value_name = "URL")]
+        repo_url: Option<String>,
+
+        /// Directory to upload as the job context (will be archived and base64 encoded).
+        #[arg(long = "context-dir", value_name = "PATH")]
+        context_dir: Option<PathBuf>,
+
+        /// Force --context-dir to be encoded as a tar archive, even if it is a git repo.
+        #[arg(long = "encode-directory", conflicts_with = "encode_git_bundle")]
+        encode_directory: bool,
+
+        /// Force --context-dir to be encoded as a git bundle.
+        #[arg(long = "encode-git-bundle")]
+        encode_git_bundle: bool,
+
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
             value_name = "PROMPT",
@@ -71,8 +87,26 @@ async fn main() -> Result<()> {
     let app_config = AppConfig::load(&config_path)?;
 
     match cli.command {
-        Commands::Spawn { wait, from, prompt } => {
-            command::spawn::run(&app_config, wait, from, prompt).await?
+        Commands::Spawn {
+            wait,
+            from,
+            repo_url,
+            context_dir,
+            encode_directory,
+            encode_git_bundle,
+            prompt,
+        } => {
+            command::spawn::run(
+                &app_config,
+                wait,
+                from,
+                repo_url,
+                context_dir,
+                encode_directory,
+                encode_git_bundle,
+                prompt,
+            )
+            .await?
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
