@@ -8,14 +8,18 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use k8s_openapi::{
     api::{
-        batch::v1::{Job, JobSpec},
+        batch::v1::{Job, JobSpec, JobStatus},
         core::v1::{Container, EnvVar, PodSpec, PodTemplateSpec},
     },
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
 };
-use kube::{Api, Error as KubeError, api::PostParams};
+use kube::{
+    Api, Error as KubeError,
+    api::{ListParams, PostParams},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeMap, env};
@@ -101,6 +105,40 @@ pub async fn create_job(
     }
 }
 
+pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
+    let config = state.config;
+    let namespace = config.metis.namespace.clone();
+    let client = build_kube_client(&config.kubernetes)
+        .await
+        .map_err(ApiError::internal)?;
+
+    let jobs_api: Api<Job> = Api::namespaced(client, &namespace);
+    let mut jobs = jobs_api
+        .list(&ListParams::default().labels("metis-id"))
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    jobs.sort_by(|a, b| job_reference_time(b).cmp(&job_reference_time(a)));
+    let now = Utc::now();
+
+    let summaries = jobs
+        .into_iter()
+        .map(|job| JobSummary {
+            id: job_metis_id(&job)
+                .unwrap_or_else(|| "<unknown>".to_string()),
+            status: job_status(&job).to_string(),
+            runtime: job_runtime(&job, now).map(format_duration),
+        })
+        .collect();
+
+    Ok(Json(ListJobsResponse {
+        namespace,
+        jobs: summaries,
+    }))
+}
+
 #[derive(Deserialize)]
 pub struct CreateJobRequest {
     pub prompt: String,
@@ -115,6 +153,19 @@ pub struct CreateJobResponse {
     pub namespace: String,
 }
 
+#[derive(Serialize)]
+pub struct ListJobsResponse {
+    pub namespace: String,
+    pub jobs: Vec<JobSummary>,
+}
+
+#[derive(Serialize)]
+pub struct JobSummary {
+    pub id: String,
+    pub status: String,
+    pub runtime: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -122,7 +173,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
@@ -136,7 +187,14 @@ impl ApiError {
         }
     }
 
-    fn internal(error: impl Into<anyhow::Error>) -> Self {
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    pub fn internal(error: impl Into<anyhow::Error>) -> Self {
         let err = error.into();
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -199,4 +257,103 @@ fn resolve_openai_key(config: &AppConfig) -> Result<String, ApiError> {
                 "OPENAI_API_KEY is not set. Provide it via the environment or config.toml.",
             )
         })
+}
+
+fn job_status(job: &Job) -> &'static str {
+    if let Some(status) = job.status.as_ref() {
+        if status.succeeded.unwrap_or(0) > 0 {
+            return "complete";
+        }
+        if status.failed.unwrap_or(0) > 0 {
+            return "failed";
+        }
+    }
+
+    "running"
+}
+
+fn job_metis_id(job: &Job) -> Option<String> {
+    job.metadata
+        .labels
+        .as_ref()
+        .and_then(|labels| labels.get("metis-id"))
+        .cloned()
+}
+
+fn job_runtime(job: &Job, now: DateTime<Utc>) -> Option<ChronoDuration> {
+    let start = job_reference_time(job)?;
+    let end = job_end_time(job).unwrap_or(now);
+
+    if end < start {
+        return Some(ChronoDuration::zero());
+    }
+
+    Some(end - start)
+}
+
+fn job_reference_time(job: &Job) -> Option<DateTime<Utc>> {
+    job.status
+        .as_ref()
+        .and_then(|status| status.start_time.as_ref())
+        .map(|time| time.0.clone())
+        .or_else(|| {
+            job.metadata
+                .creation_timestamp
+                .as_ref()
+                .map(|time| time.0.clone())
+        })
+}
+
+fn job_end_time(job: &Job) -> Option<DateTime<Utc>> {
+    let status = job.status.as_ref()?;
+
+    if status.succeeded.unwrap_or(0) > 0 {
+        if let Some(completion_time) = status.completion_time.as_ref() {
+            return Some(completion_time.0.clone());
+        }
+
+        if let Some(time) = condition_time(status, "Complete") {
+            return Some(time);
+        }
+    }
+
+    if status.failed.unwrap_or(0) > 0 {
+        if let Some(time) = condition_time(status, "Failed") {
+            return Some(time);
+        }
+    }
+
+    None
+}
+
+fn condition_time(status: &JobStatus, kind: &str) -> Option<DateTime<Utc>> {
+    status
+        .conditions
+        .as_ref()
+        .and_then(|conditions| {
+            conditions
+                .iter()
+                .find(|condition| condition.type_ == kind)
+                .and_then(|condition| condition.last_transition_time.as_ref())
+        })
+        .map(|time| time.0.clone())
+}
+
+fn format_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
 }

@@ -24,7 +24,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health_check))
+        .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/jobs", post(routes::jobs::create_job))
+        .route("/v1/jobs/:job_id/logs", get(routes::logs::get_job_logs))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
