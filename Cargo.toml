@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "metis",
+    "metis-server",
+    "metis-common",
+]
+resolver = "2"
+
