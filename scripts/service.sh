@@ -90,6 +90,7 @@ spec:
       containers:
         - name: server
           image: ${SERVER_IMAGE}
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           env:

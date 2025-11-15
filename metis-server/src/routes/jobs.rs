@@ -63,6 +63,7 @@ pub async fn create_job(
                     containers: vec![Container {
                         name: "metis-worker".to_string(),
                         image: Some(worker_image),
+                        image_pull_policy: Some("IfNotPresent".into()),
                         args: Some(vec![
                             "codex".into(),
                             "exec".into(),
