@@ -38,3 +38,19 @@ pub mod logs {
         pub watch: Option<bool>,
     }
 }
+
+pub mod job_outputs {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct JobOutputPayload {
+        pub last_message: String,
+        pub patch: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct JobOutputResponse {
+        pub job_id: String,
+        pub output: JobOutputPayload,
+    }
+}

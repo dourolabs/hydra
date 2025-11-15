@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
+    job_outputs::JobOutputResponse,
     jobs::{CreateJobRequest, CreateJobResponse, ListJobsResponse},
     logs::LogsQuery,
 };
@@ -155,6 +156,31 @@ impl MetisClient {
             let body = response.text().await?;
             Ok(Self::stream_text_logs(body))
         }
+    }
+
+    /// Call `GET /v1/jobs/:job_id/output` to retrieve the recorded agent output.
+    #[allow(dead_code)]
+    pub async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse> {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err(anyhow!("job_id must not be empty"));
+        }
+
+        let path = format!("/v1/jobs/{job_id}/output");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to request job output")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching job output")?;
+
+        response
+            .json::<JobOutputResponse>()
+            .await
+            .context("failed to decode job output response")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
