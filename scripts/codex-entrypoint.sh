@@ -17,8 +17,7 @@ startup_tasks() {
   fi
   printenv OPENAI_API_KEY | codex login --with-api-key
 
-  # clean git working tree
-  git reset --hard
+  metis context $METIS_ID . 
 }
 
 cleanup_tasks() {
