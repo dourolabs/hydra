@@ -49,12 +49,12 @@ RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install 
 
 WORKDIR ${APP_HOME}
 
-COPY ./scripts/codex-entrypoint.sh ./scripts/codex-entrypoint.sh
+COPY ./scripts/codex-entrypoint.sh /usr/local/codex-entrypoint.sh
 
 # Copy the built metis CLI into PATH
 COPY --from=builder /app/target/release/metis /usr/local/bin/metis
 
-ENTRYPOINT ["./scripts/codex-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/codex-entrypoint.sh"]
 
 # Default to an interactive shell so users can run Codex CLI commands.
 CMD ["bash"]
