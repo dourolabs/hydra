@@ -5,6 +5,7 @@ mod config;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::AppConfig;
+use std::env;
 use std::path::PathBuf;
 
 /// Top-level CLI options for the metis tool.
@@ -92,8 +93,15 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config_path = cli.config.unwrap_or_else(|| PathBuf::from("config.toml"));
-    let app_config = AppConfig::load(&config_path)?;
+    let app_config = match env::var("METIS_SERVER_URL") {
+        Ok(url) if !url.trim().is_empty() => AppConfig {
+            server: config::ServerSection { url },
+        },
+        _ => {
+            let config_path = cli.config.unwrap_or_else(|| PathBuf::from("config.toml"));
+            AppConfig::load(&config_path)?
+        }
+    };
 
     match cli.command {
         Commands::Spawn {

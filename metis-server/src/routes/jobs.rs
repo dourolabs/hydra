@@ -81,7 +81,11 @@ pub async fn create_job(
                             "--dangerously-bypass-approvals-and-sandbox".into(),
                             prompt.clone(),
                         ]),
-                        env: build_env_vars(&job_uuid, &openai_api_key),
+                        env: build_env_vars(
+                            &job_uuid,
+                            &openai_api_key,
+                            config.metis.server_hostname.as_str(),
+                        ),
                         ..Default::default()
                     }],
                     restart_policy: Some("Never".into()),
@@ -230,8 +234,8 @@ fn build_metadata_labels(job_uuid: &str) -> BTreeMap<String, String> {
     metadata_labels
 }
 
-fn build_env_vars(job_uuid: &str, openai_api_key: &str) -> Option<Vec<EnvVar>> {
-    let vars = vec![
+fn build_env_vars(job_uuid: &str, openai_api_key: &str, server_hostname: &str) -> Option<Vec<EnvVar>> {
+    let mut vars = vec![
         EnvVar {
             name: "OPENAI_API_KEY".to_string(),
             value: Some(openai_api_key.to_string()),
@@ -243,6 +247,14 @@ fn build_env_vars(job_uuid: &str, openai_api_key: &str) -> Option<Vec<EnvVar>> {
             ..Default::default()
         },
     ];
+
+    if !server_hostname.trim().is_empty() {
+        vars.push(EnvVar {
+            name: "METIS_SERVER_URL".to_string(),
+            value: Some(format!("http://{}", server_hostname.trim())),
+            ..Default::default()
+        });
+    }
 
     Some(vars)
 }

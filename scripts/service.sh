@@ -62,6 +62,7 @@ generate_server_config() {
 [metis]
 namespace = "${NAMESPACE}"
 worker_image = "${CLIENT_IMAGE}"
+server_hostname = "${SERVER_SERVICE_HOSTNAME}"
 OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
 
 [kubernetes]
