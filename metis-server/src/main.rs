@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
 };
 use metis_common::job_outputs::JobOutputPayload;
+use metis_common::jobs::CreateJobRequestContext;
 use serde_json::json;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -16,6 +17,7 @@ use tracing::info;
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub job_outputs: Arc<RwLock<HashMap<String, JobOutputPayload>>>,
+    pub job_contexts: Arc<RwLock<HashMap<String, CreateJobRequestContext>>>,
 }
 
 #[tokio::main]
@@ -27,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         config: Arc::new(app_config),
         job_outputs: Arc::new(RwLock::new(HashMap::new())),
+        job_contexts: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let app = Router::new()
@@ -37,6 +40,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/jobs/:job_id/output",
             get(routes::output::get_job_output).post(routes::output::set_job_output),
+        )
+        .route(
+            "/v1/jobs/:job_id/context",
+            get(routes::context::get_job_context),
         )
         .with_state(state);
 

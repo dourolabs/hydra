@@ -20,9 +20,7 @@ use kube::{
     Api, Error as KubeError,
     api::{ListParams, PostParams},
 };
-use metis_common::jobs::{
-    CreateJobRequest, CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse,
-};
+use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use std::{collections::BTreeMap, env};
 use tracing::{error, info};
@@ -106,6 +104,12 @@ pub async fn create_job(
                 namespace = %namespace,
                 "job created successfully"
             );
+
+            // Store the job context for later retrieval
+            {
+                let mut ctx_store = state.job_contexts.write().await;
+                ctx_store.insert(job_uuid.clone(), payload.context.clone());
+            }
 
             Ok(Json(CreateJobResponse {
                 job_id: job_uuid,
@@ -227,7 +231,7 @@ fn build_metadata_labels(job_uuid: &str) -> BTreeMap<String, String> {
 }
 
 fn build_env_vars(job_uuid: &str, openai_api_key: &str) -> Option<Vec<EnvVar>> {
-    let mut vars = vec![
+    let vars = vec![
         EnvVar {
             name: "OPENAI_API_KEY".to_string(),
             value: Some(openai_api_key.to_string()),

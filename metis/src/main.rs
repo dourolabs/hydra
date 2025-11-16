@@ -78,6 +78,15 @@ enum Commands {
         #[arg(value_name = "JOB_ID")]
         job: String,
     },
+    /// Retrieve a job's context and extract/copy it to a directory.
+    Context {
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "JOB_ID")]
+        job: String,
+        /// Destination directory where the context will be extracted/copied.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -111,6 +120,7 @@ async fn main() -> Result<()> {
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
         Commands::Output { job } => command::output::run(&app_config, job).await?,
+        Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
     }
 
     Ok(())
