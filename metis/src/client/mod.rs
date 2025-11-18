@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
-    job_outputs::JobOutputResponse,
+    job_outputs::{JobOutputPayload, JobOutputResponse},
     jobs::{CreateJobRequest, CreateJobRequestContext, CreateJobResponse, ListJobsResponse},
     logs::LogsQuery,
 };
@@ -180,6 +180,35 @@ impl MetisClient {
             .json::<JobOutputResponse>()
             .await
             .context("failed to decode job output response")
+    }
+
+    /// Call `POST /v1/jobs/:job_id/output` to set/update the recorded agent output.
+    pub async fn set_job_output(
+        &self,
+        job_id: &str,
+        payload: &JobOutputPayload,
+    ) -> Result<JobOutputResponse> {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err(anyhow!("job_id must not be empty"));
+        }
+
+        let path = format!("/v1/jobs/{job_id}/output");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .post(url)
+            .json(payload)
+            .send()
+            .await
+            .context("failed to submit set job output request")?
+            .error_for_status()
+            .context("metis-server returned an error while setting job output")?;
+
+        response
+            .json::<JobOutputResponse>()
+            .await
+            .context("failed to decode set job output response")
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.

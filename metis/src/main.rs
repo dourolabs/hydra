@@ -88,6 +88,18 @@ enum Commands {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
+    /// Set the recorded output for a job.
+    SetOutput {
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "JOB_ID")]
+        job: String,
+        /// Path to a file containing the last agent message to store.
+        #[arg(long = "last-message", value_name = "FILE")]
+        last_message: PathBuf,
+        /// Path to a file containing the patch text to store.
+        #[arg(long = "patch", value_name = "FILE")]
+        patch: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -129,6 +141,11 @@ async fn main() -> Result<()> {
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
         Commands::Output { job } => command::output::run(&app_config, job).await?,
         Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
+        Commands::SetOutput {
+            job,
+            last_message,
+            patch,
+        } => command::set_output::run(&app_config, job, last_message, patch).await?,
     }
 
     Ok(())

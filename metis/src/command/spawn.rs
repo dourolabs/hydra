@@ -11,7 +11,7 @@ use std::{
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::Duration,
 };
 use tar::Builder;
@@ -240,10 +240,13 @@ fn encode_git_bundle(path: &Path) -> Result<String> {
     let bundle_path = tmp_dir.path().join("context.bundle");
 
     let status = Command::new("git")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .arg("-C")
         .arg(path)
         .arg("bundle")
         .arg("create")
+        .arg("--quiet")
         .arg(&bundle_path)
         .arg("HEAD")
         .status()
