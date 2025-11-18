@@ -78,6 +78,10 @@ enum Commands {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
         job: String,
+
+        /// Apply the patch to the current git repository using `git apply`.
+        #[arg(short = 'a', long = "apply")]
+        apply: bool,
     },
     /// Retrieve a job's context and extract/copy it to a directory.
     Context {
@@ -139,7 +143,7 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
-        Commands::Output { job } => command::output::run(&app_config, job).await?,
+        Commands::Output { job, apply } => command::output::run(&app_config, job, apply).await?,
         Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
         Commands::SetOutput {
             job,
