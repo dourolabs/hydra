@@ -1,6 +1,7 @@
 use crate::{client::MetisClient, config::AppConfig};
 use anyhow::{bail, Context, Result};
-use std::process::Command;
+use std::{fs, process::Command};
+use tempfile::NamedTempFile;
 
 pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     let job_id = job.trim();
@@ -27,31 +28,44 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
             bail!("Current directory is not a git repository. Cannot apply patch.");
         }
 
-        // Apply the patch using git apply
-        let mut apply_cmd = Command::new("git");
-        apply_cmd.arg("apply");
-        
-        let mut apply_result = apply_cmd
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn git apply command")?;
+        // Check if patch is empty
+        let patch = response.output.patch;
+        if patch.is_empty() {
+            bail!("Patch is empty. Nothing to apply.");
+        }
+        println!("{}", &patch);
 
-        let patch_bytes = response.output.patch.as_bytes();
-        {
-            let mut stdin = apply_result.stdin.take().ok_or_else(|| anyhow::anyhow!("Failed to open stdin for git apply"))?;
-            use std::io::Write;
-            stdin.write_all(patch_bytes).context("Failed to write patch to git apply")?;
+        // Write patch to a temporary file
+        let patch_file = NamedTempFile::new()
+            .context("Failed to create temporary file for patch")?;
+        fs::write(patch_file.path(), patch)
+            .context("Failed to write patch to temporary file")?;
+
+        println!("{:?}", patch_file.path());
+        
+
+        // Apply the patch using git apply
+        let output = Command::new("git")
+            .arg("apply")
+            .arg(patch_file.path())
+            .output()
+            .context("Failed to execute git apply")?;
+
+        // Print stderr if there's any output (warnings, etc.)
+        if !output.stderr.is_empty() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("git apply stderr: {}", stderr);
         }
 
-        let output = apply_result
-            .wait_with_output()
-            .context("Failed to wait for git apply to complete")?;
+        // Print stdout if there's any output
+        if !output.stdout.is_empty() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            println!("git apply stdout: {}", stdout);
+        }
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to apply patch: {}", stderr);
+            bail!("Failed to apply patch. Exit code: {}. Error: {}", output.status.code().unwrap_or(-1), stderr);
         }
 
         println!("Patch applied successfully.");
