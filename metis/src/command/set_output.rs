@@ -22,12 +22,7 @@ pub async fn run(
     let patch = fs::read_to_string(&patch_file).with_context(|| {
         format!("failed to read --patch file '{}'", patch_file.display())
     })?;
-    if last_message.trim().is_empty() {
-        bail!("--last-message file is empty.");
-    }
-    if patch.trim().is_empty() {
-        bail!("--patch file is empty.");
-    }
+
     let client = MetisClient::from_config(config)?;
     let payload = JobOutputPayload { last_message, patch };
     println!("Setting output for job '{}' via metis-server…", job_id);

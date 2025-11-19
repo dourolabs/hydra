@@ -46,12 +46,8 @@ pub async fn run(
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
     let job_name = response.job_name;
-    let namespace = response.namespace;
 
-    println!(
-        "Requested Metis job '{}' (id {}) in namespace '{}'.",
-        job_name, job_id, namespace
-    );
+    println!("Requested Metis job (id {}).", job_id);
 
     if wait {
         println!("Streaming logs for job '{}' via metis-server…", job_name);

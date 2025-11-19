@@ -23,7 +23,7 @@ startup_tasks() {
 cleanup_tasks() {
   echo "Running cleanup tasks..."
 
-  git diff > changes.patch
+  git diff --cached > changes.patch
 
   echo "Uploading job output via Metis CLI..."
   if ! metis set-output "${METIS_ID}" --last-message output.txt --patch changes.patch; then
