@@ -47,7 +47,7 @@ pub async fn run(
     let job_id = response.job_id;
     let job_name = response.job_name;
 
-    println!("Requested Metis job (id {}).", job_id);
+    println!("Requested Metis job {}", job_id);
 
     if wait {
         println!("Streaming logs for job '{}' via metis-server…", job_name);
