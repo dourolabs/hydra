@@ -32,6 +32,10 @@ use std::{
 use tracing::{error, info};
 use uuid::Uuid;
 
+pub mod logs;
+pub mod output;
+pub mod context;
+
 pub async fn create_job(
     State(state): State<AppState>,
     Json(payload): Json<CreateJobRequest>,
@@ -215,7 +219,7 @@ impl ApiError {
         }
     }
 
-    fn conflict(message: impl Into<String>) -> Self {
+    pub fn conflict(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::CONFLICT,
             message: message.into(),
@@ -424,3 +428,4 @@ fn sanitize_note(note: &str) -> Option<String> {
         Some(collapsed)
     }
 }
+

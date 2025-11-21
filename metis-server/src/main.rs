@@ -36,14 +36,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/jobs", post(routes::jobs::create_job))
-        .route("/v1/jobs/:job_id/logs", get(routes::logs::get_job_logs))
+        .route("/v1/jobs/:job_id/logs", get(routes::jobs::logs::get_job_logs))
         .route(
             "/v1/jobs/:job_id/output",
-            get(routes::output::get_job_output).post(routes::output::set_job_output),
+            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
         )
         .route(
             "/v1/jobs/:job_id/context",
-            get(routes::context::get_job_context),
+            get(routes::jobs::context::get_job_context),
         )
         .with_state(state);
 
