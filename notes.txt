@@ -78,9 +78,12 @@ a(x, y) = sum_input P(input) * I(f(input) == y(input)) -- agreement level
 Let's say the true function is f. We want to show that if a(x,y) is high, then a(f, x) is also high.
 assume x and y are drawn such that P(x(input) == f(input)) == 0.9
 
+P(a(f, x)) - binomial 
+P(a(f, y)) - binomial 
 
-P(a(f, x))
-P(a(f, y))
+eh this kind of sucks to do the math for
+
+Maybe the simpler solution is to have a feature spec F, then have an agent generate a solution X, then ask 
 
 
 --- 
