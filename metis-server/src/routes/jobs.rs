@@ -20,9 +20,15 @@ use kube::{
     Api, Error as KubeError,
     api::{ListParams, PostParams},
 };
-use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
+use metis_common::{
+    job_outputs::JobOutputPayload,
+    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+};
 use serde_json::json;
-use std::{collections::BTreeMap, env};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -161,13 +167,25 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
 
     jobs.sort_by(|a, b| job_reference_time(b).cmp(&job_reference_time(a)));
     let now = Utc::now();
+    let job_outputs = {
+        let store = state.job_outputs.read().await;
+        store.clone()
+    };
 
     let summaries: Vec<JobSummary> = jobs
         .into_iter()
-        .map(|job| JobSummary {
-            id: job_metis_id(&job).unwrap_or_else(|| "<unknown>".to_string()),
-            status: job_status(&job).to_string(),
-            runtime: job_runtime(&job, now).map(format_duration),
+        .map(|job| {
+            let id = job_metis_id(&job).unwrap_or_else(|| "<unknown>".to_string());
+            let status = job_status(&job).to_string();
+            let runtime = job_runtime(&job, now).map(format_duration);
+            let notes = job_notes(&job, &id, &status, &job_outputs);
+
+            JobSummary {
+                id,
+                status,
+                runtime,
+                notes,
+            }
         })
         .collect();
 
@@ -366,5 +384,43 @@ fn format_duration(duration: ChronoDuration) -> String {
         format!("{minutes}m {seconds:02}s")
     } else {
         format!("{seconds}s")
+    }
+}
+
+fn job_notes(
+    job: &Job,
+    job_id: &str,
+    status: &str,
+    outputs: &HashMap<String, JobOutputPayload>,
+) -> Option<String> {
+    let note = match status {
+        "failed" => {
+            job_failure_message(job).or_else(|| outputs.get(job_id).map(|o| o.last_message.clone()))
+        }
+        "complete" => outputs.get(job_id).map(|o| o.last_message.clone()),
+        "running" => outputs.get(job_id).map(|o| o.last_message.clone()),
+        _ => None,
+    }?;
+
+    sanitize_note(&note)
+}
+
+fn job_failure_message(job: &Job) -> Option<String> {
+    let status = job.status.as_ref()?;
+    let conditions = status.conditions.as_ref()?;
+    let failed_condition = conditions.iter().find(|condition| condition.type_ == "Failed")?;
+
+    failed_condition
+        .message
+        .clone()
+        .or_else(|| failed_condition.reason.clone())
+}
+
+fn sanitize_note(note: &str) -> Option<String> {
+    let collapsed = note.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        None
+    } else {
+        Some(collapsed)
     }
 }

@@ -53,6 +53,8 @@ pub mod jobs {
         pub id: String,
         pub status: String,
         pub runtime: Option<String>,
+        #[serde(default)]
+        pub notes: Option<String>,
     }
 }
 

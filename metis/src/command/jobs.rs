@@ -3,6 +3,7 @@ use anyhow::Result;
 
 const NAME_WIDTH: usize = 48;
 const STATUS_WIDTH: usize = 9;
+const RUNTIME_WIDTH: usize = 12;
 
 pub async fn run(config: &AppConfig) -> Result<()> {
     let client = MetisClient::from_config(config)?;
@@ -14,26 +15,33 @@ pub async fn run(config: &AppConfig) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<name_width$} {:<status_width$} {}",
+    let header = format!(
+        "{:<name_width$} {:<status_width$} {:<runtime_width$} {}",
         "ID",
         "STATUS",
         "RUNTIME",
+        "NOTES",
         name_width = NAME_WIDTH,
-        status_width = STATUS_WIDTH
+        status_width = STATUS_WIDTH,
+        runtime_width = RUNTIME_WIDTH
     );
-    println!("{}", "-".repeat(NAME_WIDTH + STATUS_WIDTH + 9));
+    println!("{}", header);
+    println!("{}", "-".repeat(header.len()));
 
     for job in response.jobs {
         let runtime = job.runtime.unwrap_or_else(|| "-".into());
-        println!(
-            "{:<name_width$} {:<status_width$} {}",
+        let notes = job.notes.unwrap_or_else(|| "-".into());
+        let row = format!(
+            "{:<name_width$} {:<status_width$} {:<runtime_width$} {}",
             job.id,
             job.status,
             runtime,
+            notes,
             name_width = NAME_WIDTH,
-            status_width = STATUS_WIDTH
+            status_width = STATUS_WIDTH,
+            runtime_width = RUNTIME_WIDTH
         );
+        println!("{}", row);
     }
 
     Ok(())
