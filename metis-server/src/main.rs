@@ -1,7 +1,9 @@
 mod config;
+mod job_store;
 mod routes;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, build_kube_client};
+use crate::job_store::{JobStore, KubernetesJobStore};
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -9,7 +11,7 @@ use axum::{
 use metis_common::job_outputs::JobOutputPayload;
 use metis_common::jobs::CreateJobRequestContext;
 use serde_json::json;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -18,6 +20,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub job_outputs: Arc<RwLock<HashMap<String, JobOutputPayload>>>,
     pub job_contexts: Arc<RwLock<HashMap<String, CreateJobRequestContext>>>,
+    pub job_store: Arc<dyn JobStore>,
 }
 
 #[tokio::main]
@@ -26,10 +29,33 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
+    
+    // Resolve OpenAI API key
+    let openai_api_key = env::var("OPENAI_API_KEY")
+        .ok()
+        .or_else(|| app_config.metis.openai_api_key.clone())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!(
+            "OPENAI_API_KEY is not set. Provide it via the environment or config.toml."
+        ))?;
+    
+    // Build Kubernetes client
+    let kube_client = build_kube_client(&app_config.kubernetes).await?;
+    
+    // Create job store
+    let job_store = KubernetesJobStore {
+        namespace: app_config.metis.namespace.clone(),
+        worker_image: app_config.metis.worker_image.clone(),
+        openai_api_key,
+        server_hostname: app_config.metis.server_hostname.clone(),
+        client: kube_client,
+    };
+    
     let state = AppState {
         config: Arc::new(app_config),
         job_outputs: Arc::new(RwLock::new(HashMap::new())),
         job_contexts: Arc::new(RwLock::new(HashMap::new())),
+        job_store: Arc::new(job_store),
     };
 
     let app = Router::new()

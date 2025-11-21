@@ -73,8 +73,8 @@ enum Commands {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
-    /// Retrieve the recorded output for a completed job.
-    Output {
+    /// Retrieve and display the patch for a completed job.
+    Patch {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
         job: String,
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
-        Commands::Output { job, apply } => command::output::run(&app_config, job, apply).await?,
+        Commands::Patch { job, apply } => command::patch::run(&app_config, job, apply).await?,
         Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
         Commands::SetOutput {
             job,

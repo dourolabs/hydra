@@ -1,5 +1,4 @@
-use crate::{AppState, config::build_kube_client, routes::jobs::ApiError};
-use anyhow::anyhow;
+use crate::{AppState, job_store::JobStoreError, routes::jobs::ApiError};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderValue, header},
@@ -8,15 +7,9 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use futures::{channel::mpsc, io::AsyncReadExt};
-use k8s_openapi::api::{batch::v1::Job, core::v1::Pod};
-use kube::{
-    Api,
-    api::{ListParams, LogParams},
-};
+use futures::{channel::mpsc, StreamExt};
 use metis_common::logs::LogsQuery;
 use std::convert::Infallible;
-use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 pub async fn get_job_logs(
@@ -35,109 +28,53 @@ pub async fn get_job_logs(
         error!("get_job_logs received an empty job_id");
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
-    let job_id = job_id.to_string();
 
-    let config = state.config;
-    let namespace = config.metis.namespace.clone();
-    let client = build_kube_client(&config.kubernetes).await.map_err(|err| {
-        error!(error = ?err, "failed to build Kubernetes client for get_job_logs");
-        ApiError::internal(err)
-    })?;
+    // Check if job exists and get its status to determine if we should follow logs
+    let job = state.job_store.find_job_by_metis_id(&job_id.to_string()).await
+        .map_err(|err| match err {
+            JobStoreError::NotFound(msg) => {
+                error!(job_id = %job_id, error = %msg, "job not found");
+                ApiError::not_found(msg)
+            }
+            JobStoreError::MultipleFound(msg) => {
+                error!(job_id = %job_id, error = %msg, "multiple jobs found");
+                ApiError::bad_request(msg)
+            }
+            err => {
+                error!(job_id = %job_id, error = ?err, "failed to find job");
+                ApiError::internal(err)
+            }
+        })?;
 
-    let jobs: Api<Job> = Api::namespaced(client.clone(), &namespace);
-    let pods: Api<Pod> = Api::namespaced(client, &namespace);
-
-    let job = match find_job_by_metis_id(&jobs, &job_id).await {
-        Ok(job) => job,
-        Err(err) => {
-            error!(job_id = %job_id, error = ?err, "failed to find job by Metis ID");
-            return Err(err);
-        }
-    };
-    let job_name = match job.metadata.name.clone() {
-        Some(name) => name,
-        None => {
-            let err = ApiError::internal(anyhow!("Job '{}' is missing a Kubernetes name.", job_id));
-            error!(job_id = %job_id, error = ?err, "job missing Kubernetes name");
-            return Err(err);
-        }
-    };
-
-    let pod_name = match wait_for_pod_name(&pods, &job_name, &job_id).await {
-        Ok(name) => name,
-        Err(err) => {
-            error!(
-                job_id = %job_id,
-                job_name = %job_name,
-                error = ?err,
-                "failed while waiting for pod name"
-            );
-            return Err(err);
-        }
-    };
+    let follow = watch_requested && job.status == "running";
 
     if watch_requested {
         info!(
             job_id = %job_id,
-            job_name = %job_name,
-            pod_name = %pod_name,
+            follow = follow,
             "streaming job logs via SSE"
         );
-        match stream_logs_sse(pods, pod_name, job_is_running(&job)).await {
-            Ok(response) => Ok(response),
-            Err(err) => {
-                error!(
-                    job_id = %job_id,
-                    job_name = %job_name,
-                    error = ?err,
-                    "failed to stream logs via SSE"
-                );
-                Err(err)
-            }
-        }
+        stream_logs_sse(state.job_store.as_ref(), job_id, follow).await
     } else {
         info!(
             job_id = %job_id,
-            job_name = %job_name,
-            pod_name = %pod_name,
             "fetching job logs once"
         );
-        match fetch_logs(&pods, &pod_name).await {
-            Ok(response) => Ok(response),
-            Err(err) => {
-                error!(
-                    job_id = %job_id,
-                    job_name = %job_name,
-                    error = ?err,
-                    "failed to fetch logs"
-                );
-                Err(err)
-            }
-        }
+        fetch_logs(state.job_store.as_ref(), job_id).await
     }
 }
 
-async fn fetch_logs(pods: &Api<Pod>, pod_name: &str) -> Result<Response, ApiError> {
-    let mut params = LogParams::default();
-    params.follow = false;
-
-    let mut reader = pods
-        .log_stream(pod_name, &params)
-        .await
-        .map_err(ApiError::internal)?;
-
-    let mut buffer = Vec::new();
-    let mut chunk = vec![0u8; 1024];
-
-    loop {
-        let read = reader.read(&mut chunk).await.map_err(ApiError::internal)?;
-        if read == 0 {
-            break;
+async fn fetch_logs(
+    job_store: &dyn crate::job_store::JobStore,
+    job_id: &str,
+) -> Result<Response, ApiError> {
+    let logs = job_store.get_logs(job_id).await.map_err(|err| {
+        error!(job_id = %job_id, error = ?err, "failed to fetch logs");
+        match err {
+            JobStoreError::NotFound(msg) => ApiError::not_found(msg),
+            err => ApiError::internal(err),
         }
-        buffer.extend_from_slice(&chunk[..read]);
-    }
-
-    let logs = String::from_utf8_lossy(&buffer).to_string();
+    })?;
 
     Ok((
         [(
@@ -150,34 +87,25 @@ async fn fetch_logs(pods: &Api<Pod>, pod_name: &str) -> Result<Response, ApiErro
 }
 
 async fn stream_logs_sse(
-    pods: Api<Pod>,
-    pod_name: String,
+    job_store: &dyn crate::job_store::JobStore,
+    job_id: &str,
     follow: bool,
 ) -> Result<Response, ApiError> {
-    let mut params = LogParams::default();
-    params.follow = follow;
-
-    let log_stream = pods
-        .log_stream(&pod_name, &params)
-        .await
-        .map_err(ApiError::internal)?;
+    let mut receiver = job_store.get_logs_stream(job_id, follow).map_err(|err| {
+        error!(job_id = %job_id, error = ?err, "failed to create log stream");
+        match err {
+            JobStoreError::NotFound(msg) => ApiError::not_found(msg),
+            err => ApiError::internal(err),
+        }
+    })?;
 
     let (tx, rx) = mpsc::unbounded::<Result<Event, Infallible>>();
 
     tokio::spawn(async move {
-        let mut reader = log_stream;
-        let mut buffer = vec![0u8; 1024];
         let sender = tx;
-
         loop {
-            match reader.read(&mut buffer).await {
-                Ok(0) => break,
-                Ok(read) => {
-                    if read == 0 {
-                        continue;
-                    }
-
-                    let chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
+            match receiver.next().await {
+                Some(chunk) => {
                     if sender
                         .unbounded_send(Ok(Event::default().data(chunk)))
                         .is_err()
@@ -185,15 +113,7 @@ async fn stream_logs_sse(
                         break;
                     }
                 }
-                Err(err) => {
-                    if sender
-                        .unbounded_send(Ok(Event::default().event("error").data(err.to_string())))
-                        .is_err()
-                    {
-                        break;
-                    }
-                    break;
-                }
+                None => break,
             }
         }
     });
@@ -202,67 +122,5 @@ async fn stream_logs_sse(
     let sse = Sse::new(sse_stream).keep_alive(KeepAlive::default());
 
     Ok(sse.into_response())
-}
-
-async fn find_job_by_metis_id(jobs: &Api<Job>, job_id: &str) -> Result<Job, ApiError> {
-    let selector = format!("metis-id={job_id}");
-    let lp = ListParams::default().labels(&selector);
-    let items = jobs.list(&lp).await.map_err(ApiError::internal)?.items;
-
-    match items.len() {
-        0 => Err(ApiError::not_found(format!(
-            "No job found with Metis ID '{job_id}'."
-        ))),
-        1 => Ok(items
-            .into_iter()
-            .next()
-            .expect("validated single job response")),
-        _ => Err(ApiError::bad_request(format!(
-            "Multiple jobs found with Metis ID '{job_id}'."
-        ))),
-    }
-}
-
-fn job_is_running(job: &Job) -> bool {
-    job.status
-        .as_ref()
-        .map(|status| status.succeeded.unwrap_or(0) == 0 && status.failed.unwrap_or(0) == 0)
-        .unwrap_or(true)
-}
-
-async fn wait_for_pod_name(
-    pods: &Api<Pod>,
-    job_name: &str,
-    job_id: &str,
-) -> Result<String, ApiError> {
-    let selector = format!("job-name={job_name}");
-    let lp = ListParams::default().labels(&selector);
-
-    loop {
-        let pod_list = pods.list(&lp).await.map_err(ApiError::internal)?;
-
-        if let Some(mut pod) = pod_list
-            .items
-            .into_iter()
-            .find(|pod| pod.metadata.name.is_some())
-        {
-            let pod_name = pod.metadata.name.take().expect("pod name missing");
-
-            if let Some(phase) = pod.status.and_then(|status| status.phase) {
-                match phase.as_str() {
-                    "Running" => return Ok(pod_name),
-                    "Failed" | "Succeeded" => {
-                        return Err(ApiError::bad_request(format!(
-                            "Pod '{}' for job '{}' reached terminal phase '{}' before running.",
-                            pod_name, job_id, phase
-                        )));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        sleep(Duration::from_secs(1)).await;
-    }
 }
 

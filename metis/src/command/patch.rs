@@ -1,7 +1,31 @@
 use crate::{client::MetisClient, config::AppConfig};
 use anyhow::{bail, Context, Result};
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command, io::Write};
 use tempfile::NamedTempFile;
+
+/// ANSI color codes
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+const RESET: &str = "\x1b[0m";
+
+/// Pretty-print a patch with color coding (green for additions, red for deletions).
+fn pretty_print_patch(patch: &str) {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    
+    for line in patch.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            // Addition line (but not the +++ header)
+            writeln!(handle, "{}{}{}", GREEN, line, RESET).unwrap();
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            // Deletion line (but not the --- header)
+            writeln!(handle, "{}{}{}", RED, line, RESET).unwrap();
+        } else {
+            // Context lines, headers, etc.
+            writeln!(handle, "{}", line).unwrap();
+        }
+    }
+}
 
 pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     let job_id = job.trim();
@@ -11,7 +35,7 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     let job_id = job_id.to_string();
     let client = MetisClient::from_config(config)?;
 
-    println!("Fetching output for job '{}' via metis-server…", job_id);
+    println!("Fetching patch for job '{}' via metis-server…", job_id);
 
     let response = client.get_job_output(&job_id).await?;
     
@@ -39,7 +63,10 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
         if patch.is_empty() {
             bail!("Patch is empty. Nothing to apply.");
         }
-        println!("{}", &patch);
+        
+        // Show the patch with color coding before applying
+        println!("\nPatch to be applied:\n");
+        pretty_print_patch(&patch);
 
         // Write patch to a temporary file
         let patch_file = NamedTempFile::new()
@@ -77,8 +104,16 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
 
         println!("Patch applied successfully.");
     } else {
-        println!("\nLast agent message:\n{}\n", response.output.last_message);
-        println!("Patch:\n{}", response.output.patch);
+        if !response.output.last_message.is_empty() {
+            println!("\nLast agent message:\n{}\n", response.output.last_message);
+        }
+        
+        if !response.output.patch.is_empty() {
+            println!("Patch:\n");
+            pretty_print_patch(&response.output.patch);
+        } else {
+            println!("\nNo patch available for this job.");
+        }
     }
 
     Ok(())
