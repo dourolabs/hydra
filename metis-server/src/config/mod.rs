@@ -101,7 +101,7 @@ fn default_namespace() -> String {
 }
 
 fn default_worker_image() -> String {
-    "metis-codex:latest".to_string()
+    "metis-worker:latest".to_string()
 }
 
 fn default_kubeconfig_path() -> String {
