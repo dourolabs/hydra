@@ -30,10 +30,63 @@ kind delete cluster --name local-dev
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
 
+## Important next steps
 
-## Next steps
+Right now you can throw change ideas into the system and it will circle back with PRs.
+The bottleneck is reviewing / quality control -- the next important goal is to automate the validation process. 
+Clearly, unit tests are one approach to solving this problem;
+however, unit tests are always imperfect, and it will be difficult to guarantee that the unit tests for a new feature are sufficient.
 
-2. then we need to add endpoint(s) to metis-server where jobs can post results back to the server. The main result we want to capture at the moment is a patch for a changeset produced by the job.
+How do we validate that software works in practice? We have a pipeline of validation filters:
+production
+staging
+code review
+local development environment
+unit tests
+build / lint 
+
+As you go higher in the stack, the testing becomes more realistic and expensive.
+
+So what do we need to do for the AI? We need to enable it to perform all of these types of testing.
+We also need to ensure that it puts appropriate validation measures in place as it goes -- it won't do this without being pushed.
+How do we validate the validation measures? Well maybe that's easier than validating the code -- we just look for tests and try the software out.
+Or maybe we ask it how it knows that the code is right?
+
+Maybe we can try prompting like:
+"You are a quality control engineer. Your job is to ensure that the software being developed here is correct and bug free.
+Please audit the quality control measures in this codebase and give it a grade from 1-10. Please additionally suggest some
+improvements that could improve the system."
+
+The real question here is how do we combine noisy / inaccurate parts to produce a more correct whole? 
+The fundamental solution to these problems is redundancy (I think?) -- you run multiple noisy things, but then check agreement or other invariants on the joint results.
+
+P(x = correct) = 0.9
+P(y = correct) = 0.9
+P(x = correct & y = correct | x == y) = 0.81 / (0.81 + 0.01) = ~0.98
+
+but you also end up with a 0.18 probability that the results disagree. what then? Just try again!
+
+So look one way to take advantage of this is to define a feature spec F.
+Then you spawn two agents, one to write the code, and one to write the tests.
+If the tests pass on the code, then the probability of correctness should be high (can we quantify this?).
+The problem with this approach is that there can be minor divergences between the two implementations.
+
+P(input)
+P(x(input) == y(input) | input, x, y)
+a(x, y) = sum_input P(input) * I(f(input) == y(input)) -- agreement level
+
+Let's say the true function is f. We want to show that if a(x,y) is high, then a(f, x) is also high.
+assume x and y are drawn such that P(x(input) == f(input)) == 0.9
+
+
+P(a(f, x))
+P(a(f, y))
+
+
+--- 
+Question stack:
+- does the software match the spec?
+- does the spec reflect the right behavior for users of the system?
 
 ## TODOs
 
