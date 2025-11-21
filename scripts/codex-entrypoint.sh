@@ -23,6 +23,7 @@ startup_tasks() {
 cleanup_tasks() {
   echo "Running cleanup tasks..."
 
+  git add -A
   git diff --cached > changes.patch
 
   echo "Uploading job output via Metis CLI..."

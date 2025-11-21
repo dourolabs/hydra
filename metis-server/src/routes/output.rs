@@ -17,17 +17,6 @@ pub async fn set_job_output(
         error!("set_job_output received an empty job_id");
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
-    if payload.last_message.trim().is_empty() {
-        error!(
-            job_id = %job_id,
-            "set_job_output received an empty last_message"
-        );
-        return Err(ApiError::bad_request("last_message must not be empty"));
-    }
-    if payload.patch.trim().is_empty() {
-        error!(job_id = %job_id, "set_job_output received an empty patch");
-        return Err(ApiError::bad_request("patch must not be empty"));
-    }
 
     let mut store = state.job_outputs.write().await;
     store.insert(job_id.to_string(), payload.clone());
