@@ -75,7 +75,6 @@ pub async fn create_job(
                         args: Some(vec![
                             "codex".into(),
                             "exec".into(),
-                            "--json".into(),
                             "-o".into(),
                             "output.txt".into(),
                             "--dangerously-bypass-approvals-and-sandbox".into(),
