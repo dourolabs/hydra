@@ -153,6 +153,8 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            - name: RUST_LOG
+              value: info
             # So the server can know which image to use for client pods
             - name: CLIENT_IMAGE
               value: ${CLIENT_IMAGE}
