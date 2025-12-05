@@ -150,6 +150,12 @@ pub trait Store: Send + Sync {
     /// A vector of all MetisIds in the store
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
 
+    /// Lists all task IDs with Pending status in the store.
+    ///
+    /// # Returns
+    /// A vector of MetisIds for tasks with Pending status
+    async fn list_pending_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
+
     /// Gets the status of a task by its MetisId.
     ///
     /// # Arguments

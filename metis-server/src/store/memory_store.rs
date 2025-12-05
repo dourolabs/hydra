@@ -228,6 +228,14 @@ impl Store for MemoryStore {
         Ok(self.tasks.keys().cloned().collect())
     }
 
+    async fn list_pending_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
+        Ok(self.statuses
+            .iter()
+            .filter(|(_, status)| matches!(status, Status::Pending))
+            .map(|(id, _)| id.clone())
+            .collect())
+    }
+
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError> {
         self.statuses
             .get(id)
