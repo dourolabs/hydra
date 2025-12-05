@@ -20,6 +20,21 @@ pub enum Task {
     Ask,
 }
 
+/// Represents the status of a task in the Metis system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    /// Task is blocked by dependencies that haven't completed yet.
+    Blocked,
+    /// Task is ready to run but hasn't started yet.
+    Pending,
+    /// Task is currently running.
+    Running,
+    /// Task has completed successfully.
+    Complete,
+    /// Task has failed.
+    Failed,
+}
+
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
