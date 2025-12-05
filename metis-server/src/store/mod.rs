@@ -1,16 +1,22 @@
 use async_trait::async_trait;
 use crate::job_engine::MetisId;
+use metis_common::{
+    jobs::CreateJobRequestContext,
+    job_outputs::JobOutputPayload,
+};
 
 mod memory_store;
-
-pub use memory_store::MemoryStore;
 
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
     /// A spawn task that creates a new job.
-    Spawn,
-    /// An ask task that queries for information.
+    Spawn {
+        prompt: String,
+        context: CreateJobRequestContext,
+        result: Option<JobOutputPayload>,
+    },
+    /// An ask task that queries the human user for information.
     Ask,
 }
 

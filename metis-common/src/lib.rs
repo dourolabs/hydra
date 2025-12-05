@@ -8,7 +8,7 @@ pub mod jobs {
         pub context: CreateJobRequestContext,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum CreateJobRequestContext {
         #[serde(rename = "none")]
@@ -68,7 +68,7 @@ pub mod logs {
 pub mod job_outputs {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct JobOutputPayload {
         pub last_message: String,
         pub patch: String,
