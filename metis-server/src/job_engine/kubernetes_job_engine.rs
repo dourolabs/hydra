@@ -130,8 +130,8 @@ impl KubernetesJobEngine {
         find_kubernetes_job_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
-    async fn wait_for_pod_name(&self, job_name: &str, job_id: &str) -> Result<String, JobEngineError> {
-        wait_for_pod_name_impl(&self.client, &self.namespace, job_name, job_id).await
+    async fn wait_for_pod_name(&self, job_name: &str) -> Result<String, JobEngineError> {
+        wait_for_pod_name_impl(&self.client, &self.namespace, job_name).await
     }
 }
 
@@ -351,7 +351,7 @@ impl JobEngine for KubernetesJobEngine {
             JobEngineError::Internal(format!("Job '{}' is missing a Kubernetes name.", job_id))
         })?;
 
-        let pod_name = self.wait_for_pod_name(&job_name, job_id).await?;
+        let pod_name = self.wait_for_pod_name(&job_name).await?;
         
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let mut params = LogParams::default();
