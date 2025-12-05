@@ -23,8 +23,9 @@ startup_tasks() {
 cleanup_tasks() {
   echo "Running cleanup tasks..."
 
-  git add -A
-  git diff --cached > changes.patch
+  # Exclude codex-generated output from the staged patch
+  git add -A -- . ':!output.txt'
+  git diff --cached -- . ':!output.txt' > changes.patch
 
   echo "Uploading job output via Metis CLI..."
   if ! metis set-output "${METIS_ID}" --last-message output.txt --patch changes.patch; then
