@@ -56,6 +56,10 @@ ENV NVM_DIR=/home/worker/.nvm
 # Install node and codex as the non-root user
 RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex"
 
+# Ensure cargo is in PATH for the worker user's login shell
+# TODO: this is sort of a hacky spot for this. need to consolidate app-specific configuration somewhere.
+RUN echo 'export PATH="/usr/local/cargo/bin:$PATH"' >> /home/worker/.bash_profile
+
 # Switch back to root to copy files and set permissions
 USER root
 
