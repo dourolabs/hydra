@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-mod kubernetes_job_store;
+mod kubernetes_job_engine;
 
-pub use kubernetes_job_store::KubernetesJobStore;
+pub use kubernetes_job_engine::KubernetesJobEngine;
 
 // TODO: make this a uuid
 pub type MetisId = String;
@@ -49,20 +49,9 @@ pub struct MetisJob {
     pub failure_message: Option<String>,
 }
 
-/// Result of creating a job.
-#[derive(Debug, Clone)]
-pub struct CreateJobResult {
-    /// The unique Metis job ID
-    pub job_id: String,
-    /// The Kubernetes job name
-    pub job_name: String,
-    /// The namespace where the job was created
-    pub namespace: String,
-}
-
-/// Error type for job store operations
+/// Error type for job engine operations
 #[derive(Debug, thiserror::Error)]
-pub enum JobStoreError {
+pub enum JobEngineError {
     #[error("Job not found: {0}")]
     NotFound(String),
     #[error("Multiple jobs found: {0}")]
@@ -84,21 +73,21 @@ pub enum JobStoreError {
 /// This enables easier testing and potential future support for different
 /// job execution backends.
 #[async_trait]
-pub trait JobStore: Send + Sync {
+pub trait JobEngine: Send + Sync {
     /// Creates a new job with the given parameters.
     ///
     /// # Arguments
     /// * `prompt` - The prompt/command to execute in the job
     ///
     /// # Returns
-    /// Information about the created job, or an error if creation fails
-    async fn create_job(&self, prompt: &str) -> Result<CreateJobResult, JobStoreError>;
+    /// The Metis ID of the created job, or an error if creation fails
+    async fn create_job(&self, prompt: &str) -> Result<MetisId, JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
     ///
     /// # Returns
     /// A vector of MetisJob resources matching the selector
-    async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobStoreError>;
+    async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError>;
 
     /// Finds a single job by its metis-id.
     ///
@@ -107,7 +96,7 @@ pub trait JobStore: Send + Sync {
     ///
     /// # Returns
     /// The MetisJob if exactly one is found, or an error if none or multiple are found
-    async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobStoreError>;
+    async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError>;
 
     /// Gets logs for a job as a single string (batch mode).
     ///
@@ -116,7 +105,7 @@ pub trait JobStore: Send + Sync {
     ///
     /// # Returns
     /// The complete logs as a string, or an error if retrieval fails
-    async fn get_logs(&self, job_id: &str) -> Result<String, JobStoreError>;
+    async fn get_logs(&self, job_id: &str) -> Result<String, JobEngineError>;
 
     /// Gets logs for a job as a stream (streaming mode).
     ///
@@ -134,5 +123,6 @@ pub trait JobStore: Send + Sync {
         &self,
         job_id: &str,
         follow: bool,
-    ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobStoreError>;
+    ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobEngineError>;
 }
+

@@ -8,10 +8,9 @@ const RUNTIME_WIDTH: usize = 12;
 pub async fn run(config: &AppConfig) -> Result<()> {
     let client = MetisClient::from_config(config)?;
     let response = client.list_jobs().await?;
-    let namespace = response.namespace.clone();
 
     if response.jobs.is_empty() {
-        println!("No Metis jobs found in namespace '{}'.", namespace);
+        println!("No Metis jobs found.");
         return Ok(());
     }
 

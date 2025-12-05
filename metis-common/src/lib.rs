@@ -38,13 +38,10 @@ pub mod jobs {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct CreateJobResponse {
         pub job_id: String,
-        pub job_name: String,
-        pub namespace: String,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct ListJobsResponse {
-        pub namespace: String,
         pub jobs: Vec<JobSummary>,
     }
 

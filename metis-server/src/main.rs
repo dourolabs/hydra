@@ -1,9 +1,9 @@
 mod config;
-mod job_store;
+mod job_engine;
 mod routes;
 
 use crate::config::{AppConfig, build_kube_client};
-use crate::job_store::{JobStore, KubernetesJobStore};
+use crate::job_engine::{JobEngine, KubernetesJobEngine};
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -20,7 +20,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub job_outputs: Arc<RwLock<HashMap<String, JobOutputPayload>>>,
     pub job_contexts: Arc<RwLock<HashMap<String, CreateJobRequestContext>>>,
-    pub job_store: Arc<dyn JobStore>,
+    pub job_engine: Arc<dyn JobEngine>,
 }
 
 #[tokio::main]
@@ -42,8 +42,8 @@ async fn main() -> anyhow::Result<()> {
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
     
-    // Create job store
-    let job_store = KubernetesJobStore {
+    // Create job engine
+    let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
         worker_image: app_config.metis.worker_image.clone(),
         openai_api_key,
@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(app_config),
         job_outputs: Arc::new(RwLock::new(HashMap::new())),
         job_contexts: Arc::new(RwLock::new(HashMap::new())),
-        job_store: Arc::new(job_store),
+        job_engine: Arc::new(job_engine),
     };
 
     let app = Router::new()

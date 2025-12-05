@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_store::{JobStatus, JobStoreError},
+    job_engine::{JobStatus, JobEngineError},
 };
 use axum::{
     Json,
@@ -32,13 +32,13 @@ pub async fn create_job(
         return Err(ApiError::bad_request("prompt is required"));
     }
 
-    let result = state.job_store.create_job(&prompt).await
+    let job_id = state.job_engine.create_job(&prompt).await
         .map_err(|err| match err {
-            JobStoreError::AlreadyExists(msg) => {
+            JobEngineError::AlreadyExists(msg) => {
                 error!(error = %msg, "job already exists");
                 ApiError::conflict(msg)
             }
-            JobStoreError::Kubernetes(kube_err) => {
+            JobEngineError::Kubernetes(kube_err) => {
                 error!(error = ?kube_err, "failed to create job in Kubernetes");
                 ApiError::internal(kube_err)
             }
@@ -51,13 +51,11 @@ pub async fn create_job(
     // Store the job context for later retrieval
     {
         let mut ctx_store = state.job_contexts.write().await;
-        ctx_store.insert(result.job_id.clone(), payload.context.clone());
+        ctx_store.insert(job_id.clone(), payload.context.clone());
     }
 
     Ok(Json(CreateJobResponse {
-        job_id: result.job_id,
-        job_name: result.job_name,
-        namespace: result.namespace,
+        job_id,
     }))
 }
 
@@ -66,11 +64,11 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     let config = state.config;
     let namespace = config.metis.namespace.clone();
     
-    let metis_jobs = state.job_store.list_jobs().await
+    let metis_jobs = state.job_engine.list_jobs().await
         .map_err(|err| {
             error!(error = ?err, namespace = %namespace, "failed to list jobs");
             match err {
-                JobStoreError::Kubernetes(kube_err) => {
+                JobEngineError::Kubernetes(kube_err) => {
                     error!(error = ?kube_err, "Kubernetes error in list_jobs");
                     ApiError::internal(kube_err)
                 }
@@ -109,7 +107,6 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     );
 
     Ok(Json(ListJobsResponse {
-        namespace,
         jobs: summaries,
     }))
 }
@@ -159,7 +156,7 @@ impl IntoResponse for ApiError {
 }
 
 
-fn job_runtime(job: &crate::job_store::MetisJob, now: chrono::DateTime<Utc>) -> Option<ChronoDuration> {
+fn job_runtime(job: &crate::job_engine::MetisJob, now: chrono::DateTime<Utc>) -> Option<ChronoDuration> {
     let start = job.start_time.or(job.creation_time)?;
     let end = job.completion_time.unwrap_or(now);
 

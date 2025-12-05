@@ -18,9 +18,9 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use super::{CreateJobResult, JobStatus, JobStore, JobStoreError, MetisId, MetisJob};
+use super::{JobStatus, JobEngine, JobEngineError, MetisId, MetisJob};
 
-pub struct KubernetesJobStore {
+pub struct KubernetesJobEngine {
     pub namespace: String,
     pub worker_image: String,
     pub openai_api_key: String,
@@ -28,7 +28,7 @@ pub struct KubernetesJobStore {
     pub client: Client,
 }
 
-impl KubernetesJobStore {
+impl KubernetesJobEngine {
     fn build_metadata_labels(job_uuid: &str) -> BTreeMap<String, String> {
         let mut metadata_labels = BTreeMap::new();
         metadata_labels.insert("metis-id".to_string(), job_uuid.to_string());
@@ -127,11 +127,11 @@ impl KubernetesJobStore {
             .or_else(|| failed_condition.reason.clone())
     }
 
-    async fn find_kubernetes_job_by_metis_id(&self, job_id: &str) -> Result<Job, JobStoreError> {
+    async fn find_kubernetes_job_by_metis_id(&self, job_id: &str) -> Result<Job, JobEngineError> {
         find_kubernetes_job_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
-    async fn wait_for_pod_name(&self, job_name: &str, job_id: &str) -> Result<String, JobStoreError> {
+    async fn wait_for_pod_name(&self, job_name: &str, job_id: &str) -> Result<String, JobEngineError> {
         wait_for_pod_name_impl(&self.client, &self.namespace, job_name, job_id).await
     }
 }
@@ -140,21 +140,21 @@ async fn find_kubernetes_job_by_metis_id_impl(
     client: &Client,
     namespace: &str,
     job_id: &str,
-) -> Result<Job, JobStoreError> {
+) -> Result<Job, JobEngineError> {
     let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
     let selector = format!("metis-id={job_id}");
     let lp = ListParams::default().labels(&selector);
-    let items = jobs.list(&lp).await.map_err(JobStoreError::Kubernetes)?.items;
+    let items = jobs.list(&lp).await.map_err(JobEngineError::Kubernetes)?.items;
 
     match items.len() {
-        0 => Err(JobStoreError::NotFound(format!(
+        0 => Err(JobEngineError::NotFound(format!(
             "No job found with Metis ID '{job_id}'."
         ))),
         1 => Ok(items
             .into_iter()
             .next()
             .expect("validated single job response")),
-        _ => Err(JobStoreError::MultipleFound(format!(
+        _ => Err(JobEngineError::MultipleFound(format!(
             "Multiple jobs found with Metis ID '{job_id}'."
         ))),
     }
@@ -165,13 +165,13 @@ async fn wait_for_pod_name_impl(
     namespace: &str,
     job_name: &str,
     job_id: &str,
-) -> Result<String, JobStoreError> {
+) -> Result<String, JobEngineError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let selector = format!("job-name={job_name}");
     let lp = ListParams::default().labels(&selector);
 
     loop {
-        let pod_list = pods.list(&lp).await.map_err(JobStoreError::Kubernetes)?;
+        let pod_list = pods.list(&lp).await.map_err(JobEngineError::Kubernetes)?;
 
         if let Some(mut pod) = pod_list
             .items
@@ -184,7 +184,7 @@ async fn wait_for_pod_name_impl(
                 match phase.as_str() {
                     "Running" => return Ok(pod_name),
                     "Failed" | "Succeeded" => {
-                        return Err(JobStoreError::Internal(format!(
+                        return Err(JobEngineError::Internal(format!(
                             "Pod '{}' for job '{}' reached terminal phase '{}' before running.",
                             pod_name, job_id, phase
                         )));
@@ -199,8 +199,8 @@ async fn wait_for_pod_name_impl(
 }
 
 #[async_trait]
-impl JobStore for KubernetesJobStore {
-    async fn create_job(&self, prompt: &str) -> Result<CreateJobResult, JobStoreError> {
+impl JobEngine for KubernetesJobEngine {
+    async fn create_job(&self, prompt: &str) -> Result<MetisId, JobEngineError> {
         let job_uuid = Uuid::new_v4().hyphenated().to_string();
         let job_name = format!("metis-worker-{}", job_uuid);
         
@@ -258,11 +258,7 @@ impl JobStore for KubernetesJobStore {
                     "job created successfully"
                 );
 
-                Ok(CreateJobResult {
-                    job_id: job_uuid,
-                    job_name: display_name,
-                    namespace: self.namespace.clone(),
-                })
+                Ok(job_uuid)
             }
             Err(kube::Error::Api(err)) if err.code == 409 => {
                 error!(
@@ -271,19 +267,19 @@ impl JobStore for KubernetesJobStore {
                     code = err.code,
                     "job already exists"
                 );
-                Err(JobStoreError::AlreadyExists(format!(
+                Err(JobEngineError::AlreadyExists(format!(
                     "Job '{}' already exists in namespace '{}'",
                     job_name, self.namespace
                 )))
             }
             Err(err) => {
                 error!(job_name = %job_name, error = ?err, "failed to create job in Kubernetes");
-                Err(JobStoreError::Kubernetes(err))
+                Err(JobEngineError::Kubernetes(err))
             }
         }
     }
 
-    async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobStoreError> {
+    async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError> {
         info!(namespace = %self.namespace, "listing Kubernetes jobs");
         
         let jobs_api: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
@@ -292,7 +288,7 @@ impl JobStore for KubernetesJobStore {
             .await
             .map_err(|err| {
                 error!(error = ?err, namespace = %self.namespace, "failed to list jobs from Kubernetes");
-                JobStoreError::Kubernetes(err)
+                JobEngineError::Kubernetes(err)
             })?;
 
         let mut metis_jobs: Vec<MetisJob> = jobs
@@ -334,10 +330,10 @@ impl JobStore for KubernetesJobStore {
         Ok(metis_jobs)
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobStoreError> {
+    async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
         let id = Self::job_metis_id(&job).ok_or_else(|| {
-            JobStoreError::Internal(format!("Job '{}' is missing metis-id label", metis_id))
+            JobEngineError::Internal(format!("Job '{}' is missing metis-id label", metis_id))
         })?;
         let status = Self::job_status(&job);
         let creation_time = job.metadata.creation_timestamp.as_ref().map(|t| t.0.clone());
@@ -357,10 +353,10 @@ impl JobStore for KubernetesJobStore {
         })
     }
 
-    async fn get_logs(&self, job_id: &str) -> Result<String, JobStoreError> {
+    async fn get_logs(&self, job_id: &str) -> Result<String, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
         let job_name = job.metadata.name.ok_or_else(|| {
-            JobStoreError::Internal(format!("Job '{}' is missing a Kubernetes name.", job_id))
+            JobEngineError::Internal(format!("Job '{}' is missing a Kubernetes name.", job_id))
         })?;
 
         let pod_name = self.wait_for_pod_name(&job_name, job_id).await?;
@@ -372,14 +368,14 @@ impl JobStore for KubernetesJobStore {
         let mut reader = pods
             .log_stream(&pod_name, &params)
             .await
-            .map_err(JobStoreError::Kubernetes)?;
+            .map_err(JobEngineError::Kubernetes)?;
 
         let mut buffer = Vec::new();
         let mut chunk = vec![0u8; 1024];
 
         loop {
             let read = reader.read(&mut chunk).await.map_err(|err| {
-                JobStoreError::Io(std::io::Error::new(std::io::ErrorKind::Other, err))
+                JobEngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, err))
             })?;
             if read == 0 {
                 break;
@@ -394,7 +390,7 @@ impl JobStore for KubernetesJobStore {
         &self,
         job_id: &str,
         follow: bool,
-    ) -> Result<mpsc::UnboundedReceiver<String>, JobStoreError> {
+    ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let (tx, rx) = mpsc::unbounded();
         
         let namespace = self.namespace.clone();

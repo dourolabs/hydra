@@ -45,14 +45,13 @@ pub async fn run(
     let request = CreateJobRequest { prompt, context };
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
-    let job_name = response.job_name;
 
     println!("Requested Metis job {}", job_id);
 
     if wait {
-        println!("Streaming logs for job '{}' via metis-server…", job_name);
+        println!("Streaming logs for job '{}' via metis-server…", job_id);
         stream_job_logs_via_server(&client, &job_id, true).await?;
-        wait_for_job_completion_via_server(&client, &job_id, &job_name).await?;
+        wait_for_job_completion_via_server(&client, &job_id).await?;
     }
 
     Ok(())
@@ -86,18 +85,17 @@ pub(crate) async fn stream_job_logs_via_server(
 async fn wait_for_job_completion_via_server(
     client: &MetisClient,
     job_id: &str,
-    job_name: &str,
 ) -> Result<()> {
     loop {
         let response = client.list_jobs().await?;
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
             match job.status.as_str() {
                 "complete" => {
-                    println!("Job '{}' completed successfully.", job_name);
+                    println!("Job '{}' completed successfully.", job_id);
                     return Ok(());
                 }
                 "failed" => {
-                    bail!("Job '{}' failed.", job_name);
+                    bail!("Job '{}' failed.", job_id);
                 }
                 _ => {}
             }
