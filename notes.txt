@@ -30,6 +30,12 @@ kind delete cluster --name local-dev
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
 
+## TODO items
+
+- finish wiring up the State and the JobEngine so that they reflect each other. HTTP endpoints mostly shouldn't touch the JobEngine. 
+- there's some bug where codex in the worker can't access cargo 
+
+
 ## Important next steps
 
 Right now you can throw change ideas into the system and it will circle back with PRs.
