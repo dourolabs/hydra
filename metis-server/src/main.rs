@@ -1,6 +1,7 @@
 mod config;
 mod job_engine;
 mod routes;
+mod store;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
