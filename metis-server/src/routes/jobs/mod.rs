@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_store::JobStoreError,
+    job_store::{JobStatus, JobStoreError},
 };
 use axum::{
     Json,
@@ -91,11 +91,11 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         .into_iter()
         .map(|job| {
             let runtime = job_runtime(&job, now).map(format_duration);
-            let notes = job_notes(&job.id, &job.status, &job.failure_message, &job_outputs);
+            let notes = job_notes(&job.id, job.status, &job.failure_message, &job_outputs);
 
             JobSummary {
                 id: job.id,
-                status: job.status,
+                status: job.status.to_string(),
                 runtime,
                 notes,
             }
@@ -191,17 +191,17 @@ fn format_duration(duration: ChronoDuration) -> String {
 
 fn job_notes(
     job_id: &str,
-    status: &str,
+    status: JobStatus,
     failure_message: &Option<String>,
     outputs: &HashMap<String, JobOutputPayload>,
 ) -> Option<String> {
     let note = match status {
-        "failed" => {
+        JobStatus::Failed => {
             failure_message.clone().or_else(|| outputs.get(job_id).map(|o| o.last_message.clone()))
         }
-        "complete" => outputs.get(job_id).map(|o| o.last_message.clone()),
-        "running" => outputs.get(job_id).map(|o| o.last_message.clone()),
-        _ => None,
+        JobStatus::Complete | JobStatus::Running => {
+            outputs.get(job_id).map(|o| o.last_message.clone())
+        }
     }?;
 
     sanitize_note(&note)
@@ -215,4 +215,3 @@ fn sanitize_note(note: &str) -> Option<String> {
         Some(collapsed)
     }
 }
-

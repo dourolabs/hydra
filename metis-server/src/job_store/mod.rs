@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use k8s_openapi::{
     api::{
-        batch::v1::{Job, JobSpec, JobStatus},
+        batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{Container, EnvVar, Pod, PodSpec, PodTemplateSpec},
     },
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
@@ -24,13 +24,37 @@ use uuid::Uuid;
 // TODO: make this a uuid
 pub type MetisId = String;
 
+/// Represents the lifecycle state of a Metis job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobStatus {
+    Complete,
+    Failed,
+    Running,
+}
+
+impl JobStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JobStatus::Complete => "complete",
+            JobStatus::Failed => "failed",
+            JobStatus::Running => "running",
+        }
+    }
+}
+
+impl std::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Represents a job in the Metis system, abstracting away Kubernetes-specific details.
 #[derive(Debug, Clone)]
 pub struct MetisJob {
     /// The unique Metis job ID (metis-id label)
-    pub id: MetisId,    
-    /// Job status: "complete", "failed", or "running"
-    pub status: String,
+    pub id: MetisId,
+    /// Job status in the Metis lifecycle.
+    pub status: JobStatus,
     /// When the job was created
     pub creation_time: Option<DateTime<Utc>>,
     /// When the job started running
@@ -171,17 +195,17 @@ impl KubernetesJobStore {
         Some(vars)
     }
 
-    fn job_status(job: &Job) -> &'static str {
+    fn job_status(job: &Job) -> JobStatus {
         if let Some(status) = job.status.as_ref() {
             if status.succeeded.unwrap_or(0) > 0 {
-                return "complete";
+                return JobStatus::Complete;
             }
             if status.failed.unwrap_or(0) > 0 {
-                return "failed";
+                return JobStatus::Failed;
             }
         }
 
-        "running"
+        JobStatus::Running
     }
 
     fn job_metis_id(job: &Job) -> Option<String> {
@@ -214,7 +238,7 @@ impl KubernetesJobStore {
         None
     }
 
-    fn condition_time(status: &JobStatus, kind: &str) -> Option<DateTime<Utc>> {
+    fn condition_time(status: &KubeJobStatus, kind: &str) -> Option<DateTime<Utc>> {
         status
             .conditions
             .as_ref()
@@ -410,7 +434,7 @@ impl JobStore for KubernetesJobStore {
             .into_iter()
             .filter_map(|job| {
                 let id = Self::job_metis_id(&job)?;
-                let status = Self::job_status(&job).to_string();
+                let status = Self::job_status(&job);
                 let creation_time = job.metadata.creation_timestamp.as_ref().map(|t| t.0.clone());
                 let start_time = job.status.as_ref()
                     .and_then(|s| s.start_time.as_ref())
@@ -450,7 +474,7 @@ impl JobStore for KubernetesJobStore {
         let id = Self::job_metis_id(&job).ok_or_else(|| {
             JobStoreError::Internal(format!("Job '{}' is missing metis-id label", metis_id))
         })?;
-        let status = Self::job_status(&job).to_string();
+        let status = Self::job_status(&job);
         let creation_time = job.metadata.creation_timestamp.as_ref().map(|t| t.0.clone());
         let start_time = job.status.as_ref()
             .and_then(|s| s.start_time.as_ref())

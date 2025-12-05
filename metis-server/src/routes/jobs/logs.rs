@@ -1,4 +1,8 @@
-use crate::{AppState, job_store::JobStoreError, routes::jobs::ApiError};
+use crate::{
+    AppState,
+    job_store::{JobStatus, JobStoreError},
+    routes::jobs::ApiError,
+};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderValue, header},
@@ -46,7 +50,7 @@ pub async fn get_job_logs(
             }
         })?;
 
-    let follow = watch_requested && job.status == "running";
+    let follow = watch_requested && job.status == JobStatus::Running;
 
     if watch_requested {
         info!(
@@ -123,4 +127,3 @@ async fn stream_logs_sse(
 
     Ok(sse.into_response())
 }
-
