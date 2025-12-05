@@ -228,10 +228,10 @@ impl Store for MemoryStore {
         Ok(self.tasks.keys().cloned().collect())
     }
 
-    async fn list_pending_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
+    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError> {
         Ok(self.statuses
             .iter()
-            .filter(|(_, status)| matches!(status, Status::Pending))
+            .filter(|(_, s)| **s == status)
             .map(|(id, _)| id.clone())
             .collect())
     }
@@ -256,12 +256,20 @@ impl Store for MemoryStore {
             ));
         }
 
-        // Verify current status is Pending
+        // Verify current status is Pending or Running
         let current_status = self.statuses
             .get(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
         
-        if !matches!(current_status, Status::Pending) {
+        // Allow transitions from Pending to Running/Complete/Failed
+        // Allow transitions from Running to Complete/Failed
+        let valid_transition = match (current_status, &new_status) {
+            (Status::Pending, Status::Running | Status::Complete | Status::Failed) => true,
+            (Status::Running, Status::Complete | Status::Failed) => true,
+            _ => false,
+        };
+        
+        if !valid_transition {
             return Err(StoreError::InvalidStatusTransition);
         }
 

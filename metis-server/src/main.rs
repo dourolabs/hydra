@@ -65,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
         process_pending_jobs(background_state).await;
     });
 
+    // Spawn background task to monitor running jobs
+    let monitor_state = state.clone();
+    tokio::spawn(async move {
+        monitor_running_jobs(monitor_state).await;
+    });
+
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
@@ -117,7 +123,7 @@ async fn process_pending_jobs(state: AppState) {
         // Get pending tasks
         let pending_ids = {
             let store = state.store.read().await;
-            match store.list_pending_tasks().await {
+            match store.list_tasks_with_status(Status::Pending).await {
                 Ok(ids) => ids,
                 Err(err) => {
                     error!(error = %err, "failed to list pending tasks");
@@ -174,6 +180,79 @@ async fn process_pending_jobs(state: AppState) {
                     } else {
                         info!(metis_id = %metis_id, "set task status to Failed");
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Background task that periodically monitors running jobs.
+/// 
+/// This function runs in a loop, checking for running tasks every few seconds
+/// and updating their status based on the job engine state:
+/// 1. Gets all running tasks from the store
+/// 2. Checks each job's status in the job engine
+/// 3. Updates the store status to Complete or Failed if the job has finished
+async fn monitor_running_jobs(state: AppState) {
+    loop {
+        // Check every 5 seconds
+        sleep(Duration::from_secs(5)).await;
+
+        // Get running tasks
+        let running_ids = {
+            let store = state.store.read().await;
+            match store.list_tasks_with_status(Status::Running).await {
+                Ok(ids) => ids,
+                Err(err) => {
+                    error!(error = %err, "failed to list running tasks");
+                    continue;
+                }
+            }
+        };
+
+        if running_ids.is_empty() {
+            continue;
+        }
+
+        info!(count = running_ids.len(), "found running tasks to monitor");
+
+        // Check each running job's status
+        for metis_id in running_ids {
+            match state.job_engine.find_job_by_metis_id(&metis_id).await {
+                Ok(job) => {
+                    let new_status = match job.status {
+                        crate::job_engine::JobStatus::Complete => Status::Complete,
+                        crate::job_engine::JobStatus::Failed => Status::Failed,
+                        crate::job_engine::JobStatus::Running => {
+                            // Still running, skip
+                            continue;
+                        }
+                    };
+
+                    // Update status in store
+                    let status_for_log = new_status.clone();
+                    let mut store = state.store.write().await;
+                    match store.update_task_status(&metis_id, new_status).await {
+                        Ok(()) => {
+                            info!(metis_id = %metis_id, status = ?status_for_log, "updated task status from job engine");
+                        }
+                        Err(err) => {
+                            warn!(metis_id = %metis_id, error = %err, "failed to update task status");
+                        }
+                    }
+                }
+                Err(crate::job_engine::JobEngineError::NotFound(_)) => {
+                    // Job not found in Kubernetes - might have been deleted or never created
+                    // This could happen if the job was cleaned up externally
+                    warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
+                    let mut store = state.store.write().await;
+                    if let Err(update_err) = store.update_task_status(&metis_id, Status::Failed).await {
+                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
+                    }
+                }
+                Err(err) => {
+                    error!(metis_id = %metis_id, error = %err, "failed to check job status in job engine");
+                    // Don't update status on transient errors
                 }
             }
         }

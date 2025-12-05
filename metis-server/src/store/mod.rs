@@ -15,6 +15,7 @@ pub enum Task {
         prompt: String,
         context: CreateJobRequestContext,
         result: Option<JobOutputPayload>,
+        
     },
     /// An ask task that queries the human user for information.
     Ask,
@@ -150,11 +151,14 @@ pub trait Store: Send + Sync {
     /// A vector of all MetisIds in the store
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
 
-    /// Lists all task IDs with Pending status in the store.
+    /// Lists all task IDs with the specified status in the store.
+    ///
+    /// # Arguments
+    /// * `status` - The status to filter by
     ///
     /// # Returns
-    /// A vector of MetisIds for tasks with Pending status
-    async fn list_pending_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
+    /// A vector of MetisIds for tasks with the specified status
+    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError>;
 
     /// Gets the status of a task by its MetisId.
     ///
@@ -165,7 +169,11 @@ pub trait Store: Send + Sync {
     /// The status if found, or an error if not found
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError>;
 
-    /// Updates the status of a task from Pending to Running, Complete, or Failed.
+    /// Updates the status of a task.
+    ///
+    /// Valid transitions:
+    /// - From Pending to Running, Complete, or Failed
+    /// - From Running to Complete or Failed
     ///
     /// This function will also update the status of dependent tasks when transitioning to Complete or Failed:
     /// - If a task is moved to Complete or Failed, all its children (dependents) are checked
@@ -178,7 +186,7 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// Ok(()) if successful, or an error if:
     /// - The task doesn't exist
-    /// - The task is not in Pending state
+    /// - The task is not in a valid state for the transition
     /// - The new_status is not Running, Complete, or Failed
     async fn update_task_status(&mut self, id: &MetisId, new_status: Status) -> Result<(), StoreError>;
 }
