@@ -37,8 +37,8 @@ pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
     if dest.exists() {
-        let mut entries = fs::read_dir(dest)
-            .with_context(|| format!("failed to read directory {:?}", dest))?;
+        let mut entries =
+            fs::read_dir(dest).with_context(|| format!("failed to read directory {:?}", dest))?;
         if entries.next().is_some() {
             return Err(anyhow!(
                 "destination {:?} is not empty; choose an empty or new directory",
@@ -109,5 +109,3 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
     }
     Ok(())
 }
-
-

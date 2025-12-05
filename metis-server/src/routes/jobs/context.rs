@@ -19,11 +19,10 @@ pub async fn get_job_context(
 
     let store = state.store.read().await;
     let job_id_string = job_id.to_string();
-    let task = store.get_task(&job_id_string).await
-        .map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to get task");
-            ApiError::not_found(format!("Job '{}' not found", job_id))
-        })?;
+    let task = store.get_task(&job_id_string).await.map_err(|err| {
+        error!(error = %err, job_id = %job_id, "failed to get task");
+        ApiError::not_found(format!("Job '{}' not found", job_id))
+    })?;
 
     match task {
         Task::Spawn { context, .. } => Ok(Json(context.clone())),
@@ -33,4 +32,3 @@ pub async fn get_job_context(
         }
     }
 }
-

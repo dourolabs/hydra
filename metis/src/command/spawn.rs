@@ -82,10 +82,7 @@ pub(crate) async fn stream_job_logs_via_server(
     Ok(())
 }
 
-async fn wait_for_job_completion_via_server(
-    client: &MetisClient,
-    job_id: &str,
-) -> Result<()> {
+async fn wait_for_job_completion_via_server(client: &MetisClient, job_id: &str) -> Result<()> {
     loop {
         let response = client.list_jobs().await?;
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {

@@ -1,7 +1,7 @@
+pub mod context;
 pub mod jobs;
+pub mod kill;
 pub mod logs;
 pub mod patch;
-pub mod spawn;
-pub mod context;
 pub mod set_output;
-pub mod kill;
+pub mod spawn;

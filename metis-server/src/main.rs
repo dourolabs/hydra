@@ -5,7 +5,7 @@ mod store;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
-use crate::store::{Store, MemoryStore, Status, Task};
+use crate::store::{MemoryStore, Status, Store, Task};
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -29,19 +29,21 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    
+
     // Resolve OpenAI API key
     let openai_api_key = env::var("OPENAI_API_KEY")
         .ok()
         .or_else(|| app_config.metis.openai_api_key.clone())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!(
-            "OPENAI_API_KEY is not set. Provide it via the environment or config.toml."
-        ))?;
-    
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "OPENAI_API_KEY is not set. Provide it via the environment or config.toml."
+            )
+        })?;
+
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
-    
+
     // Create job engine
     let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
@@ -50,9 +52,9 @@ async fn main() -> anyhow::Result<()> {
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
     };
-    
+
     let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
-    
+
     let state = AppState {
         config: Arc::new(app_config),
         store,
@@ -75,7 +77,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/jobs", post(routes::jobs::create_job))
-        .route("/v1/jobs/:job_id/logs", get(routes::jobs::logs::get_job_logs))
+        .route(
+            "/v1/jobs/:job_id/logs",
+            get(routes::jobs::logs::get_job_logs),
+        )
         .route("/v1/jobs/:job_id/kill", post(routes::jobs::kill::kill_job))
         .route(
             "/v1/jobs/:job_id/output",
@@ -110,7 +115,7 @@ fn config_path() -> PathBuf {
 }
 
 /// Background task that periodically processes pending jobs.
-/// 
+///
 /// This function runs in a loop, checking for pending tasks every few seconds
 /// and starting them by:
 /// 1. Setting their status to Running
@@ -175,7 +180,9 @@ async fn process_pending_jobs(state: AppState) {
                     error!(metis_id = %metis_id, error = %err, "failed to create Kubernetes job");
                     // Set status to Failed
                     let mut store = state.store.write().await;
-                    if let Err(update_err) = store.update_task_status(&metis_id, Status::Failed).await {
+                    if let Err(update_err) =
+                        store.update_task_status(&metis_id, Status::Failed).await
+                    {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     } else {
                         info!(metis_id = %metis_id, "set task status to Failed");
@@ -187,7 +194,7 @@ async fn process_pending_jobs(state: AppState) {
 }
 
 /// Background task that periodically monitors running jobs.
-/// 
+///
 /// This function runs in a loop, checking for running tasks every few seconds
 /// and updating their status based on the job engine state:
 /// 1. Gets all running tasks from the store
@@ -246,7 +253,9 @@ async fn monitor_running_jobs(state: AppState) {
                     // This could happen if the job was cleaned up externally
                     warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
                     let mut store = state.store.write().await;
-                    if let Err(update_err) = store.update_task_status(&metis_id, Status::Failed).await {
+                    if let Err(update_err) =
+                        store.update_task_status(&metis_id, Status::Failed).await
+                    {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     }
                 }

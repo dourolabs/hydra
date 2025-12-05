@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_engine::{JobStatus, JobEngineError},
+    job_engine::{JobEngineError, JobStatus},
     routes::jobs::ApiError,
 };
 use axum::{
@@ -11,7 +11,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use futures::{channel::mpsc, StreamExt};
+use futures::{StreamExt, channel::mpsc};
 use metis_common::logs::LogsQuery;
 use std::convert::Infallible;
 use tracing::{error, info};
@@ -34,7 +34,10 @@ pub async fn get_job_logs(
     }
 
     // Check if job exists and get its status to determine if we should follow logs
-    let job = state.job_engine.find_job_by_metis_id(&job_id.to_string()).await
+    let job = state
+        .job_engine
+        .find_job_by_metis_id(&job_id.to_string())
+        .await
         .map_err(|err| match err {
             JobEngineError::NotFound(msg) => {
                 error!(job_id = %job_id, error = %msg, "job not found");

@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_engine::{JobStatus, JobEngineError},
+    job_engine::{JobEngineError, JobStatus},
     store::{Store, Task},
 };
 use axum::{
@@ -10,16 +10,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{Duration as ChronoDuration, Utc};
-use metis_common::{
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
-};
+use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use tracing::{error, info};
 
-pub mod logs;
-pub mod output;
 pub mod context;
 pub mod kill;
+pub mod logs;
+pub mod output;
 
 pub async fn create_job(
     State(state): State<AppState>,
@@ -43,7 +41,9 @@ pub async fn create_job(
             context: payload.context.clone(),
             result: None,
         };
-        store.add_task_with_id(job_id.clone(), task, vec![]).await
+        store
+            .add_task_with_id(job_id.clone(), task, vec![])
+            .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to store task");
                 ApiError::internal(anyhow::anyhow!("Failed to store task: {}", err))
@@ -52,39 +52,42 @@ pub async fn create_job(
 
     info!(job_id = %job_id, "task stored, will be started by background thread");
 
-    Ok(Json(CreateJobResponse {
-        job_id,
-    }))
+    Ok(Json(CreateJobResponse { job_id }))
 }
 
 pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
     info!("list_jobs invoked");
     let config = state.config;
     let namespace = config.metis.namespace.clone();
-    
-    let metis_jobs = state.job_engine.list_jobs().await
-        .map_err(|err| {
-            error!(error = ?err, namespace = %namespace, "failed to list jobs");
-            match err {
-                JobEngineError::Kubernetes(kube_err) => {
-                    error!(error = ?kube_err, "Kubernetes error in list_jobs");
-                    ApiError::internal(kube_err)
-                }
-                err => {
-                    error!(error = %err, "error listing jobs");
-                    ApiError::internal(err)
-                }
+
+    let metis_jobs = state.job_engine.list_jobs().await.map_err(|err| {
+        error!(error = ?err, namespace = %namespace, "failed to list jobs");
+        match err {
+            JobEngineError::Kubernetes(kube_err) => {
+                error!(error = ?kube_err, "Kubernetes error in list_jobs");
+                ApiError::internal(kube_err)
             }
-        })?;
+            err => {
+                error!(error = %err, "error listing jobs");
+                ApiError::internal(err)
+            }
+        }
+    })?;
 
     let now = Utc::now();
-    
+
     let mut summaries = Vec::new();
     for job in metis_jobs {
         let runtime = job_runtime(&job, now).map(format_duration);
         let notes = {
             let store_read = state.store.read().await;
-            job_notes(&job.id, job.status, &job.failure_message, store_read.as_ref()).await
+            job_notes(
+                &job.id,
+                job.status,
+                &job.failure_message,
+                store_read.as_ref(),
+            )
+            .await
         };
 
         summaries.push(JobSummary {
@@ -101,9 +104,7 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         "list_jobs completed successfully"
     );
 
-    Ok(Json(ListJobsResponse {
-        jobs: summaries,
-    }))
+    Ok(Json(ListJobsResponse { jobs: summaries }))
 }
 
 #[derive(Debug)]
@@ -150,8 +151,10 @@ impl IntoResponse for ApiError {
     }
 }
 
-
-fn job_runtime(job: &crate::job_engine::MetisJob, now: chrono::DateTime<Utc>) -> Option<ChronoDuration> {
+fn job_runtime(
+    job: &crate::job_engine::MetisJob,
+    now: chrono::DateTime<Utc>,
+) -> Option<ChronoDuration> {
     let start = job.start_time.or(job.creation_time)?;
     let end = job.completion_time.unwrap_or(now);
 
@@ -188,14 +191,8 @@ async fn job_notes(
     store: &dyn Store,
 ) -> Option<String> {
     let note = match status {
-        JobStatus::Failed => {
-            failure_message.clone().or_else(|| {
-                None
-            })
-        }
-        JobStatus::Complete | JobStatus::Running => {
-            None
-        }
+        JobStatus::Failed => failure_message.clone().or_else(|| None),
+        JobStatus::Complete | JobStatus::Running => None,
     };
 
     if let Some(note) = note {
@@ -205,7 +202,11 @@ async fn job_notes(
     // Try to get the task and extract the result's last_message
     let job_id_string = job_id.to_string();
     if let Ok(task) = store.get_task(&job_id_string).await {
-        if let Task::Spawn { result: Some(output), .. } = task {
+        if let Task::Spawn {
+            result: Some(output),
+            ..
+        } = task
+        {
             return sanitize_note(&output.last_message);
         }
     }

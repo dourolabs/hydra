@@ -1,6 +1,6 @@
 use crate::{client::MetisClient, config::AppConfig};
 use anyhow::{bail, Context, Result};
-use std::{fs, path::PathBuf, process::Command, io::Write};
+use std::{fs, io::Write, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -12,7 +12,7 @@ const RESET: &str = "\x1b[0m";
 fn pretty_print_patch(patch: &str) {
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
-    
+
     for line in patch.lines() {
         if line.starts_with('+') && !line.starts_with("+++") {
             // Addition line (but not the +++ header)
@@ -38,20 +38,20 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     println!("Fetching patch for job '{}' via metis-server…", job_id);
 
     let response = client.get_job_output(&job_id).await?;
-    
+
     if apply {
         println!("\nApplying patch to current git repository…");
-        
+
         // Find the git repository root
         let git_root_output = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .output()
             .context("Failed to find git repository root. Is git installed?")?;
-        
+
         if !git_root_output.status.success() {
             bail!("Current directory is not a git repository. Cannot apply patch.");
         }
-        
+
         let git_root = String::from_utf8(git_root_output.stdout)
             .context("Failed to parse git repository root")?
             .trim()
@@ -63,19 +63,17 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
         if patch.is_empty() {
             bail!("Patch is empty. Nothing to apply.");
         }
-        
+
         // Show the patch with color coding before applying
         println!("\nPatch to be applied:\n");
         pretty_print_patch(&patch);
 
         // Write patch to a temporary file
-        let patch_file = NamedTempFile::new()
-            .context("Failed to create temporary file for patch")?;
-        fs::write(patch_file.path(), patch)
-            .context("Failed to write patch to temporary file")?;
+        let patch_file =
+            NamedTempFile::new().context("Failed to create temporary file for patch")?;
+        fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
 
         println!("{:?}", patch_file.path());
-        
 
         // Apply the patch using git apply from the repository root
         let output = Command::new("git")
@@ -99,7 +97,11 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to apply patch. Exit code: {}. Error: {}", output.status.code().unwrap_or(-1), stderr);
+            bail!(
+                "Failed to apply patch. Exit code: {}. Error: {}",
+                output.status.code().unwrap_or(-1),
+                stderr
+            );
         }
 
         println!("Patch applied successfully.");
@@ -107,7 +109,7 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
         if !response.output.last_message.is_empty() {
             println!("\nLast agent message:\n{}\n", response.output.last_message);
         }
-        
+
         if !response.output.patch.is_empty() {
             println!("Patch:\n");
             pretty_print_patch(&response.output.patch);

@@ -1,9 +1,6 @@
-use async_trait::async_trait;
 use crate::job_engine::MetisId;
-use metis_common::{
-    jobs::CreateJobRequestContext,
-    job_outputs::JobOutputPayload,
-};
+use async_trait::async_trait;
+use metis_common::{job_outputs::JobOutputPayload, jobs::CreateJobRequestContext};
 
 mod memory_store;
 
@@ -15,7 +12,6 @@ pub enum Task {
         prompt: String,
         context: CreateJobRequestContext,
         result: Option<JobOutputPayload>,
-        
     },
     /// An ask task that queries the human user for information.
     Ask,
@@ -72,7 +68,11 @@ pub trait Store: Send + Sync {
     /// - The task already exists
     /// - Any parent task doesn't exist
     /// - Adding the dependencies would create a cycle
-    async fn add_task(&mut self, task: Task, parent_ids: Vec<MetisId>) -> Result<MetisId, StoreError>;
+    async fn add_task(
+        &mut self,
+        task: Task,
+        parent_ids: Vec<MetisId>,
+    ) -> Result<MetisId, StoreError>;
 
     /// Adds a task to the store with a specific ID and parent dependencies.
     ///
@@ -89,7 +89,12 @@ pub trait Store: Send + Sync {
     /// - The task already exists
     /// - Any parent task doesn't exist
     /// - Adding the dependencies would create a cycle
-    async fn add_task_with_id(&mut self, metis_id: MetisId, task: Task, parent_ids: Vec<MetisId>) -> Result<(), StoreError>;
+    async fn add_task_with_id(
+        &mut self,
+        metis_id: MetisId,
+        task: Task,
+        parent_ids: Vec<MetisId>,
+    ) -> Result<(), StoreError>;
 
     /// Updates an existing task in the store.
     ///
@@ -188,8 +193,11 @@ pub trait Store: Send + Sync {
     /// - The task doesn't exist
     /// - The task is not in a valid state for the transition
     /// - The new_status is not Running, Complete, or Failed
-    async fn update_task_status(&mut self, id: &MetisId, new_status: Status) -> Result<(), StoreError>;
+    async fn update_task_status(
+        &mut self,
+        id: &MetisId,
+        new_status: Status,
+    ) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;
-
