@@ -1,6 +1,7 @@
 use crate::{
     AppState,
     job_engine::{JobStatus, JobEngineError},
+    store::{Store, Task},
 };
 use axum::{
     Json,
@@ -10,11 +11,9 @@ use axum::{
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use metis_common::{
-    job_outputs::JobOutputPayload,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
 use serde_json::json;
-use std::collections::HashMap;
 use tracing::{error, info};
 
 pub mod logs;
@@ -48,10 +47,19 @@ pub async fn create_job(
             }
         })?;
 
-    // Store the job context for later retrieval
+    // Store the task with context and prompt
     {
-        let mut ctx_store = state.job_contexts.write().await;
-        ctx_store.insert(job_id.clone(), payload.context.clone());
+        let mut store = state.store.write().await;
+        let task = Task::Spawn {
+            prompt: prompt.clone(),
+            context: payload.context.clone(),
+            result: None,
+        };
+        store.add_task_with_id(job_id.clone(), task, vec![]).await
+            .map_err(|err| {
+                error!(error = %err, job_id = %job_id, "failed to store task");
+                ApiError::internal(anyhow::anyhow!("Failed to store task: {}", err))
+            })?;
     }
 
     Ok(Json(CreateJobResponse {
@@ -80,25 +88,22 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         })?;
 
     let now = Utc::now();
-    let job_outputs = {
-        let store = state.job_outputs.read().await;
-        store.clone()
-    };
+    
+    let mut summaries = Vec::new();
+    for job in metis_jobs {
+        let runtime = job_runtime(&job, now).map(format_duration);
+        let notes = {
+            let store_read = state.store.read().await;
+            job_notes(&job.id, job.status, &job.failure_message, store_read.as_ref()).await
+        };
 
-    let summaries: Vec<JobSummary> = metis_jobs
-        .into_iter()
-        .map(|job| {
-            let runtime = job_runtime(&job, now).map(format_duration);
-            let notes = job_notes(&job.id, job.status, &job.failure_message, &job_outputs);
-
-            JobSummary {
-                id: job.id,
-                status: job.status.to_string(),
-                runtime,
-                notes,
-            }
-        })
-        .collect();
+        summaries.push(JobSummary {
+            id: job.id,
+            status: job.status.to_string(),
+            runtime,
+            notes,
+        });
+    }
 
     info!(
         namespace = %namespace,
@@ -186,22 +191,36 @@ fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
-fn job_notes(
+async fn job_notes(
     job_id: &str,
     status: JobStatus,
     failure_message: &Option<String>,
-    outputs: &HashMap<String, JobOutputPayload>,
+    store: &dyn Store,
 ) -> Option<String> {
     let note = match status {
         JobStatus::Failed => {
-            failure_message.clone().or_else(|| outputs.get(job_id).map(|o| o.last_message.clone()))
+            failure_message.clone().or_else(|| {
+                None
+            })
         }
         JobStatus::Complete | JobStatus::Running => {
-            outputs.get(job_id).map(|o| o.last_message.clone())
+            None
         }
-    }?;
+    };
 
-    sanitize_note(&note)
+    if let Some(note) = note {
+        return sanitize_note(&note);
+    }
+
+    // Try to get the task and extract the result's last_message
+    let job_id_string = job_id.to_string();
+    if let Ok(task) = store.get_task(&job_id_string).await {
+        if let Task::Spawn { result: Some(output), .. } = task {
+            return sanitize_note(&output.last_message);
+        }
+    }
+
+    None
 }
 
 fn sanitize_note(note: &str) -> Option<String> {

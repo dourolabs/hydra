@@ -68,6 +68,39 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
+    async fn add_task_with_id(&mut self, metis_id: MetisId, task: Task, parent_ids: Vec<MetisId>) -> Result<(), StoreError> {
+        // Check if task already exists
+        if self.tasks.contains_key(&metis_id) {
+            return Err(StoreError::Internal(format!("Task already exists: {}", metis_id)));
+        }
+
+        // Verify all parent tasks exist
+        for parent_id in &parent_ids {
+            if !self.tasks.contains_key(parent_id) {
+                return Err(StoreError::InvalidDependency(
+                    format!("Parent task not found: {}", parent_id)
+                ));
+            }
+        }
+
+        // Add the task with the specified ID
+        self.tasks.insert(metis_id.clone(), task);
+
+        // Initialize empty vectors if needed
+        self.parents.insert(metis_id.clone(), parent_ids.clone());
+        self.children.insert(metis_id.clone(), Vec::new());
+
+        // Update children of each parent
+        for parent_id in &parent_ids {
+            self.children
+                .get_mut(parent_id)
+                .expect("Parent should exist")
+                .push(metis_id.clone());
+        }
+
+        Ok(())
+    }
+
     async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError> {
         if !self.tasks.contains_key(metis_id) {
             return Err(StoreError::TaskNotFound(metis_id.clone()));
@@ -147,15 +180,21 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use metis_common::jobs::CreateJobRequestContext;
 
     #[tokio::test]
     async fn add_and_retrieve_tasks_with_dependencies() {
         let mut store = MemoryStore::new();
 
-        let root_id = store.add_task(Task::Spawn, vec![]).await.unwrap();
+        let root_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
+        let root_id = store.add_task(root_task.clone(), vec![]).await.unwrap();
         let child_id = store.add_task(Task::Ask, vec![root_id.clone()]).await.unwrap();
 
-        assert_eq!(store.get_task(&root_id).await.unwrap(), Task::Spawn);
+        assert_eq!(store.get_task(&root_id).await.unwrap(), root_task);
         assert_eq!(store.get_task(&child_id).await.unwrap(), Task::Ask);
         assert_eq!(store.get_parents(&child_id).await.unwrap(), vec![root_id.clone()]);
         assert_eq!(store.get_children(&root_id).await.unwrap(), vec![child_id.clone()]);
@@ -169,8 +208,13 @@ mod tests {
         let mut store = MemoryStore::new();
         let missing_parent = "missing".to_string();
 
+        let spawn_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
         let err = store
-            .add_task(Task::Spawn, vec![missing_parent.clone()])
+            .add_task(spawn_task, vec![missing_parent.clone()])
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
@@ -182,9 +226,19 @@ mod tests {
     async fn remove_task_updates_relationships() {
         let mut store = MemoryStore::new();
 
-        let root_id = store.add_task(Task::Spawn, vec![]).await.unwrap();
+        let root_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
+        let root_id = store.add_task(root_task, vec![]).await.unwrap();
         let child_id = store.add_task(Task::Ask, vec![root_id.clone()]).await.unwrap();
-        let grandchild_id = store.add_task(Task::Spawn, vec![child_id.clone()]).await.unwrap();
+        let grandchild_task = Task::Spawn {
+            prompt: "test2".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
+        let grandchild_id = store.add_task(grandchild_task, vec![child_id.clone()]).await.unwrap();
 
         store.remove_task(&child_id).await.unwrap();
 

@@ -56,6 +56,23 @@ pub trait Store: Send + Sync {
     /// - Adding the dependencies would create a cycle
     async fn add_task(&mut self, task: Task, parent_ids: Vec<MetisId>) -> Result<MetisId, StoreError>;
 
+    /// Adds a task to the store with a specific ID and parent dependencies.
+    ///
+    /// This is similar to `add_task`, but allows specifying the MetisId directly.
+    /// Useful when the ID comes from an external source (e.g., Kubernetes job ID).
+    ///
+    /// # Arguments
+    /// * `metis_id` - The MetisId to use for this task
+    /// * `task` - The task to add
+    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if:
+    /// - The task already exists
+    /// - Any parent task doesn't exist
+    /// - Adding the dependencies would create a cycle
+    async fn add_task_with_id(&mut self, metis_id: MetisId, task: Task, parent_ids: Vec<MetisId>) -> Result<(), StoreError>;
+
     /// Updates an existing task in the store.
     ///
     /// This function overwrites the task data for the given vertex without
@@ -116,4 +133,6 @@ pub trait Store: Send + Sync {
     /// A vector of all MetisIds in the store
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
 }
+
+pub use memory_store::MemoryStore;
 

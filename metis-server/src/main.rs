@@ -5,22 +5,20 @@ mod store;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
+use crate::store::{Store, MemoryStore};
 use axum::{
     Json, Router,
     routing::{get, post},
 };
-use metis_common::job_outputs::JobOutputPayload;
-use metis_common::jobs::CreateJobRequestContext;
 use serde_json::json;
-use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
-    pub job_outputs: Arc<RwLock<HashMap<String, JobOutputPayload>>>,
-    pub job_contexts: Arc<RwLock<HashMap<String, CreateJobRequestContext>>>,
+    pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
 }
 
@@ -52,10 +50,11 @@ async fn main() -> anyhow::Result<()> {
         client: kube_client,
     };
     
+    let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
+    
     let state = AppState {
         config: Arc::new(app_config),
-        job_outputs: Arc::new(RwLock::new(HashMap::new())),
-        job_contexts: Arc::new(RwLock::new(HashMap::new())),
+        store,
         job_engine: Arc::new(job_engine),
     };
 

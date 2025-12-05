@@ -1,4 +1,4 @@
-use crate::{AppState, routes::jobs::ApiError};
+use crate::{AppState, routes::jobs::ApiError, store::Task};
 use axum::{
     Json,
     extract::{Path, State},
@@ -17,12 +17,19 @@ pub async fn get_job_context(
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
 
-    let store = state.job_contexts.read().await;
-    match store.get(job_id) {
-        Some(ctx) => Ok(Json(ctx.clone())),
-        None => {
-            error!(job_id = %job_id, "context not found for job_id");
-            Err(ApiError::not_found("context not found"))
+    let store = state.store.read().await;
+    let job_id_string = job_id.to_string();
+    let task = store.get_task(&job_id_string).await
+        .map_err(|err| {
+            error!(error = %err, job_id = %job_id, "failed to get task");
+            ApiError::not_found(format!("Job '{}' not found", job_id))
+        })?;
+
+    match task {
+        Task::Spawn { context, .. } => Ok(Json(context.clone())),
+        Task::Ask => {
+            error!(job_id = %job_id, "context requested for Ask task");
+            Err(ApiError::bad_request("Ask tasks do not have context"))
         }
     }
 }
