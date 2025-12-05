@@ -44,6 +44,8 @@ pub enum StoreError {
     InvalidDependency(String),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Invalid status transition: task is not in Pending state")]
+    InvalidStatusTransition,
 }
 
 /// Trait for storing and managing a directed acyclic graph (DAG) of tasks.
@@ -147,6 +149,32 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// A vector of all MetisIds in the store
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
+
+    /// Gets the status of a task by its MetisId.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId to look up
+    ///
+    /// # Returns
+    /// The status if found, or an error if not found
+    async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError>;
+
+    /// Updates the status of a task from Pending to Complete or Failed.
+    ///
+    /// This function will also update the status of dependent tasks:
+    /// - If a task is moved to Complete or Failed, all its children (dependents) are checked
+    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    /// * `new_status` - The new status (must be Complete or Failed)
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if:
+    /// - The task doesn't exist
+    /// - The task is not in Pending state
+    /// - The new_status is not Complete or Failed
+    async fn update_task_status(&mut self, id: &MetisId, new_status: Status) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;
