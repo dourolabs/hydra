@@ -18,7 +18,7 @@ COPY . .
 # Build only the metis CLI
 RUN cargo build --bin metis --release
 
-FROM ubuntu:22.04
+FROM rust:1.88.0
 ARG NODE_VERSION=22
 
 ENV DEBIAN_FRONTEND=noninteractive \
