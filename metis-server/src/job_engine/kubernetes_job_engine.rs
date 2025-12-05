@@ -16,7 +16,6 @@ use kube::{
 };
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
-use uuid::Uuid;
 
 use super::{JobStatus, JobEngine, JobEngineError, MetisId, MetisJob};
 
@@ -164,7 +163,6 @@ async fn wait_for_pod_name_impl(
     client: &Client,
     namespace: &str,
     job_name: &str,
-    job_id: &str,
 ) -> Result<String, JobEngineError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let selector = format!("job-name={job_name}");
@@ -182,13 +180,8 @@ async fn wait_for_pod_name_impl(
 
             if let Some(phase) = pod.status.and_then(|status| status.phase) {
                 match phase.as_str() {
-                    "Running" => return Ok(pod_name),
-                    "Failed" | "Succeeded" => {
-                        return Err(JobEngineError::Internal(format!(
-                            "Pod '{}' for job '{}' reached terminal phase '{}' before running.",
-                            pod_name, job_id, phase
-                        )));
-                    }
+                    // Allow terminal phases so completed jobs can still return logs.
+                    "Running" | "Failed" | "Succeeded" => return Ok(pod_name),
                     _ => {}
                 }
             }
@@ -200,14 +193,13 @@ async fn wait_for_pod_name_impl(
 
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
-    async fn create_job(&self, prompt: &str) -> Result<MetisId, JobEngineError> {
-        let job_uuid = Uuid::new_v4().hyphenated().to_string();
-        let job_name = format!("metis-worker-{}", job_uuid);
+    async fn create_job(&self, metis_id: &MetisId, prompt: &str) -> Result<(), JobEngineError> {
+        let job_name = format!("metis-worker-{}", metis_id);
         
-        info!(job_uuid = %job_uuid, namespace = %self.namespace, "creating Kubernetes job");
+        info!(metis_id = %metis_id, namespace = %self.namespace, "creating Kubernetes job");
         
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
-        let metadata_labels = Self::build_metadata_labels(&job_uuid);
+        let metadata_labels = Self::build_metadata_labels(metis_id);
 
         let job = Job {
             metadata: ObjectMeta {
@@ -234,7 +226,7 @@ impl JobEngine for KubernetesJobEngine {
                                 "--dangerously-bypass-approvals-and-sandbox".into(),
                                 prompt.to_string(),
                             ]),
-                            env: self.build_env_vars(&job_uuid),
+                            env: self.build_env_vars(metis_id),
                             ..Default::default()
                         }],
                         restart_policy: Some("Never".into()),
@@ -252,13 +244,13 @@ impl JobEngine for KubernetesJobEngine {
             Ok(created) => {
                 let display_name = created.metadata.name.clone().unwrap_or(job_name.clone());
                 info!(
-                    job_uuid = %job_uuid,
+                    metis_id = %metis_id,
                     job_name = %display_name,
                     namespace = %self.namespace,
                     "job created successfully"
                 );
 
-                Ok(job_uuid)
+                Ok(())
             }
             Err(kube::Error::Api(err)) if err.code == 409 => {
                 error!(
@@ -412,7 +404,7 @@ impl JobEngine for KubernetesJobEngine {
                         }
                     };
 
-                    match wait_for_pod_name_impl(&client, &namespace, &job_name, &job_id).await {
+                    match wait_for_pod_name_impl(&client, &namespace, &job_name).await {
                         Ok(pod_name) => {
                             let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
                             let mut params = LogParams::default();

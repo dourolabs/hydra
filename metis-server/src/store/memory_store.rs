@@ -249,10 +249,10 @@ impl Store for MemoryStore {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
-        // Verify new_status is Complete or Failed
-        if !matches!(new_status, Status::Complete | Status::Failed) {
+        // Verify new_status is Running, Complete, or Failed
+        if !matches!(new_status, Status::Running | Status::Complete | Status::Failed) {
             return Err(StoreError::Internal(
-                "update_task_status can only set status to Complete or Failed".to_string()
+                "update_task_status can only set status to Running, Complete, or Failed".to_string()
             ));
         }
 
@@ -265,17 +265,22 @@ impl Store for MemoryStore {
             return Err(StoreError::InvalidStatusTransition);
         }
 
+        // Check if we need to update children before inserting the new status
+        let should_update_children = matches!(new_status, Status::Complete | Status::Failed);
+
         // Update the status
         self.statuses.insert(id.clone(), new_status);
 
-        // Check all children (dependents) and update their status if needed
-        let child_ids = self.children.get(id).cloned().unwrap_or_default();
-        for child_id in child_ids {
-            // If child is blocked, check if all its parents are now complete
-            if let Some(child_status) = self.statuses.get(&child_id) {
-                if matches!(child_status, Status::Blocked) {
-                    if self.all_parents_complete(&child_id) {
-                        self.statuses.insert(child_id, Status::Pending);
+        // If transitioning to Complete or Failed, check all children (dependents) and update their status if needed
+        if should_update_children {
+            let child_ids = self.children.get(id).cloned().unwrap_or_default();
+            for child_id in child_ids {
+                // If child is blocked, check if all its parents are now complete
+                if let Some(child_status) = self.statuses.get(&child_id) {
+                    if matches!(child_status, Status::Blocked) {
+                        if self.all_parents_complete(&child_id) {
+                            self.statuses.insert(child_id, Status::Pending);
+                        }
                     }
                 }
             }

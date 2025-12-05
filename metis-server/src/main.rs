@@ -5,15 +5,16 @@ mod store;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
-use crate::store::{Store, MemoryStore};
+use crate::store::{Store, MemoryStore, Status, Task};
 use axum::{
     Json, Router,
     routing::{get, post},
 };
 use serde_json::json;
-use std::{env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use tracing::info;
+use tokio::time::sleep;
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,6 +59,12 @@ async fn main() -> anyhow::Result<()> {
         job_engine: Arc::new(job_engine),
     };
 
+    // Spawn background task to process pending jobs
+    let background_state = state.clone();
+    tokio::spawn(async move {
+        process_pending_jobs(background_state).await;
+    });
+
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
@@ -94,4 +101,81 @@ fn config_path() -> PathBuf {
     std::env::var("METIS_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
+}
+
+/// Background task that periodically processes pending jobs.
+/// 
+/// This function runs in a loop, checking for pending tasks every few seconds
+/// and starting them by:
+/// 1. Setting their status to Running
+/// 2. Creating the Kubernetes job via the job engine
+async fn process_pending_jobs(state: AppState) {
+    loop {
+        // Check every 2 seconds
+        sleep(Duration::from_secs(2)).await;
+
+        // Get pending tasks
+        let pending_ids = {
+            let store = state.store.read().await;
+            match store.list_pending_tasks().await {
+                Ok(ids) => ids,
+                Err(err) => {
+                    error!(error = %err, "failed to list pending tasks");
+                    continue;
+                }
+            }
+        };
+
+        if pending_ids.is_empty() {
+            continue;
+        }
+
+        info!(count = pending_ids.len(), "found pending tasks to process");
+
+        // Process each pending task
+        for metis_id in pending_ids {
+            // Get the task to extract the prompt
+            let prompt = {
+                let store = state.store.read().await;
+                match store.get_task(&metis_id).await {
+                    Ok(Task::Spawn { prompt, .. }) => prompt,
+                    Ok(Task::Ask) => {
+                        warn!(metis_id = %metis_id, "task is Ask type, skipping job creation");
+                        continue;
+                    }
+                    Err(err) => {
+                        error!(metis_id = %metis_id, error = %err, "failed to get task");
+                        continue;
+                    }
+                }
+            };
+
+            // Create the Kubernetes job
+            match state.job_engine.create_job(&metis_id, &prompt).await {
+                Ok(()) => {
+                    info!(metis_id = %metis_id, "successfully created Kubernetes job");
+                    // Set status to Running after successful job creation
+                    let mut store = state.store.write().await;
+                    match store.update_task_status(&metis_id, Status::Running).await {
+                        Ok(()) => {
+                            info!(metis_id = %metis_id, "set task status to Running");
+                        }
+                        Err(err) => {
+                            warn!(metis_id = %metis_id, error = %err, "failed to set task to Running");
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!(metis_id = %metis_id, error = %err, "failed to create Kubernetes job");
+                    // Set status to Failed
+                    let mut store = state.store.write().await;
+                    if let Err(update_err) = store.update_task_status(&metis_id, Status::Failed).await {
+                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
+                    } else {
+                        info!(metis_id = %metis_id, "set task status to Failed");
+                    }
+                }
+            }
+        }
+    }
 }

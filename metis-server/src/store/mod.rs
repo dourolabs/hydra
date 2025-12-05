@@ -165,21 +165,21 @@ pub trait Store: Send + Sync {
     /// The status if found, or an error if not found
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError>;
 
-    /// Updates the status of a task from Pending to Complete or Failed.
+    /// Updates the status of a task from Pending to Running, Complete, or Failed.
     ///
-    /// This function will also update the status of dependent tasks:
+    /// This function will also update the status of dependent tasks when transitioning to Complete or Failed:
     /// - If a task is moved to Complete or Failed, all its children (dependents) are checked
     /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
     ///
     /// # Arguments
     /// * `id` - The MetisId of the task to update
-    /// * `new_status` - The new status (must be Complete or Failed)
+    /// * `new_status` - The new status (must be Running, Complete, or Failed)
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
     /// - The task doesn't exist
     /// - The task is not in Pending state
-    /// - The new_status is not Complete or Failed
+    /// - The new_status is not Running, Complete, or Failed
     async fn update_task_status(&mut self, id: &MetisId, new_status: Status) -> Result<(), StoreError>;
 }
 

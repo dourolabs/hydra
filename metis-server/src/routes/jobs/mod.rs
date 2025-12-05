@@ -32,23 +32,10 @@ pub async fn create_job(
         return Err(ApiError::bad_request("prompt is required"));
     }
 
-    let job_id = state.job_engine.create_job(&prompt).await
-        .map_err(|err| match err {
-            JobEngineError::AlreadyExists(msg) => {
-                error!(error = %msg, "job already exists");
-                ApiError::conflict(msg)
-            }
-            JobEngineError::Kubernetes(kube_err) => {
-                error!(error = ?kube_err, "failed to create job in Kubernetes");
-                ApiError::internal(kube_err)
-            }
-            err => {
-                error!(error = %err, "failed to create job");
-                ApiError::internal(err)
-            }
-        })?;
+    // Generate a unique ID for the job
+    let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
-    // Store the task with context and prompt
+    // Store the task with context and prompt (status will be Pending)
     {
         let mut store = state.store.write().await;
         let task = Task::Spawn {
@@ -62,6 +49,8 @@ pub async fn create_job(
                 ApiError::internal(anyhow::anyhow!("Failed to store task: {}", err))
             })?;
     }
+
+    info!(job_id = %job_id, "task stored, will be started by background thread");
 
     Ok(Json(CreateJobResponse {
         job_id,
