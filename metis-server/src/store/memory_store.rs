@@ -68,6 +68,16 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
+    async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError> {
+        if !self.tasks.contains_key(metis_id) {
+            return Err(StoreError::TaskNotFound(metis_id.clone()));
+        }
+
+        // Overwrite the existing task without modifying edge structure
+        self.tasks.insert(metis_id.clone(), task);
+        Ok(())
+    }
+
     async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError> {
         self.tasks
             .get(id)
@@ -130,5 +140,71 @@ impl Store for MemoryStore {
 
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
         Ok(self.tasks.keys().cloned().collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[tokio::test]
+    async fn add_and_retrieve_tasks_with_dependencies() {
+        let mut store = MemoryStore::new();
+
+        let root_id = store.add_task(Task::Spawn, vec![]).await.unwrap();
+        let child_id = store.add_task(Task::Ask, vec![root_id.clone()]).await.unwrap();
+
+        assert_eq!(store.get_task(&root_id).await.unwrap(), Task::Spawn);
+        assert_eq!(store.get_task(&child_id).await.unwrap(), Task::Ask);
+        assert_eq!(store.get_parents(&child_id).await.unwrap(), vec![root_id.clone()]);
+        assert_eq!(store.get_children(&root_id).await.unwrap(), vec![child_id.clone()]);
+
+        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
+        assert_eq!(tasks, HashSet::from([root_id, child_id]));
+    }
+
+    #[tokio::test]
+    async fn add_task_with_missing_parent_fails() {
+        let mut store = MemoryStore::new();
+        let missing_parent = "missing".to_string();
+
+        let err = store
+            .add_task(Task::Spawn, vec![missing_parent.clone()])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
+
+        assert!(store.list_tasks().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_task_updates_relationships() {
+        let mut store = MemoryStore::new();
+
+        let root_id = store.add_task(Task::Spawn, vec![]).await.unwrap();
+        let child_id = store.add_task(Task::Ask, vec![root_id.clone()]).await.unwrap();
+        let grandchild_id = store.add_task(Task::Spawn, vec![child_id.clone()]).await.unwrap();
+
+        store.remove_task(&child_id).await.unwrap();
+
+        assert!(matches!(
+            store.get_task(&child_id).await,
+            Err(StoreError::TaskNotFound(id)) if id == child_id
+        ));
+        assert!(store.get_children(&root_id).await.unwrap().is_empty());
+        assert!(store.get_parents(&grandchild_id).await.unwrap().is_empty());
+
+        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
+        assert_eq!(tasks, HashSet::from([root_id, grandchild_id]));
+    }
+
+    #[tokio::test]
+    async fn removing_unknown_task_returns_error() {
+        let mut store = MemoryStore::new();
+        let missing = "does-not-exist".to_string();
+
+        let err = store.remove_task(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing));
     }
 }

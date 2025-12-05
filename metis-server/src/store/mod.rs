@@ -56,6 +56,20 @@ pub trait Store: Send + Sync {
     /// - Adding the dependencies would create a cycle
     async fn add_task(&mut self, task: Task, parent_ids: Vec<MetisId>) -> Result<MetisId, StoreError>;
 
+    /// Updates an existing task in the store.
+    ///
+    /// This function overwrites the task data for the given vertex without
+    /// modifying the edge structure of the graph (parent and child relationships
+    /// remain unchanged).
+    ///
+    /// # Arguments
+    /// * `metis_id` - The MetisId of the task to update
+    /// * `task` - The new Task to store for this vertex
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if the task doesn't exist
+    async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError>;
+
     /// Gets a task by its MetisId.
     ///
     /// # Arguments
