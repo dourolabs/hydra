@@ -124,5 +124,10 @@ pub trait JobEngine: Send + Sync {
         job_id: &str,
         follow: bool,
     ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobEngineError>;
-}
 
+    /// Terminates a job if it exists.
+    ///
+    /// Implementations should delete the underlying job and any associated
+    /// resources necessary to stop execution.
+    async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError>;
+}

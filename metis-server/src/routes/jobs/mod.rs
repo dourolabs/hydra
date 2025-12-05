@@ -19,6 +19,7 @@ use tracing::{error, info};
 pub mod logs;
 pub mod output;
 pub mod context;
+pub mod kill;
 
 pub async fn create_job(
     State(state): State<AppState>,

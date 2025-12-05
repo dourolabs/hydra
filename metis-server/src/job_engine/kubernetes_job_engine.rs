@@ -11,7 +11,7 @@ use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
 };
 use kube::{
-    api::{ListParams, LogParams, PostParams},
+    api::{DeleteParams, ListParams, LogParams, PostParams},
     Api, Client,
 };
 use tokio::time::{sleep, Duration};
@@ -460,5 +460,42 @@ impl JobEngine for KubernetesJobEngine {
 
         Ok(rx)
     }
-}
 
+    async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+        let job = self.find_kubernetes_job_by_metis_id(metis_id.as_str()).await?;
+        let job_name = job.metadata.name.ok_or_else(|| {
+            JobEngineError::Internal(format!("Job '{metis_id}' is missing a Kubernetes name."))
+        })?;
+
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
+        let dp = DeleteParams::default();
+
+        match jobs.delete(&job_name, &dp).await {
+            Ok(_) => {
+                info!(
+                    metis_id = %metis_id,
+                    job_name = %job_name,
+                    namespace = %self.namespace,
+                    "job deleted successfully"
+                );
+                Ok(())
+            }
+            Err(kube::Error::Api(err)) if err.code == 404 => {
+                Err(JobEngineError::NotFound(format!(
+                    "Job '{metis_id}' not found in namespace '{}'",
+                    self.namespace
+                )))
+            }
+            Err(err) => {
+                error!(
+                    metis_id = %metis_id,
+                    job_name = %job_name,
+                    namespace = %self.namespace,
+                    error = ?err,
+                    "failed to delete job"
+                );
+                Err(JobEngineError::Kubernetes(err))
+            }
+        }
+    }
+}

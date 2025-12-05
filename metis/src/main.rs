@@ -73,6 +73,12 @@ enum Commands {
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
+    /// Terminate a running Metis job.
+    Kill {
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "JOB_ID")]
+        job: String,
+    },
     /// Retrieve and display the patch for a completed job.
     Patch {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
@@ -143,6 +149,7 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs => command::jobs::run(&app_config).await?,
         Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
+        Commands::Kill { job } => command::kill::run(&app_config, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&app_config, job, apply).await?,
         Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
         Commands::SetOutput {

@@ -53,6 +53,12 @@ pub mod jobs {
         #[serde(default)]
         pub notes: Option<String>,
     }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct KillJobResponse {
+        pub job_id: String,
+        pub status: String,
+    }
 }
 
 pub mod logs {

@@ -3,7 +3,10 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     job_outputs::{JobOutputPayload, JobOutputResponse},
-    jobs::{CreateJobRequest, CreateJobRequestContext, CreateJobResponse, ListJobsResponse},
+    jobs::{
+        CreateJobRequest, CreateJobRequestContext, CreateJobResponse, KillJobResponse,
+        ListJobsResponse,
+    },
     logs::LogsQuery,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
@@ -119,6 +122,30 @@ impl MetisClient {
             .json::<ListJobsResponse>()
             .await
             .context("failed to decode list jobs response")
+    }
+
+    /// Call `POST /v1/jobs/:job_id/kill` to terminate a running job.
+    pub async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse> {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err(anyhow!("job_id must not be empty"));
+        }
+
+        let path = format!("/v1/jobs/{job_id}/kill");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .post(url)
+            .send()
+            .await
+            .context("failed to submit kill job request")?
+            .error_for_status()
+            .context("metis-server returned an error while killing job")?;
+
+        response
+            .json::<KillJobResponse>()
+            .await
+            .context("failed to decode kill job response")
     }
 
     /// Call `GET /v1/jobs/:job_id/logs` to fetch or stream job logs.

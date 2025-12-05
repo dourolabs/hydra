@@ -63,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/jobs", post(routes::jobs::create_job))
         .route("/v1/jobs/:job_id/logs", get(routes::jobs::logs::get_job_logs))
+        .route("/v1/jobs/:job_id/kill", post(routes::jobs::kill::kill_job))
         .route(
             "/v1/jobs/:job_id/output",
             get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
