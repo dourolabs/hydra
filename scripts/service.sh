@@ -98,7 +98,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["create", "get", "list", "watch", "delete"]
-  # Allow reading pod logs (subresource needed for `kubectl logs`)
+  # Allow reading pod logs (subresource needed for kubectl logs)
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get", "watch"]
