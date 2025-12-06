@@ -1287,6 +1287,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "metis-common",
+ "reqwest",
  "serde",
  "serde_json",
  "shellexpand",

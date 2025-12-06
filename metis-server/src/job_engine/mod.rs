@@ -8,6 +8,11 @@ pub use kubernetes_job_engine::KubernetesJobEngine;
 // TODO: make this a uuid
 pub type MetisId = String;
 
+#[cfg(test)]
+mod mock;
+#[cfg(test)]
+pub use mock::MockJobEngine;
+
 /// Represents the lifecycle state of a Metis job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {

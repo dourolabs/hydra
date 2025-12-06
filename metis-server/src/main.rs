@@ -26,6 +26,48 @@ pub struct AppState {
     pub job_engine: Arc<dyn JobEngine>,
 }
 
+async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+    // Spawn background task to process pending jobs
+    let background_state = state.clone();
+    tokio::spawn(async move {
+        process_pending_jobs(background_state).await;
+    });
+
+    // Spawn background task to monitor running jobs
+    let monitor_state = state.clone();
+    tokio::spawn(async move {
+        monitor_running_jobs(monitor_state).await;
+    });
+
+    let app = Router::new()
+        .route("/health", get(health_check))
+        .route("/v1/jobs/", get(routes::jobs::list_jobs))
+        .route("/v1/jobs", post(routes::jobs::create_job))
+        .route(
+            "/v1/jobs/:job_id/logs",
+            get(routes::jobs::logs::get_job_logs),
+        )
+        .route("/v1/jobs/:job_id/kill", post(routes::jobs::kill::kill_job))
+        .route(
+            "/v1/jobs/:job_id/output",
+            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
+        )
+        .route(
+            "/v1/jobs/:job_id/context",
+            get(routes::jobs::context::get_job_context),
+        )
+        .with_state(state);
+
+    let addr = listener.local_addr()?;
+
+    info!("metis-server listening on http://{}", addr);
+    println!("metis-server listening on http://{addr}");
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -64,46 +106,9 @@ async fn main() -> anyhow::Result<()> {
         job_engine: Arc::new(job_engine),
     };
 
-    // Spawn background task to process pending jobs
-    let background_state = state.clone();
-    tokio::spawn(async move {
-        process_pending_jobs(background_state).await;
-    });
-
-    // Spawn background task to monitor running jobs
-    let monitor_state = state.clone();
-    tokio::spawn(async move {
-        monitor_running_jobs(monitor_state).await;
-    });
-
-    let app = Router::new()
-        .route("/health", get(health_check))
-        .route("/v1/jobs/", get(routes::jobs::list_jobs))
-        .route("/v1/jobs", post(routes::jobs::create_job))
-        .route(
-            "/v1/jobs/:job_id/logs",
-            get(routes::jobs::logs::get_job_logs),
-        )
-        .route("/v1/jobs/:job_id/kill", post(routes::jobs::kill::kill_job))
-        .route(
-            "/v1/jobs/:job_id/output",
-            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
-        )
-        .route(
-            "/v1/jobs/:job_id/context",
-            get(routes::jobs::context::get_job_context),
-        )
-        .with_state(state);
-
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
-    let addr = listener.local_addr()?;
 
-    info!("metis-server listening on http://{}", addr);
-    println!("metis-server listening on http://{addr}");
-
-    axum::serve(listener, app).await?;
-
-    Ok(())
+    run_with_state(state, listener).await
 }
 
 async fn health_check() -> Json<serde_json::Value> {
@@ -338,5 +343,52 @@ async fn monitor_running_jobs(state: AppState) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{KubernetesSection, MetisSection};
+    use crate::job_engine::MockJobEngine;
+    use reqwest::Client;
+    use serde_json::json;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn health_route_runs_with_injected_dependencies() -> anyhow::Result<()> {
+        let config = AppConfig {
+            metis: MetisSection::default(),
+            kubernetes: KubernetesSection::default(),
+        };
+        let state = AppState {
+            config: Arc::new(config),
+            store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+            job_engine: Arc::new(MockJobEngine::new()),
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let server_state = state.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_with_state(server_state, listener).await;
+        });
+
+        // Allow the server a brief moment to start
+        sleep(Duration::from_millis(50)).await;
+
+        let client = Client::new();
+        let response = client
+            .get(format!("http://{addr}/health"))
+            .send()
+            .await?;
+
+        server.abort();
+
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "status": "ok" }));
+
+        Ok(())
     }
 }
