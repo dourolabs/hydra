@@ -42,7 +42,7 @@ pub async fn create_job(
             result: None,
         };
         store
-            .add_task_with_id(job_id.clone(), task, vec![])
+            .add_task_with_id(job_id.clone(), task, vec![], Utc::now())
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to store task");

@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Status, Store, StoreError, Task};
+use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::job_engine::MetisId;
 
 /// An in-memory implementation of the Store trait.
@@ -18,6 +19,8 @@ pub struct MemoryStore {
     children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their Status
     statuses: HashMap<MetisId, Status>,
+    /// Maps task IDs to their TaskStatusLog
+    status_logs: HashMap<MetisId, TaskStatusLog>,
 }
 
 impl MemoryStore {
@@ -28,6 +31,7 @@ impl MemoryStore {
             parents: HashMap::new(),
             children: HashMap::new(),
             statuses: HashMap::new(),
+            status_logs: HashMap::new(),
         }
     }
 
@@ -55,6 +59,7 @@ impl Store for MemoryStore {
         &mut self,
         task: Task,
         parent_ids: Vec<MetisId>,
+        creation_time: DateTime<Utc>,
     ) -> Result<MetisId, StoreError> {
         // Generate a unique ID for the new task
         let id = Uuid::new_v4().hyphenated().to_string();
@@ -94,6 +99,17 @@ impl Store for MemoryStore {
         self.children.insert(id.clone(), Vec::new());
         self.statuses.insert(id.clone(), initial_status);
 
+        // Initialize status log
+        self.status_logs.insert(
+            id.clone(),
+            TaskStatusLog {
+                creation_time,
+                start_time: None,
+                end_time: None,
+                failure_reason: None,
+            },
+        );
+
         // Update children of each parent
         for parent_id in &parent_ids {
             self.children
@@ -110,6 +126,7 @@ impl Store for MemoryStore {
         metis_id: MetisId,
         task: Task,
         parent_ids: Vec<MetisId>,
+        creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Check if task already exists
         if self.tasks.contains_key(&metis_id) {
@@ -152,6 +169,17 @@ impl Store for MemoryStore {
         self.parents.insert(metis_id.clone(), parent_ids.clone());
         self.children.insert(metis_id.clone(), Vec::new());
         self.statuses.insert(metis_id.clone(), initial_status);
+
+        // Initialize status log
+        self.status_logs.insert(
+            metis_id.clone(),
+            TaskStatusLog {
+                creation_time,
+                start_time: None,
+                end_time: None,
+                failure_reason: None,
+            },
+        );
 
         // Update children of each parent
         for parent_id in &parent_ids {
@@ -211,6 +239,7 @@ impl Store for MemoryStore {
         self.parents.remove(id);
         self.children.remove(id);
         self.statuses.remove(id);
+        self.status_logs.remove(id);
 
         // Remove this task from its parents' children lists
         for parent_id in &parent_ids {
@@ -249,62 +278,114 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn update_task_status(
-        &mut self,
-        id: &MetisId,
-        new_status: Status,
-    ) -> Result<(), StoreError> {
+    async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError> {
+        self.status_logs
+            .get(id)
+            .cloned()
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+    }
+
+    async fn mark_task_running(&mut self, id: &MetisId, start_time: DateTime<Utc>) -> Result<(), StoreError> {
         // Verify task exists
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
-        // Verify new_status is Running, Complete, or Failed
-        if !matches!(
-            new_status,
-            Status::Running | Status::Complete | Status::Failed
-        ) {
-            return Err(StoreError::Internal(
-                "update_task_status can only set status to Running, Complete, or Failed"
-                    .to_string(),
-            ));
-        }
-
-        // Verify current status is Pending or Running
+        // Verify current status is Pending
         let current_status = self
             .statuses
             .get(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        // Allow transitions from Pending to Running/Complete/Failed
-        // Allow transitions from Running to Complete/Failed
-        let valid_transition = matches!(
-            (current_status, &new_status),
-            (Status::Pending, Status::Running | Status::Complete | Status::Failed)
-                | (Status::Running, Status::Complete | Status::Failed)
-        );
-
-        if !valid_transition {
+        if !matches!(current_status, Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        // Check if we need to update children before inserting the new status
-        let should_update_children = matches!(new_status, Status::Complete | Status::Failed);
+        // Update the status to Running
+        self.statuses.insert(id.clone(), Status::Running);
 
-        // Update the status
-        self.statuses.insert(id.clone(), new_status);
+        // Update status log
+        if let Some(status_log) = self.status_logs.get_mut(id) {
+            status_log.start_time = Some(start_time);
+        }
 
-        // If transitioning to Complete or Failed, check all children (dependents) and update their status if needed
-        if should_update_children {
-            let child_ids = self.children.get(id).cloned().unwrap_or_default();
-            for child_id in child_ids {
-                // If child is blocked, check if all its parents are now complete
-                if let Some(child_status) = self.statuses.get(&child_id) {
-                    if matches!(child_status, Status::Blocked)
-                        && self.all_parents_complete(&child_id)
-                    {
-                        self.statuses.insert(child_id, Status::Pending);
-                    }
+        Ok(())
+    }
+
+    async fn mark_task_complete(&mut self, id: &MetisId, end_time: DateTime<Utc>) -> Result<(), StoreError> {
+        // Verify task exists
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        // Verify current status is Running
+        let current_status = self
+            .statuses
+            .get(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        if !matches!(current_status, Status::Running) {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        // Update the status to Complete
+        self.statuses.insert(id.clone(), Status::Complete);
+
+        // Update status log
+        if let Some(status_log) = self.status_logs.get_mut(id) {
+            status_log.end_time = Some(end_time);
+        }
+
+        // Check all children (dependents) and update their status if needed
+        let child_ids = self.children.get(id).cloned().unwrap_or_default();
+        for child_id in child_ids {
+            // If child is blocked, check if all its parents are now complete
+            if let Some(child_status) = self.statuses.get(&child_id) {
+                if matches!(child_status, Status::Blocked)
+                    && self.all_parents_complete(&child_id)
+                {
+                    self.statuses.insert(child_id, Status::Pending);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn mark_task_failed(&mut self, id: &MetisId, failure_reason: String, end_time: DateTime<Utc>) -> Result<(), StoreError> {
+        // Verify task exists
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        // Verify current status is Running
+        let current_status = self
+            .statuses
+            .get(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        if !matches!(current_status, Status::Running) {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        // Update the status to Failed
+        self.statuses.insert(id.clone(), Status::Failed);
+
+        // Update status log
+        if let Some(status_log) = self.status_logs.get_mut(id) {
+            status_log.end_time = Some(end_time);
+            status_log.failure_reason = Some(failure_reason);
+        }
+
+        // Check all children (dependents) and update their status if needed
+        let child_ids = self.children.get(id).cloned().unwrap_or_default();
+        for child_id in child_ids {
+            // If child is blocked, check if all its parents are now complete
+            if let Some(child_status) = self.statuses.get(&child_id) {
+                if matches!(child_status, Status::Blocked)
+                    && self.all_parents_complete(&child_id)
+                {
+                    self.statuses.insert(child_id, Status::Pending);
                 }
             }
         }
@@ -316,6 +397,7 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use metis_common::jobs::CreateJobRequestContext;
     use std::collections::HashSet;
 
@@ -328,9 +410,9 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task.clone(), vec![]).await.unwrap();
+        let root_id = store.add_task(root_task.clone(), vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -364,7 +446,7 @@ mod tests {
             result: None,
         };
         let err = store
-            .add_task(spawn_task, vec![missing_parent.clone()])
+            .add_task(spawn_task, vec![missing_parent.clone()], Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
@@ -381,9 +463,9 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
@@ -392,7 +474,7 @@ mod tests {
             result: None,
         };
         let grandchild_id = store
-            .add_task(grandchild_task, vec![child_id.clone()])
+            .add_task(grandchild_task, vec![child_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -427,7 +509,7 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
     }
@@ -441,9 +523,9 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -461,25 +543,23 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
-        // Complete the root task
-        store
-            .update_task_status(&root_id, Status::Complete)
-            .await
-            .unwrap();
+        // Complete the root task (first mark as running, then complete)
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        store.mark_task_complete(&root_id, Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
 
         // Add a child - it should start as pending since parent is complete
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
     }
 
     #[tokio::test]
-    async fn update_task_status_completes_pending_task() {
+    async fn mark_task_running_transitions_from_pending() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -487,19 +567,38 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
-        store
-            .update_task_status(&root_id, Status::Complete)
-            .await
-            .unwrap();
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+    }
+
+    #[tokio::test]
+    async fn mark_task_complete_transitions_from_running() {
+        let mut store = MemoryStore::new();
+
+        let root_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
+
+        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
+
+        // First mark as running
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+
+        // Then mark as complete
+        store.mark_task_complete(&root_id, Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
     }
 
     #[tokio::test]
-    async fn update_task_status_fails_pending_task() {
+    async fn mark_task_failed_transitions_from_running() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -507,19 +606,21 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
-        store
-            .update_task_status(&root_id, Status::Failed)
-            .await
-            .unwrap();
+        // First mark as running
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+
+        // Then mark as failed
+        store.mark_task_failed(&root_id, "test failure".to_string(), Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Failed);
     }
 
     #[tokio::test]
-    async fn update_task_status_unblocks_dependents() {
+    async fn mark_task_complete_unblocks_dependents() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -527,9 +628,9 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -537,11 +638,9 @@ mod tests {
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
 
-        // Complete the root task
-        store
-            .update_task_status(&root_id, Status::Complete)
-            .await
-            .unwrap();
+        // Complete the root task (first mark as running, then complete)
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        store.mark_task_complete(&root_id, Utc::now()).await.unwrap();
 
         // Child should now be pending
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -549,7 +648,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_task_status_with_multiple_dependents() {
+    async fn mark_task_complete_with_multiple_dependents() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -557,13 +656,13 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let child2_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -571,11 +670,9 @@ mod tests {
         assert_eq!(store.get_status(&child1_id).await.unwrap(), Status::Blocked);
         assert_eq!(store.get_status(&child2_id).await.unwrap(), Status::Blocked);
 
-        // Complete the root task
-        store
-            .update_task_status(&root_id, Status::Complete)
-            .await
-            .unwrap();
+        // Complete the root task (first mark as running, then complete)
+        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        store.mark_task_complete(&root_id, Utc::now()).await.unwrap();
 
         // Both children should now be pending
         assert_eq!(store.get_status(&child1_id).await.unwrap(), Status::Pending);
@@ -583,7 +680,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_task_status_with_multiple_parents() {
+    async fn mark_task_complete_with_multiple_parents() {
         let mut store = MemoryStore::new();
 
         let root1_task = Task::Spawn {
@@ -591,18 +688,18 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root1_id = store.add_task(root1_task, vec![]).await.unwrap();
+        let root1_id = store.add_task(root1_task, vec![], Utc::now()).await.unwrap();
 
         let root2_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root2_id = store.add_task(root2_task, vec![]).await.unwrap();
+        let root2_id = store.add_task(root2_task, vec![], Utc::now()).await.unwrap();
 
         // Child depends on both parents
         let child_id = store
-            .add_task(Task::Ask, vec![root1_id.clone(), root2_id.clone()])
+            .add_task(Task::Ask, vec![root1_id.clone(), root2_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -610,22 +707,18 @@ mod tests {
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
 
         // Complete first parent - child should still be blocked
-        store
-            .update_task_status(&root1_id, Status::Complete)
-            .await
-            .unwrap();
+        store.mark_task_running(&root1_id, Utc::now()).await.unwrap();
+        store.mark_task_complete(&root1_id, Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
 
         // Complete second parent - child should now be pending
-        store
-            .update_task_status(&root2_id, Status::Complete)
-            .await
-            .unwrap();
+        store.mark_task_running(&root2_id, Utc::now()).await.unwrap();
+        store.mark_task_complete(&root2_id, Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
     }
 
     #[tokio::test]
-    async fn update_task_status_from_blocked_fails() {
+    async fn mark_task_running_from_blocked_fails() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -633,22 +726,19 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()])
+            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
-        // Child is blocked, trying to update it should fail
-        let err = store
-            .update_task_status(&child_id, Status::Complete)
-            .await
-            .unwrap_err();
+        // Child is blocked, trying to mark it as running should fail
+        let err = store.mark_task_running(&child_id, Utc::now()).await.unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
     }
 
     #[tokio::test]
-    async fn update_task_status_to_invalid_status_fails() {
+    async fn mark_task_complete_from_pending_fails() {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
@@ -656,19 +746,26 @@ mod tests {
             context: CreateJobRequestContext::None,
             result: None,
         };
-        let root_id = store.add_task(root_task, vec![]).await.unwrap();
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
-        // Trying to set status to Blocked or Pending should fail
-        let err = store
-            .update_task_status(&root_id, Status::Blocked)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Internal(_)));
+        // Trying to mark as complete from pending should fail
+        let err = store.mark_task_complete(&root_id, Utc::now()).await.unwrap_err();
+        assert!(matches!(err, StoreError::InvalidStatusTransition));
+    }
 
-        let err = store
-            .update_task_status(&root_id, Status::Pending)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Internal(_)));
+    #[tokio::test]
+    async fn mark_task_failed_from_pending_fails() {
+        let mut store = MemoryStore::new();
+
+        let root_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: CreateJobRequestContext::None,
+            result: None,
+        };
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
+
+        // Trying to mark as failed from pending should fail
+        let err = store.mark_task_failed(&root_id, "test".to_string(), Utc::now()).await.unwrap_err();
+        assert!(matches!(err, StoreError::InvalidStatusTransition));
     }
 }

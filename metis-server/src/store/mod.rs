@@ -1,5 +1,6 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use metis_common::{job_outputs::JobOutputPayload, jobs::CreateJobRequestContext};
 
 mod memory_store;
@@ -15,6 +16,16 @@ pub enum Task {
     },
     /// An ask task that queries the human user for information.
     Ask,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskStatusLog {
+    pub creation_time: DateTime<Utc>,
+    /// When the job started running
+    pub start_time: Option<DateTime<Utc>>,
+    /// When the job completed (succeeded or failed)
+    pub end_time: Option<DateTime<Utc>>,
+    pub failure_reason: Option<String>
 }
 
 /// Represents the status of a task in the Metis system.
@@ -68,10 +79,16 @@ pub trait Store: Send + Sync {
     /// - The task already exists
     /// - Any parent task doesn't exist
     /// - Adding the dependencies would create a cycle
+    ///
+    /// # Arguments
+    /// * `task` - The task to add
+    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
+    /// * `creation_time` - The timestamp when the task is being created
     async fn add_task(
         &mut self,
         task: Task,
         parent_ids: Vec<MetisId>,
+        creation_time: DateTime<Utc>,
     ) -> Result<MetisId, StoreError>;
 
     /// Adds a task to the store with a specific ID and parent dependencies.
@@ -89,11 +106,18 @@ pub trait Store: Send + Sync {
     /// - The task already exists
     /// - Any parent task doesn't exist
     /// - Adding the dependencies would create a cycle
+    ///
+    /// # Arguments
+    /// * `metis_id` - The MetisId to use for this task
+    /// * `task` - The task to add
+    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
+    /// * `creation_time` - The timestamp when the task is being created
     async fn add_task_with_id(
         &mut self,
         metis_id: MetisId,
         task: Task,
         parent_ids: Vec<MetisId>,
+        creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
     /// Updates an existing task in the store.
@@ -174,30 +198,81 @@ pub trait Store: Send + Sync {
     /// The status if found, or an error if not found
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError>;
 
-    /// Updates the status of a task.
+    /// Gets the status log for a task by its MetisId.
+    ///
+    /// The status log contains timing information about the task's lifecycle,
+    /// including when it was created, when it started running, when it completed,
+    /// and any failure reason if applicable.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId to look up
+    ///
+    /// # Returns
+    /// The TaskStatusLog if found, or an error if not found
+    async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError>;
+
+    /// Marks a task as running.
     ///
     /// Valid transitions:
-    /// - From Pending to Running, Complete, or Failed
-    /// - From Running to Complete or Failed
-    ///
-    /// This function will also update the status of dependent tasks when transitioning to Complete or Failed:
-    /// - If a task is moved to Complete or Failed, all its children (dependents) are checked
-    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
+    /// - From Pending to Running
     ///
     /// # Arguments
     /// * `id` - The MetisId of the task to update
-    /// * `new_status` - The new status (must be Running, Complete, or Failed)
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
     /// - The task doesn't exist
-    /// - The task is not in a valid state for the transition
-    /// - The new_status is not Running, Complete, or Failed
-    async fn update_task_status(
-        &mut self,
-        id: &MetisId,
-        new_status: Status,
-    ) -> Result<(), StoreError>;
+    /// - The task is not in Pending state
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    /// * `start_time` - The timestamp when the task started running
+    async fn mark_task_running(&mut self, id: &MetisId, start_time: DateTime<Utc>) -> Result<(), StoreError>;
+
+    /// Marks a task as complete.
+    ///
+    /// Valid transitions:
+    /// - From Running to Complete
+    ///
+    /// This function will also update the status of dependent tasks:
+    /// - All children (dependents) are checked
+    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if:
+    /// - The task doesn't exist
+    /// - The task is not in Running state
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    /// * `end_time` - The timestamp when the task completed
+    async fn mark_task_complete(&mut self, id: &MetisId, end_time: DateTime<Utc>) -> Result<(), StoreError>;
+
+    /// Marks a task as failed.
+    ///
+    /// Valid transitions:
+    /// - From Running to Failed
+    ///
+    /// This function will also update the status of dependent tasks:
+    /// - All children (dependents) are checked
+    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if:
+    /// - The task doesn't exist
+    /// - The task is not in Running state
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task to update
+    /// * `failure_reason` - The reason why the task failed
+    /// * `end_time` - The timestamp when the task failed
+    async fn mark_task_failed(&mut self, id: &MetisId, failure_reason: String, end_time: DateTime<Utc>) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;

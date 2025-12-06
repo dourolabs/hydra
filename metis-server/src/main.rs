@@ -12,6 +12,7 @@ use axum::{
     Json, Router,
     routing::{get, post},
 };
+use chrono::Utc;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -169,7 +170,7 @@ async fn process_pending_jobs(state: AppState) {
                     info!(metis_id = %metis_id, "successfully created Kubernetes job");
                     // Set status to Running after successful job creation
                     let mut store = state.store.write().await;
-                    match store.update_task_status(&metis_id, Status::Running).await {
+                    match store.mark_task_running(&metis_id, Utc::now()).await {
                         Ok(()) => {
                             info!(metis_id = %metis_id, "set task status to Running");
                         }
@@ -182,9 +183,8 @@ async fn process_pending_jobs(state: AppState) {
                     error!(metis_id = %metis_id, error = %err, "failed to create Kubernetes job");
                     // Set status to Failed
                     let mut store = state.store.write().await;
-                    if let Err(update_err) =
-                        store.update_task_status(&metis_id, Status::Failed).await
-                    {
+                    let failure_reason = format!("Failed to create Kubernetes job: {err}");
+                    if let Err(update_err) = store.mark_task_failed(&metis_id, failure_reason, Utc::now()).await {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     } else {
                         info!(metis_id = %metis_id, "set task status to Failed");
@@ -229,24 +229,37 @@ async fn monitor_running_jobs(state: AppState) {
         for metis_id in running_ids {
             match state.job_engine.find_job_by_metis_id(&metis_id).await {
                 Ok(job) => {
-                    let new_status = match job.status {
-                        crate::job_engine::JobStatus::Complete => Status::Complete,
-                        crate::job_engine::JobStatus::Failed => Status::Failed,
+                    match job.status {
+                        crate::job_engine::JobStatus::Complete => {
+                            // Update status in store
+                            let mut store = state.store.write().await;
+                            let end_time = job.completion_time.unwrap_or_else(|| Utc::now());
+                            match store.mark_task_complete(&metis_id, end_time).await {
+                                Ok(()) => {
+                                    info!(metis_id = %metis_id, "updated task status to Complete from job engine");
+                                }
+                                Err(err) => {
+                                    warn!(metis_id = %metis_id, error = %err, "failed to update task status to Complete");
+                                }
+                            }
+                        }
+                        crate::job_engine::JobStatus::Failed => {
+                            // Update status in store
+                            let mut store = state.store.write().await;
+                            let end_time = job.completion_time.unwrap_or_else(|| Utc::now());
+                            let failure_reason = job.failure_message.unwrap_or_else(|| "Job failed for an undetermined reason".to_string());
+                            match store.mark_task_failed(&metis_id, failure_reason, end_time).await {
+                                Ok(()) => {
+                                    info!(metis_id = %metis_id, "updated task status to Failed from job engine");
+                                }
+                                Err(err) => {
+                                    warn!(metis_id = %metis_id, error = %err, "failed to update task status to Failed");
+                                }
+                            }
+                        }
                         crate::job_engine::JobStatus::Running => {
                             // Still running, skip
                             continue;
-                        }
-                    };
-
-                    // Update status in store
-                    let status_for_log = new_status.clone();
-                    let mut store = state.store.write().await;
-                    match store.update_task_status(&metis_id, new_status).await {
-                        Ok(()) => {
-                            info!(metis_id = %metis_id, status = ?status_for_log, "updated task status from job engine");
-                        }
-                        Err(err) => {
-                            warn!(metis_id = %metis_id, error = %err, "failed to update task status");
                         }
                     }
                 }
@@ -255,9 +268,8 @@ async fn monitor_running_jobs(state: AppState) {
                     // This could happen if the job was cleaned up externally
                     warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
                     let mut store = state.store.write().await;
-                    if let Err(update_err) =
-                        store.update_task_status(&metis_id, Status::Failed).await
-                    {
+                    let failure_reason = "Job not found in job engine".to_string();
+                    if let Err(update_err) = store.mark_task_failed(&metis_id, failure_reason, Utc::now()).await {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     }
                 }
