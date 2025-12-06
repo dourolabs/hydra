@@ -25,11 +25,13 @@ pub struct TaskStatusLog {
     pub start_time: Option<DateTime<Utc>>,
     /// When the job completed (succeeded or failed)
     pub end_time: Option<DateTime<Utc>>,
+    /// Current status of the task
+    pub current_status: Status,
     pub failure_reason: Option<String>,
 }
 
 /// Represents the status of a task in the Metis system.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Task is blocked by dependencies that haven't completed yet.
     Blocked,

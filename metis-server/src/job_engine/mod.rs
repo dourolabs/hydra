@@ -103,10 +103,15 @@ pub trait JobEngine: Send + Sync {
     ///
     /// # Arguments
     /// * `job_id` - The Metis job ID
+    /// * `tail_lines` - When set, return only the last N lines from the log
     ///
     /// # Returns
     /// The complete logs as a string, or an error if retrieval fails
-    async fn get_logs(&self, job_id: &str) -> Result<String, JobEngineError>;
+    async fn get_logs(
+        &self,
+        job_id: &str,
+        tail_lines: Option<i64>,
+    ) -> Result<String, JobEngineError>;
 
     /// Gets logs for a job as a stream (streaming mode).
     ///

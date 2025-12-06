@@ -70,6 +70,8 @@ pub mod logs {
     pub struct LogsQuery {
         #[serde(default)]
         pub watch: Option<bool>,
+        #[serde(default)]
+        pub tail_lines: Option<i64>,
     }
 }
 

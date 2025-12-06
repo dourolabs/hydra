@@ -17,8 +17,6 @@ pub struct MemoryStore {
     parents: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
-    /// Maps task IDs to their Status
-    statuses: HashMap<MetisId, Status>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -30,7 +28,6 @@ impl MemoryStore {
             tasks: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
-            statuses: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
@@ -39,9 +36,11 @@ impl MemoryStore {
     fn all_parents_complete(&self, id: &MetisId) -> bool {
         let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
         parent_ids.iter().all(|parent_id| {
-            self.statuses
+            self.status_logs
                 .get(parent_id)
-                .map(|status| matches!(status, Status::Complete | Status::Failed))
+                .map(|status_log| {
+                    matches!(status_log.current_status, Status::Complete | Status::Failed)
+                })
                 .unwrap_or(false)
         })
     }
@@ -79,9 +78,11 @@ impl Store for MemoryStore {
         } else {
             // Check if all parents are complete (Complete or Failed)
             let all_complete = parent_ids.iter().all(|parent_id| {
-                self.statuses
+                self.status_logs
                     .get(parent_id)
-                    .map(|status| matches!(status, Status::Complete | Status::Failed))
+                    .map(|status_log| {
+                        matches!(status_log.current_status, Status::Complete | Status::Failed)
+                    })
                     .unwrap_or(false)
             });
             if all_complete {
@@ -97,7 +98,6 @@ impl Store for MemoryStore {
         // Initialize empty vectors if needed
         self.parents.insert(id.clone(), parent_ids.clone());
         self.children.insert(id.clone(), Vec::new());
-        self.statuses.insert(id.clone(), initial_status);
 
         // Initialize status log
         self.status_logs.insert(
@@ -106,6 +106,7 @@ impl Store for MemoryStore {
                 creation_time,
                 start_time: None,
                 end_time: None,
+                current_status: initial_status,
                 failure_reason: None,
             },
         );
@@ -150,9 +151,11 @@ impl Store for MemoryStore {
         } else {
             // Check if all parents are complete (Complete or Failed)
             let all_complete = parent_ids.iter().all(|parent_id| {
-                self.statuses
+                self.status_logs
                     .get(parent_id)
-                    .map(|status| matches!(status, Status::Complete | Status::Failed))
+                    .map(|status_log| {
+                        matches!(status_log.current_status, Status::Complete | Status::Failed)
+                    })
                     .unwrap_or(false)
             });
             if all_complete {
@@ -168,7 +171,6 @@ impl Store for MemoryStore {
         // Initialize empty vectors if needed
         self.parents.insert(metis_id.clone(), parent_ids.clone());
         self.children.insert(metis_id.clone(), Vec::new());
-        self.statuses.insert(metis_id.clone(), initial_status);
 
         // Initialize status log
         self.status_logs.insert(
@@ -177,6 +179,7 @@ impl Store for MemoryStore {
                 creation_time,
                 start_time: None,
                 end_time: None,
+                current_status: initial_status,
                 failure_reason: None,
             },
         );
@@ -238,7 +241,6 @@ impl Store for MemoryStore {
         self.tasks.remove(id);
         self.parents.remove(id);
         self.children.remove(id);
-        self.statuses.remove(id);
         self.status_logs.remove(id);
 
         // Remove this task from its parents' children lists
@@ -264,17 +266,17 @@ impl Store for MemoryStore {
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError> {
         Ok(self
-            .statuses
+            .status_logs
             .iter()
-            .filter(|(_, s)| **s == status)
+            .filter(|(_, status_log)| status_log.current_status == status)
             .map(|(id, _)| id.clone())
             .collect())
     }
 
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError> {
-        self.statuses
+        self.status_logs
             .get(id)
-            .cloned()
+            .map(|status_log| status_log.current_status)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -296,22 +298,18 @@ impl Store for MemoryStore {
         }
 
         // Verify current status is Pending
-        let current_status = self
-            .statuses
-            .get(id)
+        let status_log = self
+            .status_logs
+            .get_mut(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(current_status, Status::Pending) {
+        if !matches!(status_log.current_status, Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        // Update the status to Running
-        self.statuses.insert(id.clone(), Status::Running);
-
         // Update status log
-        if let Some(status_log) = self.status_logs.get_mut(id) {
-            status_log.start_time = Some(start_time);
-        }
+        status_log.current_status = Status::Running;
+        status_log.start_time = Some(start_time);
 
         Ok(())
     }
@@ -327,20 +325,18 @@ impl Store for MemoryStore {
         }
 
         // Verify current status is Running
-        let current_status = self
-            .statuses
-            .get(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        {
+            let status_log = self
+                .status_logs
+                .get_mut(id)
+                .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(current_status, Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
+            if !matches!(status_log.current_status, Status::Running) {
+                return Err(StoreError::InvalidStatusTransition);
+            }
 
-        // Update the status to Complete
-        self.statuses.insert(id.clone(), Status::Complete);
-
-        // Update status log
-        if let Some(status_log) = self.status_logs.get_mut(id) {
+            // Update status log
+            status_log.current_status = Status::Complete;
             status_log.end_time = Some(end_time);
         }
 
@@ -348,9 +344,16 @@ impl Store for MemoryStore {
         let child_ids = self.children.get(id).cloned().unwrap_or_default();
         for child_id in child_ids {
             // If child is blocked, check if all its parents are now complete
-            if let Some(child_status) = self.statuses.get(&child_id) {
-                if matches!(child_status, Status::Blocked) && self.all_parents_complete(&child_id) {
-                    self.statuses.insert(child_id, Status::Pending);
+            let should_unblock = matches!(
+                self.status_logs
+                    .get(&child_id)
+                    .map(|status_log| status_log.current_status),
+                Some(Status::Blocked)
+            ) && self.all_parents_complete(&child_id);
+
+            if should_unblock {
+                if let Some(child_log) = self.status_logs.get_mut(&child_id) {
+                    child_log.current_status = Status::Pending;
                 }
             }
         }
@@ -370,20 +373,18 @@ impl Store for MemoryStore {
         }
 
         // Verify current status is Running
-        let current_status = self
-            .statuses
-            .get(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        {
+            let status_log = self
+                .status_logs
+                .get_mut(id)
+                .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(current_status, Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
+            if !matches!(status_log.current_status, Status::Running) {
+                return Err(StoreError::InvalidStatusTransition);
+            }
 
-        // Update the status to Failed
-        self.statuses.insert(id.clone(), Status::Failed);
-
-        // Update status log
-        if let Some(status_log) = self.status_logs.get_mut(id) {
+            // Update status log
+            status_log.current_status = Status::Failed;
             status_log.end_time = Some(end_time);
             status_log.failure_reason = Some(failure_reason);
         }
@@ -392,9 +393,16 @@ impl Store for MemoryStore {
         let child_ids = self.children.get(id).cloned().unwrap_or_default();
         for child_id in child_ids {
             // If child is blocked, check if all its parents are now complete
-            if let Some(child_status) = self.statuses.get(&child_id) {
-                if matches!(child_status, Status::Blocked) && self.all_parents_complete(&child_id) {
-                    self.statuses.insert(child_id, Status::Pending);
+            let should_unblock = matches!(
+                self.status_logs
+                    .get(&child_id)
+                    .map(|status_log| status_log.current_status),
+                Some(Status::Blocked)
+            ) && self.all_parents_complete(&child_id);
+
+            if should_unblock {
+                if let Some(child_log) = self.status_logs.get_mut(&child_id) {
+                    child_log.current_status = Status::Pending;
                 }
             }
         }

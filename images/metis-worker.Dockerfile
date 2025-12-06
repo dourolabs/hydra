@@ -38,6 +38,9 @@ RUN apt-get update \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure rustfmt is available for formatting tasks run inside the worker image
+RUN rustup component add rustfmt
+
 # Create a non-root user
 RUN useradd -m -s /bin/bash -u 1000 worker \
     && mkdir -p ${APP_HOME} /usr/local/bin \

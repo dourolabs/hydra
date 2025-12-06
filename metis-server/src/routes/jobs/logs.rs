@@ -67,15 +67,16 @@ pub async fn get_job_logs(
             job_id = %job_id,
             "fetching job logs once"
         );
-        fetch_logs(state.job_engine.as_ref(), job_id).await
+        fetch_logs(state.job_engine.as_ref(), job_id, query.tail_lines).await
     }
 }
 
 async fn fetch_logs(
     job_engine: &dyn crate::job_engine::JobEngine,
     job_id: &str,
+    tail_lines: Option<i64>,
 ) -> Result<Response, ApiError> {
-    let logs = job_engine.get_logs(job_id).await.map_err(|err| {
+    let logs = job_engine.get_logs(job_id, tail_lines).await.map_err(|err| {
         error!(job_id = %job_id, error = ?err, "failed to fetch logs");
         match err {
             JobEngineError::NotFound(msg) => ApiError::not_found(msg),

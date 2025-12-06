@@ -355,7 +355,11 @@ impl JobEngine for KubernetesJobEngine {
         })
     }
 
-    async fn get_logs(&self, job_id: &str) -> Result<String, JobEngineError> {
+    async fn get_logs(
+        &self,
+        job_id: &str,
+        tail_lines: Option<i64>,
+    ) -> Result<String, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
         let job_name = job.metadata.name.ok_or_else(|| {
             JobEngineError::Internal(format!("Job '{job_id}' is missing a Kubernetes name."))
@@ -366,6 +370,7 @@ impl JobEngine for KubernetesJobEngine {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let params = LogParams {
             follow: false,
+            tail_lines,
             ..Default::default()
         };
 
