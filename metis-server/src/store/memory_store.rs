@@ -63,8 +63,7 @@ impl Store for MemoryStore {
         for parent_id in &parent_ids {
             if !self.tasks.contains_key(parent_id) {
                 return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {}",
-                    parent_id
+                    "Parent task not found: {parent_id}"
                 )));
             }
         }
@@ -115,8 +114,7 @@ impl Store for MemoryStore {
         // Check if task already exists
         if self.tasks.contains_key(&metis_id) {
             return Err(StoreError::Internal(format!(
-                "Task already exists: {}",
-                metis_id
+                "Task already exists: {metis_id}"
             )));
         }
 
@@ -124,8 +122,7 @@ impl Store for MemoryStore {
         for parent_id in &parent_ids {
             if !self.tasks.contains_key(parent_id) {
                 return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {}",
-                    parent_id
+                    "Parent task not found: {parent_id}"
                 )));
             }
         }
@@ -281,11 +278,11 @@ impl Store for MemoryStore {
 
         // Allow transitions from Pending to Running/Complete/Failed
         // Allow transitions from Running to Complete/Failed
-        let valid_transition = match (current_status, &new_status) {
-            (Status::Pending, Status::Running | Status::Complete | Status::Failed) => true,
-            (Status::Running, Status::Complete | Status::Failed) => true,
-            _ => false,
-        };
+        let valid_transition = matches!(
+            (current_status, &new_status),
+            (Status::Pending, Status::Running | Status::Complete | Status::Failed)
+                | (Status::Running, Status::Complete | Status::Failed)
+        );
 
         if !valid_transition {
             return Err(StoreError::InvalidStatusTransition);
@@ -303,10 +300,10 @@ impl Store for MemoryStore {
             for child_id in child_ids {
                 // If child is blocked, check if all its parents are now complete
                 if let Some(child_status) = self.statuses.get(&child_id) {
-                    if matches!(child_status, Status::Blocked) {
-                        if self.all_parents_complete(&child_id) {
-                            self.statuses.insert(child_id, Status::Pending);
-                        }
+                    if matches!(child_status, Status::Blocked)
+                        && self.all_parents_complete(&child_id)
+                    {
+                        self.statuses.insert(child_id, Status::Pending);
                     }
                 }
             }

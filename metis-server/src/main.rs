@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 mod config;
 mod job_engine;
 mod routes;
@@ -96,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = listener.local_addr()?;
 
     info!("metis-server listening on http://{}", addr);
-    println!("metis-server listening on http://{}", addr);
+    println!("metis-server listening on http://{addr}");
 
     axum::serve(listener, app).await?;
 

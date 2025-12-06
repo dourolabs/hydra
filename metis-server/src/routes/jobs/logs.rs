@@ -110,17 +110,12 @@ async fn stream_logs_sse(
 
     tokio::spawn(async move {
         let sender = tx;
-        loop {
-            match receiver.next().await {
-                Some(chunk) => {
-                    if sender
-                        .unbounded_send(Ok(Event::default().data(chunk)))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                None => break,
+        while let Some(chunk) = receiver.next().await {
+            if sender
+                .unbounded_send(Ok(Event::default().data(chunk)))
+                .is_err()
+            {
+                break;
             }
         }
     });

@@ -27,7 +27,7 @@ pub async fn run(
         last_message,
         patch,
     };
-    println!("Setting output for job '{}' via metis-server…", job_id);
+    println!("Setting output for job '{job_id}' via metis-server…");
     let response = client.set_job_output(job_id, &payload).await?;
     println!(
         "Output set for job '{}'. Stored last message length: {}, patch length: {}",

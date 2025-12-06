@@ -16,13 +16,13 @@ fn pretty_print_patch(patch: &str) {
     for line in patch.lines() {
         if line.starts_with('+') && !line.starts_with("+++") {
             // Addition line (but not the +++ header)
-            writeln!(handle, "{}{}{}", GREEN, line, RESET).unwrap();
+            writeln!(handle, "{GREEN}{line}{RESET}").unwrap();
         } else if line.starts_with('-') && !line.starts_with("---") {
             // Deletion line (but not the --- header)
-            writeln!(handle, "{}{}{}", RED, line, RESET).unwrap();
+            writeln!(handle, "{RED}{line}{RESET}").unwrap();
         } else {
             // Context lines, headers, etc.
-            writeln!(handle, "{}", line).unwrap();
+            writeln!(handle, "{line}").unwrap();
         }
     }
 }
@@ -35,7 +35,7 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     let job_id = job_id.to_string();
     let client = MetisClient::from_config(config)?;
 
-    println!("Fetching patch for job '{}' via metis-server…", job_id);
+    println!("Fetching patch for job '{job_id}' via metis-server…");
 
     let response = client.get_job_output(&job_id).await?;
 
@@ -86,13 +86,13 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
         // Print stderr if there's any output (warnings, etc.)
         if !output.stderr.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("git apply stderr: {}", stderr);
+            eprintln!("git apply stderr: {stderr}");
         }
 
         // Print stdout if there's any output
         if !output.stdout.is_empty() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            println!("git apply stdout: {}", stdout);
+            println!("git apply stdout: {stdout}");
         }
 
         if !output.status.success() {

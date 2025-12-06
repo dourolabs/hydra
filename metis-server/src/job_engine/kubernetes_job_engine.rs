@@ -85,7 +85,7 @@ impl KubernetesJobEngine {
 
         if status.succeeded.unwrap_or(0) > 0 {
             if let Some(completion_time) = status.completion_time.as_ref() {
-                return Some(completion_time.0.clone());
+                return Some(completion_time.0);
             }
 
             if let Some(time) = Self::condition_time(status, "Complete") {
@@ -112,7 +112,7 @@ impl KubernetesJobEngine {
                     .find(|condition| condition.type_ == kind)
                     .and_then(|condition| condition.last_transition_time.as_ref())
             })
-            .map(|time| time.0.clone())
+            .map(|time| time.0)
     }
 
     fn job_failure_message(job: &Job) -> Option<String> {
@@ -200,7 +200,7 @@ async fn wait_for_pod_name_impl(
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
     async fn create_job(&self, metis_id: &MetisId, prompt: &str) -> Result<(), JobEngineError> {
-        let job_name = format!("metis-worker-{}", metis_id);
+        let job_name = format!("metis-worker-{metis_id}");
 
         info!(metis_id = %metis_id, namespace = %self.namespace, "creating Kubernetes job");
 
@@ -298,12 +298,12 @@ impl JobEngine for KubernetesJobEngine {
                     .metadata
                     .creation_timestamp
                     .as_ref()
-                    .map(|t| t.0.clone());
+                    .map(|t| t.0);
                 let start_time = job
                     .status
                     .as_ref()
                     .and_then(|s| s.start_time.as_ref())
-                    .map(|t| t.0.clone());
+                    .map(|t| t.0);
                 let completion_time = Self::job_end_time(&job);
                 let failure_message = Self::job_failure_message(&job);
 
@@ -337,19 +337,19 @@ impl JobEngine for KubernetesJobEngine {
     async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
         let id = Self::job_metis_id(&job).ok_or_else(|| {
-            JobEngineError::Internal(format!("Job '{}' is missing metis-id label", metis_id))
+            JobEngineError::Internal(format!("Job '{metis_id}' is missing metis-id label"))
         })?;
         let status = Self::job_status(&job);
         let creation_time = job
             .metadata
             .creation_timestamp
             .as_ref()
-            .map(|t| t.0.clone());
+            .map(|t| t.0);
         let start_time = job
             .status
             .as_ref()
             .and_then(|s| s.start_time.as_ref())
-            .map(|t| t.0.clone());
+            .map(|t| t.0);
         let completion_time = Self::job_end_time(&job);
         let failure_message = Self::job_failure_message(&job);
 
@@ -366,14 +366,16 @@ impl JobEngine for KubernetesJobEngine {
     async fn get_logs(&self, job_id: &str) -> Result<String, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
         let job_name = job.metadata.name.ok_or_else(|| {
-            JobEngineError::Internal(format!("Job '{}' is missing a Kubernetes name.", job_id))
+            JobEngineError::Internal(format!("Job '{job_id}' is missing a Kubernetes name."))
         })?;
 
         let pod_name = self.wait_for_pod_name(&job_name).await?;
 
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
-        let mut params = LogParams::default();
-        params.follow = false;
+        let params = LogParams {
+            follow: false,
+            ..Default::default()
+        };
 
         let mut reader = pods
             .log_stream(&pod_name, &params)
@@ -385,7 +387,7 @@ impl JobEngine for KubernetesJobEngine {
 
         loop {
             let read = reader.read(&mut chunk).await.map_err(|err| {
-                JobEngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, err))
+                JobEngineError::Io(std::io::Error::other(err))
             })?;
             if read == 0 {
                 break;
@@ -415,8 +417,7 @@ impl JobEngine for KubernetesJobEngine {
                         Some(name) => name,
                         None => {
                             let _ = sender.unbounded_send(format!(
-                                "Error: Job '{}' is missing a Kubernetes name.",
-                                job_id
+                                "Error: Job '{job_id}' is missing a Kubernetes name."
                             ));
                             return;
                         }
@@ -425,8 +426,10 @@ impl JobEngine for KubernetesJobEngine {
                     match wait_for_pod_name_impl(&client, &namespace, &job_name).await {
                         Ok(pod_name) => {
                             let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-                            let mut params = LogParams::default();
-                            params.follow = follow;
+                            let params = LogParams {
+                                follow,
+                                ..Default::default()
+                            };
 
                             match pods.log_stream(&pod_name, &params).await {
                                 Ok(mut reader) => {
@@ -449,24 +452,24 @@ impl JobEngine for KubernetesJobEngine {
                                             }
                                             Err(err) => {
                                                 let _ = sender
-                                                    .unbounded_send(format!("Error: {}", err));
+                                                    .unbounded_send(format!("Error: {err}"));
                                                 break;
                                             }
                                         }
                                     }
                                 }
                                 Err(err) => {
-                                    let _ = sender.unbounded_send(format!("Error: {}", err));
+                                    let _ = sender.unbounded_send(format!("Error: {err}"));
                                 }
                             }
                         }
                         Err(err) => {
-                            let _ = sender.unbounded_send(format!("Error: {}", err));
+                            let _ = sender.unbounded_send(format!("Error: {err}"));
                         }
                     }
                 }
                 Err(err) => {
-                    let _ = sender.unbounded_send(format!("Error: {}", err));
+                    let _ = sender.unbounded_send(format!("Error: {err}"));
                 }
             }
         });

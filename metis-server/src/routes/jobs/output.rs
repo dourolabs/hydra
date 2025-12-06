@@ -24,7 +24,7 @@ pub async fn set_job_output(
         let job_id_string = job_id.to_string();
         let current_task = store.get_task(&job_id_string).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
-            ApiError::not_found(format!("Job '{}' not found in store", job_id))
+            ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
         let updated_task = match current_task {
@@ -46,7 +46,7 @@ pub async fn set_job_output(
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to update task with output");
-                ApiError::internal(anyhow::anyhow!("Failed to update task: {}", err))
+                ApiError::internal(anyhow::anyhow!("Failed to update task: {err}"))
             })?;
     }
 
@@ -72,7 +72,7 @@ pub async fn get_job_output(
     let job_id_string = job_id.to_string();
     let task = store.get_task(&job_id_string).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to get task");
-        ApiError::not_found(format!("Job '{}' not found", job_id))
+        ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
     if let Task::Spawn {

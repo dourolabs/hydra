@@ -263,7 +263,7 @@ impl MetisClient {
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
-            .with_context(|| format!("failed to construct endpoint URL for '{}'", path))
+            .with_context(|| format!("failed to construct endpoint URL for '{path}'"))
     }
 
     fn stream_text_logs(body: String) -> LogStream {

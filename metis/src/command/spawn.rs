@@ -46,10 +46,10 @@ pub async fn run(
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
-    println!("Requested Metis job {}", job_id);
+    println!("Requested Metis job {job_id}");
 
     if wait {
-        println!("Streaming logs for job '{}' via metis-server…", job_id);
+        println!("Streaming logs for job '{job_id}' via metis-server…");
         stream_job_logs_via_server(&client, &job_id, true).await?;
         wait_for_job_completion_via_server(&client, &job_id).await?;
     }
@@ -62,8 +62,9 @@ pub(crate) async fn stream_job_logs_via_server(
     job_id: &str,
     watch: bool,
 ) -> Result<()> {
-    let mut query = LogsQuery::default();
-    query.watch = Some(watch);
+    let query = LogsQuery {
+        watch: Some(watch),
+    };
 
     let mut log_stream = client
         .get_job_logs(job_id, &query)
@@ -88,11 +89,11 @@ async fn wait_for_job_completion_via_server(client: &MetisClient, job_id: &str) 
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
             match job.status.as_str() {
                 "complete" => {
-                    println!("Job '{}' completed successfully.", job_id);
+                    println!("Job '{job_id}' completed successfully.");
                     return Ok(());
                 }
                 "failed" => {
-                    bail!("Job '{}' failed.", job_id);
+                    bail!("Job '{job_id}' failed.");
                 }
                 _ => {}
             }

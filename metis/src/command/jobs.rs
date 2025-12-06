@@ -24,7 +24,7 @@ pub async fn run(config: &AppConfig) -> Result<()> {
         status_width = STATUS_WIDTH,
         runtime_width = RUNTIME_WIDTH
     );
-    println!("{}", header);
+    println!("{header}");
     println!("{}", "-".repeat(header.len()));
 
     for job in response.jobs {
@@ -40,7 +40,7 @@ pub async fn run(config: &AppConfig) -> Result<()> {
             status_width = STATUS_WIDTH,
             runtime_width = RUNTIME_WIDTH
         );
-        println!("{}", row);
+        println!("{row}");
     }
 
     Ok(())

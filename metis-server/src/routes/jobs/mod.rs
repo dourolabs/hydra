@@ -46,7 +46,7 @@ pub async fn create_job(
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to store task");
-                ApiError::internal(anyhow::anyhow!("Failed to store task: {}", err))
+                ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
             })?;
     }
 
@@ -191,7 +191,7 @@ async fn job_notes(
     store: &dyn Store,
 ) -> Option<String> {
     let note = match status {
-        JobStatus::Failed => failure_message.clone().or_else(|| None),
+        JobStatus::Failed => failure_message.clone(),
         JobStatus::Complete | JobStatus::Running => None,
     };
 
@@ -201,14 +201,12 @@ async fn job_notes(
 
     // Try to get the task and extract the result's last_message
     let job_id_string = job_id.to_string();
-    if let Ok(task) = store.get_task(&job_id_string).await {
-        if let Task::Spawn {
-            result: Some(output),
-            ..
-        } = task
-        {
-            return sanitize_note(&output.last_message);
-        }
+    if let Ok(Task::Spawn {
+        result: Some(output),
+        ..
+    }) = store.get_task(&job_id_string).await
+    {
+        return sanitize_note(&output.last_message);
     }
 
     None
