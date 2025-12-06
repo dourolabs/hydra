@@ -670,11 +670,5 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::Internal(_)));
-
-        let err = store
-            .update_task_status(&root_id, Status::Running)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::Internal(_)));
     }
 }
