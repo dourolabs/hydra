@@ -101,9 +101,7 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
         .status()
         .context("failed to spawn git clone from bundle")?;
     if !status.success() {
-        return Err(anyhow!(
-            "git clone from bundle failed with status {status}"
-        ));
+        return Err(anyhow!("git clone from bundle failed with status {status}"));
     }
     Ok(())
 }

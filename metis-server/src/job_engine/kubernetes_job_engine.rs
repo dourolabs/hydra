@@ -294,11 +294,7 @@ impl JobEngine for KubernetesJobEngine {
             .filter_map(|job| {
                 let id = Self::job_metis_id(&job)?;
                 let status = Self::job_status(&job);
-                let creation_time = job
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .map(|t| t.0);
+                let creation_time = job.metadata.creation_timestamp.as_ref().map(|t| t.0);
                 let start_time = job
                     .status
                     .as_ref()
@@ -340,11 +336,7 @@ impl JobEngine for KubernetesJobEngine {
             JobEngineError::Internal(format!("Job '{metis_id}' is missing metis-id label"))
         })?;
         let status = Self::job_status(&job);
-        let creation_time = job
-            .metadata
-            .creation_timestamp
-            .as_ref()
-            .map(|t| t.0);
+        let creation_time = job.metadata.creation_timestamp.as_ref().map(|t| t.0);
         let start_time = job
             .status
             .as_ref()
@@ -386,9 +378,10 @@ impl JobEngine for KubernetesJobEngine {
         let mut chunk = vec![0u8; 1024];
 
         loop {
-            let read = reader.read(&mut chunk).await.map_err(|err| {
-                JobEngineError::Io(std::io::Error::other(err))
-            })?;
+            let read = reader
+                .read(&mut chunk)
+                .await
+                .map_err(|err| JobEngineError::Io(std::io::Error::other(err)))?;
             if read == 0 {
                 break;
             }
@@ -451,8 +444,8 @@ impl JobEngine for KubernetesJobEngine {
                                                 }
                                             }
                                             Err(err) => {
-                                                let _ = sender
-                                                    .unbounded_send(format!("Error: {err}"));
+                                                let _ =
+                                                    sender.unbounded_send(format!("Error: {err}"));
                                                 break;
                                             }
                                         }

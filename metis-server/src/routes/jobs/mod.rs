@@ -91,7 +91,8 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         };
 
         let runtime = task_runtime(&status_log, now).map(format_duration);
-        let notes = job_notes_from_store(&task_id, &status, &status_log.failure_reason, store).await;
+        let notes =
+            job_notes_from_store(&task_id, &status, &status_log.failure_reason, store).await;
 
         let reference_time = status_log.start_time.or(Some(status_log.creation_time));
         summaries_with_times.push((
@@ -112,7 +113,10 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         time_b.cmp(&time_a)
     });
 
-    let summaries: Vec<JobSummary> = summaries_with_times.into_iter().map(|(summary, _)| summary).collect();
+    let summaries: Vec<JobSummary> = summaries_with_times
+        .into_iter()
+        .map(|(summary, _)| summary)
+        .collect();
 
     info!(
         namespace = %namespace,

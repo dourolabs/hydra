@@ -14,7 +14,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde_json::json;
-use std::{env, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, env, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -184,7 +184,10 @@ async fn process_pending_jobs(state: AppState) {
                     // Set status to Failed
                     let mut store = state.store.write().await;
                     let failure_reason = format!("Failed to create Kubernetes job: {err}");
-                    if let Err(update_err) = store.mark_task_failed(&metis_id, failure_reason, Utc::now()).await {
+                    if let Err(update_err) = store
+                        .mark_task_failed(&metis_id, failure_reason, Utc::now())
+                        .await
+                    {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     } else {
                         info!(metis_id = %metis_id, "set task status to Failed");
@@ -206,6 +209,54 @@ async fn monitor_running_jobs(state: AppState) {
     loop {
         // Check every 5 seconds
         sleep(Duration::from_secs(5)).await;
+
+        // Kill any jobs that are running in the engine but missing from the store
+        let job_engine_jobs = match state.job_engine.list_jobs().await {
+            Ok(jobs) => jobs,
+            Err(err) => {
+                error!(error = %err, "failed to list jobs in job engine");
+                Vec::new()
+            }
+        };
+
+        if !job_engine_jobs.is_empty() {
+            let store_task_ids = {
+                let store = state.store.read().await;
+                match store.list_tasks().await {
+                    Ok(ids) => Some(ids),
+                    Err(err) => {
+                        error!(error = %err, "failed to list tasks from store for job reconciliation");
+                        None
+                    }
+                }
+            };
+
+            if let Some(store_task_ids) = store_task_ids {
+                let store_task_set: HashSet<_> = store_task_ids.into_iter().collect();
+                let orphaned_jobs: Vec<_> = job_engine_jobs
+                    .into_iter()
+                    .filter(|job| !store_task_set.contains(&job.id))
+                    .collect();
+
+                if !orphaned_jobs.is_empty() {
+                    info!(
+                        count = orphaned_jobs.len(),
+                        "killing jobs present in engine but missing from store"
+                    );
+                }
+
+                for job in orphaned_jobs {
+                    match state.job_engine.kill_job(&job.id).await {
+                        Ok(()) => {
+                            info!(metis_id = %job.id, "killed job not present in store");
+                        }
+                        Err(err) => {
+                            warn!(metis_id = %job.id, error = %err, "failed to kill job not present in store");
+                        }
+                    }
+                }
+            }
+        }
 
         // Get running tasks
         let running_ids = {
@@ -247,8 +298,13 @@ async fn monitor_running_jobs(state: AppState) {
                             // Update status in store
                             let mut store = state.store.write().await;
                             let end_time = job.completion_time.unwrap_or_else(|| Utc::now());
-                            let failure_reason = job.failure_message.unwrap_or_else(|| "Job failed for an undetermined reason".to_string());
-                            match store.mark_task_failed(&metis_id, failure_reason, end_time).await {
+                            let failure_reason = job.failure_message.unwrap_or_else(|| {
+                                "Job failed for an undetermined reason".to_string()
+                            });
+                            match store
+                                .mark_task_failed(&metis_id, failure_reason, end_time)
+                                .await
+                            {
                                 Ok(()) => {
                                     info!(metis_id = %metis_id, "updated task status to Failed from job engine");
                                 }
@@ -269,7 +325,10 @@ async fn monitor_running_jobs(state: AppState) {
                     warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
                     let mut store = state.store.write().await;
                     let failure_reason = "Job not found in job engine".to_string();
-                    if let Err(update_err) = store.mark_task_failed(&metis_id, failure_reason, Utc::now()).await {
+                    if let Err(update_err) = store
+                        .mark_task_failed(&metis_id, failure_reason, Utc::now())
+                        .await
+                    {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     }
                 }

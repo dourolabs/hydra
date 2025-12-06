@@ -62,9 +62,7 @@ pub(crate) async fn stream_job_logs_via_server(
     job_id: &str,
     watch: bool,
 ) -> Result<()> {
-    let query = LogsQuery {
-        watch: Some(watch),
-    };
+    let query = LogsQuery { watch: Some(watch) };
 
     let mut log_stream = client
         .get_job_logs(job_id, &query)

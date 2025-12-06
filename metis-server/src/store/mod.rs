@@ -25,7 +25,7 @@ pub struct TaskStatusLog {
     pub start_time: Option<DateTime<Utc>>,
     /// When the job completed (succeeded or failed)
     pub end_time: Option<DateTime<Utc>>,
-    pub failure_reason: Option<String>
+    pub failure_reason: Option<String>,
 }
 
 /// Represents the status of a task in the Metis system.
@@ -227,7 +227,11 @@ pub trait Store: Send + Sync {
     /// # Arguments
     /// * `id` - The MetisId of the task to update
     /// * `start_time` - The timestamp when the task started running
-    async fn mark_task_running(&mut self, id: &MetisId, start_time: DateTime<Utc>) -> Result<(), StoreError>;
+    async fn mark_task_running(
+        &mut self,
+        id: &MetisId,
+        start_time: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
 
     /// Marks a task as complete.
     ///
@@ -249,7 +253,11 @@ pub trait Store: Send + Sync {
     /// # Arguments
     /// * `id` - The MetisId of the task to update
     /// * `end_time` - The timestamp when the task completed
-    async fn mark_task_complete(&mut self, id: &MetisId, end_time: DateTime<Utc>) -> Result<(), StoreError>;
+    async fn mark_task_complete(
+        &mut self,
+        id: &MetisId,
+        end_time: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
 
     /// Marks a task as failed.
     ///
@@ -272,7 +280,12 @@ pub trait Store: Send + Sync {
     /// * `id` - The MetisId of the task to update
     /// * `failure_reason` - The reason why the task failed
     /// * `end_time` - The timestamp when the task failed
-    async fn mark_task_failed(&mut self, id: &MetisId, failure_reason: String, end_time: DateTime<Utc>) -> Result<(), StoreError>;
+    async fn mark_task_failed(
+        &mut self,
+        id: &MetisId,
+        failure_reason: String,
+        end_time: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;
