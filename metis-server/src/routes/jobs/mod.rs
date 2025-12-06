@@ -1,7 +1,6 @@
 use crate::{
     AppState,
-    job_engine::{JobEngineError, JobStatus},
-    store::{Store, Task},
+    store::{Status as StoreStatus, Store, Task},
 };
 use axum::{
     Json,
@@ -9,7 +8,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use tracing::{error, info};
@@ -60,43 +59,60 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     let config = state.config;
     let namespace = config.metis.namespace.clone();
 
-    let metis_jobs = state.job_engine.list_jobs().await.map_err(|err| {
-        error!(error = ?err, namespace = %namespace, "failed to list jobs");
-        match err {
-            JobEngineError::Kubernetes(kube_err) => {
-                error!(error = ?kube_err, "Kubernetes error in list_jobs");
-                ApiError::internal(kube_err)
-            }
-            err => {
-                error!(error = %err, "error listing jobs");
-                ApiError::internal(err)
-            }
-        }
+    let store_read = state.store.read().await;
+    let store = store_read.as_ref();
+
+    // Get all tasks with all statuses
+    let task_ids = store.list_tasks().await.map_err(|err| {
+        error!(error = %err, "failed to list tasks");
+        ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
     })?;
 
     let now = Utc::now();
 
-    let mut summaries = Vec::new();
-    for job in metis_jobs {
-        let runtime = job_runtime(&job, now).map(format_duration);
-        let notes = {
-            let store_read = state.store.read().await;
-            job_notes(
-                &job.id,
-                job.status,
-                &job.failure_message,
-                store_read.as_ref(),
-            )
-            .await
+    // Collect all summaries with their reference times for sorting
+    let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();
+    for task_id in task_ids {
+        let status = match store.get_status(&task_id).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let status_log = match store.get_status_log(&task_id).await {
+            Ok(log) => log,
+            Err(_) => continue,
         };
 
-        summaries.push(JobSummary {
-            id: job.id,
-            status: job.status.to_string(),
-            runtime,
-            notes,
-        });
+        let job_status_str = match status {
+            StoreStatus::Running => "running",
+            StoreStatus::Complete => "complete",
+            StoreStatus::Failed => "failed",
+            StoreStatus::Pending => "pending",
+            StoreStatus::Blocked => "blocked",
+        };
+
+        let runtime = task_runtime(&status_log, now).map(format_duration);
+        let notes = job_notes_from_store(&task_id, &status, &status_log.failure_reason, store).await;
+
+        let reference_time = status_log.start_time.or(Some(status_log.creation_time));
+        summaries_with_times.push((
+            JobSummary {
+                id: task_id,
+                status: job_status_str.to_string(),
+                runtime,
+                notes,
+            },
+            reference_time,
+        ));
     }
+
+    // Sort by reference time, most recent first
+    summaries_with_times.sort_by(|a, b| {
+        let time_a = a.1;
+        let time_b = b.1;
+        time_b.cmp(&time_a)
+    });
+
+    let summaries: Vec<JobSummary> = summaries_with_times.into_iter().map(|(summary, _)| summary).collect();
 
     info!(
         namespace = %namespace,
@@ -151,12 +167,12 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn job_runtime(
-    job: &crate::job_engine::MetisJob,
-    now: chrono::DateTime<Utc>,
+fn task_runtime(
+    status_log: &crate::store::TaskStatusLog,
+    now: DateTime<Utc>,
 ) -> Option<ChronoDuration> {
-    let start = job.start_time.or(job.creation_time)?;
-    let end = job.completion_time.unwrap_or(now);
+    let start = status_log.start_time.or(Some(status_log.creation_time))?;
+    let end = status_log.end_time.unwrap_or(now);
 
     if end < start {
         return Some(ChronoDuration::zero());
@@ -184,15 +200,16 @@ fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
-async fn job_notes(
+async fn job_notes_from_store(
     job_id: &str,
-    status: JobStatus,
-    failure_message: &Option<String>,
+    status: &StoreStatus,
+    failure_reason: &Option<String>,
     store: &dyn Store,
 ) -> Option<String> {
     let note = match status {
-        JobStatus::Failed => failure_message.clone(),
-        JobStatus::Complete | JobStatus::Running => None,
+        StoreStatus::Failed => failure_reason.clone(),
+        StoreStatus::Complete | StoreStatus::Running => None,
+        StoreStatus::Pending | StoreStatus::Blocked => None,
     };
 
     if let Some(note) = note {
