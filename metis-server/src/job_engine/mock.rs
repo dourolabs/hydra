@@ -56,7 +56,10 @@ impl JobEngine for MockJobEngine {
     async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
         let mut matches: Vec<MetisJob> = {
             let jobs = self.jobs.lock().await;
-            jobs.iter().filter(|job| &job.id == metis_id).cloned().collect()
+            jobs.iter()
+                .filter(|job| &job.id == metis_id)
+                .cloned()
+                .collect()
         };
 
         match matches.len() {

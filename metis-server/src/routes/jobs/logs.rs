@@ -76,13 +76,16 @@ async fn fetch_logs(
     job_id: &str,
     tail_lines: Option<i64>,
 ) -> Result<Response, ApiError> {
-    let logs = job_engine.get_logs(job_id, tail_lines).await.map_err(|err| {
-        error!(job_id = %job_id, error = ?err, "failed to fetch logs");
-        match err {
-            JobEngineError::NotFound(msg) => ApiError::not_found(msg),
-            err => ApiError::internal(err),
-        }
-    })?;
+    let logs = job_engine
+        .get_logs(job_id, tail_lines)
+        .await
+        .map_err(|err| {
+            error!(job_id = %job_id, error = ?err, "failed to fetch logs");
+            match err {
+                JobEngineError::NotFound(msg) => ApiError::not_found(msg),
+                err => ApiError::internal(err),
+            }
+        })?;
 
     Ok((
         [(

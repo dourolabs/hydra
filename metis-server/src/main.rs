@@ -4,6 +4,8 @@ mod config;
 mod job_engine;
 mod routes;
 mod store;
+#[cfg(test)]
+mod test;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
@@ -348,47 +350,186 @@ async fn monitor_running_jobs(state: AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::{KubernetesSection, MetisSection};
-    use crate::job_engine::MockJobEngine;
-    use reqwest::Client;
+    use crate::test::{
+        spawn_test_server, spawn_test_server_with_state, test_client, test_state,
+    };
     use serde_json::json;
-    use tokio::time::sleep;
 
     #[tokio::test]
     async fn health_route_runs_with_injected_dependencies() -> anyhow::Result<()> {
-        let config = AppConfig {
-            metis: MetisSection::default(),
-            kubernetes: KubernetesSection::default(),
-        };
-        let state = AppState {
-            config: Arc::new(config),
-            store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
-            job_engine: Arc::new(MockJobEngine::new()),
-        };
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-        let server_state = state.clone();
-        let server = tokio::spawn(async move {
-            let _ = run_with_state(server_state, listener).await;
-        });
-
-        // Allow the server a brief moment to start
-        sleep(Duration::from_millis(50)).await;
-
-        let client = Client::new();
+        let server = spawn_test_server().await?;
+        let client = test_client();
         let response = client
-            .get(format!("http://{addr}/health"))
+            .get(format!("{}/health", server.base_url()))
             .send()
             .await?;
-
-        server.abort();
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
         assert_eq!(body, json!({ "status": "ok" }));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_rejects_empty_prompt() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement create_job rejection assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_trims_prompt_and_enqueues_task() -> anyhow::Result<()> {
+        let state = test_state();
+        let _server = spawn_test_server_with_state(state).await?;
+        // TODO: Implement create_job success path assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement list_jobs empty-state assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement list_jobs sorting assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement logs empty job_id assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement logs multiple match assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement logs 404 assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement streaming logs assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn kill_job_rejects_empty_job_id() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement kill_job empty id assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement kill_job 404 assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement kill_job conflict assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement set_job_output empty id assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_output_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement set_job_output missing job assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_output_rejects_ask_tasks() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement set_job_output ask-task assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_output_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement set_job_output success assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_output empty id assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_output_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_output 404 assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_output_returns_stored_output() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_output success assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_output_errors_when_result_is_missing() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_output missing result assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_context_rejects_empty_job_id() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_context empty id assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_context 404 assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_context success assertions.
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_context_rejects_ask_tasks() -> anyhow::Result<()> {
+        let _server = spawn_test_server().await?;
+        // TODO: Implement get_job_context ask-task assertions.
         Ok(())
     }
 }
