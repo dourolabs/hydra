@@ -75,13 +75,14 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
 
         println!("{:?}", patch_file.path());
 
-        // Apply the patch using git apply from the repository root
+        // Apply the patch using git apply from the repository root, allowing merge-style conflicts
         let output = Command::new("git")
             .arg("apply")
+            .args(["--3way", "--index"])
             .arg(patch_file.path())
             .current_dir(&git_root_path)
             .output()
-            .context("Failed to execute git apply")?;
+            .context("Failed to execute git apply with 3-way merge")?;
 
         // Print stderr if there's any output (warnings, etc.)
         if !output.stderr.is_empty() {
@@ -95,16 +96,32 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
             println!("git apply stdout: {stdout}");
         }
 
-        if !output.status.success() {
+        if output.status.success() {
+            println!("Patch applied successfully.");
+        } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Check for merge conflicts so the user can resolve them like a regular git merge
+            let conflicted_files = Command::new("git")
+                .args(["diff", "--name-only", "--diff-filter=U"])
+                .current_dir(&git_root_path)
+                .output()
+                .context("Failed to check for merge conflicts after applying patch")?;
+            let conflicts = String::from_utf8_lossy(&conflicted_files.stdout);
+
+            if !conflicts.trim().is_empty() {
+                println!(
+                    "Patch applied with merge conflicts. Please resolve the following files:\n{conflicts}"
+                );
+                bail!("Merge conflicts detected while applying patch; resolve them and continue.");
+            }
+
             bail!(
                 "Failed to apply patch. Exit code: {}. Error: {}",
                 output.status.code().unwrap_or(-1),
                 stderr
             );
         }
-
-        println!("Patch applied successfully.");
     } else {
         if !response.output.last_message.is_empty() {
             println!("\nLast agent message:\n{}\n", response.output.last_message);

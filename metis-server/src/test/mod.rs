@@ -83,4 +83,3 @@ async fn wait_for_server_ready(base_url: &str) -> anyhow::Result<()> {
         "test server did not respond at {health_url}"
     ))
 }
-

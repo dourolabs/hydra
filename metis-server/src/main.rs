@@ -350,9 +350,7 @@ async fn monitor_running_jobs(state: AppState) {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{
-        spawn_test_server, spawn_test_server_with_state, test_client, test_state,
-    };
+    use crate::test::{spawn_test_server, spawn_test_server_with_state, test_client, test_state};
     use serde_json::json;
 
     #[tokio::test]
