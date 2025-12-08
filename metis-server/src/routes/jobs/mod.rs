@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status as StoreStatus, Store, Task},
+    store::{Status as StoreStatus, Store, StoreError, Task},
 };
 use axum::{
     Json,
@@ -29,6 +29,16 @@ pub async fn create_job(
         return Err(ApiError::bad_request("prompt is required"));
     }
 
+    let parent_ids: Vec<String> = payload
+        .parent_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .collect();
+    if parent_ids.iter().any(|id| id.is_empty()) {
+        error!("create_job received an empty parent_id");
+        return Err(ApiError::bad_request("parent_ids must not be empty"));
+    }
+
     // Generate a unique ID for the job
     let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
@@ -41,15 +51,29 @@ pub async fn create_job(
             result: None,
         };
         store
-            .add_task_with_id(job_id.clone(), task, vec![], Utc::now())
+            .add_task_with_id(job_id.clone(), task, parent_ids.clone(), Utc::now())
             .await
-            .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to store task");
-                ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
+            .map_err(|err| match err {
+                StoreError::InvalidDependency(msg) => {
+                    error!(
+                        error = %msg,
+                        job_id = %job_id,
+                        "failed to store task due to invalid parent dependency"
+                    );
+                    ApiError::bad_request(msg)
+                }
+                err => {
+                    error!(error = %err, job_id = %job_id, "failed to store task");
+                    ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
+                }
             })?;
     }
 
-    info!(job_id = %job_id, "task stored, will be started by background thread");
+    info!(
+        job_id = %job_id,
+        parent_count = parent_ids.len(),
+        "task stored, will be started by background thread"
+    );
 
     Ok(Json(CreateJobResponse { job_id }))
 }

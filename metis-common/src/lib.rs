@@ -8,6 +8,8 @@ pub mod jobs {
         pub prompt: String,
         #[serde(default)]
         pub context: CreateJobRequestContext,
+        #[serde(default)]
+        pub parent_ids: Vec<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

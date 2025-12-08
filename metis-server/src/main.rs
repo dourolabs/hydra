@@ -432,6 +432,50 @@ mod tests {
 
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Pending);
+        let parents = store_read.get_parents(&body.job_id).await?;
+        assert!(parents.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_respects_parent_dependencies() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        // Seed a parent task that is still pending.
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "parent-1".to_string(),
+                    Task::Spawn {
+                        prompt: "parent task".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({ "prompt": "child task", "parent_ids": ["parent-1"] }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        assert!(!body.job_id.trim().is_empty());
+
+        let store_read = store.read().await;
+        let parents = store_read.get_parents(&body.job_id).await?;
+        assert_eq!(parents, vec!["parent-1".to_string()]);
+        let status = store_read.get_status(&body.job_id).await?;
+        assert_eq!(status, Status::Blocked);
         Ok(())
     }
 

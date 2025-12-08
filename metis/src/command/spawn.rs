@@ -26,6 +26,7 @@ pub async fn run(
     context_dir: Option<PathBuf>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
+    after: Vec<String>,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
     let prompt = if prompt_parts.is_empty() {
@@ -33,6 +34,11 @@ pub async fn run(
     } else {
         prompt_parts.join(" ")
     };
+
+    let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
+    if parent_ids.iter().any(|id| id.is_empty()) {
+        bail!("--after values must not be empty");
+    }
 
     let client = MetisClient::from_config(config)?;
     let context = build_context(
@@ -42,7 +48,11 @@ pub async fn run(
         force_encode_directory,
         force_encode_git_bundle,
     )?;
-    let request = CreateJobRequest { prompt, context };
+    let request = CreateJobRequest {
+        prompt,
+        context,
+        parent_ids,
+    };
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 

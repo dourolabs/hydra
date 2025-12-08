@@ -55,6 +55,10 @@ enum Commands {
         #[arg(long = "encode-git-bundle")]
         encode_git_bundle: bool,
 
+        /// Create the job after the given Metis job ID (repeatable).
+        #[arg(long = "after", value_name = "JOB_ID")]
+        after: Vec<String>,
+
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
             value_name = "PROMPT",
@@ -135,6 +139,7 @@ async fn main() -> Result<()> {
             context_dir,
             encode_directory,
             encode_git_bundle,
+            after,
             prompt,
         } => {
             command::spawn::run(
@@ -145,6 +150,7 @@ async fn main() -> Result<()> {
                 context_dir,
                 encode_directory,
                 encode_git_bundle,
+                after,
                 prompt,
             )
             .await?
