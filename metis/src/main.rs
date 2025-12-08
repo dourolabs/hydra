@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
 
-        Commands::WorkerInit { job: (), path: () } { job, path } => command::worker_init::run(&client, job, path).await?,
+        Commands::WorkerInit { job, path } => command::worker_init::run(&client, job, path).await?,
         Commands::WorkerSubmit { job } => command::worker_submit::run(&client, job).await?,
     }
 
