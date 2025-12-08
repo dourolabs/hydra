@@ -840,6 +840,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();

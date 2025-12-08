@@ -4,7 +4,7 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -101,43 +101,17 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
-        let status = match store.get_status(&task_id).await {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let status_log = match store.get_status_log(&task_id).await {
-            Ok(log) => log,
-            Err(_) => continue,
-        };
-
-        let job_status_str = match status {
-            StoreStatus::Running => "running",
-            StoreStatus::Complete => "complete",
-            StoreStatus::Failed => "failed",
-            StoreStatus::Pending => "pending",
-            StoreStatus::Blocked => "blocked",
-        };
-
-        let runtime = task_runtime(&status_log, now).map(format_duration);
-        let notes =
-            job_notes_from_store(&task_id, &status, &status_log.failure_reason, store).await;
-        let output_type = match store.get_task(&task_id).await {
-            Ok(Task::Spawn { output_type, .. }) => output_type,
-            Ok(Task::Ask) => JobOutputType::Patch,
-            Err(_) => continue,
-        };
-
-        let reference_time = status_log.start_time.or(Some(status_log.creation_time));
-        summaries_with_times.push((
-            JobSummary {
-                id: task_id,
-                status: job_status_str.to_string(),
-                runtime,
-                notes,
-                output_type,
-            },
-            reference_time,
-        ));
+        match job_summary_with_time(&task_id, store, now).await {
+            Ok(summary) => summaries_with_times.push(summary),
+            Err(err) => {
+                error!(
+                    job_id = %task_id,
+                    error = %err,
+                    "failed to build summary while listing jobs"
+                );
+                continue;
+            }
+        }
     }
 
     // Sort by reference time, most recent first
@@ -159,6 +133,36 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     );
 
     Ok(Json(ListJobsResponse { jobs: summaries }))
+}
+
+pub async fn get_job(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Result<Json<JobSummary>, ApiError> {
+    info!(job_id = %job_id, "get_job invoked");
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(ApiError::bad_request("job_id must not be empty"));
+    }
+
+    let store_read = state.store.read().await;
+    let store = store_read.as_ref();
+
+    let (summary, _) = job_summary_with_time(job_id, store, Utc::now())
+        .await
+        .map_err(|err| match err {
+            StoreError::TaskNotFound(_) => {
+                error!(job_id = %job_id, "job not found");
+                ApiError::not_found(format!("job '{job_id}' not found"))
+            }
+            err => {
+                error!(job_id = %job_id, error = %err, "failed to load job summary");
+                ApiError::internal(anyhow::anyhow!("Failed to load job '{job_id}': {err}"))
+            }
+        })?;
+
+    info!(job_id = %summary.id, "get_job completed successfully");
+    Ok(Json(summary))
 }
 
 #[derive(Debug)]
@@ -203,6 +207,44 @@ impl IntoResponse for ApiError {
         let body = Json(json!({ "error": self.message }));
         (self.status, body).into_response()
     }
+}
+
+async fn job_summary_with_time(
+    job_id: &str,
+    store: &dyn Store,
+    now: DateTime<Utc>,
+) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
+    let job_id = job_id.to_string();
+    let status = store.get_status(&job_id).await?;
+    let status_log = store.get_status_log(&job_id).await?;
+
+    let job_status_str = match status {
+        StoreStatus::Running => "running",
+        StoreStatus::Complete => "complete",
+        StoreStatus::Failed => "failed",
+        StoreStatus::Pending => "pending",
+        StoreStatus::Blocked => "blocked",
+    };
+
+    let runtime = task_runtime(&status_log, now).map(format_duration);
+    let notes = job_notes_from_store(&job_id, &status, &status_log.failure_reason, store).await;
+    let output_type = match store.get_task(&job_id).await? {
+        Task::Spawn { output_type, .. } => output_type,
+        Task::Ask => JobOutputType::Patch,
+    };
+
+    let reference_time = status_log.start_time.or(Some(status_log.creation_time));
+
+    Ok((
+        JobSummary {
+            id: job_id,
+            status: job_status_str.to_string(),
+            runtime,
+            notes,
+            output_type,
+        },
+        reference_time,
+    ))
 }
 
 fn task_runtime(

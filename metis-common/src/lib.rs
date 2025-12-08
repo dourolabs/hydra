@@ -5,7 +5,7 @@ pub mod jobs {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CreateJobRequest {
         pub prompt: String,
         #[serde(default)]

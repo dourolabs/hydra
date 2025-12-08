@@ -15,10 +15,9 @@ use metis_common::{
 };
 use tar::Archive;
 
-use crate::{client::MetisClient, config::AppConfig};
+use crate::client::MetisClientInterface;
 
-pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
-    let client = MetisClient::from_config(config)?;
+pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) -> Result<()> {
     let WorkerContext {
         request_context,
         parents,

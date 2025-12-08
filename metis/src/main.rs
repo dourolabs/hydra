@@ -6,6 +6,7 @@ mod config;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use client::MetisClient;
 use config::AppConfig;
 use std::env;
 use std::path::PathBuf;
@@ -130,6 +131,7 @@ async fn main() -> Result<()> {
             AppConfig::load(&config_path)?
         }
     };
+    let client = MetisClient::from_config(&app_config)?;
 
     match cli.command {
         Commands::Spawn {
@@ -143,7 +145,7 @@ async fn main() -> Result<()> {
             prompt,
         } => {
             command::spawn::run(
-                &app_config,
+                &client,
                 wait,
                 from,
                 repo_url,
@@ -155,16 +157,16 @@ async fn main() -> Result<()> {
             )
             .await?
         }
-        Commands::Jobs => command::jobs::run(&app_config).await?,
-        Commands::Logs { job, watch } => command::logs::run(&app_config, job, watch).await?,
-        Commands::Kill { job } => command::kill::run(&app_config, job).await?,
-        Commands::Patch { job, apply } => command::patch::run(&app_config, job, apply).await?,
-        Commands::Context { job, path } => command::context::run(&app_config, job, path).await?,
+        Commands::Jobs => command::jobs::run(&client).await?,
+        Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
+        Commands::Kill { job } => command::kill::run(&client, job).await?,
+        Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
+        Commands::Context { job, path } => command::context::run(&client, job, path).await?,
         Commands::SetOutput {
             job,
             last_message,
             patch,
-        } => command::set_output::run(&app_config, job, last_message, patch).await?,
+        } => command::set_output::run(&client, job, last_message, patch).await?,
     }
 
     Ok(())

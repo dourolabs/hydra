@@ -1,13 +1,12 @@
-use crate::{client::MetisClient, command::spawn::stream_job_logs_via_server, config::AppConfig};
+use crate::{client::MetisClientInterface, command::spawn::stream_job_logs_via_server};
 use anyhow::{bail, Result};
 
-pub async fn run(config: &AppConfig, job: String, watch: bool) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, job: String, watch: bool) -> Result<()> {
     let job_id = job.trim();
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
     let job_id = job_id.to_string();
-    let client = MetisClient::from_config(config)?;
 
     if watch {
         println!("Streaming logs for job '{job_id}' via metis-server…");
@@ -15,5 +14,5 @@ pub async fn run(config: &AppConfig, job: String, watch: bool) -> Result<()> {
         println!("Fetching logs for job '{job_id}' via metis-server…");
     }
 
-    stream_job_logs_via_server(&client, &job_id, watch).await
+    stream_job_logs_via_server(client, &job_id, watch).await
 }

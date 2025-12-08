@@ -1,4 +1,4 @@
-use crate::{client::MetisClient, config::AppConfig};
+use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use metis_common::job_outputs::JobOutputType;
 use std::{fs, io::Write, path::PathBuf, process::Command};
@@ -28,13 +28,12 @@ fn pretty_print_patch(patch: &str) {
     }
 }
 
-pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, job: String, apply: bool) -> Result<()> {
     let job_id = job.trim();
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
     let job_id = job_id.to_string();
-    let client = MetisClient::from_config(config)?;
 
     println!("Fetching patch for job '{job_id}' via metis-server…");
 

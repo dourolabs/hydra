@@ -1,4 +1,4 @@
-use crate::{client::MetisClient, config::AppConfig};
+use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
@@ -20,7 +20,7 @@ use tempfile::tempdir;
 use tokio::time::sleep;
 
 pub async fn run(
-    config: &AppConfig,
+    client: &dyn MetisClientInterface,
     wait: bool,
     from_git_rev_arg: Option<String>,
     repo_url_arg: Option<String>,
@@ -41,7 +41,6 @@ pub async fn run(
         bail!("--after values must not be empty");
     }
 
-    let client = MetisClient::from_config(config)?;
     let context = build_context(
         from_git_rev_arg,
         repo_url_arg,
@@ -62,15 +61,15 @@ pub async fn run(
 
     if wait {
         println!("Streaming logs for job '{job_id}' via metis-server…");
-        stream_job_logs_via_server(&client, &job_id, true).await?;
-        wait_for_job_completion_via_server(&client, &job_id).await?;
+        stream_job_logs_via_server(client, &job_id, true).await?;
+        wait_for_job_completion_via_server(client, &job_id).await?;
     }
 
     Ok(())
 }
 
 pub(crate) async fn stream_job_logs_via_server(
-    client: &MetisClient,
+    client: &dyn MetisClientInterface,
     job_id: &str,
     watch: bool,
 ) -> Result<()> {
@@ -96,7 +95,10 @@ pub(crate) async fn stream_job_logs_via_server(
     Ok(())
 }
 
-async fn wait_for_job_completion_via_server(client: &MetisClient, job_id: &str) -> Result<()> {
+async fn wait_for_job_completion_via_server(
+    client: &dyn MetisClientInterface,
+    job_id: &str,
+) -> Result<()> {
     loop {
         let response = client.list_jobs().await?;
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
@@ -268,4 +270,71 @@ fn encode_git_bundle(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read git bundle '{}'", bundle_path.display()))?;
 
     Ok(Base64Engine.encode(bundle_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::MockMetisClient;
+    use metis_common::{
+        job_outputs::JobOutputType,
+        jobs::{CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse},
+    };
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn spawn_uses_injected_client_and_waits_for_completion() {
+        let tmp_dir = tempdir().unwrap();
+        let client = MockMetisClient::default();
+
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-123".into(),
+        });
+        client.push_log_lines(["first log line\n", "second log line\n"]);
+        client.push_list_jobs_response(ListJobsResponse {
+            jobs: vec![JobSummary {
+                id: "job-123".into(),
+                status: "running".into(),
+                runtime: None,
+                notes: None,
+                output_type: JobOutputType::Patch,
+            }],
+        });
+        client.push_list_jobs_response(ListJobsResponse {
+            jobs: vec![JobSummary {
+                id: "job-123".into(),
+                status: "complete".into(),
+                runtime: Some("1s".into()),
+                notes: None,
+                output_type: JobOutputType::Patch,
+            }],
+        });
+
+        run(
+            &client,
+            true,
+            None,
+            None,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
+            false,
+            vec![],
+            vec!["test prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.prompt, "test prompt");
+        assert!(request.parent_ids.is_empty());
+        assert!(matches!(
+            request.context,
+            CreateJobRequestContext::UploadDirectory { ref archive_base64 } if !archive_base64.is_empty()
+        ));
+        assert!(client.create_job_responses.lock().unwrap().is_empty());
+        assert!(client.list_jobs_responses.lock().unwrap().is_empty());
+        assert!(client.log_responses.lock().unwrap().is_empty());
+    }
 }

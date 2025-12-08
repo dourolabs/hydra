@@ -1,10 +1,10 @@
-use crate::{client::MetisClient, config::AppConfig};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::client::MetisClientInterface;
+use anyhow::{bail, Context, Result};
 use metis_common::job_outputs::{JobOutputPayload, JobOutputType};
 use std::{fs, path::PathBuf};
 
 pub async fn run(
-    config: &AppConfig,
+    client: &dyn MetisClientInterface,
     job: String,
     last_message_file: PathBuf,
     patch_file: PathBuf,
@@ -14,8 +14,7 @@ pub async fn run(
         bail!("Job ID must not be empty.");
     }
 
-    let client = MetisClient::from_config(config)?;
-    let output_type = resolve_output_type(&client, job_id).await?;
+    let output_type = resolve_output_type(client, job_id).await?;
 
     match output_type {
         JobOutputType::Patch => {
@@ -47,11 +46,11 @@ pub async fn run(
     Ok(())
 }
 
-async fn resolve_output_type(client: &MetisClient, job_id: &str) -> Result<JobOutputType> {
-    let jobs = client.list_jobs().await?;
-    jobs.jobs
-        .into_iter()
-        .find(|job| job.id == job_id)
-        .map(|job| job.output_type)
-        .ok_or_else(|| anyhow!("Job '{job_id}' not found. Use `metis jobs` to view job IDs."))
+
+async fn resolve_output_type(client: &dyn MetisClientInterface, job_id: &str) -> Result<JobOutputType> {
+    let job = client
+        .get_job(job_id)
+        .await
+        .with_context(|| format!("failed to fetch job '{job_id}'"))?;
+    Ok(job.output_type)
 }

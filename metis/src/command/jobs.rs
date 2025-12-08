@@ -1,12 +1,11 @@
-use crate::{client::MetisClient, config::AppConfig};
+use crate::client::MetisClientInterface;
 use anyhow::Result;
 
 const NAME_WIDTH: usize = 48;
 const STATUS_WIDTH: usize = 9;
 const RUNTIME_WIDTH: usize = 12;
 
-pub async fn run(config: &AppConfig) -> Result<()> {
-    let client = MetisClient::from_config(config)?;
+pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let response = client.list_jobs().await?;
 
     if response.jobs.is_empty() {

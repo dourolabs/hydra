@@ -44,6 +44,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
+        .route("/v1/jobs/:job_id", get(routes::jobs::get_job))
         .route("/v1/jobs", post(routes::jobs::create_job))
         .route(
             "/v1/jobs/:job_id/logs",
@@ -361,7 +362,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         job_outputs::{JobOutputPayload, JobOutputType},
-        jobs::{CreateJobRequestContext, CreateJobResponse, ListJobsResponse, WorkerContext},
+        jobs::{
+            CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
+        },
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -567,6 +570,63 @@ mod tests {
         let body: ListJobsResponse = response.json().await?;
         let ids: Vec<String> = body.jobs.into_iter().map(|job| job.id).collect();
         assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+        let job_id = "job-123".to_string();
+        let now = Utc::now();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        prompt: "demo".to_string(),
+                        context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
+                        result: None,
+                    },
+                    vec![],
+                    now - Duration::seconds(20),
+                )
+                .await?;
+            store_write
+                .mark_task_running(&job_id, now - Duration::seconds(10))
+                .await?;
+        }
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let summary: JobSummary = response.json().await?;
+        assert_eq!(summary.id, job_id);
+        assert_eq!(summary.status, "running");
+        assert_eq!(summary.output_type, JobOutputType::Patch);
+        assert!(summary.runtime.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/missing", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job 'missing' not found" }));
         Ok(())
     }
 

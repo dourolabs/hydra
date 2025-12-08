@@ -1,9 +1,13 @@
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     job_outputs::{JobOutputPayload, JobOutputResponse},
-    jobs::{CreateJobRequest, CreateJobResponse, KillJobResponse, ListJobsResponse, WorkerContext},
+    jobs::{
+        CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
+        WorkerContext,
+    },
     logs::LogsQuery,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
@@ -21,6 +25,22 @@ pub struct MetisClient {
 
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+
+#[async_trait]
+pub trait MetisClientInterface: Send + Sync {
+    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
+    async fn list_jobs(&self) -> Result<ListJobsResponse>;
+    async fn get_job(&self, job_id: &str) -> Result<JobSummary>;
+    async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse>;
+    async fn get_job_logs(&self, job_id: &str, query: &LogsQuery) -> Result<LogStream>;
+    async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse>;
+    async fn set_job_output(
+        &self,
+        job_id: &str,
+        payload: &JobOutputPayload,
+    ) -> Result<JobOutputResponse>;
+    async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext>;
+}
 
 impl MetisClient {
     /// Construct a new client using the server URL from the CLI configuration.
@@ -119,6 +139,30 @@ impl MetisClient {
             .json::<ListJobsResponse>()
             .await
             .context("failed to decode list jobs response")
+    }
+
+    /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
+    pub async fn get_job(&self, job_id: &str) -> Result<JobSummary> {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err(anyhow!("job_id must not be empty"));
+        }
+
+        let path = format!("/v1/jobs/{job_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch job")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching job")?;
+
+        response
+            .json::<JobSummary>()
+            .await
+            .context("failed to decode job response")
     }
 
     /// Call `POST /v1/jobs/:job_id/kill` to terminate a running job.
@@ -355,3 +399,48 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
         Some((event_name, data_lines.join("\n")))
     }
 }
+
+#[async_trait]
+impl MetisClientInterface for MetisClient {
+    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
+        MetisClient::create_job(self, request).await
+    }
+
+    async fn list_jobs(&self) -> Result<ListJobsResponse> {
+        MetisClient::list_jobs(self).await
+    }
+
+    async fn get_job(&self, job_id: &str) -> Result<JobSummary> {
+        MetisClient::get_job(self, job_id).await
+    }
+
+    async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse> {
+        MetisClient::kill_job(self, job_id).await
+    }
+
+    async fn get_job_logs(&self, job_id: &str, query: &LogsQuery) -> Result<LogStream> {
+        MetisClient::get_job_logs(self, job_id, query).await
+    }
+
+    async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse> {
+        MetisClient::get_job_output(self, job_id).await
+    }
+
+    async fn set_job_output(
+        &self,
+        job_id: &str,
+        payload: &JobOutputPayload,
+    ) -> Result<JobOutputResponse> {
+        MetisClient::set_job_output(self, job_id, payload).await
+    }
+
+    async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext> {
+        MetisClient::get_job_context(self, job_id).await
+    }
+}
+
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+pub use mock::MockMetisClient;

@@ -110,4 +110,8 @@ So what we need is an experimental setup -- what are the inputs and outputs? how
 3. Dockerfiles shouldn't run services as root 
 
 
-Help me write unit tests for the metis-cli. As a first step, please enable dependency injection for MetisClient so that each CLI command can be passed a mock client implementation. Further implement a mock client and implement one unit test for the Spawn command using this mock
+Help me write unit tests for the metis-cli. As a first step, please enable dependency injection for MetisClient so that each CLI command can be passed a mock client implementation. Further implement a mock client and implement one unit test for the Spawn command using this mock. Use async-trait. Also you can assume that each run command for the CLI takes  MetisClient""
+
+please add a /v1/jobs/:job_id route to the server that gets the JobSummary for the indicated job. Use this route in the CLI for the set_output command to get the OutputType so that the command doesn't need to list all jobs and iterate through them"
+
+You are a code review agent who is going to review the work of another agent. The previous agent has generated a patch to the current git repository. Please review the patch for code quality. The patch lives in .metis/parents/<uuid>/ . Here was the prompt provided to the previous agent:
