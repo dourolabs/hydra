@@ -976,13 +976,28 @@ mod tests {
             let mut store_write = store.write().await;
             store_write
                 .add_task_with_id(
+                    "parent-job".to_string(),
+                    Task::Spawn {
+                        prompt: "prepare".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: Some(JobOutputPayload {
+                            last_message: "done".to_string(),
+                            patch: "patch-content".to_string(),
+                        }),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write
+                .add_task_with_id(
                     "ctx-job".to_string(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: context.clone(),
                         result: None,
                     },
-                    vec![],
+                    vec!["parent-job".to_string()],
                     Utc::now(),
                 )
                 .await?;
@@ -998,6 +1013,14 @@ mod tests {
         assert!(response.status().is_success());
         let body: WorkerContext = response.json().await?;
         assert_eq!(body.request_context, context);
+        assert_eq!(body.parents.len(), 1);
+        assert_eq!(
+            body.parents.get("parent-job"),
+            Some(&JobOutputPayload {
+                last_message: "done".to_string(),
+                patch: "patch-content".to_string()
+            })
+        );
         Ok(())
     }
 

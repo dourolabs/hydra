@@ -1,7 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod jobs {
+    use crate::job_outputs::JobOutputPayload;
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct CreateJobRequest {
@@ -42,6 +44,8 @@ pub mod jobs {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct WorkerContext {
         pub request_context: CreateJobRequestContext,
+        #[serde(default)]
+        pub parents: HashMap<String, JobOutputPayload>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

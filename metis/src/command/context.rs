@@ -9,14 +9,20 @@ use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::jobs::{CreateJobRequestContext, WorkerContext};
+use metis_common::{
+    job_outputs::JobOutputPayload,
+    jobs::{CreateJobRequestContext, WorkerContext},
+};
 use tar::Archive;
 
 use crate::{client::MetisClient, config::AppConfig};
 
 pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
     let client = MetisClient::from_config(config)?;
-    let WorkerContext { request_context } = client.get_job_context(&job).await?;
+    let WorkerContext {
+        request_context,
+        parents,
+    } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
     match request_context {
         CreateJobRequestContext::None => {
@@ -32,6 +38,7 @@ pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
             clone_from_git_bundle_base64(&bundle_base64, &dest)?;
         }
     }
+    write_parent_outputs(&parents, &dest)?;
     Ok(())
 }
 
@@ -48,6 +55,31 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
     } else {
         fs::create_dir_all(dest).with_context(|| format!("failed to create {dest:?}"))
     }
+}
+
+fn write_parent_outputs(
+    parents: &std::collections::HashMap<String, JobOutputPayload>,
+    dest: &Path,
+) -> Result<()> {
+    if parents.is_empty() {
+        return Ok(());
+    }
+
+    let parents_dir = dest.join("parents");
+    fs::create_dir_all(&parents_dir)
+        .with_context(|| format!("failed to create parents directory at {parents_dir:?}"))?;
+
+    for (metis_id, output) in parents {
+        let parent_dir = parents_dir.join(metis_id);
+        fs::create_dir_all(&parent_dir)
+            .with_context(|| format!("failed to create directory {parent_dir:?}"))?;
+        fs::write(parent_dir.join("last_message.txt"), &output.last_message)
+            .with_context(|| format!("failed to write last_message.txt for parent '{metis_id}'"))?;
+        fs::write(parent_dir.join("patch.diff"), &output.patch)
+            .with_context(|| format!("failed to write patch.diff for parent '{metis_id}'"))?;
+    }
+
+    Ok(())
 }
 
 fn extract_tar_gz_base64(archive_base64: &str, dest: &Path) -> Result<()> {
