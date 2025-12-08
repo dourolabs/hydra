@@ -65,7 +65,7 @@ fn write_parent_outputs(
         return Ok(());
     }
 
-    let parents_dir = dest.join("parents");
+    let parents_dir = dest.join(".metis").join("parents");
     fs::create_dir_all(&parents_dir)
         .with_context(|| format!("failed to create parents directory at {parents_dir:?}"))?;
 

@@ -108,3 +108,6 @@ So what we need is an experimental setup -- what are the inputs and outputs? how
 1. Fix the deployment process, and specifically how configuration information is passed to the deployed services. E.g. there are env variables in service.sh that aren't wired up.
 2. imagePullPolicy: IfNotPresent is dangerous with the latest tag. this only works due to the current local development setup where the image is pushed into kind.
 3. Dockerfiles shouldn't run services as root 
+
+
+Help me write unit tests for the metis-cli. As a first step, please enable dependency injection for MetisClient so that each CLI command can be passed a mock client implementation. Further implement a mock client and implement one unit test for the Spawn command using this mock

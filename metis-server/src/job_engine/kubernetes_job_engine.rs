@@ -228,7 +228,7 @@ impl JobEngine for KubernetesJobEngine {
                                 "codex".into(),
                                 "exec".into(),
                                 "-o".into(),
-                                "output.txt".into(),
+                                ".metis/output/output.txt".into(),
                                 "--dangerously-bypass-approvals-and-sandbox".into(),
                                 prompt.to_string(),
                             ]),
