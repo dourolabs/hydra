@@ -44,13 +44,15 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
-        .route("/v1/jobs/:job_id", get(routes::jobs::get_job))
+        .route(
+            "/v1/jobs/:job_id",
+            get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
+        )
         .route("/v1/jobs", post(routes::jobs::create_job))
         .route(
             "/v1/jobs/:job_id/logs",
             get(routes::jobs::logs::get_job_logs),
         )
-        .route("/v1/jobs/:job_id/kill", post(routes::jobs::kill::kill_job))
         .route(
             "/v1/jobs/:job_id/output",
             get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
@@ -724,7 +726,7 @@ mod tests {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/ /kill", server.base_url()))
+            .delete(format!("{}/v1/jobs/%20", server.base_url()))
             .send()
             .await?;
 
@@ -739,7 +741,7 @@ mod tests {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/unknown/kill", server.base_url()))
+            .delete(format!("{}/v1/jobs/unknown", server.base_url()))
             .send()
             .await?;
 
@@ -763,7 +765,7 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/dupe/kill", server.base_url()))
+            .delete(format!("{}/v1/jobs/dupe", server.base_url()))
             .send()
             .await?;
 

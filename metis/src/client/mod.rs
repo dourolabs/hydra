@@ -165,18 +165,18 @@ impl MetisClient {
             .context("failed to decode job response")
     }
 
-    /// Call `POST /v1/jobs/:job_id/kill` to terminate a running job.
+    /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
     pub async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/kill");
+        let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .http
-            .post(url)
+            .delete(url)
             .send()
             .await
             .context("failed to submit kill job request")?
