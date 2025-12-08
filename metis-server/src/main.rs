@@ -609,9 +609,13 @@ mod tests {
         assert!(response.status().is_success());
         let summary: JobSummary = response.json().await?;
         assert_eq!(summary.id, job_id);
-        assert_eq!(summary.status, "running");
+        assert_eq!(summary.status_log.current_status, Status::Running);
+        assert_eq!(
+            summary.status_log.start_time,
+            Some(now - Duration::seconds(10))
+        );
         assert_eq!(summary.output_type, JobOutputType::Patch);
-        assert!(summary.runtime.is_some());
+        assert!(summary.status_log.failure_reason.is_none());
         Ok(())
     }
 

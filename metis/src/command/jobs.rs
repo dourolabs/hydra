@@ -1,5 +1,10 @@
 use crate::client::MetisClientInterface;
 use anyhow::Result;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use metis_common::{
+    jobs::JobSummary,
+    task_status::{Status, TaskStatusLog},
+};
 use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
@@ -12,6 +17,7 @@ const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let response = client.list_jobs().await?;
     let terminal_width = current_terminal_width();
+    let now = Utc::now();
 
     if response.jobs.is_empty() {
         println!("No Metis jobs found.");
@@ -23,11 +29,12 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     println!("{}", "-".repeat(plain_header.len()));
 
     for job in response.jobs {
-        let runtime = job.runtime.unwrap_or_else(|| "-".into());
-        let notes = job.notes.unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(&job.id, &job.status, &runtime);
+        let status = format_status(&job.status_log.current_status);
+        let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
+        let notes = job_note(&job).unwrap_or_else(|| "-".into());
+        let cells = job_row_cells(&job.id, status, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.status);
+        let colored_prefix = colored_job_row_prefix(&cells, status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -142,6 +149,53 @@ fn color_status(padded_status: &str, status: &str) -> String {
     } else {
         padded_status.bold().to_string()
     }
+}
+
+fn format_status(status: &Status) -> &'static str {
+    match status {
+        Status::Blocked => "blocked",
+        Status::Pending => "pending",
+        Status::Running => "running",
+        Status::Complete => "complete",
+        Status::Failed => "failed",
+    }
+}
+
+fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
+    let start = status_log.start_time.or(Some(status_log.creation_time))?;
+    let end = status_log.end_time.unwrap_or(now);
+    let duration = if end < start {
+        ChronoDuration::zero()
+    } else {
+        end - start
+    };
+
+    Some(format_duration(duration))
+}
+
+fn format_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn job_note(job: &JobSummary) -> Option<String> {
+    job.notes
+        .clone()
+        .or_else(|| job.status_log.failure_reason.clone())
 }
 
 #[cfg(test)]

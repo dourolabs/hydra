@@ -20,4 +20,5 @@ tar = "0.4"
 tempfile = "3.13"
 flate2 = "1.0"
 textwrap = { version = "0.16", features = ["terminal_size"] }
+chrono = { version = "0.4", features = ["clock"] }
 owo-colors = "4.1"

@@ -7,6 +7,7 @@ use metis_common::{
     job_outputs::JobOutputType,
     jobs::{CreateJobRequest, CreateJobRequestContext},
     logs::LogsQuery,
+    task_status::Status,
 };
 use std::{
     env, fs,
@@ -102,13 +103,18 @@ async fn wait_for_job_completion_via_server(
     loop {
         let response = client.list_jobs().await?;
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
-            match job.status.as_str() {
-                "complete" => {
+            match job.status_log.current_status {
+                Status::Complete => {
                     println!("Job '{job_id}' completed successfully.");
                     return Ok(());
                 }
-                "failed" => {
-                    bail!("Job '{job_id}' failed.");
+                Status::Failed => {
+                    let reason = job
+                        .status_log
+                        .failure_reason
+                        .as_deref()
+                        .unwrap_or("no failure reason provided");
+                    bail!("Job '{job_id}' failed: {reason}");
                 }
                 _ => {}
             }
@@ -276,9 +282,11 @@ fn encode_git_bundle(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
+    use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
         job_outputs::JobOutputType,
         jobs::{CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse},
+        task_status::{Status, TaskStatusLog},
     };
     use tempfile::tempdir;
 
@@ -291,22 +299,33 @@ mod tests {
             job_id: "job-123".into(),
         });
         client.push_log_lines(["first log line\n", "second log line\n"]);
+        let start_time = Utc::now();
         client.push_list_jobs_response(ListJobsResponse {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
-                status: "running".into(),
-                runtime: None,
                 notes: None,
                 output_type: JobOutputType::Patch,
+                status_log: TaskStatusLog {
+                    creation_time: start_time,
+                    start_time: Some(start_time),
+                    end_time: None,
+                    current_status: Status::Running,
+                    failure_reason: None,
+                },
             }],
         });
         client.push_list_jobs_response(ListJobsResponse {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
-                status: "complete".into(),
-                runtime: Some("1s".into()),
                 notes: None,
                 output_type: JobOutputType::Patch,
+                status_log: TaskStatusLog {
+                    creation_time: start_time,
+                    start_time: Some(start_time),
+                    end_time: Some(start_time + ChronoDuration::seconds(1)),
+                    current_status: Status::Complete,
+                    failure_reason: None,
+                },
             }],
         });
 

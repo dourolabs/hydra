@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status as StoreStatus, Store, StoreError, Task},
+    store::{Store, StoreError, Task},
 };
 use axum::{
     Json,
@@ -8,7 +8,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Utc};
 use metis_common::{
     job_outputs::JobOutputType,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
@@ -96,12 +96,10 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
     })?;
 
-    let now = Utc::now();
-
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
-        match job_summary_with_time(&task_id, store, now).await {
+        match job_summary_with_time(&task_id, store).await {
             Ok(summary) => summaries_with_times.push(summary),
             Err(err) => {
                 error!(
@@ -148,7 +146,7 @@ pub async fn get_job(
     let store_read = state.store.read().await;
     let store = store_read.as_ref();
 
-    let (summary, _) = job_summary_with_time(job_id, store, Utc::now())
+    let (summary, _) = job_summary_with_time(job_id, store)
         .await
         .map_err(|err| match err {
             StoreError::TaskNotFound(_) => {
@@ -212,22 +210,10 @@ impl IntoResponse for ApiError {
 async fn job_summary_with_time(
     job_id: &str,
     store: &dyn Store,
-    now: DateTime<Utc>,
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let job_id = job_id.to_string();
-    let status = store.get_status(&job_id).await?;
     let status_log = store.get_status_log(&job_id).await?;
-
-    let job_status_str = match status {
-        StoreStatus::Running => "running",
-        StoreStatus::Complete => "complete",
-        StoreStatus::Failed => "failed",
-        StoreStatus::Pending => "pending",
-        StoreStatus::Blocked => "blocked",
-    };
-
-    let runtime = task_runtime(&status_log, now).map(format_duration);
-    let notes = job_notes_from_store(&job_id, &status, &status_log.failure_reason, store).await;
+    let notes = job_notes_from_store(&job_id, store).await;
     let output_type = match store.get_task(&job_id).await? {
         Task::Spawn { output_type, .. } => output_type,
         Task::Ask => JobOutputType::Patch,
@@ -238,65 +224,18 @@ async fn job_summary_with_time(
     Ok((
         JobSummary {
             id: job_id,
-            status: job_status_str.to_string(),
-            runtime,
             notes,
             output_type,
+            status_log,
         },
         reference_time,
     ))
 }
 
-fn task_runtime(
-    status_log: &crate::store::TaskStatusLog,
-    now: DateTime<Utc>,
-) -> Option<ChronoDuration> {
-    let start = status_log.start_time.or(Some(status_log.creation_time))?;
-    let end = status_log.end_time.unwrap_or(now);
-
-    if end < start {
-        return Some(ChronoDuration::zero());
-    }
-
-    Some(end - start)
-}
-
-fn format_duration(duration: ChronoDuration) -> String {
-    let total_seconds = duration.num_seconds();
-    if total_seconds <= 0 {
-        return "0s".to_string();
-    }
-
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{hours}h {minutes:02}m {seconds:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds:02}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 async fn job_notes_from_store(
     job_id: &str,
-    status: &StoreStatus,
-    failure_reason: &Option<String>,
     store: &dyn Store,
 ) -> Option<String> {
-    let note = match status {
-        StoreStatus::Failed => failure_reason.clone(),
-        StoreStatus::Complete | StoreStatus::Running => None,
-        StoreStatus::Pending | StoreStatus::Blocked => None,
-    };
-
-    if let Some(note) = note {
-        return sanitize_note(&note);
-    }
-
-    // Try to get the task and extract the result's last_message
     let job_id_string = job_id.to_string();
     if let Ok(Task::Spawn {
         result: Some(output),

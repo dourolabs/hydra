@@ -1,7 +1,35 @@
 #![allow(clippy::too_many_arguments)]
 
+pub mod task_status {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Status {
+        Blocked,
+        Pending,
+        Running,
+        Complete,
+        Failed,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct TaskStatusLog {
+        pub creation_time: DateTime<Utc>,
+        #[serde(default)]
+        pub start_time: Option<DateTime<Utc>>,
+        #[serde(default)]
+        pub end_time: Option<DateTime<Utc>>,
+        pub current_status: Status,
+        #[serde(default)]
+        pub failure_reason: Option<String>,
+    }
+}
+
 pub mod jobs {
     use crate::job_outputs::{JobOutputPayload, JobOutputType};
+    use crate::task_status::TaskStatusLog;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -65,12 +93,11 @@ pub mod jobs {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct JobSummary {
         pub id: String,
-        pub status: String,
-        pub runtime: Option<String>,
         #[serde(default)]
         pub notes: Option<String>,
         #[serde(default)]
         pub output_type: JobOutputType,
+        pub status_log: TaskStatusLog,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

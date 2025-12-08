@@ -8,6 +8,8 @@ use metis_common::{
 
 mod memory_store;
 
+pub use metis_common::task_status::{Status, TaskStatusLog};
+
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
@@ -20,33 +22,6 @@ pub enum Task {
     },
     /// An ask task that queries the human user for information.
     Ask,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskStatusLog {
-    pub creation_time: DateTime<Utc>,
-    /// When the job started running
-    pub start_time: Option<DateTime<Utc>>,
-    /// When the job completed (succeeded or failed)
-    pub end_time: Option<DateTime<Utc>>,
-    /// Current status of the task
-    pub current_status: Status,
-    pub failure_reason: Option<String>,
-}
-
-/// Represents the status of a task in the Metis system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    /// Task is blocked by dependencies that haven't completed yet.
-    Blocked,
-    /// Task is ready to run but hasn't started yet.
-    Pending,
-    /// Task is currently running.
-    Running,
-    /// Task has completed successfully.
-    Complete,
-    /// Task has failed.
-    Failed,
 }
 
 /// Error type for store operations.
