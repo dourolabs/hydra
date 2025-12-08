@@ -9,16 +9,16 @@ use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::jobs::CreateJobRequestContext;
+use metis_common::jobs::{CreateJobRequestContext, WorkerContext};
 use tar::Archive;
 
 use crate::{client::MetisClient, config::AppConfig};
 
 pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
     let client = MetisClient::from_config(config)?;
-    let context = client.get_job_context(&job).await?;
+    let WorkerContext { request_context } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
-    match context {
+    match request_context {
         CreateJobRequestContext::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
         }

@@ -3,13 +3,13 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use metis_common::jobs::CreateJobRequestContext;
+use metis_common::jobs::WorkerContext;
 use tracing::{error, info};
 
 pub async fn get_job_context(
     State(state): State<AppState>,
     Path(job_id): Path<String>,
-) -> Result<Json<CreateJobRequestContext>, ApiError> {
+) -> Result<Json<WorkerContext>, ApiError> {
     let job_id = job_id.trim();
     info!(job_id = %job_id, "get_job_context invoked");
     if job_id.is_empty() {
@@ -25,7 +25,9 @@ pub async fn get_job_context(
     })?;
 
     match task {
-        Task::Spawn { context, .. } => Ok(Json(context.clone())),
+        Task::Spawn { context, .. } => Ok(Json(WorkerContext {
+            request_context: context.clone(),
+        })),
         Task::Ask => {
             error!(job_id = %job_id, "context requested for Ask task");
             Err(ApiError::bad_request("Ask tasks do not have context"))

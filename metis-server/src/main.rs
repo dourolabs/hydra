@@ -361,7 +361,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         job_outputs::JobOutputPayload,
-        jobs::{CreateJobRequestContext, CreateJobResponse, ListJobsResponse},
+        jobs::{CreateJobRequestContext, CreateJobResponse, ListJobsResponse, WorkerContext},
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -418,7 +418,11 @@ mod tests {
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
         match task {
-            Task::Spawn { prompt, context, result } => {
+            Task::Spawn {
+                prompt,
+                context,
+                result,
+            } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(context, CreateJobRequestContext::None);
                 assert!(result.is_none());
@@ -576,14 +580,20 @@ mod tests {
         let job_id = "job-stream".to_string();
         engine.insert_job(&job_id, JobStatus::Running).await;
         engine
-            .set_logs(&job_id, vec!["first chunk".to_string(), "second chunk".to_string()])
+            .set_logs(
+                &job_id,
+                vec!["first chunk".to_string(), "second chunk".to_string()],
+            )
             .await;
         let state = test_state_with_engine(engine);
         let server = spawn_test_server_with_state(state).await?;
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/{job_id}/logs?watch=true", server.base_url()))
+            .get(format!(
+                "{}/v1/jobs/{job_id}/logs?watch=true",
+                server.base_url()
+            ))
             .send()
             .await?;
 
@@ -685,10 +695,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert!(body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not found"));
+        assert!(body["error"].as_str().unwrap_or("").contains("not found"));
         Ok(())
     }
 
@@ -699,12 +706,7 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
-                    "ask-job".to_string(),
-                    Task::Ask,
-                    vec![],
-                    Utc::now(),
-                )
+                .add_task_with_id("ask-job".to_string(), Task::Ask, vec![], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -806,10 +808,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert!(body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not found"));
+        assert!(body["error"].as_str().unwrap_or("").contains("not found"));
         Ok(())
     }
 
@@ -882,10 +881,12 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert!(body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("has not completed"));
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("has not completed")
+        );
         Ok(())
     }
 
@@ -915,10 +916,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert!(body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not found"));
+        assert!(body["error"].as_str().unwrap_or("").contains("not found"));
         Ok(())
     }
 
@@ -954,8 +952,8 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, serde_json::to_value(&context)?);
+        let body: WorkerContext = response.json().await?;
+        assert_eq!(body.request_context, context);
         Ok(())
     }
 

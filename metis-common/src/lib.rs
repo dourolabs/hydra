@@ -37,6 +37,11 @@ pub mod jobs {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct WorkerContext {
+        pub request_context: CreateJobRequestContext,
+    }
+
     #[derive(Debug, Serialize, Deserialize)]
     pub struct CreateJobResponse {
         pub job_id: String,

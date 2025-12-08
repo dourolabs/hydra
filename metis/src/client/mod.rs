@@ -3,10 +3,7 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     job_outputs::{JobOutputPayload, JobOutputResponse},
-    jobs::{
-        CreateJobRequest, CreateJobRequestContext, CreateJobResponse, KillJobResponse,
-        ListJobsResponse,
-    },
+    jobs::{CreateJobRequest, CreateJobResponse, KillJobResponse, ListJobsResponse, WorkerContext},
     logs::LogsQuery,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
@@ -239,7 +236,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
-    pub async fn get_job_context(&self, job_id: &str) -> Result<CreateJobRequestContext> {
+    pub async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -255,7 +252,7 @@ impl MetisClient {
             .error_for_status()
             .context("metis-server returned an error while fetching job context")?;
         response
-            .json::<CreateJobRequestContext>()
+            .json::<WorkerContext>()
             .await
             .context("failed to decode job context response")
     }
