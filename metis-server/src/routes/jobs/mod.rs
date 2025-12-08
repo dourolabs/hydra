@@ -216,7 +216,7 @@ async fn job_summary_with_time(
     let notes = job_notes_from_store(&job_id, store).await;
     let output_type = match store.get_task(&job_id).await? {
         Task::Spawn { output_type, .. } => output_type,
-        Task::Ask => JobOutputType::Patch,
+        Task::AwaitHuman => JobOutputType::Patch,
     };
 
     let reference_time = status_log.start_time.or(Some(status_log.creation_time));

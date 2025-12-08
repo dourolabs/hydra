@@ -434,12 +434,12 @@ mod tests {
             .await
             .unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
         assert_eq!(store.get_task(&root_id).await.unwrap(), root_task);
-        assert_eq!(store.get_task(&child_id).await.unwrap(), Task::Ask);
+        assert_eq!(store.get_task(&child_id).await.unwrap(), Task::AwaitHuman);
         assert_eq!(
             store.get_parents(&child_id).await.unwrap(),
             vec![root_id.clone()]
@@ -489,7 +489,7 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
@@ -552,7 +552,7 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -583,7 +583,7 @@ mod tests {
 
         // Add a child - it should start as pending since parent is complete
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -671,7 +671,7 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -703,11 +703,11 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let child2_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -756,7 +756,7 @@ mod tests {
         // Child depends on both parents
         let child_id = store
             .add_task(
-                Task::Ask,
+                Task::AwaitHuman,
                 vec![root1_id.clone(), root2_id.clone()],
                 Utc::now(),
             )
@@ -801,7 +801,7 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Ask, vec![root_id.clone()], Utc::now())
+            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 

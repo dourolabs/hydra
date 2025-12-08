@@ -20,8 +20,8 @@ pub enum Task {
         output_type: JobOutputType,
         result: Option<JobOutputPayload>,
     },
-    /// An ask task that queries the human user for information.
-    Ask,
+    /// A task that pauses processing until a human provides input.
+    AwaitHuman,
 }
 
 /// Error type for store operations.

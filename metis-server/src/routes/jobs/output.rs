@@ -54,7 +54,7 @@ pub async fn set_job_output(
                     },
                 )
             }
-            Task::Ask => {
+            Task::AwaitHuman => {
                 error!(job_id = %job_id, "attempted to set output on Ask task");
                 return Err(ApiError::bad_request("Cannot set output on Ask task"));
             }

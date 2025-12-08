@@ -163,7 +163,7 @@ async fn process_pending_jobs(state: AppState) {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
                     Ok(Task::Spawn { prompt, .. }) => prompt,
-                    Ok(Task::Ask) => {
+                    Ok(Task::AwaitHuman) => {
                         warn!(metis_id = %metis_id, "task is Ask type, skipping job creation");
                         continue;
                     }
@@ -434,7 +434,7 @@ mod tests {
                 assert_eq!(output_type, JobOutputType::Patch);
                 assert!(result.is_none());
             }
-            Task::Ask => panic!("expected spawn task"),
+            Task::AwaitHuman => panic!("expected spawn task"),
         }
 
         let status = store_read.get_status(&body.job_id).await?;
@@ -822,7 +822,7 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-job".to_string(), Task::Ask, vec![], Utc::now())
+                .add_task_with_id("ask-job".to_string(), Task::AwaitHuman, vec![], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -898,7 +898,7 @@ mod tests {
                     patch: "diff".to_string()
                 })
             ),
-            Task::Ask => panic!("expected spawn task"),
+            Task::AwaitHuman => panic!("expected spawn task"),
         }
         Ok(())
     }
@@ -1117,7 +1117,7 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-context".to_string(), Task::Ask, vec![], Utc::now())
+                .add_task_with_id("ask-context".to_string(), Task::AwaitHuman, vec![], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;

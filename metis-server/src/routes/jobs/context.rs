@@ -36,7 +36,7 @@ pub async fn get_job_context(
             parents: parent_outputs(store.as_ref(), &job_id_string, job_id).await?,
             output_type,
         })),
-        Task::Ask => {
+        Task::AwaitHuman => {
             error!(job_id = %job_id, "context requested for Ask task");
             Err(ApiError::bad_request("Ask tasks do not have context"))
         }
