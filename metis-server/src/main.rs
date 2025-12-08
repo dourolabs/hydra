@@ -350,8 +350,21 @@ async fn monitor_running_jobs(state: AppState) {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{spawn_test_server, spawn_test_server_with_state, test_client, test_state};
+    use crate::{
+        job_engine::{JobStatus, MockJobEngine},
+        store::{Status, Task},
+        test::{
+            spawn_test_server, spawn_test_server_with_state, test_client, test_state,
+            test_state_with_engine,
+        },
+    };
+    use chrono::{Duration, Utc};
+    use metis_common::{
+        job_outputs::JobOutputPayload,
+        jobs::{CreateJobRequestContext, CreateJobResponse, ListJobsResponse},
+    };
     use serde_json::json;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn health_route_runs_with_injected_dependencies() -> anyhow::Result<()> {
@@ -371,163 +384,602 @@ mod tests {
 
     #[tokio::test]
     async fn create_job_rejects_empty_prompt() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement create_job rejection assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({ "prompt": "   " }))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "prompt is required" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn create_job_trims_prompt_and_enqueues_task() -> anyhow::Result<()> {
         let state = test_state();
-        let _server = spawn_test_server_with_state(state).await?;
-        // TODO: Implement create_job success path assertions.
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({ "prompt": "  run tests  " }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        assert!(!body.job_id.trim().is_empty());
+
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn { prompt, context, result } => {
+                assert_eq!(prompt, "run tests");
+                assert_eq!(context, CreateJobRequestContext::None);
+                assert!(result.is_none());
+            }
+            Task::Ask => panic!("expected spawn task"),
+        }
+
+        let status = store_read.get_status(&body.job_id).await?;
+        assert_eq!(status, Status::Pending);
         Ok(())
     }
 
     #[tokio::test]
     async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement list_jobs empty-state assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: ListJobsResponse = response.json().await?;
+        assert!(body.jobs.is_empty());
         Ok(())
     }
 
     #[tokio::test]
     async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement list_jobs sorting assertions.
+        let engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(engine);
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let oldest_id = "oldest".to_string();
+        let middle_id = "middle".to_string();
+        let newest_id = "newest".to_string();
+        let now = Utc::now();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    oldest_id.clone(),
+                    Task::Spawn {
+                        prompt: "old".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    now - Duration::seconds(30),
+                )
+                .await?;
+            store_write
+                .add_task_with_id(
+                    middle_id.clone(),
+                    Task::Spawn {
+                        prompt: "mid".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    now - Duration::seconds(20),
+                )
+                .await?;
+            store_write
+                .add_task_with_id(
+                    newest_id.clone(),
+                    Task::Spawn {
+                        prompt: "new".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    now - Duration::seconds(10),
+                )
+                .await?;
+            store_write
+                .mark_task_running(&middle_id, now - Duration::seconds(15))
+                .await?;
+            store_write
+                .mark_task_running(&newest_id, now - Duration::seconds(5))
+                .await?;
+        }
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: ListJobsResponse = response.json().await?;
+        let ids: Vec<String> = body.jobs.into_iter().map(|job| job.id).collect();
+        assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement logs empty job_id assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/ /logs", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement logs multiple match assertions.
+        let engine = Arc::new(MockJobEngine::new());
+        engine
+            .insert_job(&"job-1".to_string(), JobStatus::Running)
+            .await;
+        engine
+            .insert_job(&"job-1".to_string(), JobStatus::Failed)
+            .await;
+        let state = test_state_with_engine(engine);
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/job-1/logs", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job-1" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement logs 404 assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/missing/logs", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "missing" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement streaming logs assertions.
+        let engine = Arc::new(MockJobEngine::new());
+        let job_id = "job-stream".to_string();
+        engine.insert_job(&job_id, JobStatus::Running).await;
+        engine
+            .set_logs(&job_id, vec!["first chunk".to_string(), "second chunk".to_string()])
+            .await;
+        let state = test_state_with_engine(engine);
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/{job_id}/logs?watch=true", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body = response.text().await?;
+        assert!(!body.is_empty(), "expected SSE body, got empty string");
+        assert!(body.contains("first chunk"));
+        assert!(body.contains("second chunk"));
         Ok(())
     }
 
     #[tokio::test]
     async fn kill_job_rejects_empty_job_id() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement kill_job empty id assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs/ /kill", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id is required" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement kill_job 404 assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs/unknown/kill", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "unknown" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement kill_job conflict assertions.
+        let engine = Arc::new(MockJobEngine::new());
+        engine
+            .insert_job(&"dupe".to_string(), JobStatus::Running)
+            .await;
+        engine
+            .insert_job(&"dupe".to_string(), JobStatus::Running)
+            .await;
+        let state = test_state_with_engine(engine);
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs/dupe/kill", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "dupe" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn set_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement set_job_output empty id assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let payload = JobOutputPayload {
+            last_message: "msg".to_string(),
+            patch: "diff".to_string(),
+        };
+        let response = client
+            .post(format!("{}/v1/jobs/ /output", server.base_url()))
+            .json(&payload)
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn set_job_output_returns_not_found_for_missing_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement set_job_output missing job assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let payload = JobOutputPayload {
+            last_message: "msg".to_string(),
+            patch: "diff".to_string(),
+        };
+        let response = client
+            .post(format!("{}/v1/jobs/missing/output", server.base_url()))
+            .json(&payload)
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not found"));
         Ok(())
     }
 
     #[tokio::test]
     async fn set_job_output_rejects_ask_tasks() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement set_job_output ask-task assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "ask-job".to_string(),
+                    Task::Ask,
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let payload = JobOutputPayload {
+            last_message: "msg".to_string(),
+            patch: "diff".to_string(),
+        };
+        let response = client
+            .post(format!("{}/v1/jobs/ask-job/output", server.base_url()))
+            .json(&payload)
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "Cannot set output on Ask task" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn set_job_output_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement set_job_output success assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "spawn-job".to_string(),
+                    Task::Spawn {
+                        prompt: "do work".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let payload = JobOutputPayload {
+            last_message: "done".to_string(),
+            patch: "diff".to_string(),
+        };
+        let response = client
+            .post(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
+            .json(&payload)
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "job_id": "spawn-job", "output": { "last_message": "done", "patch": "diff" } })
+        );
+
+        let store_read = store.read().await;
+        let task = store_read.get_task(&"spawn-job".to_string()).await?;
+        match task {
+            Task::Spawn { result, .. } => assert_eq!(
+                result,
+                Some(JobOutputPayload {
+                    last_message: "done".to_string(),
+                    patch: "diff".to_string()
+                })
+            ),
+            Task::Ask => panic!("expected spawn task"),
+        }
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_output empty id assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/ /output", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_output_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_output 404 assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/missing/output", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not found"));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_output_returns_stored_output() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_output success assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        let payload = JobOutputPayload {
+            last_message: "all good".to_string(),
+            patch: "diff".to_string(),
+        };
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "with-output".to_string(),
+                    Task::Spawn {
+                        prompt: "do work".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: Some(payload.clone()),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/with-output/output", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "job_id": "with-output", "output": { "last_message": "all good", "patch": "diff" } })
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_output_errors_when_result_is_missing() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_output missing result assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "no-output".to_string(),
+                    Task::Spawn {
+                        prompt: "do work".to_string(),
+                        context: CreateJobRequestContext::None,
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/no-output/output", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("has not completed"));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_context_rejects_empty_job_id() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_context empty id assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/ /context", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_context 404 assertions.
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/missing/context", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        let body: serde_json::Value = response.json().await?;
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not found"));
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_context success assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        let context = CreateJobRequestContext::GitRepository {
+            url: "https://example.com/repo.git".to_string(),
+            rev: "main".to_string(),
+        };
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "ctx-job".to_string(),
+                    Task::Spawn {
+                        prompt: "do work".to_string(),
+                        context: context.clone(),
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/ctx-job/context", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, serde_json::to_value(&context)?);
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_context_rejects_ask_tasks() -> anyhow::Result<()> {
-        let _server = spawn_test_server().await?;
-        // TODO: Implement get_job_context ask-task assertions.
+        let state = test_state();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id("ask-context".to_string(), Task::Ask, vec![], Utc::now())
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/ask-context/context", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "Ask tasks do not have context" }));
         Ok(())
     }
 }
