@@ -4,6 +4,7 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use futures::StreamExt;
 use metis_common::{
+    job_outputs::JobOutputType,
     jobs::{CreateJobRequest, CreateJobRequestContext},
     logs::LogsQuery,
 };
@@ -52,6 +53,7 @@ pub async fn run(
         prompt,
         context,
         parent_ids,
+        output_type: JobOutputType::Patch,
     };
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;

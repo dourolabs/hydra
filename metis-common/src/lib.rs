@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod jobs {
-    use crate::job_outputs::JobOutputPayload;
+    use crate::job_outputs::{JobOutputPayload, JobOutputType};
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -12,6 +12,8 @@ pub mod jobs {
         pub context: CreateJobRequestContext,
         #[serde(default)]
         pub parent_ids: Vec<String>,
+        #[serde(default)]
+        pub output_type: JobOutputType,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +48,8 @@ pub mod jobs {
         pub request_context: CreateJobRequestContext,
         #[serde(default)]
         pub parents: HashMap<String, JobOutputPayload>,
+        #[serde(default)]
+        pub output_type: JobOutputType,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +69,8 @@ pub mod jobs {
         pub runtime: Option<String>,
         #[serde(default)]
         pub notes: Option<String>,
+        #[serde(default)]
+        pub output_type: JobOutputType,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -89,6 +95,18 @@ pub mod logs {
 pub mod job_outputs {
     use serde::{Deserialize, Serialize};
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum JobOutputType {
+        Patch,
+    }
+
+    impl Default for JobOutputType {
+        fn default() -> Self {
+            Self::Patch
+        }
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct JobOutputPayload {
         pub last_message: String,
@@ -98,6 +116,7 @@ pub mod job_outputs {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JobOutputResponse {
         pub job_id: String,
+        pub output_type: JobOutputType,
         pub output: JobOutputPayload,
     }
 }

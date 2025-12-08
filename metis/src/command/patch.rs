@@ -1,5 +1,6 @@
 use crate::{client::MetisClient, config::AppConfig};
 use anyhow::{bail, Context, Result};
+use metis_common::job_outputs::JobOutputType;
 use std::{fs, io::Write, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 
@@ -38,6 +39,13 @@ pub async fn run(config: &AppConfig, job: String, apply: bool) -> Result<()> {
     println!("Fetching patch for job '{job_id}' via metis-server…");
 
     let response = client.get_job_output(&job_id).await?;
+    if response.output_type != JobOutputType::Patch {
+        bail!(
+            "Job '{}' has output type '{:?}', which is not supported by the patch command",
+            job_id,
+            response.output_type
+        );
+    }
 
     if apply {
         println!("\nApplying patch to current git repository…");

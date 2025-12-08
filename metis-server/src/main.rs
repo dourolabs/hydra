@@ -360,7 +360,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        job_outputs::JobOutputPayload,
+        job_outputs::{JobOutputPayload, JobOutputType},
         jobs::{CreateJobRequestContext, CreateJobResponse, ListJobsResponse, WorkerContext},
     };
     use serde_json::json;
@@ -421,10 +421,12 @@ mod tests {
             Task::Spawn {
                 prompt,
                 context,
+                output_type,
                 result,
             } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(context, CreateJobRequestContext::None);
+                assert_eq!(output_type, JobOutputType::Patch);
                 assert!(result.is_none());
             }
             Task::Ask => panic!("expected spawn task"),
@@ -452,6 +454,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "parent task".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -513,6 +516,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "old".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -525,6 +529,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "mid".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -537,6 +542,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "new".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -784,6 +790,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -808,7 +815,11 @@ mod tests {
         let body: serde_json::Value = response.json().await?;
         assert_eq!(
             body,
-            json!({ "job_id": "spawn-job", "output": { "last_message": "done", "patch": "diff" } })
+            json!({
+                "job_id": "spawn-job",
+                "output_type": "patch",
+                "output": { "last_message": "done", "patch": "diff" }
+            })
         );
 
         let store_read = store.read().await;
@@ -872,6 +883,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: Some(payload.clone()),
                     },
                     vec![],
@@ -891,7 +903,11 @@ mod tests {
         let body: serde_json::Value = response.json().await?;
         assert_eq!(
             body,
-            json!({ "job_id": "with-output", "output": { "last_message": "all good", "patch": "diff" } })
+            json!({
+                "job_id": "with-output",
+                "output_type": "patch",
+                "output": { "last_message": "all good", "patch": "diff" }
+            })
         );
         Ok(())
     }
@@ -908,6 +924,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec![],
@@ -980,6 +997,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "prepare".to_string(),
                         context: CreateJobRequestContext::None,
+                        output_type: JobOutputType::Patch,
                         result: Some(JobOutputPayload {
                             last_message: "done".to_string(),
                             patch: "patch-content".to_string(),
@@ -995,6 +1013,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: context.clone(),
+                        output_type: JobOutputType::Patch,
                         result: None,
                     },
                     vec!["parent-job".to_string()],
@@ -1014,6 +1033,7 @@ mod tests {
         let body: WorkerContext = response.json().await?;
         assert_eq!(body.request_context, context);
         assert_eq!(body.parents.len(), 1);
+        assert_eq!(body.output_type, JobOutputType::Patch);
         assert_eq!(
             body.parents.get("parent-job"),
             Some(&JobOutputPayload {

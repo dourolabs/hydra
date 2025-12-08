@@ -9,7 +9,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
+use metis_common::{
+    job_outputs::JobOutputType,
+    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+};
 use serde_json::json;
 use tracing::{error, info};
 
@@ -48,6 +51,7 @@ pub async fn create_job(
         let task = Task::Spawn {
             prompt: prompt.clone(),
             context: payload.context.clone(),
+            output_type: payload.output_type,
             result: None,
         };
         store
@@ -117,6 +121,11 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         let runtime = task_runtime(&status_log, now).map(format_duration);
         let notes =
             job_notes_from_store(&task_id, &status, &status_log.failure_reason, store).await;
+        let output_type = match store.get_task(&task_id).await {
+            Ok(Task::Spawn { output_type, .. }) => output_type,
+            Ok(Task::Ask) => JobOutputType::Patch,
+            Err(_) => continue,
+        };
 
         let reference_time = status_log.start_time.or(Some(status_log.creation_time));
         summaries_with_times.push((
@@ -125,6 +134,7 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
                 status: job_status_str.to_string(),
                 runtime,
                 notes,
+                output_type,
             },
             reference_time,
         ));

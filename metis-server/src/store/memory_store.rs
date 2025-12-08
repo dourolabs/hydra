@@ -415,6 +415,7 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use metis_common::job_outputs::JobOutputType;
     use metis_common::jobs::CreateJobRequestContext;
     use std::collections::HashSet;
 
@@ -425,6 +426,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store
@@ -463,6 +465,7 @@ mod tests {
         let spawn_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let err = store
@@ -481,6 +484,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -491,6 +495,7 @@ mod tests {
         let grandchild_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let grandchild_id = store
@@ -527,6 +532,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -541,6 +547,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -561,6 +568,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -588,6 +596,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -605,6 +614,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -630,6 +640,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -655,6 +666,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -686,6 +698,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -721,6 +734,7 @@ mod tests {
         let root1_task = Task::Spawn {
             prompt: "test1".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root1_id = store
@@ -731,6 +745,7 @@ mod tests {
         let root2_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root2_id = store
@@ -781,6 +796,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -804,6 +820,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
+            output_type: JobOutputType::Patch,
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();

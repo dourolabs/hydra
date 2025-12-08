@@ -1,7 +1,10 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{job_outputs::JobOutputPayload, jobs::CreateJobRequestContext};
+use metis_common::{
+    job_outputs::{JobOutputPayload, JobOutputType},
+    jobs::CreateJobRequestContext,
+};
 
 mod memory_store;
 
@@ -12,6 +15,7 @@ pub enum Task {
     Spawn {
         prompt: String,
         context: CreateJobRequestContext,
+        output_type: JobOutputType,
         result: Option<JobOutputPayload>,
     },
     /// An ask task that queries the human user for information.

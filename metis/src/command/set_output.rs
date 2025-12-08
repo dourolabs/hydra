@@ -1,6 +1,6 @@
 use crate::{client::MetisClient, config::AppConfig};
-use anyhow::{bail, Context, Result};
-use metis_common::job_outputs::JobOutputPayload;
+use anyhow::{anyhow, bail, Context, Result};
+use metis_common::job_outputs::{JobOutputPayload, JobOutputType};
 use std::{fs, path::PathBuf};
 
 pub async fn run(
@@ -13,27 +13,45 @@ pub async fn run(
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
-    let last_message = fs::read_to_string(&last_message_file).with_context(|| {
-        format!(
-            "failed to read --last-message file '{}'",
-            last_message_file.display()
-        )
-    })?;
-    let patch = fs::read_to_string(&patch_file)
-        .with_context(|| format!("failed to read --patch file '{}'", patch_file.display()))?;
 
     let client = MetisClient::from_config(config)?;
-    let payload = JobOutputPayload {
-        last_message,
-        patch,
-    };
-    println!("Setting output for job '{job_id}' via metis-server…");
-    let response = client.set_job_output(job_id, &payload).await?;
-    println!(
-        "Output set for job '{}'. Stored last message length: {}, patch length: {}",
-        response.job_id,
-        response.output.last_message.len(),
-        response.output.patch.len()
-    );
+    let output_type = resolve_output_type(&client, job_id).await?;
+
+    match output_type {
+        JobOutputType::Patch => {
+            let last_message = fs::read_to_string(&last_message_file).with_context(|| {
+                format!(
+                    "failed to read --last-message file '{}'",
+                    last_message_file.display()
+                )
+            })?;
+            let patch = fs::read_to_string(&patch_file).with_context(|| {
+                format!("failed to read --patch file '{}'", patch_file.display())
+            })?;
+
+            let payload = JobOutputPayload {
+                last_message,
+                patch,
+            };
+            println!("Setting output for job '{job_id}' via metis-server…");
+            let response = client.set_job_output(job_id, &payload).await?;
+            println!(
+                "Output set for job '{}' (type: {:?}). Stored last message length: {}, patch length: {}",
+                response.job_id,
+                response.output_type,
+                response.output.last_message.len(),
+                response.output.patch.len()
+            );
+        }
+    }
     Ok(())
+}
+
+async fn resolve_output_type(client: &MetisClient, job_id: &str) -> Result<JobOutputType> {
+    let jobs = client.list_jobs().await?;
+    jobs.jobs
+        .into_iter()
+        .find(|job| job.id == job_id)
+        .map(|job| job.output_type)
+        .ok_or_else(|| anyhow!("Job '{job_id}' not found. Use `metis jobs` to view job IDs."))
 }

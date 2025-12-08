@@ -22,6 +22,7 @@ pub async fn run(config: &AppConfig, job: String, dest: PathBuf) -> Result<()> {
     let WorkerContext {
         request_context,
         parents,
+        ..
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
     match request_context {
