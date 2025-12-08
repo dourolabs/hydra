@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use futures::stream;
 use metis_common::{
     job_outputs::{JobOutputPayload, JobOutputResponse},
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse, WorkerContext},
+    jobs::{
+        CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
+        WorkerContext,
+    },
     logs::LogsQuery,
 };
 use std::collections::VecDeque;

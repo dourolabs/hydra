@@ -22,7 +22,7 @@ startup_tasks() {
   fi
   printenv OPENAI_API_KEY | codex login --with-api-key
 
-  metis context "${METIS_ID}" .
+  metis worker-init "${METIS_ID}" .
   mkdir -p "${OUTPUT_DIR}"
 }
 
@@ -34,7 +34,7 @@ cleanup_tasks() {
   git diff --cached -- . ':!.metis/**' > "${PATCH_FILE}"
 
   echo "Uploading job output via Metis CLI..."
-  if ! metis set-output "${METIS_ID}" --last-message "${OUTPUT_FILE}" --patch "${PATCH_FILE}"; then
+  if ! metis worker-submit "${METIS_ID}"; then
     echo "Failed to set job output via Metis CLI." >&2
   else
     echo "Job output uploaded successfully."

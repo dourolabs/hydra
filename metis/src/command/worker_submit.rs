@@ -3,29 +3,25 @@ use anyhow::{bail, Context, Result};
 use metis_common::job_outputs::{JobOutputPayload, JobOutputType};
 use std::{fs, path::PathBuf};
 
-pub async fn run(
-    client: &dyn MetisClientInterface,
-    job: String,
-    last_message_file: PathBuf,
-    patch_file: PathBuf,
-) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
     let job_id = job.trim();
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
 
+    let (last_message_file, patch_file) = resolve_output_paths();
     let output_type = resolve_output_type(client, job_id).await?;
 
     match output_type {
         JobOutputType::Patch => {
             let last_message = fs::read_to_string(&last_message_file).with_context(|| {
                 format!(
-                    "failed to read --last-message file '{}'",
+                    "failed to read last message output at '{}'",
                     last_message_file.display()
                 )
             })?;
             let patch = fs::read_to_string(&patch_file).with_context(|| {
-                format!("failed to read --patch file '{}'", patch_file.display())
+                format!("failed to read patch output at '{}'", patch_file.display())
             })?;
 
             let payload = JobOutputPayload {
@@ -46,11 +42,20 @@ pub async fn run(
     Ok(())
 }
 
-
-async fn resolve_output_type(client: &dyn MetisClientInterface, job_id: &str) -> Result<JobOutputType> {
+async fn resolve_output_type(
+    client: &dyn MetisClientInterface,
+    job_id: &str,
+) -> Result<JobOutputType> {
     let job = client
         .get_job(job_id)
         .await
         .with_context(|| format!("failed to fetch job '{job_id}'"))?;
     Ok(job.output_type)
+}
+
+fn resolve_output_paths() -> (PathBuf, PathBuf) {
+    let output_dir = PathBuf::from(".metis").join("output");
+    let last_message_file = output_dir.join("output.txt");
+    let patch_file = output_dir.join("changes.patch");
+    (last_message_file, patch_file)
 }

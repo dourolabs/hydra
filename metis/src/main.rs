@@ -97,7 +97,7 @@ enum Commands {
         apply: bool,
     },
     /// Retrieve a job's context and extract/copy it to a directory.
-    Context {
+    WorkerInit {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
         job: String,
@@ -106,16 +106,10 @@ enum Commands {
         path: PathBuf,
     },
     /// Set the recorded output for a job.
-    SetOutput {
+    WorkerSubmit {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
         job: String,
-        /// Path to a file containing the last agent message to store.
-        #[arg(long = "last-message", value_name = "FILE")]
-        last_message: PathBuf,
-        /// Path to a file containing the patch text to store.
-        #[arg(long = "patch", value_name = "FILE")]
-        patch: PathBuf,
     },
 }
 
@@ -161,12 +155,9 @@ async fn main() -> Result<()> {
         Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
-        Commands::Context { job, path } => command::context::run(&client, job, path).await?,
-        Commands::SetOutput {
-            job,
-            last_message,
-            patch,
-        } => command::set_output::run(&client, job, last_message, patch).await?,
+
+        Commands::WorkerInit { job: (), path: () } { job, path } => command::worker_init::run(&client, job, path).await?,
+        Commands::WorkerSubmit { job } => command::worker_submit::run(&client, job).await?,
     }
 
     Ok(())
