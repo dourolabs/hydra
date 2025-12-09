@@ -1,3 +1,6 @@
+use crate::job_engine::{JobEngine, MetisId};
+use crate::lang::value::{FromValueRef, RuntimeError, Value};
+
 pub struct Args<'a> {
     pub vals: &'a [Value],
 }
@@ -7,7 +10,7 @@ impl<'a> Args<'a> {
         self.vals.len()
     }
 
-    pub fn get<T>(&'a self, idx: usize) -> Result<T, RuntimeError>
+    pub fn get<T>(&self, idx: usize) -> Result<T, RuntimeError>
     where
         T: FromValueRef<'a>,
     {
@@ -24,68 +27,68 @@ impl<'a> Args<'a> {
 fn builtin_add(args: &Args) -> Result<Value, RuntimeError> {
     let a: &i64 = args.get(0)?;
     let b: &i64 = args.get(1)?;
-    Ok((a + b).into_value())
+    Ok(Value::Int(*a + *b))
 }
 
 fn builtin_eq(args: &Args) -> Result<Value, RuntimeError> {
     let a: &i64 = args.get(0)?;
     let b: &i64 = args.get(1)?;
-    Ok((a == b).into_value())
+    Ok(Value::Bool(*a == *b))
 }
 
 fn builtin_strlen(args: &Args) -> Result<Value, RuntimeError> {
     let s: &String = args.get(0)?;
-    Ok((s.len() as i64).into_value())
+    Ok(Value::Int(s.len() as i64))
 }
 
 pub trait NativeFunc: Send + Sync {
     fn call(&self, args: &[Value]) -> Option<Result<Value, RuntimeError>>;
 
-    fn spawn(&self, args: &[Value], id: MetisId, engine: JobEngine) -> Result<(), RuntimeError>;
+    fn spawn(&self, args: &[Value], id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError>;
 
-    fn finalize(&self, args: &[Value], id: MetisId, engine: JobEngine) -> Result<Value, RuntimeError>;
+    fn finalize(&self, args: &[Value], id: MetisId, engine: &dyn JobEngine) -> Result<Value, RuntimeError>;
 }
 
 impl<F> NativeFunc for F
 where
     F: Fn(&[Value]) -> Result<Value, RuntimeError> + Send + Sync,
 {
-    fn call(&self, args: &[Value]) -> Result<Value, RuntimeError> {
+    fn call(&self, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         Some((self)(args))
     }
 
-    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<(), RuntimeError> {
+    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
         Ok(())
     }
 
-    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<Value, RuntimeError> {
+    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
         Ok(Value::Nil)
     }
 }
 
 pub struct Builtin {
     pub name: &'static str,
-    pub func: NativeFunc,
+    pub func: Box<dyn NativeFunc>,
 }
 
-pub fn call_builtin(b: NativeFunc, args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn call_builtin(b: &dyn NativeFunc, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     let args = Args { vals: args };
-    b(args)
+    b.call(args.vals)
 }
 
 pub struct Spawn {}
 
 impl NativeFunc for Spawn {
-    fn call(&self, args: &[Value]) -> Result<Value, RuntimeError> {
+    fn call(&self, _args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         None
     }
 
-    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<(), RuntimeError> {
+    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
         // TODO
         Ok(())
     }
 
-    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<Value, RuntimeError> {
+    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
         // TODO
         Ok(Value::Nil)
     }

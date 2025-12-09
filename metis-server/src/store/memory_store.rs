@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::job_engine::MetisId;
+use crate::lang::value::{RuntimeError, Value};
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -17,6 +18,7 @@ pub struct MemoryStore {
     parents: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
+    
     results: Option<Result<Value, RuntimeError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
@@ -29,6 +31,7 @@ impl MemoryStore {
             tasks: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
+            results: None,
             status_logs: HashMap::new(),
         }
     }

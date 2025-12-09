@@ -60,7 +60,7 @@ macro_rules! impl_value_conversion {
         impl<'a> FromValueRef<'a> for &'a $ty {
             fn from_value_ref(v: &'a Value) -> Result<Self, RuntimeError> {
                 match v {
-                    Value::$variant(ref inner) => Ok(inner),
+                    Value::$variant(inner) => Ok(inner),
                     other => Err(RuntimeError::TypeMismatch {
                         expected: $expected_name,
                         found: other.type_name(),
