@@ -52,9 +52,19 @@ fn builtin_strlen(args: &Args) -> Result<Value, RuntimeError> {
 pub trait NativeFunc: Send + Sync {
     fn call(&self, args: &Args) -> Option<Result<Value, RuntimeError>>;
 
-    async fn spawn(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError>;
+    async fn spawn(
+        &self,
+        args: &Args,
+        id: MetisId,
+        engine: &dyn JobEngine,
+    ) -> Result<(), RuntimeError>;
 
-    async fn finalize(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<Value, RuntimeError>;
+    async fn finalize(
+        &self,
+        args: &Args,
+        id: MetisId,
+        engine: &dyn JobEngine,
+    ) -> Result<Value, RuntimeError>;
 }
 
 #[async_trait]
@@ -66,11 +76,21 @@ where
         Some((self)(args))
     }
 
-    async fn spawn(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
+    async fn spawn(
+        &self,
+        _args: &Args,
+        _id: MetisId,
+        _engine: &dyn JobEngine,
+    ) -> Result<(), RuntimeError> {
         Ok(())
     }
 
-    async fn finalize(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
+    async fn finalize(
+        &self,
+        _args: &Args,
+        _id: MetisId,
+        _engine: &dyn JobEngine,
+    ) -> Result<Value, RuntimeError> {
         Ok(Value::Nil)
     }
 }
@@ -83,9 +103,7 @@ pub struct Builtin {
 
 impl std::fmt::Debug for Builtin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Builtin")
-            .field("name", &self.name)
-            .finish()
+        f.debug_struct("Builtin").field("name", &self.name).finish()
     }
 }
 
@@ -119,16 +137,28 @@ impl NativeFunc for Codex {
         None
     }
 
-    async fn spawn(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError> {
+    async fn spawn(
+        &self,
+        args: &Args,
+        id: MetisId,
+        engine: &dyn JobEngine,
+    ) -> Result<(), RuntimeError> {
         let prompt: &String = args.get(0)?;
 
         match engine.create_job(&id, prompt).await {
             Ok(()) => Ok(()),
-            Err(err) => Err(RuntimeError::JobEngineError { reason: format!("Failed to create Kubernetes job: {err}") }),
+            Err(err) => Err(RuntimeError::JobEngineError {
+                reason: format!("Failed to create Kubernetes job: {err}"),
+            }),
         }
     }
 
-    async fn finalize(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
+    async fn finalize(
+        &self,
+        _args: &Args,
+        _id: MetisId,
+        _engine: &dyn JobEngine,
+    ) -> Result<Value, RuntimeError> {
         // TODO
         Ok(Value::Nil)
     }

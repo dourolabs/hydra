@@ -1,10 +1,7 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{
-    job_outputs::JobOutputPayload,
-    jobs::CreateJobRequestContext,
-};
+use metis_common::{job_outputs::JobOutputPayload, jobs::CreateJobRequestContext};
 
 mod memory_store;
 
@@ -21,7 +18,6 @@ pub enum Task {
         result: Option<JobOutputPayload>,
     },
 }
-
 
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
@@ -216,7 +212,10 @@ pub trait Store: Send + Sync {
     /// Some(Ok(Value)) if the task completed successfully with a result,
     /// Some(Err(RuntimeError)) if the task completed with an error,
     /// None if the task doesn't exist or has no result yet
-    fn get_result(&self, id: &MetisId) -> Option<Result<crate::lang::value::Value, crate::lang::value::RuntimeError>>;
+    fn get_result(
+        &self,
+        id: &MetisId,
+    ) -> Option<Result<crate::lang::value::Value, crate::lang::value::RuntimeError>>;
 
     /// Marks a task as running.
     ///
@@ -243,7 +242,8 @@ pub trait Store: Send + Sync {
     /// Marks a task as complete.
     ///
     /// Valid transitions:
-    /// - From Running to Complete
+    /// - From Running to Complete (if result is Ok)
+    /// - From Running to Failed (if result is Err)
     ///
     /// This function will also update the status of dependent tasks:
     /// - All children (dependents) are checked
@@ -251,53 +251,18 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `id` - The MetisId of the task to update
+    /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
+    ///              If Err, the task is marked as Failed with the error as the failure reason.
+    /// * `end_time` - The timestamp when the task completed or failed
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
     /// - The task doesn't exist
     /// - The task is not in Running state
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    /// * `end_time` - The timestamp when the task completed
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
-    async fn mark_task_complete_with_result(
-        &mut self,
-        id: &MetisId,
         result: Result<crate::lang::value::Value, crate::lang::value::RuntimeError>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
-    /// Marks a task as failed.
-    ///
-    /// Valid transitions:
-    /// - From Running to Failed
-    ///
-    /// This function will also update the status of dependent tasks:
-    /// - All children (dependents) are checked
-    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Running state
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    /// * `failure_reason` - The reason why the task failed
-    /// * `end_time` - The timestamp when the task failed
-    async fn mark_task_failed(
-        &mut self,
-        id: &MetisId,
-        failure_reason: String,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }

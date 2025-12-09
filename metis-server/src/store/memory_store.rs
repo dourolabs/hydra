@@ -356,75 +356,23 @@ impl Store for MemoryStore {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        // Verify task exists
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        // Verify current status is Running
-        {
-            let status_log = self
-                .status_logs
-                .get_mut(id)
-                .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-            if !matches!(status_log.current_status, Status::Running) {
-                return Err(StoreError::InvalidStatusTransition);
-            }
-
-            // Update status log
-            status_log.current_status = Status::Complete;
-            status_log.end_time = Some(end_time);
-        }
-
-        // Check all children (dependents) and update their status if needed
-        let child_ids = self.children.get(id).cloned().unwrap_or_default();
-        for child_id in child_ids {
-            // If child is blocked, check if all its parents are now complete
-            let should_unblock = matches!(
-                self.status_logs
-                    .get(&child_id)
-                    .map(|status_log| status_log.current_status),
-                Some(Status::Blocked)
-            ) && self.all_parents_complete(&child_id);
-
-            if should_unblock {
-                if let Some(child_log) = self.status_logs.get_mut(&child_id) {
-                    child_log.current_status = Status::Pending;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn mark_task_complete_with_result(
-        &mut self,
-        id: &MetisId,
         result: Result<Value, RuntimeError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        // Store the result first
-        self.results.insert(id.clone(), result);
-        
-        // Then mark as complete
-        self.mark_task_complete(id, end_time).await
-    }
-
-    async fn mark_task_failed(
-        &mut self,
-        id: &MetisId,
-        failure_reason: String,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
         // Verify task exists
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
         // Verify current status is Running
+        let (status, failure_reason) = match result {
+            Ok(_) => (Status::Complete, None),
+            Err(ref e) => (Status::Failed, Some(format!("{:?}", e))),
+        };
+
+        // Store the result
+        self.results.insert(id.clone(), result.clone());
+
         {
             let status_log = self
                 .status_logs
@@ -436,9 +384,9 @@ impl Store for MemoryStore {
             }
 
             // Update status log
-            status_log.current_status = Status::Failed;
+            status_log.current_status = status;
             status_log.end_time = Some(end_time);
-            status_log.failure_reason = Some(failure_reason);
+            status_log.failure_reason = failure_reason;
         }
 
         // Check all children (dependents) and update their status if needed
@@ -546,12 +494,16 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
@@ -614,12 +566,16 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
 
@@ -643,19 +599,23 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Utc::now())
+            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
 
         // Add a child - it should start as pending since parent is complete
         let child_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -699,7 +659,7 @@ mod tests {
 
         // Then mark as complete
         store
-            .mark_task_complete(&root_id, Utc::now())
+            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -725,7 +685,13 @@ mod tests {
 
         // Then mark as failed
         store
-            .mark_task_failed(&root_id, "test failure".to_string(), Utc::now())
+            .mark_task_complete(
+                &root_id,
+                Err(RuntimeError::JobEngineError {
+                    reason: "test failure".to_string(),
+                }),
+                Utc::now(),
+            )
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Failed);
@@ -743,12 +709,16 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
 
@@ -759,7 +729,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Utc::now())
+            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
 
@@ -780,21 +750,29 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
         let child2_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
 
@@ -805,7 +783,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Utc::now())
+            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
 
@@ -864,7 +842,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root1_id, Utc::now())
+            .mark_task_complete(&root1_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
@@ -875,7 +853,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root2_id, Utc::now())
+            .mark_task_complete(&root2_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -893,12 +871,16 @@ mod tests {
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::Spawn {
-                prompt: "child".to_string(),
-                context: CreateJobRequestContext::None,
-                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                result: None,
-            }, vec![root_id.clone()], Utc::now())
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
+                vec![root_id.clone()],
+                Utc::now(),
+            )
             .await
             .unwrap();
 
@@ -924,7 +906,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = store
-            .mark_task_complete(&root_id, Utc::now())
+            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -944,7 +926,13 @@ mod tests {
 
         // Trying to mark as failed from pending should fail
         let err = store
-            .mark_task_failed(&root_id, "test".to_string(), Utc::now())
+            .mark_task_complete(
+                &root_id,
+                Err(RuntimeError::JobEngineError {
+                    reason: "test".to_string(),
+                }),
+                Utc::now(),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));

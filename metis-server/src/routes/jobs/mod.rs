@@ -9,9 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
-use metis_common::{
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
-};
+use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
 use tracing::{error, info};
 
@@ -226,10 +224,7 @@ async fn job_summary_with_time(
     ))
 }
 
-async fn job_notes_from_store(
-    job_id: &str,
-    store: &dyn Store,
-) -> Option<String> {
+async fn job_notes_from_store(job_id: &str, store: &dyn Store) -> Option<String> {
     let job_id_string = job_id.to_string();
     if let Ok(Task::Spawn {
         result: Some(output),

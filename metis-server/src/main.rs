@@ -10,6 +10,7 @@ mod test;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
+use crate::lang::value::{RuntimeError, Value};
 use crate::store::{MemoryStore, Status, Store, Task};
 use axum::{
     Json, Router,
@@ -183,49 +184,58 @@ async fn process_pending_jobs(state: AppState) {
             };
 
             match func.func.call(&args) {
-                    Some(result) => {
-                        // Synchronous completion: result = Value or RuntimeError
-                        let mut store = state.store.write().await;
-                        let status_update = match result {
-                            Ok(v) => store.mark_task_complete_with_result(&metis_id, Ok(v), Utc::now()).await,
-                            Err(e) => store.mark_task_failed(&metis_id, format!("{:?}", e), Utc::now()).await,
-                        };
-                        // if we fail to update the store for some reason, that's fine. We'll just try again next time.
-                        // Not sure this is the best way to handle an error here, but we'll figure it out later.
-                        if let Err(err) = status_update {
-                            error!(metis_id = %metis_id, error = %err, "failed to update task final status");
-                        }
-                    }
-                    None => {
-                        // Async/side-effectful: call spawn and mark task running/failed
-                        match func.func.spawn(&args, metis_id.clone(), state.job_engine.as_ref()).await {
-                            Ok(()) => {
-                                let mut store = state.store.write().await;
-                                match store.mark_task_running(&metis_id, Utc::now()).await {
-                                    Ok(()) => {
-                                        info!(metis_id = %metis_id, "set task status to Running (spawned)");
-                                    }
-                                    Err(err) => {
-                                        warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                let mut store = state.store.write().await;
-                                let failure_reason = format!("Failed to spawn job: {:?}", err);
-                                if let Err(update_err) = store
-                                    .mark_task_failed(&metis_id, failure_reason, Utc::now())
-                                    .await
-                                {
-                                    error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
-                                } else {
-                                    info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
-                                }
-                            }
-                        }
-                        continue;
+                Some(result) => {
+                    // Synchronous completion: result = Value or RuntimeError
+                    let mut store = state.store.write().await;
+                    let status_update = store
+                        .mark_task_complete(&metis_id, result, Utc::now())
+                        .await;
+                    // if we fail to update the store for some reason, that's fine. We'll just try again next time.
+                    // Not sure this is the best way to handle an error here, but we'll figure it out later.
+                    if let Err(err) = status_update {
+                        error!(metis_id = %metis_id, error = %err, "failed to update task final status");
                     }
                 }
+                None => {
+                    // Async/side-effectful: call spawn and mark task running/failed
+                    match func
+                        .func
+                        .spawn(&args, metis_id.clone(), state.job_engine.as_ref())
+                        .await
+                    {
+                        Ok(()) => {
+                            let mut store = state.store.write().await;
+                            match store.mark_task_running(&metis_id, Utc::now()).await {
+                                Ok(()) => {
+                                    info!(metis_id = %metis_id, "set task status to Running (spawned)");
+                                }
+                                Err(err) => {
+                                    warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let mut store = state.store.write().await;
+                            let failure_reason = format!("Failed to spawn job: {:?}", err);
+                            if let Err(update_err) = store
+                                .mark_task_complete(
+                                    &metis_id,
+                                    Err(RuntimeError::JobEngineError {
+                                        reason: failure_reason,
+                                    }),
+                                    Utc::now(),
+                                )
+                                .await
+                            {
+                                error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
+                            } else {
+                                info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
         }
     }
 }
@@ -314,15 +324,32 @@ async fn monitor_running_jobs(state: AppState) {
                 Ok(job) => {
                     match job.status {
                         crate::job_engine::JobStatus::Complete => {
-                            // Update status in store
+                            warn!(metis_id = %metis_id, "Job completed in job engine without submitting results.");
+                            // If job has been completed for at least 1 minute, mark as failed due to timeout for missing result
                             let mut store = state.store.write().await;
-                            let end_time = job.completion_time.unwrap_or_else(|| Utc::now());
-                            match store.mark_task_complete(&metis_id, end_time).await {
-                                Ok(()) => {
-                                    info!(metis_id = %metis_id, "updated task status to Complete from job engine");
-                                }
-                                Err(err) => {
-                                    warn!(metis_id = %metis_id, error = %err, "failed to update task status to Complete");
+                            let completion_time = job.completion_time.unwrap_or_else(|| Utc::now());
+                            let now = Utc::now();
+                            let duration_since_completion =
+                                now.signed_duration_since(completion_time);
+                            // Check for a 1 minute (60s) timeout since completion
+                            if duration_since_completion.num_seconds() >= 60 {
+                                let failure_reason = "Job completed without submitting results (timeout after 1 minute)".to_string();
+                                match store
+                                    .mark_task_complete(
+                                        &metis_id,
+                                        Err(RuntimeError::JobEngineError {
+                                            reason: failure_reason,
+                                        }),
+                                        completion_time,
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        warn!(metis_id = %metis_id, "task marked failed due to missing results after job completion timeout");
+                                    }
+                                    Err(err) => {
+                                        warn!(metis_id = %metis_id, error = %err, "failed to mark task failed after missing results timeout");
+                                    }
                                 }
                             }
                         }
@@ -334,7 +361,13 @@ async fn monitor_running_jobs(state: AppState) {
                                 "Job failed for an undetermined reason".to_string()
                             });
                             match store
-                                .mark_task_failed(&metis_id, failure_reason, end_time)
+                                .mark_task_complete(
+                                    &metis_id,
+                                    Err(RuntimeError::JobEngineError {
+                                        reason: failure_reason,
+                                    }),
+                                    end_time,
+                                )
                                 .await
                             {
                                 Ok(()) => {
@@ -358,7 +391,13 @@ async fn monitor_running_jobs(state: AppState) {
                     let mut store = state.store.write().await;
                     let failure_reason = "Job not found in job engine".to_string();
                     if let Err(update_err) = store
-                        .mark_task_failed(&metis_id, failure_reason, Utc::now())
+                        .mark_task_complete(
+                            &metis_id,
+                            Err(RuntimeError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            Utc::now(),
+                        )
                         .await
                     {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
@@ -841,12 +880,17 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-job".to_string(), Task::Spawn {
-                    prompt: "ask".to_string(),
-                    context: CreateJobRequestContext::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
-                }, vec![], Utc::now())
+                .add_task_with_id(
+                    "ask-job".to_string(),
+                    Task::Spawn {
+                        prompt: "ask".to_string(),
+                        context: CreateJobRequestContext::None,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1139,12 +1183,17 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-context".to_string(), Task::Spawn {
-                    prompt: "ask".to_string(),
-                    context: CreateJobRequestContext::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
-                }, vec![], Utc::now())
+                .add_task_with_id(
+                    "ask-context".to_string(),
+                    Task::Spawn {
+                        prompt: "ask".to_string(),
+                        context: CreateJobRequestContext::None,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        result: None,
+                    },
+                    vec![],
+                    Utc::now(),
+                )
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;

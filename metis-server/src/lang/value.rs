@@ -27,9 +27,8 @@ pub enum RuntimeError {
         found: usize,
     },
     JobEngineError {
-        reason: String
-    }
-    // …
+        reason: String,
+    }, // …
 }
 
 pub trait IntoValue {
@@ -43,7 +42,6 @@ pub trait FromValue: Sized {
 pub trait FromValueRef<'a>: Sized {
     fn from_value_ref(v: &'a Value) -> Result<Self, RuntimeError>;
 }
-
 
 macro_rules! impl_value_conversion {
     ($variant:ident, $ty:ty, $expected_name:expr) => {
