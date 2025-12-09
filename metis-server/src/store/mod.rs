@@ -193,6 +193,19 @@ pub trait Store: Send + Sync {
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError>;
 
+    /// Gets the result of a task by its MetisId.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId to look up
+    ///
+    /// # Returns
+    /// Some(Ok(Value)) if the task completed successfully with a result,
+    /// Some(Err(RuntimeError)) if the task completed with an error,
+    /// None if the task doesn't exist or has no result yet
+    fn get_result(&self, id: &MetisId) -> Option<Result<crate::lang::value::Value, crate::lang::value::RuntimeError>>;
+
+    
+
     /// Marks a task as running.
     ///
     /// Valid transitions:

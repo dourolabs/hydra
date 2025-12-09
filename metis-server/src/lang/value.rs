@@ -11,7 +11,7 @@ pub enum Value {
     Nil,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RuntimeError {
     TypeMismatch {
         expected: &'static str,

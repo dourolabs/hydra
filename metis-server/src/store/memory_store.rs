@@ -18,8 +18,8 @@ pub struct MemoryStore {
     parents: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
-    
-    results: Option<Result<Value, RuntimeError>>,
+    /// Maps task IDs to their execution results
+    results: HashMap<MetisId, Result<Value, RuntimeError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -31,7 +31,7 @@ impl MemoryStore {
             tasks: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
-            results: None,
+            results: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
@@ -289,6 +289,10 @@ impl Store for MemoryStore {
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+    }
+
+    fn get_result(&self, id: &MetisId) -> Option<Result<Value, RuntimeError>> {
+        self.results.get(id).cloned()
     }
 
     async fn mark_task_running(
