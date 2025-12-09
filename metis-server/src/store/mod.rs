@@ -218,8 +218,6 @@ pub trait Store: Send + Sync {
     /// None if the task doesn't exist or has no result yet
     fn get_result(&self, id: &MetisId) -> Option<Result<crate::lang::value::Value, crate::lang::value::RuntimeError>>;
 
-    
-
     /// Marks a task as running.
     ///
     /// Valid transitions:
@@ -265,6 +263,13 @@ pub trait Store: Send + Sync {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
+        end_time: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    async fn mark_task_complete_with_result(
+        &mut self,
+        id: &MetisId,
+        result: Result<crate::lang::value::Value, crate::lang::value::RuntimeError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 

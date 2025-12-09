@@ -160,35 +160,35 @@ async fn process_pending_jobs(state: AppState) {
         // Process each pending task
         for metis_id in pending_ids {
             // Get the task to extract the prompt
-            {
-                let func = { 
-                    let store = state.store.read().await;
-                    match store.get_task(&metis_id).await {
+            let func = {
+                let store = state.store.read().await;
+                match store.get_task(&metis_id).await {
                     Ok(Task::Spawn { func, .. }) => func,
                     Err(err) => {
                         error!(metis_id = %metis_id, error = %err, "failed to get task");
                         continue;
                     }
-                };
+                }
+            };
 
-                let args_vec = {
-                    let store = state.store.read().await;
-                    match store.get_args(&metis_id).await {
-                    Ok(arg_struct) => arg_struct.vals,
+            let args = {
+                let store = state.store.read().await;
+                match store.get_args(&metis_id).await {
+                    Ok(arg_struct) => arg_struct,
                     Err(err) => {
                         error!(metis_id = %metis_id, error = %err, "failed to collect args for task");
                         continue;
                     }
-                };
+                }
+            };
 
-                let args = Args::from_slice(args_vec);
-                match func.func.call(&args) {
+            match func.func.call(&args) {
                     Some(result) => {
                         // Synchronous completion: result = Value or RuntimeError
                         let mut store = state.store.write().await;
-                        let status_update = match &result {
-                            Ok(v) => store.mark_task_complete(&metis_id, v.clone(), Utc::now()).await,
-                            Err(e) => store.mark_task_failed(&metis_id, format!("{:?}", e.clone()), Utc::now()).await,
+                        let status_update = match result {
+                            Ok(v) => store.mark_task_complete_with_result(&metis_id, Ok(v), Utc::now()).await,
+                            Err(e) => store.mark_task_failed(&metis_id, format!("{:?}", e), Utc::now()).await,
                         };
                         // if we fail to update the store for some reason, that's fine. We'll just try again next time.
                         // Not sure this is the best way to handle an error here, but we'll figure it out later.
@@ -212,7 +212,7 @@ async fn process_pending_jobs(state: AppState) {
                             }
                             Err(err) => {
                                 let mut store = state.store.write().await;
-                                let failure_reason = format!("Failed to spawn job: {err}");
+                                let failure_reason = format!("Failed to spawn job: {:?}", err);
                                 if let Err(update_err) = store
                                     .mark_task_failed(&metis_id, failure_reason, Utc::now())
                                     .await
@@ -226,7 +226,6 @@ async fn process_pending_jobs(state: AppState) {
                         continue;
                     }
                 }
-            };
         }
     }
 }

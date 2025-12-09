@@ -400,6 +400,19 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn mark_task_complete_with_result(
+        &mut self,
+        id: &MetisId,
+        result: Result<Value, RuntimeError>,
+        end_time: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        // Store the result first
+        self.results.insert(id.clone(), result);
+        
+        // Then mark as complete
+        self.mark_task_complete(id, end_time).await
+    }
+
     async fn mark_task_failed(
         &mut self,
         id: &MetisId,
