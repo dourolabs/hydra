@@ -24,6 +24,7 @@ pub enum Task {
     AwaitHuman,
 }
 
+
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

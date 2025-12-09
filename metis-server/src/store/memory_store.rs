@@ -17,6 +17,7 @@ pub struct MemoryStore {
     parents: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
+    results: Option<Result<Value, RuntimeError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }

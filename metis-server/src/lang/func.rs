@@ -1,0 +1,92 @@
+pub struct Args<'a> {
+    pub vals: &'a [Value],
+}
+
+impl<'a> Args<'a> {
+    pub fn len(&self) -> usize {
+        self.vals.len()
+    }
+
+    pub fn get<T>(&'a self, idx: usize) -> Result<T, RuntimeError>
+    where
+        T: FromValueRef<'a>,
+    {
+        self.vals
+            .get(idx)
+            .ok_or(RuntimeError::ArityMismatch {
+                expected: idx + 1,
+                found: self.len(),
+            })
+            .and_then(|v| T::from_value_ref(v))
+    }
+}
+
+fn builtin_add(args: &Args) -> Result<Value, RuntimeError> {
+    let a: &i64 = args.get(0)?;
+    let b: &i64 = args.get(1)?;
+    Ok((a + b).into_value())
+}
+
+fn builtin_eq(args: &Args) -> Result<Value, RuntimeError> {
+    let a: &i64 = args.get(0)?;
+    let b: &i64 = args.get(1)?;
+    Ok((a == b).into_value())
+}
+
+fn builtin_strlen(args: &Args) -> Result<Value, RuntimeError> {
+    let s: &String = args.get(0)?;
+    Ok((s.len() as i64).into_value())
+}
+
+pub trait NativeFunc: Send + Sync {
+    fn call(&self, args: &[Value]) -> Option<Result<Value, RuntimeError>>;
+
+    fn spawn(&self, args: &[Value], id: MetisId, engine: JobEngine) -> Result<(), RuntimeError>;
+
+    fn finalize(&self, args: &[Value], id: MetisId, engine: JobEngine) -> Result<Value, RuntimeError>;
+}
+
+impl<F> NativeFunc for F
+where
+    F: Fn(&[Value]) -> Result<Value, RuntimeError> + Send + Sync,
+{
+    fn call(&self, args: &[Value]) -> Result<Value, RuntimeError> {
+        Some((self)(args))
+    }
+
+    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<Value, RuntimeError> {
+        Ok(Value::Nil)
+    }
+}
+
+pub struct Builtin {
+    pub name: &'static str,
+    pub func: NativeFunc,
+}
+
+pub fn call_builtin(b: NativeFunc, args: &[Value]) -> Result<Value, RuntimeError> {
+    let args = Args { vals: args };
+    b(args)
+}
+
+pub struct Spawn {}
+
+impl NativeFunc for Spawn {
+    fn call(&self, args: &[Value]) -> Result<Value, RuntimeError> {
+        None
+    }
+
+    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<(), RuntimeError> {
+        // TODO
+        Ok(())
+    }
+
+    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: JobEngine) -> Result<Value, RuntimeError> {
+        // TODO
+        Ok(Value::Nil)
+    }
+}

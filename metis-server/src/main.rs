@@ -2,6 +2,7 @@
 
 mod config;
 mod job_engine;
+mod lang;
 mod routes;
 mod store;
 #[cfg(test)]
