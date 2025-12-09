@@ -489,11 +489,9 @@ mod tests {
                 prompt,
                 context,
                 func: _,
-                result,
             } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(context, CreateJobRequestContext::None);
-                assert!(result.is_none());
             }
         }
 
@@ -520,7 +518,6 @@ mod tests {
                         prompt: "parent task".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     Utc::now(),
@@ -582,7 +579,6 @@ mod tests {
                         prompt: "old".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     now - Duration::seconds(30),
@@ -595,7 +591,6 @@ mod tests {
                         prompt: "mid".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -608,7 +603,6 @@ mod tests {
                         prompt: "new".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     now - Duration::seconds(10),
@@ -651,7 +645,6 @@ mod tests {
                         prompt: "demo".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -888,7 +881,6 @@ mod tests {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     Utc::now(),
@@ -970,7 +962,6 @@ mod tests {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     Utc::now(),
@@ -1015,7 +1006,6 @@ mod tests {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec![],
                     Utc::now(),
@@ -1081,6 +1071,10 @@ mod tests {
         };
         {
             let mut store_write = store.write().await;
+            let parent_output = JobOutputPayload {
+                last_message: "done".to_string(),
+                patch: "patch-content".to_string(),
+            };
             store_write
                 .add_task_with_id(
                     "parent-job".to_string(),
@@ -1088,12 +1082,16 @@ mod tests {
                         prompt: "prepare".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: Some(JobOutputPayload {
-                            last_message: "done".to_string(),
-                            patch: "patch-content".to_string(),
-                        }),
                     },
                     vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&"parent-job".to_string(), Utc::now()).await?;
+            store_write
+                .mark_task_complete(
+                    &"parent-job".to_string(),
+                    Ok(crate::lang::value::Value::CodexOutput(parent_output.clone())),
                     Utc::now(),
                 )
                 .await?;
@@ -1104,7 +1102,6 @@ mod tests {
                         prompt: "do work".to_string(),
                         context: context.clone(),
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
                     },
                     vec!["parent-job".to_string()],
                     Utc::now(),

@@ -1,7 +1,7 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{job_outputs::JobOutputPayload, jobs::CreateJobRequestContext};
+use metis_common::jobs::CreateJobRequestContext;
 
 mod memory_store;
 
@@ -15,7 +15,6 @@ pub enum Task {
         prompt: String,
         context: CreateJobRequestContext,
         func: crate::lang::func::Builtin,
-        result: Option<JobOutputPayload>,
     },
 }
 

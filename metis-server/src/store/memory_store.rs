@@ -426,7 +426,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store
             .add_task(root_task.clone(), vec![], Utc::now())
@@ -436,7 +435,6 @@ mod tests {
             prompt: "child".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let child_id = store
             .add_task(child_task.clone(), vec![root_id.clone()], Utc::now())
@@ -471,7 +469,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let err = store
             .add_task(spawn_task, vec![missing_parent.clone()], Utc::now())
@@ -490,7 +487,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -499,7 +495,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -510,7 +505,6 @@ mod tests {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let grandchild_id = store
             .add_task(grandchild_task, vec![child_id.clone()], Utc::now())
@@ -547,7 +541,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -562,7 +555,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -571,7 +563,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -592,7 +583,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -611,7 +601,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -629,7 +618,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -647,7 +635,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -673,7 +660,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -705,7 +691,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -714,7 +699,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -746,7 +730,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
@@ -755,7 +738,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -768,7 +750,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -800,7 +781,6 @@ mod tests {
             prompt: "test1".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root1_id = store
             .add_task(root1_task, vec![], Utc::now())
@@ -811,7 +791,6 @@ mod tests {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root2_id = store
             .add_task(root2_task, vec![], Utc::now())
@@ -825,7 +804,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root1_id.clone(), root2_id.clone()],
                 Utc::now(),
@@ -867,7 +845,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -876,7 +853,6 @@ mod tests {
                     prompt: "child".to_string(),
                     context: CreateJobRequestContext::None,
                     func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                    result: None,
                 },
                 vec![root_id.clone()],
                 Utc::now(),
@@ -900,7 +876,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -920,7 +895,6 @@ mod tests {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 

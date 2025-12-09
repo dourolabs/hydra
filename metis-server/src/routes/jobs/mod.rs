@@ -49,7 +49,6 @@ pub async fn create_job(
             prompt: prompt.clone(),
             context: payload.context.clone(),
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-            result: None,
         };
         store
             .add_task_with_id(job_id.clone(), task, parent_ids.clone(), Utc::now())
@@ -226,11 +225,7 @@ async fn job_summary_with_time(
 
 async fn job_notes_from_store(job_id: &str, store: &dyn Store) -> Option<String> {
     let job_id_string = job_id.to_string();
-    if let Ok(Task::Spawn {
-        result: Some(output),
-        ..
-    }) = store.get_task(&job_id_string).await
-    {
+    if let Some(Ok(crate::lang::value::Value::CodexOutput(output))) = store.get_result(&job_id_string) {
         return sanitize_note(&output.last_message);
     }
 

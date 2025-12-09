@@ -29,43 +29,7 @@ pub async fn get_job_context(
     match task {
         Task::Spawn { context, .. } => Ok(Json(WorkerContext {
             request_context: context.clone(),
-            parents: parent_outputs(store.as_ref(), &job_id_string, job_id).await?,
+            parents: HashMap::new(),
         })),
     }
-}
-
-async fn parent_outputs(
-    store: &dyn crate::store::Store,
-    job_id_string: &String,
-    job_id: &str,
-) -> Result<HashMap<String, JobOutputPayload>, ApiError> {
-    let parent_ids = store.get_parents(job_id_string).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to get parents for job context");
-        ApiError::internal(anyhow!("Failed to get parents for job '{job_id}': {err}"))
-    })?;
-
-    let mut parents: HashMap<String, JobOutputPayload> = HashMap::new();
-    for parent_id in parent_ids {
-        match store.get_task(&parent_id).await.map_err(|err| {
-            error!(
-                error = %err,
-                job_id = %job_id,
-                parent_id = %parent_id,
-                "failed to get parent task"
-            );
-            ApiError::internal(anyhow!(
-                "Failed to get parent task '{parent_id}' for job '{job_id}': {err}"
-            ))
-        })? {
-            Task::Spawn {
-                result: Some(output),
-                ..
-            } => {
-                parents.insert(parent_id, output);
-            }
-            _ => {}
-        }
-    }
-
-    Ok(parents)
 }
