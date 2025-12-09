@@ -66,9 +66,35 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct Builtin {
     pub name: &'static str,
-    pub func: Box<dyn NativeFunc>,
+    pub func: std::sync::Arc<dyn NativeFunc>,
+}
+
+impl std::fmt::Debug for Builtin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Builtin")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl PartialEq for Builtin {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for Builtin {}
+
+impl Builtin {
+    pub fn new(name: &'static str, func: impl NativeFunc + 'static) -> Self {
+        Self {
+            name,
+            func: std::sync::Arc::new(func),
+        }
+    }
 }
 
 pub fn call_builtin(b: &dyn NativeFunc, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
@@ -76,9 +102,9 @@ pub fn call_builtin(b: &dyn NativeFunc, args: &[Value]) -> Option<Result<Value, 
     b.call(args.vals)
 }
 
-pub struct Spawn {}
+pub struct Codex {}
 
-impl NativeFunc for Spawn {
+impl NativeFunc for Codex {
     fn call(&self, _args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         None
     }

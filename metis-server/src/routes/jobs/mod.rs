@@ -10,7 +10,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{
-    job_outputs::JobOutputType,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
 use serde_json::json;
@@ -51,7 +50,7 @@ pub async fn create_job(
         let task = Task::Spawn {
             prompt: prompt.clone(),
             context: payload.context.clone(),
-            output_type: payload.output_type,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         store
@@ -214,10 +213,6 @@ async fn job_summary_with_time(
     let job_id = job_id.to_string();
     let status_log = store.get_status_log(&job_id).await?;
     let notes = job_notes_from_store(&job_id, store).await;
-    let output_type = match store.get_task(&job_id).await? {
-        Task::Spawn { output_type, .. } => output_type,
-        Task::AwaitHuman => JobOutputType::Patch,
-    };
 
     let reference_time = status_log.start_time.or(Some(status_log.creation_time));
 
@@ -225,7 +220,6 @@ async fn job_summary_with_time(
         JobSummary {
             id: job_id,
             notes,
-            output_type,
             status_log,
         },
         reference_time,

@@ -4,7 +4,6 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use futures::StreamExt;
 use metis_common::{
-    job_outputs::JobOutputType,
     jobs::{CreateJobRequest, CreateJobRequestContext},
     logs::LogsQuery,
     task_status::Status,
@@ -53,7 +52,6 @@ pub async fn run(
         prompt,
         context,
         parent_ids,
-        output_type: JobOutputType::Patch,
     };
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
@@ -284,7 +282,6 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        job_outputs::JobOutputType,
         jobs::{CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Status, TaskStatusLog},
     };
@@ -304,7 +301,6 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
-                output_type: JobOutputType::Patch,
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),
@@ -318,7 +314,6 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
-                output_type: JobOutputType::Patch,
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),

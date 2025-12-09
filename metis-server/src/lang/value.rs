@@ -1,9 +1,14 @@
+use metis_common::job_outputs::JobOutputPayload;
+use metis_common::jobs::CreateJobRequestContext;
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
     Str(String),
+    CodexOutput(JobOutputPayload),
+    CodexContext(CreateJobRequestContext),
     // …
     // Function(Function),
     // NativeFunc(NativeFunc),
@@ -79,6 +84,8 @@ impl Value {
             Value::Float(_) => "Float",
             Value::Bool(_) => "Bool",
             Value::Str(_) => "Str",
+            Value::CodexOutput(_) => "CodexOutput",
+            Value::CodexContext(_) => "CodexContext",
             // …
             Value::Nil => "Nil",
         }

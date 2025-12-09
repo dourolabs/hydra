@@ -3,7 +3,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse, JobOutputType};
+use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse};
 use tracing::{error, info};
 
 pub async fn set_job_output(
@@ -19,7 +19,7 @@ pub async fn set_job_output(
     }
 
     // Get the current task, update it with the result, and store it back
-    let output_type = {
+    {
         let mut store = state.store.write().await;
         let job_id_string = job_id.to_string();
         let current_task = store.get_task(&job_id_string).await.map_err(|err| {
@@ -27,37 +27,18 @@ pub async fn set_job_output(
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        let (output_type, updated_task) = match current_task {
+        let updated_task = match current_task {
             Task::Spawn {
                 prompt,
                 context,
-                output_type,
+                func,
                 ..
-            } => {
-                if !matches!(output_type, JobOutputType::Patch) {
-                    error!(
-                        job_id = %job_id,
-                        ?output_type,
-                        "set_job_output called for unsupported output type"
-                    );
-                    return Err(ApiError::bad_request(format!(
-                        "Output type '{output_type:?}' is not supported"
-                    )));
-                }
-                (
-                    output_type,
-                    Task::Spawn {
-                        prompt,
-                        context,
-                        output_type,
-                        result: Some(payload.clone()),
-                    },
-                )
-            }
-            Task::AwaitHuman => {
-                error!(job_id = %job_id, "attempted to set output on Ask task");
-                return Err(ApiError::bad_request("Cannot set output on Ask task"));
-            }
+            } => Task::Spawn {
+                prompt,
+                context,
+                func,
+                result: Some(payload.clone()),
+            },
         };
 
         store
@@ -67,13 +48,11 @@ pub async fn set_job_output(
                 error!(error = %err, job_id = %job_id, "failed to update task with output");
                 ApiError::internal(anyhow::anyhow!("Failed to update task: {err}"))
             })?;
-        output_type
-    };
+    }
 
     info!(job_id = %job_id, "job output stored successfully");
     Ok(Json(JobOutputResponse {
         job_id: job_id.to_string(),
-        output_type,
         output: payload,
     }))
 }
@@ -97,25 +76,13 @@ pub async fn get_job_output(
     })?;
 
     if let Task::Spawn {
-        output_type,
         result: Some(output),
         ..
     } = task
     {
-        if !matches!(output_type, JobOutputType::Patch) {
-            error!(
-                job_id = %job_id,
-                ?output_type,
-                "get_job_output called for unsupported output type"
-            );
-            return Err(ApiError::bad_request(format!(
-                "Output type '{output_type:?}' is not supported"
-            )));
-        }
         info!(job_id = %job_id, "job output found");
         return Ok(Json(JobOutputResponse {
             job_id: job_id.to_string(),
-            output_type,
             output: output.clone(),
         }));
     }

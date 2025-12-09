@@ -423,7 +423,6 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use metis_common::job_outputs::JobOutputType;
     use metis_common::jobs::CreateJobRequestContext;
     use std::collections::HashSet;
 
@@ -434,20 +433,26 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store
             .add_task(root_task.clone(), vec![], Utc::now())
             .await
             .unwrap();
+        let child_task = Task::Spawn {
+            prompt: "child".to_string(),
+            context: CreateJobRequestContext::None,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+            result: None,
+        };
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(child_task.clone(), vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
         assert_eq!(store.get_task(&root_id).await.unwrap(), root_task);
-        assert_eq!(store.get_task(&child_id).await.unwrap(), Task::AwaitHuman);
+        assert_eq!(store.get_task(&child_id).await.unwrap(), child_task);
         assert_eq!(
             store.get_parents(&child_id).await.unwrap(),
             vec![root_id.clone()]
@@ -473,7 +478,7 @@ mod tests {
         let spawn_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let err = store
@@ -492,18 +497,23 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let grandchild_id = store
@@ -540,7 +550,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -555,12 +565,17 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -576,7 +591,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -591,7 +606,12 @@ mod tests {
 
         // Add a child - it should start as pending since parent is complete
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -604,7 +624,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -622,7 +642,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -648,7 +668,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -674,12 +694,17 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -706,16 +731,26 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
         let child2_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -742,7 +777,7 @@ mod tests {
         let root1_task = Task::Spawn {
             prompt: "test1".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root1_id = store
@@ -753,7 +788,7 @@ mod tests {
         let root2_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root2_id = store
@@ -764,7 +799,12 @@ mod tests {
         // Child depends on both parents
         let child_id = store
             .add_task(
-                Task::AwaitHuman,
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                },
                 vec![root1_id.clone(), root2_id.clone()],
                 Utc::now(),
             )
@@ -804,12 +844,17 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(Task::AwaitHuman, vec![root_id.clone()], Utc::now())
+            .add_task(Task::Spawn {
+                prompt: "child".to_string(),
+                context: CreateJobRequestContext::None,
+                func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                result: None,
+            }, vec![root_id.clone()], Utc::now())
             .await
             .unwrap();
 
@@ -828,7 +873,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -848,7 +893,7 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: CreateJobRequestContext::None,
-            output_type: JobOutputType::Patch,
+            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             result: None,
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();

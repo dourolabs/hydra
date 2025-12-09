@@ -164,10 +164,6 @@ async fn process_pending_jobs(state: AppState) {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
                     Ok(Task::Spawn { prompt, .. }) => prompt,
-                    Ok(Task::AwaitHuman) => {
-                        warn!(metis_id = %metis_id, "task is Ask type, skipping job creation");
-                        continue;
-                    }
                     Err(err) => {
                         error!(metis_id = %metis_id, error = %err, "failed to get task");
                         continue;
@@ -364,7 +360,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        job_outputs::{JobOutputPayload, JobOutputType},
+        job_outputs::JobOutputPayload,
         jobs::{
             CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
         },
@@ -427,15 +423,13 @@ mod tests {
             Task::Spawn {
                 prompt,
                 context,
-                output_type,
+                func: _,
                 result,
             } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(context, CreateJobRequestContext::None);
-                assert_eq!(output_type, JobOutputType::Patch);
                 assert!(result.is_none());
             }
-            Task::AwaitHuman => panic!("expected spawn task"),
         }
 
         let status = store_read.get_status(&body.job_id).await?;
@@ -460,7 +454,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "parent task".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -522,7 +516,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "old".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -535,7 +529,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "mid".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -548,7 +542,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "new".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -591,7 +585,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "demo".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -617,7 +611,6 @@ mod tests {
             summary.status_log.start_time,
             Some(now - Duration::seconds(10))
         );
-        assert_eq!(summary.output_type, JobOutputType::Patch);
         assert!(summary.status_log.failure_reason.is_none());
         Ok(())
     }
@@ -823,7 +816,12 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-job".to_string(), Task::AwaitHuman, vec![], Utc::now())
+                .add_task_with_id("ask-job".to_string(), Task::Spawn {
+                    prompt: "ask".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                }, vec![], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -857,7 +855,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -899,7 +897,6 @@ mod tests {
                     patch: "diff".to_string()
                 })
             ),
-            Task::AwaitHuman => panic!("expected spawn task"),
         }
         Ok(())
     }
@@ -950,7 +947,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: Some(payload.clone()),
                     },
                     vec![],
@@ -991,7 +988,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec![],
@@ -1064,7 +1061,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "prepare".to_string(),
                         context: CreateJobRequestContext::None,
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: Some(JobOutputPayload {
                             last_message: "done".to_string(),
                             patch: "patch-content".to_string(),
@@ -1080,7 +1077,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: context.clone(),
-                        output_type: JobOutputType::Patch,
+                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         result: None,
                     },
                     vec!["parent-job".to_string()],
@@ -1100,7 +1097,6 @@ mod tests {
         let body: WorkerContext = response.json().await?;
         assert_eq!(body.request_context, context);
         assert_eq!(body.parents.len(), 1);
-        assert_eq!(body.output_type, JobOutputType::Patch);
         assert_eq!(
             body.parents.get("parent-job"),
             Some(&JobOutputPayload {
@@ -1118,7 +1114,12 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id("ask-context".to_string(), Task::AwaitHuman, vec![], Utc::now())
+                .add_task_with_id("ask-context".to_string(), Task::Spawn {
+                    prompt: "ask".to_string(),
+                    context: CreateJobRequestContext::None,
+                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                    result: None,
+                }, vec![], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
