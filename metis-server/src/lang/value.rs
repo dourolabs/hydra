@@ -26,6 +26,9 @@ pub enum RuntimeError {
         expected: usize,
         found: usize,
     },
+    JobEngineError {
+        reason: String
+    }
     // …
 }
 

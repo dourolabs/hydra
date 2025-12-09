@@ -1,5 +1,6 @@
 use crate::job_engine::{JobEngine, MetisId};
 use crate::lang::value::{FromValueRef, RuntimeError, Value};
+use async_trait::async_trait;
 
 pub struct Args<'a> {
     pub vals: &'a [Value],
@@ -41,27 +42,29 @@ fn builtin_strlen(args: &Args) -> Result<Value, RuntimeError> {
     Ok(Value::Int(s.len() as i64))
 }
 
+#[async_trait]
 pub trait NativeFunc: Send + Sync {
-    fn call(&self, args: &[Value]) -> Option<Result<Value, RuntimeError>>;
+    fn call(&self, args: &Args) -> Option<Result<Value, RuntimeError>>;
 
-    fn spawn(&self, args: &[Value], id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError>;
+    async fn spawn(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError>;
 
-    fn finalize(&self, args: &[Value], id: MetisId, engine: &dyn JobEngine) -> Result<Value, RuntimeError>;
+    async fn finalize(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<Value, RuntimeError>;
 }
 
+#[async_trait]
 impl<F> NativeFunc for F
 where
-    F: Fn(&[Value]) -> Result<Value, RuntimeError> + Send + Sync,
+    F: Fn(&Args) -> Result<Value, RuntimeError> + Send + Sync,
 {
-    fn call(&self, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
+    fn call(&self, args: &Args) -> Option<Result<Value, RuntimeError>> {
         Some((self)(args))
     }
 
-    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
+    async fn spawn(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
         Ok(())
     }
 
-    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
+    async fn finalize(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
         Ok(Value::Nil)
     }
 }
@@ -99,22 +102,27 @@ impl Builtin {
 
 pub fn call_builtin(b: &dyn NativeFunc, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     let args = Args { vals: args };
-    b.call(args.vals)
+    b.call(&args)
 }
 
 pub struct Codex {}
 
+#[async_trait]
 impl NativeFunc for Codex {
-    fn call(&self, _args: &[Value]) -> Option<Result<Value, RuntimeError>> {
+    fn call(&self, _args: &Args) -> Option<Result<Value, RuntimeError>> {
         None
     }
 
-    fn spawn(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<(), RuntimeError> {
-        // TODO
-        Ok(())
+    async fn spawn(&self, args: &Args, id: MetisId, engine: &dyn JobEngine) -> Result<(), RuntimeError> {
+        let prompt: &String = args.get(0)?;
+
+        match engine.create_job(&id, prompt).await {
+            Ok(()) => Ok(()),
+            Err(err) => Err(RuntimeError::JobEngineError { reason: format!("Failed to create Kubernetes job: {err}") }),
+        }
     }
 
-    fn finalize(&self, _args: &[Value], _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
+    async fn finalize(&self, _args: &Args, _id: MetisId, _engine: &dyn JobEngine) -> Result<Value, RuntimeError> {
         // TODO
         Ok(Value::Nil)
     }
