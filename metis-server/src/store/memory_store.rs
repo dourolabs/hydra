@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::job_engine::MetisId;
+use crate::lang::func::Args;
 use crate::lang::value::{RuntimeError, Value};
 
 /// An in-memory implementation of the Store trait.
@@ -222,6 +223,36 @@ impl Store for MemoryStore {
         }
 
         Ok(self.parents.get(id).cloned().unwrap_or_default())
+    }
+
+    async fn get_args(&self, id: &MetisId) -> Result<Args, StoreError> {
+        // Verify task exists
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        // Get all parent IDs
+        let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
+
+        // Collect results from all parents
+        let mut vals = Vec::new();
+        for parent_id in &parent_ids {
+            match self.get_result(parent_id) {
+                Some(Ok(value)) => vals.push(value),
+                Some(Err(e)) => {
+                    return Err(StoreError::Internal(format!(
+                        "Parent task {parent_id} has error result: {e:?}"
+                    )));
+                }
+                None => {
+                    return Err(StoreError::Internal(format!(
+                        "Parent task {parent_id} has no result yet"
+                    )));
+                }
+            }
+        }
+
+        Ok(Args { vals })
     }
 
     async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {

@@ -134,6 +134,22 @@ pub trait Store: Send + Sync {
     /// A vector of MetisIds representing the parent tasks, or an error if the task doesn't exist
     async fn get_parents(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
 
+    /// Gets the arguments for a task by collecting results from all parent tasks.
+    ///
+    /// This method looks up all parent tasks of the given task, retrieves their results,
+    /// and constructs an Args from them. All parents must have completed successfully
+    /// (non-error results) for this to succeed.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the task
+    ///
+    /// # Returns
+    /// Args containing Values from all parent tasks, or an error if:
+    /// - The task doesn't exist
+    /// - Any parent task doesn't have a result
+    /// - Any parent task has an error result
+    async fn get_args(&self, id: &MetisId) -> Result<crate::lang::func::Args, StoreError>;
+
     /// Gets all child tasks (dependents) of a given task.
     ///
     /// Children are tasks that must wait for the given task to complete before they can start.

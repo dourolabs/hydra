@@ -160,47 +160,73 @@ async fn process_pending_jobs(state: AppState) {
         // Process each pending task
         for metis_id in pending_ids {
             // Get the task to extract the prompt
-            let prompt = {
-                let store = state.store.read().await;
-                match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn { prompt, .. }) => prompt,
+            {
+                let func = { 
+                    let store = state.store.read().await;
+                    match store.get_task(&metis_id).await {
+                    Ok(Task::Spawn { func, .. }) => func,
                     Err(err) => {
                         error!(metis_id = %metis_id, error = %err, "failed to get task");
                         continue;
                     }
+                };
+
+                let args_vec = {
+                    let store = state.store.read().await;
+                    match store.get_args(&metis_id).await {
+                    Ok(arg_struct) => arg_struct.vals,
+                    Err(err) => {
+                        error!(metis_id = %metis_id, error = %err, "failed to collect args for task");
+                        continue;
+                    }
+                };
+
+                let args = Args::from_slice(args_vec);
+                match func.func.call(&args) {
+                    Some(result) => {
+                        // Synchronous completion: result = Value or RuntimeError
+                        let mut store = state.store.write().await;
+                        let status_update = match &result {
+                            Ok(v) => store.mark_task_complete(&metis_id, v.clone(), Utc::now()).await,
+                            Err(e) => store.mark_task_failed(&metis_id, format!("{:?}", e.clone()), Utc::now()).await,
+                        };
+                        // if we fail to update the store for some reason, that's fine. We'll just try again next time.
+                        // Not sure this is the best way to handle an error here, but we'll figure it out later.
+                        if let Err(err) = status_update {
+                            error!(metis_id = %metis_id, error = %err, "failed to update task final status");
+                        }
+                    }
+                    None => {
+                        // Async/side-effectful: call spawn and mark task running/failed
+                        match func.func.spawn(&args, metis_id.clone(), state.job_engine.as_ref()).await {
+                            Ok(()) => {
+                                let mut store = state.store.write().await;
+                                match store.mark_task_running(&metis_id, Utc::now()).await {
+                                    Ok(()) => {
+                                        info!(metis_id = %metis_id, "set task status to Running (spawned)");
+                                    }
+                                    Err(err) => {
+                                        warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                let mut store = state.store.write().await;
+                                let failure_reason = format!("Failed to spawn job: {err}");
+                                if let Err(update_err) = store
+                                    .mark_task_failed(&metis_id, failure_reason, Utc::now())
+                                    .await
+                                {
+                                    error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
+                                } else {
+                                    info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
+                                }
+                            }
+                        }
+                        continue;
+                    }
                 }
             };
-
-            // Create the Kubernetes job
-            match state.job_engine.create_job(&metis_id, &prompt).await {
-                Ok(()) => {
-                    info!(metis_id = %metis_id, "successfully created Kubernetes job");
-                    // Set status to Running after successful job creation
-                    let mut store = state.store.write().await;
-                    match store.mark_task_running(&metis_id, Utc::now()).await {
-                        Ok(()) => {
-                            info!(metis_id = %metis_id, "set task status to Running");
-                        }
-                        Err(err) => {
-                            warn!(metis_id = %metis_id, error = %err, "failed to set task to Running");
-                        }
-                    }
-                }
-                Err(err) => {
-                    error!(metis_id = %metis_id, error = %err, "failed to create Kubernetes job");
-                    // Set status to Failed
-                    let mut store = state.store.write().await;
-                    let failure_reason = format!("Failed to create Kubernetes job: {err}");
-                    if let Err(update_err) = store
-                        .mark_task_failed(&metis_id, failure_reason, Utc::now())
-                        .await
-                    {
-                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
-                    } else {
-                        info!(metis_id = %metis_id, "set task status to Failed");
-                    }
-                }
-            }
         }
     }
 }

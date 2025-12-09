@@ -2,16 +2,16 @@ use crate::job_engine::{JobEngine, MetisId};
 use crate::lang::value::{FromValueRef, RuntimeError, Value};
 use async_trait::async_trait;
 
-pub struct Args<'a> {
-    pub vals: &'a [Value],
+pub struct Args {
+    pub vals: Vec<Value>,
 }
 
-impl<'a> Args<'a> {
+impl Args {
     pub fn len(&self) -> usize {
         self.vals.len()
     }
 
-    pub fn get<T>(&self, idx: usize) -> Result<T, RuntimeError>
+    pub fn get<'a, T>(&'a self, idx: usize) -> Result<T, RuntimeError>
     where
         T: FromValueRef<'a>,
     {
@@ -22,6 +22,12 @@ impl<'a> Args<'a> {
                 found: self.len(),
             })
             .and_then(|v| T::from_value_ref(v))
+    }
+
+    pub fn from_slice(vals: &[Value]) -> Self {
+        Self {
+            vals: vals.to_vec(),
+        }
     }
 }
 
@@ -101,7 +107,7 @@ impl Builtin {
 }
 
 pub fn call_builtin(b: &dyn NativeFunc, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
-    let args = Args { vals: args };
+    let args = Args::from_slice(args);
     b.call(&args)
 }
 
