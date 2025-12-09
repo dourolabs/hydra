@@ -1,8 +1,9 @@
-use crate::{AppState, routes::jobs::ApiError, store::Task};
+use crate::{AppState, routes::jobs::ApiError, lang::value::Value};
 use axum::{
     Json,
     extract::{Path, State},
 };
+use chrono::Utc;
 use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse};
 use tracing::{error, info};
 
@@ -18,35 +19,25 @@ pub async fn set_job_output(
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
 
-    // Get the current task, update it with the result, and store it back
+    // Mark the task as complete with the CodexOutput value
     {
         let mut store = state.store.write().await;
         let job_id_string = job_id.to_string();
-        let current_task = store.get_task(&job_id_string).await.map_err(|err| {
+        
+        // Verify task exists
+        store.get_task(&job_id_string).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        let updated_task = match current_task {
-            Task::Spawn {
-                prompt,
-                context,
-                func,
-                ..
-            } => Task::Spawn {
-                prompt,
-                context,
-                func,
-                result: Some(payload.clone()),
-            },
-        };
-
+        // Mark task as complete with the CodexOutput value
+        let value = Value::CodexOutput(payload.clone());
         store
-            .update_task(&job_id_string, updated_task)
+            .mark_task_complete(&job_id_string, Ok(value), Utc::now())
             .await
             .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to update task with output");
-                ApiError::internal(anyhow::anyhow!("Failed to update task: {err}"))
+                error!(error = %err, job_id = %job_id, "failed to mark task complete with output");
+                ApiError::internal(anyhow::anyhow!("Failed to mark task complete: {err}"))
             })?;
     }
 
@@ -70,25 +61,39 @@ pub async fn get_job_output(
 
     let store = state.store.read().await;
     let job_id_string = job_id.to_string();
-    let task = store.get_task(&job_id_string).await.map_err(|err| {
+    
+    // Verify task exists
+    store.get_task(&job_id_string).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to get task");
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
-    if let Task::Spawn {
-        result: Some(output),
-        ..
-    } = task
-    {
-        info!(job_id = %job_id, "job output found");
-        return Ok(Json(JobOutputResponse {
-            job_id: job_id.to_string(),
-            output: output.clone(),
-        }));
-    }
+    // Get the result from the task (assumed to be a CodexOutput)
+    let output = match store.get_result(&job_id_string) {
+        Some(Ok(Value::CodexOutput(output))) => output,
+        Some(Ok(_)) => {
+            error!(job_id = %job_id, "task result is not a CodexOutput");
+            return Err(ApiError::internal(anyhow::anyhow!(
+                "Task result is not a CodexOutput"
+            )));
+        }
+        Some(Err(e)) => {
+            error!(error = ?e, job_id = %job_id, "task completed with error");
+            return Err(ApiError::internal(anyhow::anyhow!(
+                "Task completed with error: {e:?}"
+            )));
+        }
+        None => {
+            error!(job_id = %job_id, "job output not available");
+            return Err(ApiError::bad_request(format!(
+                "Job '{job_id}' has not completed yet."
+            )));
+        }
+    };
 
-    error!(job_id = %job_id, "job output not available");
-    Err(ApiError::bad_request(format!(
-        "Job '{job_id}' has not completed yet."
-    )))
+    info!(job_id = %job_id, "job output found");
+    Ok(Json(JobOutputResponse {
+        job_id: job_id.to_string(),
+        output,
+    }))
 }

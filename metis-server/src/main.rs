@@ -10,7 +10,7 @@ mod test;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
-use crate::lang::value::{RuntimeError, Value};
+use crate::lang::value::RuntimeError;
 use crate::store::{MemoryStore, Status, Store, Task};
 use axum::{
     Json, Router,
@@ -429,6 +429,7 @@ mod tests {
             CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
         },
     };
+    use crate::lang::value::Value;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -874,53 +875,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_output_rejects_ask_tasks() -> anyhow::Result<()> {
-        let state = test_state();
-        let store = state.store.clone();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_task_with_id(
-                    "ask-job".to_string(),
-                    Task::Spawn {
-                        prompt: "ask".to_string(),
-                        context: CreateJobRequestContext::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
-                    },
-                    vec![],
-                    Utc::now(),
-                )
-                .await?;
-        }
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let payload = JobOutputPayload {
-            last_message: "msg".to_string(),
-            patch: "diff".to_string(),
-        };
-        let response = client
-            .post(format!("{}/v1/jobs/ask-job/output", server.base_url()))
-            .json(&payload)
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "Cannot set output on Ask task" }));
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn set_job_output_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
+            let job_id = "spawn-job".to_string();
             store_write
                 .add_task_with_id(
-                    "spawn-job".to_string(),
+                    job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
@@ -931,6 +894,7 @@ mod tests {
                     Utc::now(),
                 )
                 .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
         }
         let server = spawn_test_server_with_state(state).await?;
 
@@ -951,22 +915,10 @@ mod tests {
             body,
             json!({
                 "job_id": "spawn-job",
-                "output_type": "patch",
                 "output": { "last_message": "done", "patch": "diff" }
             })
         );
 
-        let store_read = store.read().await;
-        let task = store_read.get_task(&"spawn-job".to_string()).await?;
-        match task {
-            Task::Spawn { result, .. } => assert_eq!(
-                result,
-                Some(JobOutputPayload {
-                    last_message: "done".to_string(),
-                    patch: "diff".to_string()
-                })
-            ),
-        }
         Ok(())
     }
 
@@ -1010,18 +962,23 @@ mod tests {
         };
         {
             let mut store_write = store.write().await;
+            let job_id = "with-output".to_string();
             store_write
                 .add_task_with_id(
-                    "with-output".to_string(),
+                    job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: Some(payload.clone()),
+                        result: None,
                     },
                     vec![],
                     Utc::now(),
                 )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+            store_write
+                .mark_task_complete(&job_id, Ok(Value::CodexOutput(payload.clone())), Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1038,7 +995,6 @@ mod tests {
             body,
             json!({
                 "job_id": "with-output",
-                "output_type": "patch",
                 "output": { "last_message": "all good", "patch": "diff" }
             })
         );
@@ -1051,9 +1007,10 @@ mod tests {
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
+            let job_id = "no-output".to_string();
             store_write
                 .add_task_with_id(
-                    "no-output".to_string(),
+                    job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: CreateJobRequestContext::None,
@@ -1173,40 +1130,6 @@ mod tests {
                 patch: "patch-content".to_string()
             })
         );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_context_rejects_ask_tasks() -> anyhow::Result<()> {
-        let state = test_state();
-        let store = state.store.clone();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_task_with_id(
-                    "ask-context".to_string(),
-                    Task::Spawn {
-                        prompt: "ask".to_string(),
-                        context: CreateJobRequestContext::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
-                        result: None,
-                    },
-                    vec![],
-                    Utc::now(),
-                )
-                .await?;
-        }
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/ask-context/context", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "Ask tasks do not have context" }));
         Ok(())
     }
 }

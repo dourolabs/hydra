@@ -97,3 +97,4 @@ impl_value_conversion!(Int, i64, "Int");
 impl_value_conversion!(Float, f64, "Float");
 impl_value_conversion!(Bool, bool, "Bool");
 impl_value_conversion!(Str, String, "Str");
+impl_value_conversion!(CodexOutput, JobOutputPayload, "CodexOutput");
