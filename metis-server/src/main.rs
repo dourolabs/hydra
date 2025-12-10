@@ -2,7 +2,6 @@
 
 mod config;
 mod job_engine;
-mod lang;
 mod routes;
 mod store;
 #[cfg(test)]
@@ -10,8 +9,7 @@ mod test;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
-use crate::lang::value::RuntimeError;
-use crate::store::{MemoryStore, Status, Store, Task};
+use crate::store::{MemoryStore, Status, Store, Task, TaskError};
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -191,7 +189,7 @@ async fn process_pending_jobs(state: AppState) {
                     if let Err(update_err) = store
                         .mark_task_complete(
                             &metis_id,
-                            Err(RuntimeError::JobEngineError {
+                            Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
                             Utc::now(),
@@ -305,7 +303,7 @@ async fn monitor_running_jobs(state: AppState) {
                                 match store
                                     .mark_task_complete(
                                         &metis_id,
-                                        Err(RuntimeError::JobEngineError {
+                                        Err(TaskError::JobEngineError {
                                             reason: failure_reason,
                                         }),
                                         completion_time,
@@ -331,7 +329,7 @@ async fn monitor_running_jobs(state: AppState) {
                             match store
                                 .mark_task_complete(
                                     &metis_id,
-                                    Err(RuntimeError::JobEngineError {
+                                    Err(TaskError::JobEngineError {
                                         reason: failure_reason,
                                     }),
                                     end_time,
@@ -361,7 +359,7 @@ async fn monitor_running_jobs(state: AppState) {
                     if let Err(update_err) = store
                         .mark_task_complete(
                             &metis_id,
-                            Err(RuntimeError::JobEngineError {
+                            Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
                             Utc::now(),

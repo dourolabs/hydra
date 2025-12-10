@@ -23,6 +23,15 @@ pub enum Task {
     },
 }
 
+/// Error type for task execution failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskError {
+    /// An error occurred during job engine operations.
+    JobEngineError {
+        reason: String,
+    },
+}
+
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -214,12 +223,12 @@ pub trait Store: Send + Sync {
     ///
     /// # Returns
     /// Some(Ok(JobOutputPayload)) if the task completed successfully with a result,
-    /// Some(Err(RuntimeError)) if the task completed with an error,
+    /// Some(Err(TaskError)) if the task completed with an error,
     /// None if the task doesn't exist or has no result yet
     fn get_result(
         &self,
         id: &MetisId,
-    ) -> Option<Result<metis_common::job_outputs::JobOutputPayload, crate::lang::value::RuntimeError>>;
+    ) -> Option<Result<metis_common::job_outputs::JobOutputPayload, TaskError>>;
 
     /// Marks a task as running.
     ///
@@ -266,7 +275,7 @@ pub trait Store: Send + Sync {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        result: Result<metis_common::job_outputs::JobOutputPayload, crate::lang::value::RuntimeError>,
+        result: Result<metis_common::job_outputs::JobOutputPayload, TaskError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }

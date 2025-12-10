@@ -3,9 +3,8 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Status, Store, StoreError, Task, TaskStatusLog};
+use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::job_engine::MetisId;
-use crate::lang::value::RuntimeError;
 use metis_common::job_outputs::JobOutputPayload;
 
 /// An in-memory implementation of the Store trait.
@@ -20,7 +19,7 @@ pub struct MemoryStore {
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their execution results
-    results: HashMap<MetisId, Result<JobOutputPayload, RuntimeError>>,
+    results: HashMap<MetisId, Result<JobOutputPayload, TaskError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -322,7 +321,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    fn get_result(&self, id: &MetisId) -> Option<Result<JobOutputPayload, RuntimeError>> {
+    fn get_result(&self, id: &MetisId) -> Option<Result<JobOutputPayload, TaskError>> {
         self.results.get(id).cloned()
     }
 
@@ -356,7 +355,7 @@ impl Store for MemoryStore {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        result: Result<JobOutputPayload, RuntimeError>,
+        result: Result<JobOutputPayload, TaskError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Verify task exists
@@ -695,7 +694,7 @@ mod tests {
         store
             .mark_task_complete(
                 &root_id,
-                Err(RuntimeError::JobEngineError {
+                Err(TaskError::JobEngineError {
                     reason: "test failure".to_string(),
                 }),
                 Utc::now(),
@@ -936,7 +935,7 @@ mod tests {
         let err = store
             .mark_task_complete(
                 &root_id,
-                Err(RuntimeError::JobEngineError {
+                Err(TaskError::JobEngineError {
                     reason: "test".to_string(),
                 }),
                 Utc::now(),
