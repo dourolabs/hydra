@@ -161,10 +161,10 @@ async fn process_pending_jobs(state: AppState) {
         // Process each pending task
         for metis_id in pending_ids {
             // Get the task to extract the prompt
-            let func = {
+            let prompt = {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn { func, .. }) => func,
+                    Ok(Task::Spawn { prompt, .. }) => prompt,
                     Err(err) => {
                         error!(metis_id = %metis_id, error = %err, "failed to get task");
                         continue;
@@ -172,68 +172,36 @@ async fn process_pending_jobs(state: AppState) {
                 }
             };
 
-            let args = {
-                let store = state.store.read().await;
-                match store.get_args(&metis_id).await {
-                    Ok(arg_struct) => arg_struct,
-                    Err(err) => {
-                        error!(metis_id = %metis_id, error = %err, "failed to collect args for task");
-                        continue;
-                    }
-                }
-            };
-
-            match func.func.call(&args) {
-                Some(result) => {
-                    // Synchronous completion: result = Value or RuntimeError
+            // Spawn the job using the prompt from the task
+            match state.job_engine.create_job(&metis_id, &prompt).await {
+                Ok(()) => {
                     let mut store = state.store.write().await;
-                    let status_update = store
-                        .mark_task_complete(&metis_id, result, Utc::now())
-                        .await;
-                    // if we fail to update the store for some reason, that's fine. We'll just try again next time.
-                    // Not sure this is the best way to handle an error here, but we'll figure it out later.
-                    if let Err(err) = status_update {
-                        error!(metis_id = %metis_id, error = %err, "failed to update task final status");
-                    }
-                }
-                None => {
-                    // Async/side-effectful: call spawn and mark task running/failed
-                    match func
-                        .func
-                        .spawn(&args, metis_id.clone(), state.job_engine.as_ref())
-                        .await
-                    {
+                    match store.mark_task_running(&metis_id, Utc::now()).await {
                         Ok(()) => {
-                            let mut store = state.store.write().await;
-                            match store.mark_task_running(&metis_id, Utc::now()).await {
-                                Ok(()) => {
-                                    info!(metis_id = %metis_id, "set task status to Running (spawned)");
-                                }
-                                Err(err) => {
-                                    warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
-                                }
-                            }
+                            info!(metis_id = %metis_id, "set task status to Running (spawned)");
                         }
                         Err(err) => {
-                            let mut store = state.store.write().await;
-                            let failure_reason = format!("Failed to spawn job: {:?}", err);
-                            if let Err(update_err) = store
-                                .mark_task_complete(
-                                    &metis_id,
-                                    Err(RuntimeError::JobEngineError {
-                                        reason: failure_reason,
-                                    }),
-                                    Utc::now(),
-                                )
-                                .await
-                            {
-                                error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
-                            } else {
-                                info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
-                            }
+                            warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
                         }
                     }
-                    continue;
+                }
+                Err(err) => {
+                    let mut store = state.store.write().await;
+                    let failure_reason = format!("Failed to create Kubernetes job: {err}");
+                    if let Err(update_err) = store
+                        .mark_task_complete(
+                            &metis_id,
+                            Err(RuntimeError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            Utc::now(),
+                        )
+                        .await
+                    {
+                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
+                    } else {
+                        info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
+                    }
                 }
             }
         }
@@ -429,7 +397,6 @@ mod tests {
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
         },
     };
-    use crate::lang::value::Value;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -488,7 +455,6 @@ mod tests {
             Task::Spawn {
                 prompt,
                 context,
-                func: _,
                 setup: _,
                 cleanup: _,
             } => {
@@ -519,7 +485,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "parent task".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -582,7 +547,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "old".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -596,7 +560,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "mid".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -610,7 +573,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "new".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -654,7 +616,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "demo".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -892,7 +853,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -975,7 +935,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -985,7 +944,7 @@ mod tests {
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             store_write
-                .mark_task_complete(&job_id, Ok(Value::CodexOutput(payload.clone())), Utc::now())
+                .mark_task_complete(&job_id, Ok(payload.clone()), Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1021,7 +980,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -1099,7 +1057,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "prepare".to_string(),
                         context: Bundle::None,
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },
@@ -1111,7 +1068,7 @@ mod tests {
             store_write
                 .mark_task_complete(
                     &"parent-job".to_string(),
-                    Ok(crate::lang::value::Value::CodexOutput(parent_output.clone())),
+                    Ok(parent_output.clone()),
                     Utc::now(),
                 )
                 .await?;
@@ -1121,7 +1078,6 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         context: context.clone(),
-                        func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                         setup: vec![],
                         cleanup: vec![],
                     },

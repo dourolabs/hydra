@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::job_engine::MetisId;
-use crate::lang::func::Args;
-use crate::lang::value::{RuntimeError, Value};
+use crate::lang::value::RuntimeError;
+use metis_common::job_outputs::JobOutputPayload;
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -20,7 +20,7 @@ pub struct MemoryStore {
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their execution results
-    results: HashMap<MetisId, Result<Value, RuntimeError>>,
+    results: HashMap<MetisId, Result<JobOutputPayload, RuntimeError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -225,7 +225,7 @@ impl Store for MemoryStore {
         Ok(self.parents.get(id).cloned().unwrap_or_default())
     }
 
-    async fn get_args(&self, id: &MetisId) -> Result<Args, StoreError> {
+    async fn get_args(&self, id: &MetisId) -> Result<Vec<JobOutputPayload>, StoreError> {
         // Verify task exists
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
@@ -235,10 +235,10 @@ impl Store for MemoryStore {
         let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
 
         // Collect results from all parents
-        let mut vals = Vec::new();
+        let mut payloads = Vec::new();
         for parent_id in &parent_ids {
             match self.get_result(parent_id) {
-                Some(Ok(value)) => vals.push(value),
+                Some(Ok(payload)) => payloads.push(payload),
                 Some(Err(e)) => {
                     return Err(StoreError::Internal(format!(
                         "Parent task {parent_id} has error result: {e:?}"
@@ -252,7 +252,7 @@ impl Store for MemoryStore {
             }
         }
 
-        Ok(Args { vals })
+        Ok(payloads)
     }
 
     async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
@@ -322,7 +322,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    fn get_result(&self, id: &MetisId) -> Option<Result<Value, RuntimeError>> {
+    fn get_result(&self, id: &MetisId) -> Option<Result<JobOutputPayload, RuntimeError>> {
         self.results.get(id).cloned()
     }
 
@@ -356,7 +356,7 @@ impl Store for MemoryStore {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        result: Result<Value, RuntimeError>,
+        result: Result<JobOutputPayload, RuntimeError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Verify task exists
@@ -418,6 +418,14 @@ mod tests {
     use metis_common::jobs::Bundle;
     use std::collections::HashSet;
 
+    // Helper function for tests to create a dummy payload
+    fn dummy_payload() -> JobOutputPayload {
+        JobOutputPayload {
+            last_message: String::new(),
+            patch: String::new(),
+        }
+    }
+
     #[tokio::test]
     async fn add_and_retrieve_tasks_with_dependencies() {
         let mut store = MemoryStore::new();
@@ -425,7 +433,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -436,7 +443,6 @@ mod tests {
         let child_task = Task::Spawn {
             prompt: "child".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -472,7 +478,6 @@ mod tests {
         let spawn_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -492,7 +497,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -502,7 +506,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -514,7 +517,6 @@ mod tests {
         let grandchild_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -552,7 +554,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -568,7 +569,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -578,7 +578,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -600,7 +599,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -609,7 +607,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -620,7 +618,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -639,7 +636,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -658,7 +654,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -672,7 +667,7 @@ mod tests {
 
         // Then mark as complete
         store
-            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -685,7 +680,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -718,7 +712,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -728,7 +721,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -745,7 +737,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
 
@@ -761,7 +753,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -771,7 +762,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -785,7 +775,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -802,7 +791,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
 
@@ -818,7 +807,6 @@ mod tests {
         let root1_task = Task::Spawn {
             prompt: "test1".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -830,7 +818,6 @@ mod tests {
         let root2_task = Task::Spawn {
             prompt: "test2".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -845,7 +832,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -864,7 +850,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root1_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root1_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
@@ -875,7 +861,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root2_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root2_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -888,7 +874,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -898,7 +883,6 @@ mod tests {
                 Task::Spawn {
                     prompt: "child".to_string(),
                     context: Bundle::None,
-                    func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
                     setup: vec![],
                     cleanup: vec![],
                 },
@@ -923,7 +907,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };
@@ -931,7 +914,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = store
-            .mark_task_complete(&root_id, Ok(Value::Nil), Utc::now())
+            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -944,7 +927,6 @@ mod tests {
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
             context: Bundle::None,
-            func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
             setup: vec![],
             cleanup: vec![],
         };

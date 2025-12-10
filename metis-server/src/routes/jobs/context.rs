@@ -4,7 +4,8 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use metis_common::{job_outputs::JobOutputPayload, jobs::WorkerContext};
+use metis_common::jobs::WorkerContext;
+use metis_common::job_outputs::JobOutputPayload;
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -26,10 +27,23 @@ pub async fn get_job_context(
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
+    // Get parent task IDs and their results
+    let parent_ids = store.get_parents(&job_id_string).await.map_err(|err| {
+        error!(error = %err, job_id = %job_id, "failed to get parent tasks");
+        ApiError::internal(anyhow::anyhow!("Failed to get parent tasks: {err}"))
+    })?;
+
+    let mut parents: HashMap<String, JobOutputPayload> = HashMap::new();
+    for parent_id in parent_ids {
+        if let Some(Ok(payload)) = store.get_result(&parent_id) {
+            parents.insert(parent_id, payload);
+        }
+    }
+
     match task {
         Task::Spawn { context, .. } => Ok(Json(WorkerContext {
             request_context: context.clone(),
-            parents: HashMap::new(),
+            parents,
         })),
     }
 }

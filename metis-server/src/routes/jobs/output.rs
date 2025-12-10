@@ -1,4 +1,4 @@
-use crate::{AppState, routes::jobs::ApiError, lang::value::Value};
+use crate::{AppState, routes::jobs::ApiError};
 use axum::{
     Json,
     extract::{Path, State},
@@ -30,10 +30,9 @@ pub async fn set_job_output(
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        // Mark task as complete with the CodexOutput value
-        let value = Value::CodexOutput(payload.clone());
+        // Mark task as complete with the JobOutputPayload
         store
-            .mark_task_complete(&job_id_string, Ok(value), Utc::now())
+            .mark_task_complete(&job_id_string, Ok(payload.clone()), Utc::now())
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to mark task complete with output");
@@ -68,15 +67,9 @@ pub async fn get_job_output(
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
-    // Get the result from the task (assumed to be a CodexOutput)
+    // Get the result from the task
     let output = match store.get_result(&job_id_string) {
-        Some(Ok(Value::CodexOutput(output))) => output,
-        Some(Ok(_)) => {
-            error!(job_id = %job_id, "task result is not a CodexOutput");
-            return Err(ApiError::internal(anyhow::anyhow!(
-                "Task result is not a CodexOutput"
-            )));
-        }
+        Some(Ok(output)) => output,
         Some(Err(e)) => {
             error!(error = ?e, job_id = %job_id, "task completed with error");
             return Err(ApiError::internal(anyhow::anyhow!(
