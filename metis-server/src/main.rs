@@ -963,7 +963,7 @@ mod tests {
             body,
             json!({
                 "job_id": "with-output",
-                "output": { "last_message": "all good", "patch": "diff" }
+                "output": { "last_message": "all good", "patch": "diff", "bundle": {"type": "none"}}
             })
         );
         Ok(())
