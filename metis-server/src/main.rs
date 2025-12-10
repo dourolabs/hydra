@@ -426,7 +426,7 @@ mod tests {
     use metis_common::{
         job_outputs::JobOutputPayload,
         jobs::{
-            CreateJobRequestContext, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
+            Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
         },
     };
     use crate::lang::value::Value;
@@ -489,9 +489,11 @@ mod tests {
                 prompt,
                 context,
                 func: _,
+                setup: _,
+                cleanup: _,
             } => {
                 assert_eq!(prompt, "run tests");
-                assert_eq!(context, CreateJobRequestContext::None);
+                assert_eq!(context, Bundle::None);
             }
         }
 
@@ -516,8 +518,10 @@ mod tests {
                     "parent-1".to_string(),
                     Task::Spawn {
                         prompt: "parent task".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     Utc::now(),
@@ -577,8 +581,10 @@ mod tests {
                     oldest_id.clone(),
                     Task::Spawn {
                         prompt: "old".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     now - Duration::seconds(30),
@@ -589,8 +595,10 @@ mod tests {
                     middle_id.clone(),
                     Task::Spawn {
                         prompt: "mid".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -601,8 +609,10 @@ mod tests {
                     newest_id.clone(),
                     Task::Spawn {
                         prompt: "new".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     now - Duration::seconds(10),
@@ -643,8 +653,10 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "demo".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -879,8 +891,10 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     Utc::now(),
@@ -960,8 +974,10 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     Utc::now(),
@@ -1004,8 +1020,10 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     Utc::now(),
@@ -1065,7 +1083,7 @@ mod tests {
     async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
         let store = state.store.clone();
-        let context = CreateJobRequestContext::GitRepository {
+        let context = Bundle::GitRepository {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         };
@@ -1080,8 +1098,10 @@ mod tests {
                     "parent-job".to_string(),
                     Task::Spawn {
                         prompt: "prepare".to_string(),
-                        context: CreateJobRequestContext::None,
+                        context: Bundle::None,
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec![],
                     Utc::now(),
@@ -1102,6 +1122,8 @@ mod tests {
                         prompt: "do work".to_string(),
                         context: context.clone(),
                         func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+                        setup: vec![],
+                        cleanup: vec![],
                     },
                     vec!["parent-job".to_string()],
                     Utc::now(),

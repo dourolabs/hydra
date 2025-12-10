@@ -11,7 +11,7 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use metis_common::{
     job_outputs::JobOutputPayload,
-    jobs::{CreateJobRequestContext, WorkerContext},
+    jobs::{Bundle, WorkerContext},
 };
 use tar::Archive;
 
@@ -25,16 +25,16 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
     match request_context {
-        CreateJobRequestContext::None => {
+        Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
         }
-        CreateJobRequestContext::UploadDirectory { archive_base64 } => {
+        Bundle::TarGz { archive_base64 } => {
             extract_tar_gz_base64(&archive_base64, &dest)?;
         }
-        CreateJobRequestContext::GitRepository { url, rev } => {
+        Bundle::GitRepository { url, rev } => {
             clone_git_repo(&url, &rev, &dest)?;
         }
-        CreateJobRequestContext::GitBundle { bundle_base64 } => {
+        Bundle::GitBundle { bundle_base64 } => {
             clone_from_git_bundle_base64(&bundle_base64, &dest)?;
         }
     }

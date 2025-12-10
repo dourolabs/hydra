@@ -49,6 +49,8 @@ pub async fn create_job(
             prompt: prompt.clone(),
             context: payload.context.clone(),
             func: crate::lang::func::Builtin::new("codex", crate::lang::func::Codex {}),
+            setup: vec![],
+            cleanup: vec![],
         };
         store
             .add_task_with_id(job_id.clone(), task, parent_ids.clone(), Utc::now())

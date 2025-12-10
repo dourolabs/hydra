@@ -1,5 +1,5 @@
 use metis_common::job_outputs::JobOutputPayload;
-use metis_common::jobs::CreateJobRequestContext;
+use metis_common::jobs::Bundle;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -8,7 +8,7 @@ pub enum Value {
     Bool(bool),
     Str(String),
     CodexOutput(JobOutputPayload),
-    CodexContext(CreateJobRequestContext),
+    CodexContext(Bundle),
     // …
     // Function(Function),
     // NativeFunc(NativeFunc),

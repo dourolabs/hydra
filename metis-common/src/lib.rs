@@ -37,17 +37,17 @@ pub mod jobs {
     pub struct CreateJobRequest {
         pub prompt: String,
         #[serde(default)]
-        pub context: CreateJobRequestContext,
+        pub context: Bundle,
         #[serde(default)]
         pub parent_ids: Vec<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
-    pub enum CreateJobRequestContext {
+    pub enum Bundle {
         #[serde(rename = "none")]
         None,
-        UploadDirectory {
+        TarGz {
             /// Base64-encoded archive (.tar.gz) of the directory contents.
             archive_base64: String,
         },
@@ -63,7 +63,7 @@ pub mod jobs {
         },
     }
 
-    impl Default for CreateJobRequestContext {
+    impl Default for Bundle {
         fn default() -> Self {
             Self::None
         }
@@ -71,7 +71,7 @@ pub mod jobs {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct WorkerContext {
-        pub request_context: CreateJobRequestContext,
+        pub request_context: Bundle,
         #[serde(default)]
         pub parents: HashMap<String, JobOutputPayload>,
     }

@@ -1,11 +1,15 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::jobs::CreateJobRequestContext;
+use metis_common::jobs::Bundle;
 
 mod memory_store;
 
 pub use metis_common::task_status::{Status, TaskStatusLog};
+
+/// Type alias for a command. Currently represents a bash command as a string.
+/// In the future, this will be a more structured type.
+pub type Command = String;
 
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,8 +17,10 @@ pub enum Task {
     /// A spawn task that creates a new job.
     Spawn {
         prompt: String,
-        context: CreateJobRequestContext,
+        context: Bundle,
         func: crate::lang::func::Builtin,
+        setup: Vec<Command>,
+        cleanup: Vec<Command>,
     },
 }
 
