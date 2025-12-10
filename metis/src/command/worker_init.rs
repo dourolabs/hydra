@@ -73,10 +73,21 @@ fn write_parent_outputs(
         let parent_dir = parents_dir.join(metis_id);
         fs::create_dir_all(&parent_dir)
             .with_context(|| format!("failed to create directory {parent_dir:?}"))?;
-        fs::write(parent_dir.join("last_message.txt"), &output.last_message)
-            .with_context(|| format!("failed to write last_message.txt for parent '{metis_id}'"))?;
-        fs::write(parent_dir.join("patch.diff"), &output.patch)
-            .with_context(|| format!("failed to write patch.diff for parent '{metis_id}'"))?;
+        
+        match &output.bundle {
+            Bundle::None => {
+                // Directory already created above, nothing to extract
+            }
+            Bundle::TarGz { archive_base64 } => {
+                extract_tar_gz_base64(archive_base64, &parent_dir)?;
+            }
+            Bundle::GitRepository { url, rev } => {
+                clone_git_repo(url, rev, &parent_dir)?;
+            }
+            Bundle::GitBundle { bundle_base64 } => {
+                clone_from_git_bundle_base64(bundle_base64, &parent_dir)?;
+            }
+        }
     }
 
     Ok(())

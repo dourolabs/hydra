@@ -114,12 +114,14 @@ pub mod logs {
 }
 
 pub mod job_outputs {
+    use crate::jobs::Bundle;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct JobOutputPayload {
         pub last_message: String,
         pub patch: String,
+        pub bundle: Bundle,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]

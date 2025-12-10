@@ -805,6 +805,7 @@ mod tests {
         let payload = JobOutputPayload {
             last_message: "msg".to_string(),
             patch: "diff".to_string(),
+            bundle: Bundle::None,
         };
         let response = client
             .post(format!("{}/v1/jobs/ /output", server.base_url()))
@@ -825,6 +826,7 @@ mod tests {
         let payload = JobOutputPayload {
             last_message: "msg".to_string(),
             patch: "diff".to_string(),
+            bundle: Bundle::None,
         };
         let response = client
             .post(format!("{}/v1/jobs/missing/output", server.base_url()))
@@ -866,6 +868,7 @@ mod tests {
         let payload = JobOutputPayload {
             last_message: "done".to_string(),
             patch: "diff".to_string(),
+            bundle: Bundle::None,
         };
         let response = client
             .post(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
@@ -879,7 +882,7 @@ mod tests {
             body,
             json!({
                 "job_id": "spawn-job",
-                "output": { "last_message": "done", "patch": "diff" }
+                "output": { "last_message": "done", "patch": "diff", "bundle": { "type": "none" } }
             })
         );
 
@@ -923,6 +926,7 @@ mod tests {
         let payload = JobOutputPayload {
             last_message: "all good".to_string(),
             patch: "diff".to_string(),
+            bundle: Bundle::None,
         };
         {
             let mut store_write = store.write().await;
@@ -1048,6 +1052,7 @@ mod tests {
             let parent_output = JobOutputPayload {
                 last_message: "done".to_string(),
                 patch: "patch-content".to_string(),
+                bundle: Bundle::None,
             };
             store_write
                 .add_task_with_id(
@@ -1100,7 +1105,8 @@ mod tests {
             body.parents.get("parent-job"),
             Some(&JobOutputPayload {
                 last_message: "done".to_string(),
-                patch: "patch-content".to_string()
+                patch: "patch-content".to_string(),
+                bundle: Bundle::None,
             })
         );
         Ok(())

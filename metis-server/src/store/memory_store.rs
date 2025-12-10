@@ -422,6 +422,7 @@ mod tests {
         JobOutputPayload {
             last_message: String::new(),
             patch: String::new(),
+            bundle: Bundle::None,
         }
     }
 
