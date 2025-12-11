@@ -13,7 +13,7 @@ tasks:
     type: codex
     prompt: >
       You are a code review agent who is responsible for approving or 
-      rejecting the changes from a contributor. Please look at the changes in changes.patch 
+      rejecting the changes from a contributor. Please look at the changes in .metis/generate-patch/changes.patch 
       as being applied to the current repository. 
 
       If the code *does not* meet your standards, please write the reasons it does not 
@@ -22,8 +22,6 @@ tasks:
       The task provided to the prior contributor was as follows:
 
       $PROMPT
-    setup:
-      - cp .metis/parents/**/changes.patch .
 
   fix-problems:
     inputs: 
@@ -47,39 +45,27 @@ tasks:
             exit 0
           fi
 
-          task_id="${METIS_TASK_ID:-${TASK_ID:-${METIS_ID:-}}}"
-          if [[ -z "${task_id}" ]]; then
-            echo "GH_TOKEN provided but task id not found in METIS_TASK_ID/TASK_ID/METIS_ID; skipping PR creation." >&2
-            exit 0
-          fi
-
-          branch_name="metis-${task_id}"
-
-          if ! command -v gh >/dev/null 2>&1; then
-            echo "gh CLI not installed; skipping PR creation." >&2
-            exit 0
-          fi
-
           git config user.name "${GIT_USER_NAME:-metis-bot}"
           git config user.email "${GIT_USER_EMAIL:-metis-bot@dourolabs.com}"
+          
+          gh auth setup-git
+
+          branch_name="metis-${METIS_ID}"
 
           git checkout -B "${branch_name}"
-
           git add -A -- . ':!.metis/**'
+
           if git diff --cached --quiet; then
             echo "No changes to commit; skipping PR creation."
             exit 0
           fi
 
-          if ! gh auth status >/dev/null 2>&1; then
-            printf "%s\n" "${GH_TOKEN}" | gh auth login --with-token
-          fi
-
-          gh auth setup-git
-
+          echo "committing"
           git commit -m "task ${task_id}"
+          echo "pushing"
           git push --force-with-lease origin "${branch_name}"
 
+          echo "making PR"
           gh pr create \
             --repo dourolabs/metis \
             --head "${branch_name}" \
