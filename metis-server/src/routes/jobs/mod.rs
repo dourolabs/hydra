@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Edge, Store, StoreError, Task},
+    store::{Edge, Store, StoreError, Task, TaskError},
 };
 use axum::{
     Json,
@@ -9,7 +9,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
-use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
+use metis_common::{
+    job_outputs::JobOutputPayload,
+    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+};
 use serde_json::json;
 use std::collections::HashMap;
 use tracing::{error, info};
@@ -235,8 +238,8 @@ async fn job_summary_with_time(
 
 async fn job_notes_from_store(job_id: &str, store: &dyn Store) -> Option<String> {
     let job_id_string = job_id.to_string();
-    if let Some(Ok(output)) = store.get_result(&job_id_string) {
-        return sanitize_note(&output.last_message);
+    if let Some(result) = store.get_result(&job_id_string) {
+        return note_from_result(&result);
     }
 
     None
@@ -248,5 +251,20 @@ pub(crate) fn sanitize_note(note: &str) -> Option<String> {
         None
     } else {
         Some(collapsed)
+    }
+}
+
+fn format_error_note(error: &TaskError) -> Option<String> {
+    match error {
+        TaskError::JobEngineError { reason } => {
+            sanitize_note(reason).map(|msg| format!("error: {msg}"))
+        }
+    }
+}
+
+pub(crate) fn note_from_result(result: &Result<JobOutputPayload, TaskError>) -> Option<String> {
+    match result {
+        Ok(output) => sanitize_note(&output.last_message),
+        Err(err) => format_error_note(err),
     }
 }

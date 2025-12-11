@@ -22,8 +22,6 @@ pub mod task_status {
         #[serde(default)]
         pub end_time: Option<DateTime<Utc>>,
         pub current_status: Status,
-        #[serde(default)]
-        pub failure_reason: Option<String>,
     }
 }
 
