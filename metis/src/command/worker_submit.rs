@@ -4,10 +4,7 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use metis_common::{
-    job_outputs::JobOutputPayload,
-    jobs::Bundle,
-};
+use metis_common::{job_outputs::JobOutputPayload, jobs::Bundle};
 use std::{
     fs,
     io::Write,
@@ -34,12 +31,15 @@ pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
             last_message_file.display()
         )
     })?;
-    let patch = fs::read_to_string(&patch_file).with_context(|| {
-        format!("failed to read patch output at '{}'", patch_file.display())
-    })?;
+    let patch = fs::read_to_string(&patch_file)
+        .with_context(|| format!("failed to read patch output at '{}'", patch_file.display()))?;
 
-    let bundle = create_output_bundle(&output_dir)
-        .with_context(|| format!("failed to create bundle from output directory '{}'", output_dir.display()))?;
+    let bundle = create_output_bundle(&output_dir).with_context(|| {
+        format!(
+            "failed to create bundle from output directory '{}'",
+            output_dir.display()
+        )
+    })?;
 
     let payload = JobOutputPayload {
         last_message,
@@ -56,7 +56,6 @@ pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
     );
     Ok(())
 }
-
 
 fn resolve_output_paths() -> (PathBuf, PathBuf, PathBuf) {
     let output_dir = PathBuf::from(".metis").join("output");
@@ -113,7 +112,9 @@ fn run_cleanup_commands(commands: &[String]) -> Result<()> {
             .arg(command)
             .current_dir(&current_dir)
             .status()
-            .with_context(|| format!("failed to execute cleanup command {}: {}", idx + 1, command))?;
+            .with_context(|| {
+                format!("failed to execute cleanup command {}: {}", idx + 1, command)
+            })?;
         if !status.success() {
             return Err(anyhow!(
                 "cleanup command {} failed with status {}: {}",

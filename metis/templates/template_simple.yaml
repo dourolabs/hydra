@@ -1,32 +1,28 @@
-env:
-  - name: FOO
-    value: 0
-  - name: BAR
+variables:
+  - name: PROMPT
 
 tasks:
   generate-patch:
     type: codex
     prompt: >
-      please write unit tests for the metis spawn CLI command, making sure to consider corner cases.
+      $PROMPT
   
   code-review:
     inputs: generate-patch
     type: codex
     prompt: >
       You are a code review agent who is responsible for approving or 
-      rejecting the changes from a contributor. Please look at the changes in patch.txt 
+      rejecting the changes from a contributor. Please look at the changes in changes.patch 
       as being applied to the current repository. 
 
       If the code *does not* meet your standards, please write the reasons it does not 
       into the .metis/output/error.txt file. If the code looks good, do not generate this file.
 
-      The value of foo is $FOO
+      The task provided to the prior contributor was as follows:
 
-      The task provided to the prior contributor was as follows      
+      $PROMPT
     setup:
-      - echo "this is the setup"
-      - echo "$PROMPT"
-      - echo "$FOO"
+      - cp .metis/parents/**/changes.patch .
 
   merge:
     inputs: code-review

@@ -1,3 +1,4 @@
+use crate::task_status::{Status, TaskStatusLog};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -79,6 +80,29 @@ pub struct CreateWorkflowResponse {
     pub task_ids: HashMap<String, String>,
 }
 
+/// Summary of a workflow's current state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSummary {
+    /// Unique identifier for the workflow.
+    pub id: String,
+    /// Sanitized notes from the most recent completed task or failure reason.
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Aggregate workflow status derived from task states.
+    pub status: Status,
+    /// Aggregate timing information for the workflow.
+    pub status_log: TaskStatusLog,
+    /// Names of tasks that are currently running.
+    #[serde(default)]
+    pub running_tasks: Vec<String>,
+}
+
+/// Response containing all workflows known to the server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListWorkflowsResponse {
+    pub workflows: Vec<WorkflowSummary>,
+}
+
 impl Workflow {
     /// Build a map of variable names to their values.
     /// Only includes variables that have a value set.
@@ -86,7 +110,9 @@ impl Workflow {
         self.variables
             .iter()
             .filter_map(|var| {
-                var.value.as_ref().map(|val| (var.name.clone(), val.clone()))
+                var.value
+                    .as_ref()
+                    .map(|val| (var.name.clone(), val.clone()))
             })
             .collect()
     }
@@ -97,7 +123,7 @@ impl Workflow {
     fn substitute_variables_in_string(s: &str, vars: &HashMap<String, String>) -> String {
         let mut result = String::with_capacity(s.len());
         let mut chars = s.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '$' {
                 // Check for escaped dollar sign
@@ -106,13 +132,13 @@ impl Workflow {
                     result.push('$');
                     continue;
                 }
-                
+
                 // Check for ${VAR_NAME} syntax
                 if chars.peek() == Some(&'{') {
                     chars.next(); // consume {
                     let mut var_name = String::new();
                     let mut found_closing = false;
-                    
+
                     while let Some(ch) = chars.next() {
                         if ch == '}' {
                             found_closing = true;
@@ -120,7 +146,7 @@ impl Workflow {
                         }
                         var_name.push(ch);
                     }
-                    
+
                     if found_closing && !var_name.is_empty() {
                         if let Some(value) = vars.get(&var_name) {
                             result.push_str(value);
@@ -143,7 +169,7 @@ impl Workflow {
                     // Check for $VAR_NAME syntax
                     let mut var_name = String::new();
                     let mut chars_clone = chars.clone();
-                    
+
                     // Collect variable name (alphanumeric + underscore)
                     while let Some(&ch) = chars_clone.peek() {
                         if ch.is_alphanumeric() || ch == '_' {
@@ -153,13 +179,13 @@ impl Workflow {
                             break;
                         }
                     }
-                    
+
                     if !var_name.is_empty() {
                         // Consume the chars we've identified
                         for _ in 0..var_name.len() {
                             chars.next();
                         }
-                        
+
                         if let Some(value) = vars.get(&var_name) {
                             result.push_str(value);
                         } else {
@@ -176,7 +202,7 @@ impl Workflow {
                 result.push(ch);
             }
         }
-        
+
         result
     }
 
@@ -184,7 +210,7 @@ impl Workflow {
     /// This resolves all $VAR_NAME references in prompts, setup, and cleanup commands.
     pub fn with_substituted_variables(&self) -> Self {
         let vars = self.build_variable_map();
-        
+
         let tasks: HashMap<String, TaskDefinition> = self
             .tasks
             .iter()
@@ -207,7 +233,7 @@ impl Workflow {
                 (name.clone(), substituted_task)
             })
             .collect();
-        
+
         Self {
             variables: self.variables.clone(),
             tasks,
@@ -217,21 +243,18 @@ impl Workflow {
     /// Validate that all referenced variables are defined.
     /// Returns a list of undefined variable references.
     pub fn validate_variables(&self) -> Vec<String> {
-        let defined_vars: std::collections::HashSet<String> = self
-            .variables
-            .iter()
-            .map(|v| v.name.clone())
-            .collect();
-        
+        let defined_vars: std::collections::HashSet<String> =
+            self.variables.iter().map(|v| v.name.clone()).collect();
+
         let mut undefined = Vec::new();
         let vars_in_use = self.collect_referenced_variables();
-        
+
         for var in vars_in_use {
             if !defined_vars.contains(&var) {
                 undefined.push(var);
             }
         }
-        
+
         undefined.sort();
         undefined.dedup();
         undefined
@@ -240,7 +263,7 @@ impl Workflow {
     /// Collect all variable names referenced in task prompts, setup, and cleanup commands.
     fn collect_referenced_variables(&self) -> Vec<String> {
         let mut vars = Vec::new();
-        
+
         for task in self.tasks.values() {
             vars.extend(Self::extract_variable_names(&task.prompt));
             for cmd in &task.setup {
@@ -250,7 +273,7 @@ impl Workflow {
                 vars.extend(Self::extract_variable_names(cmd));
             }
         }
-        
+
         vars
     }
 
@@ -258,7 +281,7 @@ impl Workflow {
     fn extract_variable_names(s: &str) -> Vec<String> {
         let mut vars = Vec::new();
         let mut chars = s.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '$' {
                 // Skip escaped dollar signs
@@ -266,19 +289,19 @@ impl Workflow {
                     chars.next();
                     continue;
                 }
-                
+
                 // Check for ${VAR_NAME} syntax
                 if chars.peek() == Some(&'{') {
                     chars.next(); // consume {
                     let mut var_name = String::new();
-                    
+
                     while let Some(ch) = chars.next() {
                         if ch == '}' {
                             break;
                         }
                         var_name.push(ch);
                     }
-                    
+
                     if !var_name.is_empty() {
                         vars.push(var_name);
                     }
@@ -286,7 +309,7 @@ impl Workflow {
                     // Check for $VAR_NAME syntax
                     let mut var_name = String::new();
                     let mut chars_clone = chars.clone();
-                    
+
                     while let Some(&ch) = chars_clone.peek() {
                         if ch.is_alphanumeric() || ch == '_' {
                             var_name.push(ch);
@@ -295,7 +318,7 @@ impl Workflow {
                             break;
                         }
                     }
-                    
+
                     if !var_name.is_empty() {
                         // Consume the chars we've identified
                         for _ in 0..var_name.len() {
@@ -306,7 +329,7 @@ impl Workflow {
                 }
             }
         }
-        
+
         vars
     }
 }
@@ -373,10 +396,7 @@ mod tests {
             Workflow::substitute_variables_in_string("$$FOO", &vars),
             "$FOO"
         );
-        assert_eq!(
-            Workflow::substitute_variables_in_string("$$", &vars),
-            "$"
-        );
+        assert_eq!(Workflow::substitute_variables_in_string("$$", &vars), "$");
         assert_eq!(
             Workflow::substitute_variables_in_string("$UNKNOWN", &vars),
             "$UNKNOWN"
@@ -516,19 +536,12 @@ mod tests {
             .collect();
 
         assert_eq!(
-            Workflow::substitute_variables_in_string(
-                "PATH=$PATH exec command",
-                &vars
-            ),
+            Workflow::substitute_variables_in_string("PATH=$PATH exec command", &vars),
             "PATH=/usr/bin exec command"
         );
         assert_eq!(
-            Workflow::substitute_variables_in_string(
-                "Escape $$ and use ${PATH}",
-                &vars
-            ),
+            Workflow::substitute_variables_in_string("Escape $$ and use ${PATH}", &vars),
             "Escape $ and use /usr/bin"
         );
     }
 }
-

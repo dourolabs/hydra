@@ -9,7 +9,9 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
-    workflows::{CreateWorkflowRequest, CreateWorkflowResponse},
+    workflows::{
+        CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, WorkflowSummary,
+    },
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
 use serde::Deserialize;
@@ -41,7 +43,12 @@ pub trait MetisClientInterface: Send + Sync {
         payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse>;
     async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext>;
-    async fn create_workflow(&self, request: &CreateWorkflowRequest) -> Result<CreateWorkflowResponse>;
+    async fn create_workflow(
+        &self,
+        request: &CreateWorkflowRequest,
+    ) -> Result<CreateWorkflowResponse>;
+    async fn list_workflows(&self) -> Result<ListWorkflowsResponse>;
+    async fn get_workflow(&self, workflow_id: &str) -> Result<WorkflowSummary>;
 }
 
 impl MetisClient {
@@ -304,7 +311,10 @@ impl MetisClient {
     }
 
     /// Call `POST /v1/workflows` to create a new workflow.
-    pub async fn create_workflow(&self, request: &CreateWorkflowRequest) -> Result<CreateWorkflowResponse> {
+    pub async fn create_workflow(
+        &self,
+        request: &CreateWorkflowRequest,
+    ) -> Result<CreateWorkflowResponse> {
         let url = self.endpoint("/v1/workflows")?;
         let response = self
             .http
@@ -320,6 +330,48 @@ impl MetisClient {
             .json::<CreateWorkflowResponse>()
             .await
             .context("failed to decode create workflow response")
+    }
+
+    /// Call `GET /v1/workflows/` to list existing workflows.
+    pub async fn list_workflows(&self) -> Result<ListWorkflowsResponse> {
+        let url = self.endpoint("/v1/workflows/")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch workflows list")?
+            .error_for_status()
+            .context("metis-server returned an error while listing workflows")?;
+
+        response
+            .json::<ListWorkflowsResponse>()
+            .await
+            .context("failed to decode list workflows response")
+    }
+
+    /// Call `GET /v1/workflows/:workflow_id` to fetch an individual workflow summary.
+    pub async fn get_workflow(&self, workflow_id: &str) -> Result<WorkflowSummary> {
+        let workflow_id = workflow_id.trim();
+        if workflow_id.is_empty() {
+            return Err(anyhow!("workflow_id must not be empty"));
+        }
+
+        let path = format!("/v1/workflows/{workflow_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch workflow")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching workflow")?;
+
+        response
+            .json::<WorkflowSummary>()
+            .await
+            .context("failed to decode workflow response")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -459,8 +511,19 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_context(self, job_id).await
     }
 
-    async fn create_workflow(&self, request: &CreateWorkflowRequest) -> Result<CreateWorkflowResponse> {
+    async fn create_workflow(
+        &self,
+        request: &CreateWorkflowRequest,
+    ) -> Result<CreateWorkflowResponse> {
         MetisClient::create_workflow(self, request).await
+    }
+
+    async fn list_workflows(&self) -> Result<ListWorkflowsResponse> {
+        MetisClient::list_workflows(self).await
+    }
+
+    async fn get_workflow(&self, workflow_id: &str) -> Result<WorkflowSummary> {
+        MetisClient::get_workflow(self, workflow_id).await
     }
 }
 

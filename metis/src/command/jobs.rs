@@ -51,7 +51,7 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     Ok(())
 }
 
-fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
+pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
     let indent = " ".repeat(prefix.len());
     let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
     let notes_width = available_width.min(MAX_NOTES_WIDTH);
@@ -105,7 +105,7 @@ fn job_row_prefix(cells: &JobRowCells) -> String {
     )
 }
 
-fn current_terminal_width() -> usize {
+pub(crate) fn current_terminal_width() -> usize {
     let width = termwidth();
     if width == 0 {
         DEFAULT_TERMINAL_WIDTH
@@ -139,7 +139,7 @@ fn colored_job_row_prefix(cells: &JobRowCells, status: &str) -> String {
     )
 }
 
-fn color_status(padded_status: &str, status: &str) -> String {
+pub(crate) fn color_status(padded_status: &str, status: &str) -> String {
     if status.eq_ignore_ascii_case("complete") {
         padded_status.green().to_string()
     } else if status.eq_ignore_ascii_case("running") {
@@ -151,7 +151,7 @@ fn color_status(padded_status: &str, status: &str) -> String {
     }
 }
 
-fn format_status(status: &Status) -> &'static str {
+pub(crate) fn format_status(status: &Status) -> &'static str {
     match status {
         Status::Blocked => "blocked",
         Status::Pending => "pending",
@@ -161,7 +161,7 @@ fn format_status(status: &Status) -> &'static str {
     }
 }
 
-fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
+pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
     let start = status_log.start_time.or(Some(status_log.creation_time))?;
     let end = status_log.end_time.unwrap_or(now);
     let duration = if end < start {
@@ -173,7 +173,7 @@ fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<Stri
     Some(format_duration(duration))
 }
 
-fn format_duration(duration: ChronoDuration) -> String {
+pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     let total_seconds = duration.num_seconds();
     if total_seconds <= 0 {
         return "0s".to_string();

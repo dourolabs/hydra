@@ -75,7 +75,7 @@ fn write_parent_outputs(
         let parent_dir = parents_dir.join(metis_id);
         fs::create_dir_all(&parent_dir)
             .with_context(|| format!("failed to create directory {parent_dir:?}"))?;
-        
+
         match &output.bundle {
             Bundle::None => {
                 // Directory already created above, nothing to extract

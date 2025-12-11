@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use futures::StreamExt;
 use metis_common::{
-    jobs::{CreateJobRequest, Bundle},
+    jobs::{Bundle, CreateJobRequest},
     logs::LogsQuery,
     task_status::Status,
     workflows::{CreateWorkflowRequest, VariableDefinition},
@@ -44,32 +44,35 @@ pub async fn run(
 
     if let Some(workflow_path) = workflow_file {
         // Spawn a workflow
-        let workflow_content = fs::read_to_string(&workflow_path)
-            .with_context(|| format!("failed to read workflow file '{}'", workflow_path.display()))?;
-        
-        let mut workflow: metis_common::workflows::Workflow = serde_yaml::from_str(&workflow_content)
-            .with_context(|| format!("failed to parse workflow file '{}'", workflow_path.display()))?;
-        
+        let workflow_content = fs::read_to_string(&workflow_path).with_context(|| {
+            format!("failed to read workflow file '{}'", workflow_path.display())
+        })?;
+
+        let mut workflow: metis_common::workflows::Workflow =
+            serde_yaml::from_str(&workflow_content).with_context(|| {
+                format!(
+                    "failed to parse workflow file '{}'",
+                    workflow_path.display()
+                )
+            })?;
+
         // Parse CLI variables
         let parsed_cli_vars = parse_cli_variables(&cli_vars)?;
-        
+
         // Add default $PROMPT variable if prompt was provided
         let prompt = if prompt_parts.is_empty() {
             None
         } else {
             Some(prompt_parts.join(" "))
         };
-        
+
         // Merge variables: CLI overrides YAML, PROMPT is added if provided
         workflow = merge_workflow_variables(workflow, parsed_cli_vars, prompt)?;
-        
-        let request = CreateWorkflowRequest {
-            workflow,
-            context,
-        };
-        
+
+        let request = CreateWorkflowRequest { workflow, context };
+
         let response = client.create_workflow(&request).await?;
-        
+
         println!("Created workflow {}", response.workflow_id);
         println!("Task IDs:");
         for (task_name, task_id) in &response.task_ids {
@@ -326,49 +329,54 @@ fn encode_git_bundle(path: &Path) -> Result<String> {
 /// Returns a map of variable names to their values.
 fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<String, String>> {
     let mut vars = std::collections::HashMap::new();
-    
+
     for var_str in cli_vars {
         let trimmed = var_str.trim();
         if trimmed.is_empty() {
             continue;
         }
-        
+
         // Find the first = sign
         match trimmed.find('=') {
             Some(pos) if pos > 0 && pos < trimmed.len() - 1 => {
                 let key = trimmed[..pos].trim().to_string();
                 let value = trimmed[pos + 1..].trim().to_string();
-                
+
                 if key.is_empty() {
-                    bail!("Invalid variable format '{}': variable name cannot be empty", trimmed);
+                    bail!(
+                        "Invalid variable format '{}': variable name cannot be empty",
+                        trimmed
+                    );
                 }
-                
+
                 // Basic validation: key should be a valid identifier
-                if !key.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                if !key
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphabetic() || c == '_')
+                    .unwrap_or(false)
+                {
                     bail!(
                         "Invalid variable name '{}': must start with a letter or underscore",
                         key
                     );
                 }
-                
+
                 if !key.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     bail!(
                         "Invalid variable name '{}': must contain only alphanumeric characters and underscores",
                         key
                     );
                 }
-                
+
                 vars.insert(key, value);
             }
             _ => {
-                bail!(
-                    "Invalid variable format '{}': expected KEY=VALUE",
-                    trimmed
-                );
+                bail!("Invalid variable format '{}': expected KEY=VALUE", trimmed);
             }
         }
     }
-    
+
     Ok(vars)
 }
 
@@ -386,7 +394,7 @@ fn merge_workflow_variables(
     for (idx, var) in workflow.variables.iter().enumerate() {
         var_map.insert(var.name.clone(), idx);
     }
-    
+
     // Update existing variables or add new ones from CLI
     for (key, value) in cli_vars {
         if let Some(&idx) = var_map.get(&key) {
@@ -400,7 +408,7 @@ fn merge_workflow_variables(
             });
         }
     }
-    
+
     // Add or update PROMPT variable if provided
     if let Some(prompt_value) = prompt {
         if let Some(&idx) = var_map.get("PROMPT") {
@@ -412,7 +420,7 @@ fn merge_workflow_variables(
             });
         }
     }
-    
+
     Ok(workflow)
 }
 
@@ -500,12 +508,12 @@ mod tests {
         let result = parse_cli_variables(&vars).unwrap();
         assert_eq!(result.get("FOO"), Some(&"bar".to_string()));
         assert_eq!(result.get("BAZ"), Some(&"qux".to_string()));
-        
+
         // Test with spaces
         let vars = vec!["FOO=bar qux".to_string()];
         let result = parse_cli_variables(&vars).unwrap();
         assert_eq!(result.get("FOO"), Some(&"bar qux".to_string()));
-        
+
         // Test invalid formats
         assert!(parse_cli_variables(&vec!["invalid".to_string()]).is_err());
         assert!(parse_cli_variables(&vec!["=value".to_string()]).is_err());
@@ -514,9 +522,9 @@ mod tests {
 
     #[test]
     fn test_merge_workflow_variables() {
-        use metis_common::workflows::{Workflow, TaskDefinition};
+        use metis_common::workflows::{TaskDefinition, Workflow};
         use std::collections::HashMap;
-        
+
         let mut tasks = HashMap::new();
         tasks.insert(
             "test".to_string(),
@@ -528,7 +536,7 @@ mod tests {
                 cleanup: vec![],
             },
         );
-        
+
         let workflow = Workflow {
             variables: vec![
                 VariableDefinition {
@@ -542,35 +550,40 @@ mod tests {
             ],
             tasks,
         };
-        
+
         let mut cli_vars = HashMap::new();
         cli_vars.insert("FOO".to_string(), "overridden".to_string());
         cli_vars.insert("NEW".to_string(), "added".to_string());
-        
-        let merged = merge_workflow_variables(workflow, cli_vars, Some("test prompt".to_string())).unwrap();
-        
+
+        let merged =
+            merge_workflow_variables(workflow, cli_vars, Some("test prompt".to_string())).unwrap();
+
         // FOO should be overridden
         let foo_var = merged.variables.iter().find(|v| v.name == "FOO").unwrap();
         assert_eq!(foo_var.value, Some("overridden".to_string()));
-        
+
         // BAR should be unchanged
         let bar_var = merged.variables.iter().find(|v| v.name == "BAR").unwrap();
         assert_eq!(bar_var.value, Some("unchanged".to_string()));
-        
+
         // NEW should be added
         let new_var = merged.variables.iter().find(|v| v.name == "NEW").unwrap();
         assert_eq!(new_var.value, Some("added".to_string()));
-        
+
         // PROMPT should be added
-        let prompt_var = merged.variables.iter().find(|v| v.name == "PROMPT").unwrap();
+        let prompt_var = merged
+            .variables
+            .iter()
+            .find(|v| v.name == "PROMPT")
+            .unwrap();
         assert_eq!(prompt_var.value, Some("test prompt".to_string()));
     }
 
     #[test]
     fn test_merge_workflow_variables_prompt_override() {
-        use metis_common::workflows::{Workflow, TaskDefinition};
+        use metis_common::workflows::{TaskDefinition, Workflow};
         use std::collections::HashMap;
-        
+
         let mut tasks = HashMap::new();
         tasks.insert(
             "test".to_string(),
@@ -582,22 +595,25 @@ mod tests {
                 cleanup: vec![],
             },
         );
-        
+
         let workflow = Workflow {
-            variables: vec![
-                VariableDefinition {
-                    name: "PROMPT".to_string(),
-                    value: Some("original prompt".to_string()),
-                },
-            ],
+            variables: vec![VariableDefinition {
+                name: "PROMPT".to_string(),
+                value: Some("original prompt".to_string()),
+            }],
             tasks,
         };
-        
+
         let cli_vars = HashMap::new();
-        
+
         // CLI prompt should override existing PROMPT variable
-        let merged = merge_workflow_variables(workflow, cli_vars, Some("cli prompt".to_string())).unwrap();
-        let prompt_var = merged.variables.iter().find(|v| v.name == "PROMPT").unwrap();
+        let merged =
+            merge_workflow_variables(workflow, cli_vars, Some("cli prompt".to_string())).unwrap();
+        let prompt_var = merged
+            .variables
+            .iter()
+            .find(|v| v.name == "PROMPT")
+            .unwrap();
         assert_eq!(prompt_var.value, Some("cli prompt".to_string()));
     }
 }

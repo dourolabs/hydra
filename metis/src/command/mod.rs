@@ -5,3 +5,4 @@ pub mod patch;
 pub mod spawn;
 pub mod worker_init;
 pub mod worker_submit;
+pub mod workflows;

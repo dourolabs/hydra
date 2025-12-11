@@ -23,7 +23,7 @@ pub async fn set_job_output(
     {
         let mut store = state.store.write().await;
         let job_id_string = job_id.to_string();
-        
+
         // Verify task exists
         store.get_task(&job_id_string).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
@@ -60,7 +60,7 @@ pub async fn get_job_output(
 
     let store = state.store.read().await;
     let job_id_string = job_id.to_string();
-    
+
     // Verify task exists
     store.get_task(&job_id_string).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to get task");

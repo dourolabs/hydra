@@ -233,7 +233,7 @@ async fn job_notes_from_store(job_id: &str, store: &dyn Store) -> Option<String>
     None
 }
 
-fn sanitize_note(note: &str) -> Option<String> {
+pub(crate) fn sanitize_note(note: &str) -> Option<String> {
     let collapsed = note.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
         None

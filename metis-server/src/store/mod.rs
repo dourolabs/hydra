@@ -27,9 +27,7 @@ pub enum Task {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskError {
     /// An error occurred during job engine operations.
-    JobEngineError {
-        reason: String,
-    },
+    JobEngineError { reason: String },
 }
 
 /// Error type for store operations.
@@ -157,7 +155,10 @@ pub trait Store: Send + Sync {
     /// - The task doesn't exist
     /// - Any parent task doesn't have a result
     /// - Any parent task has an error result
-    async fn get_args(&self, id: &MetisId) -> Result<Vec<metis_common::job_outputs::JobOutputPayload>, StoreError>;
+    async fn get_args(
+        &self,
+        id: &MetisId,
+    ) -> Result<Vec<metis_common::job_outputs::JobOutputPayload>, StoreError>;
 
     /// Gets all child tasks (dependents) of a given task.
     ///

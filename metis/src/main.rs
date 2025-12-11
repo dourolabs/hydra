@@ -79,6 +79,8 @@ enum Commands {
     },
     /// List all Metis jobs in the configured namespace.
     Jobs,
+    /// List all Metis workflows in the configured namespace.
+    Workflows,
     /// Show logs for an existing Metis job.
     Logs {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
@@ -165,6 +167,7 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Jobs => command::jobs::run(&client).await?,
+        Commands::Workflows => command::workflows::run(&client).await?,
         Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,

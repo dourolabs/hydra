@@ -30,7 +30,10 @@ kind delete cluster --name local-dev
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
 
-## TODO items
+## Queue of prompts
+- update the layout of the .metis/parents/<id> directory so that we additionally create symlinks from 
+  .metis/parents/<parent task name> -> .metis/parents/<id> if the parent task name is defined. You likely need to 
+  add an optional "name" field to edges in the store. 
 
 
 
@@ -137,5 +140,7 @@ The setup for a task is as follows:
 * unpack the context directory 
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
-## Environment variables
+## Variables
+
+
 
