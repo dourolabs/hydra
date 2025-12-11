@@ -2,6 +2,7 @@ use crate::{
     client::MetisClientInterface,
     command::jobs::{
         color_status, current_terminal_width, format_job_lines, format_runtime, format_status,
+        normalize_note,
     },
 };
 use anyhow::Result;
@@ -75,10 +76,12 @@ fn header_row() -> (String, String) {
 }
 
 fn workflow_note(workflow: &WorkflowSummary) -> Option<String> {
-    workflow
-        .notes
-        .clone()
-        .or_else(|| workflow.status_log.failure_reason.clone())
+    normalize_note(
+        workflow
+            .notes
+            .clone()
+            .or_else(|| workflow.status_log.failure_reason.clone()),
+    )
 }
 
 fn running_tasks_display(running_tasks: &[String]) -> String {
@@ -185,5 +188,48 @@ mod tests {
         };
 
         assert_eq!(workflow_note(&summary), Some("boom".into()));
+    }
+
+    #[test]
+    fn workflow_notes_extract_job_engine_reason() {
+        let summary = WorkflowSummary {
+            id: "wf-2".into(),
+            notes: None,
+            status: Status::Failed,
+            status_log: TaskStatusLog {
+                creation_time: Utc::now(),
+                start_time: None,
+                end_time: None,
+                current_status: Status::Failed,
+                failure_reason: Some(r#"JobEngineError { reason: "failure" }"#.into()),
+            },
+            running_tasks: vec![],
+        };
+
+        assert_eq!(workflow_note(&summary), Some("failure".into()));
+    }
+
+    #[test]
+    fn workflow_notes_keep_trailing_brace_inside_reason() {
+        let summary = WorkflowSummary {
+            id: "wf-3".into(),
+            notes: None,
+            status: Status::Failed,
+            status_log: TaskStatusLog {
+                creation_time: Utc::now(),
+                start_time: None,
+                end_time: None,
+                current_status: Status::Failed,
+                failure_reason: Some(
+                    r#"JobEngineError { reason: "Kubernetes API error: ErrorResponse { status: \"Failure\" }" }"#.into(),
+                ),
+            },
+            running_tasks: vec![],
+        };
+
+        assert_eq!(
+            workflow_note(&summary),
+            Some(r#"Kubernetes API error: ErrorResponse { status: \"Failure\" }"#.into())
+        );
     }
 }

@@ -193,9 +193,36 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
 }
 
 fn job_note(job: &JobSummary) -> Option<String> {
-    job.notes
-        .clone()
-        .or_else(|| job.status_log.failure_reason.clone())
+    normalize_note(
+        job.notes
+            .clone()
+            .or_else(|| job.status_log.failure_reason.clone()),
+    )
+}
+
+pub(crate) fn normalize_note(note: Option<String>) -> Option<String> {
+    note.and_then(|note| extract_job_engine_reason(&note).or(Some(note)))
+}
+
+fn extract_job_engine_reason(note: &str) -> Option<String> {
+    let prefix = "JobEngineError { reason: ";
+    let without_prefix = note.strip_prefix(prefix)?.trim();
+    let trimmed_end = without_prefix.trim_end();
+    let (reason_with_quotes, remainder) = trimmed_end.rsplit_once('}')?;
+
+    if !remainder.trim().is_empty() {
+        return None;
+    }
+
+    let reason = reason_with_quotes.trim();
+    let reason = reason.strip_prefix('"').unwrap_or(reason);
+    let reason = reason.strip_suffix('"').unwrap_or(reason).trim();
+
+    if reason.is_empty() {
+        None
+    } else {
+        Some(reason.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -242,5 +269,48 @@ mod tests {
         assert!(lines
             .iter()
             .all(|line| line.len() - prefix.len() <= MAX_NOTES_WIDTH));
+    }
+
+    #[test]
+    fn job_notes_extract_job_engine_reason() {
+        let status_log = TaskStatusLog {
+            creation_time: Utc::now(),
+            start_time: None,
+            end_time: None,
+            current_status: Status::Failed,
+            failure_reason: Some(r#"JobEngineError { reason: "boom" }"#.into()),
+        };
+        let job = JobSummary {
+            id: "job-123".into(),
+            notes: None,
+            status_log,
+        };
+
+        assert_eq!(job_note(&job), Some("boom".into()));
+    }
+
+    #[test]
+    fn job_notes_keep_trailing_brace_inside_reason() {
+        let status_log = TaskStatusLog {
+            creation_time: Utc::now(),
+            start_time: None,
+            end_time: None,
+            current_status: Status::Failed,
+            failure_reason: Some(
+                r#"JobEngineError { reason: "Failed to create Kubernetes job: Kubernetes API error: ErrorResponse { status: \"Failure\" }" }"#.into(),
+            ),
+        };
+        let job = JobSummary {
+            id: "job-456".into(),
+            notes: None,
+            status_log,
+        };
+
+        assert_eq!(
+            job_note(&job),
+            Some(
+                r#"Failed to create Kubernetes job: Kubernetes API error: ErrorResponse { status: \"Failure\" }"#.into()
+            )
+        );
     }
 }
