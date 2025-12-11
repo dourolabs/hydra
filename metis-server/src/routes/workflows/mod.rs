@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     routes::jobs::ApiError,
-    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use axum::{
     Json,
@@ -209,9 +209,12 @@ pub async fn create_workflow(
         let mut store = state.store.write().await;
         for (task_name, parent_names) in tasks_to_create {
             // Map parent names to their job IDs
-            let parent_ids: Vec<String> = parent_names
+            let parent_edges: Vec<Edge> = parent_names
                 .iter()
-                .map(|name| task_ids[name].clone())
+                .map(|name| Edge {
+                    id: task_ids[name].clone(),
+                    name: Some(name.clone()),
+                })
                 .collect();
 
             // Generate job ID for this task
@@ -226,7 +229,7 @@ pub async fn create_workflow(
             };
 
             store
-                .add_task_with_id(job_id.clone(), task, parent_ids, workflow_created_at)
+                .add_task_with_id(job_id.clone(), task, parent_edges, workflow_created_at)
                 .await
                 .map_err(|err| {
                     error!(

@@ -43,6 +43,7 @@ cleanup_tasks() {
 
 startup_tasks
 
+# Run the main task (eg codex)
 "$@"
 cmd_status=$?
 

@@ -33,6 +33,13 @@ pub mod jobs {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ParentContext {
+        #[serde(default)]
+        pub name: Option<String>,
+        pub output: JobOutputPayload,
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CreateJobRequest {
         pub prompt: String,
@@ -73,7 +80,7 @@ pub mod jobs {
     pub struct WorkerContext {
         pub request_context: Bundle,
         #[serde(default)]
-        pub parents: HashMap<String, JobOutputPayload>,
+        pub parents: HashMap<String, ParentContext>,
         #[serde(default)]
         pub setup: Vec<String>,
         #[serde(default)]

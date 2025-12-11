@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::job_engine::MetisId;
 use metis_common::job_outputs::JobOutputPayload;
 
@@ -14,8 +14,8 @@ use metis_common::job_outputs::JobOutputPayload;
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
     tasks: HashMap<MetisId, Task>,
-    /// Maps task IDs to their parent task IDs (dependencies)
-    parents: HashMap<MetisId, Vec<MetisId>>,
+    /// Maps task IDs to their parent task edges (dependencies)
+    parents: HashMap<MetisId, Vec<Edge>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their execution results
@@ -38,10 +38,10 @@ impl MemoryStore {
 
     /// Checks if all parents of a task are complete (Complete or Failed).
     fn all_parents_complete(&self, id: &MetisId) -> bool {
-        let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
-        parent_ids.iter().all(|parent_id| {
+        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
+        parent_edges.iter().all(|edge| {
             self.status_logs
-                .get(parent_id)
+                .get(&edge.id)
                 .map(|status_log| {
                     matches!(status_log.current_status, Status::Complete | Status::Failed)
                 })
@@ -61,29 +61,30 @@ impl Store for MemoryStore {
     async fn add_task(
         &mut self,
         task: Task,
-        parent_ids: Vec<MetisId>,
+        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<MetisId, StoreError> {
         // Generate a unique ID for the new task
         let id = Uuid::new_v4().hyphenated().to_string();
 
         // Verify all parent tasks exist
-        for parent_id in &parent_ids {
-            if !self.tasks.contains_key(parent_id) {
+        for parent_edge in &parent_edges {
+            if !self.tasks.contains_key(&parent_edge.id) {
                 return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {parent_id}"
+                    "Parent task not found: {}",
+                    parent_edge.id
                 )));
             }
         }
 
         // Determine initial status: blocked if any parent is not complete, otherwise pending
-        let initial_status = if parent_ids.is_empty() {
+        let initial_status = if parent_edges.is_empty() {
             Status::Pending
         } else {
             // Check if all parents are complete (Complete or Failed)
-            let all_complete = parent_ids.iter().all(|parent_id| {
+            let all_complete = parent_edges.iter().all(|parent_edge| {
                 self.status_logs
-                    .get(parent_id)
+                    .get(&parent_edge.id)
                     .map(|status_log| {
                         matches!(status_log.current_status, Status::Complete | Status::Failed)
                     })
@@ -100,7 +101,7 @@ impl Store for MemoryStore {
         self.tasks.insert(id.clone(), task);
 
         // Initialize empty vectors if needed
-        self.parents.insert(id.clone(), parent_ids.clone());
+        self.parents.insert(id.clone(), parent_edges.clone());
         self.children.insert(id.clone(), Vec::new());
 
         // Initialize status log
@@ -116,9 +117,9 @@ impl Store for MemoryStore {
         );
 
         // Update children of each parent
-        for parent_id in &parent_ids {
+        for parent_edge in &parent_edges {
             self.children
-                .get_mut(parent_id)
+                .get_mut(&parent_edge.id)
                 .expect("Parent should exist")
                 .push(id.clone());
         }
@@ -130,7 +131,7 @@ impl Store for MemoryStore {
         &mut self,
         metis_id: MetisId,
         task: Task,
-        parent_ids: Vec<MetisId>,
+        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Check if task already exists
@@ -141,22 +142,23 @@ impl Store for MemoryStore {
         }
 
         // Verify all parent tasks exist
-        for parent_id in &parent_ids {
-            if !self.tasks.contains_key(parent_id) {
+        for parent_edge in &parent_edges {
+            if !self.tasks.contains_key(&parent_edge.id) {
                 return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {parent_id}"
+                    "Parent task not found: {}",
+                    parent_edge.id
                 )));
             }
         }
 
         // Determine initial status: blocked if any parent is not complete, otherwise pending
-        let initial_status = if parent_ids.is_empty() {
+        let initial_status = if parent_edges.is_empty() {
             Status::Pending
         } else {
             // Check if all parents are complete (Complete or Failed)
-            let all_complete = parent_ids.iter().all(|parent_id| {
+            let all_complete = parent_edges.iter().all(|parent_edge| {
                 self.status_logs
-                    .get(parent_id)
+                    .get(&parent_edge.id)
                     .map(|status_log| {
                         matches!(status_log.current_status, Status::Complete | Status::Failed)
                     })
@@ -173,7 +175,7 @@ impl Store for MemoryStore {
         self.tasks.insert(metis_id.clone(), task);
 
         // Initialize empty vectors if needed
-        self.parents.insert(metis_id.clone(), parent_ids.clone());
+        self.parents.insert(metis_id.clone(), parent_edges.clone());
         self.children.insert(metis_id.clone(), Vec::new());
 
         // Initialize status log
@@ -189,9 +191,9 @@ impl Store for MemoryStore {
         );
 
         // Update children of each parent
-        for parent_id in &parent_ids {
+        for parent_edge in &parent_edges {
             self.children
-                .get_mut(parent_id)
+                .get_mut(&parent_edge.id)
                 .expect("Parent should exist")
                 .push(metis_id.clone());
         }
@@ -216,7 +218,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn get_parents(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
+    async fn get_parents(&self, id: &MetisId) -> Result<Vec<Edge>, StoreError> {
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
@@ -231,21 +233,23 @@ impl Store for MemoryStore {
         }
 
         // Get all parent IDs
-        let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
+        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
 
         // Collect results from all parents
         let mut payloads = Vec::new();
-        for parent_id in &parent_ids {
-            match self.get_result(parent_id) {
+        for parent_edge in &parent_edges {
+            match self.get_result(&parent_edge.id) {
                 Some(Ok(payload)) => payloads.push(payload),
                 Some(Err(e)) => {
                     return Err(StoreError::Internal(format!(
-                        "Parent task {parent_id} has error result: {e:?}"
+                        "Parent task {} has error result: {e:?}",
+                        parent_edge.id
                     )));
                 }
                 None => {
                     return Err(StoreError::Internal(format!(
-                        "Parent task {parent_id} has no result yet"
+                        "Parent task {} has no result yet",
+                        parent_edge.id
                     )));
                 }
             }
@@ -268,7 +272,7 @@ impl Store for MemoryStore {
         }
 
         // Get parent and child IDs before removal
-        let parent_ids = self.parents.get(id).cloned().unwrap_or_default();
+        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
         let child_ids = self.children.get(id).cloned().unwrap_or_default();
 
         // Remove the task
@@ -278,8 +282,8 @@ impl Store for MemoryStore {
         self.status_logs.remove(id);
 
         // Remove this task from its parents' children lists
-        for parent_id in &parent_ids {
-            if let Some(children) = self.children.get_mut(parent_id) {
+        for parent_edge in &parent_edges {
+            if let Some(children) = self.children.get_mut(&parent_edge.id) {
                 children.retain(|child_id| child_id != id);
             }
         }
@@ -287,7 +291,7 @@ impl Store for MemoryStore {
         // Remove this task from its children's parent lists
         for child_id in &child_ids {
             if let Some(parents) = self.parents.get_mut(child_id) {
-                parents.retain(|parent_id| parent_id != id);
+                parents.retain(|edge| edge.id != *id);
             }
         }
 
@@ -426,6 +430,13 @@ mod tests {
         }
     }
 
+    fn edge(id: &str) -> Edge {
+        Edge {
+            id: id.to_string(),
+            name: None,
+        }
+    }
+
     #[tokio::test]
     async fn add_and_retrieve_tasks_with_dependencies() {
         let mut store = MemoryStore::new();
@@ -447,7 +458,7 @@ mod tests {
             cleanup: vec![],
         };
         let child_id = store
-            .add_task(child_task.clone(), vec![root_id.clone()], Utc::now())
+            .add_task(child_task.clone(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
 
@@ -455,7 +466,7 @@ mod tests {
         assert_eq!(store.get_task(&child_id).await.unwrap(), child_task);
         assert_eq!(
             store.get_parents(&child_id).await.unwrap(),
-            vec![root_id.clone()]
+            vec![edge(&root_id)]
         );
         assert_eq!(
             store.get_children(&root_id).await.unwrap(),
@@ -482,7 +493,7 @@ mod tests {
             cleanup: vec![],
         };
         let err = store
-            .add_task(spawn_task, vec![missing_parent.clone()], Utc::now())
+            .add_task(spawn_task, vec![edge(&missing_parent)], Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
@@ -509,7 +520,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -521,7 +532,7 @@ mod tests {
             cleanup: vec![],
         };
         let grandchild_id = store
-            .add_task(grandchild_task, vec![child_id.clone()], Utc::now())
+            .add_task(grandchild_task, vec![edge(&child_id)], Utc::now())
             .await
             .unwrap();
 
@@ -581,7 +592,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -590,6 +601,45 @@ mod tests {
         // Root is pending, child should be blocked
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
+    }
+
+    #[tokio::test]
+    async fn get_parents_returns_edge_names() {
+        let mut store = MemoryStore::new();
+
+        let root_task = Task::Spawn {
+            prompt: "test".to_string(),
+            context: Bundle::None,
+            setup: vec![],
+            cleanup: vec![],
+        };
+        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
+
+        let child_id = store
+            .add_task(
+                Task::Spawn {
+                    prompt: "child".to_string(),
+                    context: Bundle::None,
+                    setup: vec![],
+                    cleanup: vec![],
+                },
+                vec![Edge {
+                    id: root_id.clone(),
+                    name: Some("root".to_string()),
+                }],
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+
+        let parents = store.get_parents(&child_id).await.unwrap();
+        assert_eq!(
+            parents,
+            vec![Edge {
+                id: root_id,
+                name: Some("root".to_string())
+            }]
+        );
     }
 
     #[tokio::test]
@@ -621,7 +671,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -724,7 +774,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -765,7 +815,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -778,7 +828,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await
@@ -835,7 +885,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root1_id.clone(), root2_id.clone()],
+                vec![edge(&root1_id), edge(&root2_id)],
                 Utc::now(),
             )
             .await
@@ -886,7 +936,7 @@ mod tests {
                     setup: vec![],
                     cleanup: vec![],
                 },
-                vec![root_id.clone()],
+                vec![edge(&root_id)],
                 Utc::now(),
             )
             .await

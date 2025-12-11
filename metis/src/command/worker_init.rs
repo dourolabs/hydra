@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::Cursor,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 
@@ -9,10 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::{
-    job_outputs::JobOutputPayload,
-    jobs::{Bundle, WorkerContext},
-};
+use metis_common::jobs::{Bundle, ParentContext, WorkerContext};
 use tar::Archive;
 
 use crate::client::MetisClientInterface;
@@ -60,7 +57,7 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
 }
 
 fn write_parent_outputs(
-    parents: &std::collections::HashMap<String, JobOutputPayload>,
+    parents: &std::collections::HashMap<String, ParentContext>,
     dest: &Path,
 ) -> Result<()> {
     if parents.is_empty() {
@@ -71,12 +68,12 @@ fn write_parent_outputs(
     fs::create_dir_all(&parents_dir)
         .with_context(|| format!("failed to create parents directory at {parents_dir:?}"))?;
 
-    for (metis_id, output) in parents {
+    for (metis_id, parent) in parents {
         let parent_dir = parents_dir.join(metis_id);
         fs::create_dir_all(&parent_dir)
             .with_context(|| format!("failed to create directory {parent_dir:?}"))?;
 
-        match &output.bundle {
+        match &parent.output.bundle {
             Bundle::None => {
                 // Directory already created above, nothing to extract
             }
@@ -90,9 +87,44 @@ fn write_parent_outputs(
                 clone_from_git_bundle_base64(bundle_base64, &parent_dir)?;
             }
         }
+
+        if let Some(name) = &parent.name {
+            if !name.is_empty() && name != metis_id {
+                let alias = validate_parent_alias(name).with_context(|| {
+                    format!("parent alias must be a single path segment: {:?}", name)
+                })?;
+                let symlink_path = parents_dir.join(alias);
+                create_symlink(Path::new(metis_id), &symlink_path).with_context(|| {
+                    format!("failed to create symlink {symlink_path:?} -> {metis_id}")
+                })?;
+            }
+        }
     }
 
     Ok(())
+}
+
+fn create_symlink(target: &Path, link: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).context("failed to create symlink")?;
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).context("failed to create symlink")?;
+    }
+    Ok(())
+}
+
+fn validate_parent_alias(alias: &str) -> Result<&str> {
+    let mut components = Path::new(alias).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(alias),
+        _ => Err(anyhow!(
+            "invalid parent alias {:?}: must not contain separators, traversal, or prefixes",
+            alias
+        )),
+    }
 }
 
 fn extract_tar_gz_base64(archive_base64: &str, dest: &Path) -> Result<()> {
@@ -173,4 +205,67 @@ fn run_setup_commands(commands: &[String], working_dir: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metis_common::job_outputs::JobOutputPayload;
+    use std::{collections::HashMap, path::PathBuf};
+
+    #[test]
+    fn write_parent_outputs_creates_symlink_for_named_parent() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let mut parents = HashMap::new();
+        parents.insert(
+            "parent-id".to_string(),
+            ParentContext {
+                name: Some("parent-name".to_string()),
+                output: JobOutputPayload {
+                    last_message: String::new(),
+                    patch: String::new(),
+                    bundle: Bundle::None,
+                },
+            },
+        );
+
+        write_parent_outputs(&parents, tempdir.path())?;
+
+        let parents_dir = tempdir.path().join(".metis").join("parents");
+        assert!(parents_dir.join("parent-id").is_dir());
+
+        let symlink_path = parents_dir.join("parent-name");
+        let metadata = std::fs::symlink_metadata(&symlink_path)?;
+        assert!(metadata.file_type().is_symlink());
+        let target = std::fs::read_link(&symlink_path)?;
+        assert_eq!(target, PathBuf::from("parent-id"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_parent_outputs_rejects_traversal_aliases() {
+        let tempdir = tempfile::tempdir().expect("failed to create tempdir for test");
+        let mut parents = HashMap::new();
+        parents.insert(
+            "parent-id".to_string(),
+            ParentContext {
+                name: Some("../escape".to_string()),
+                output: JobOutputPayload {
+                    last_message: String::new(),
+                    patch: String::new(),
+                    bundle: Bundle::None,
+                },
+            },
+        );
+
+        let err = write_parent_outputs(&parents, tempdir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("parent alias"),
+            "expected alias validation error, got {err:?}"
+        );
+
+        let parents_dir = tempdir.path().join(".metis").join("parents");
+        assert!(!parents_dir.join("../escape").exists());
+    }
 }

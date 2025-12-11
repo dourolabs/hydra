@@ -11,6 +11,13 @@ pub use metis_common::task_status::{Status, TaskStatusLog};
 /// In the future, this will be a more structured type.
 pub type Command = String;
 
+/// Represents a dependency edge between tasks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edge {
+    pub id: MetisId,
+    pub name: Option<String>,
+}
+
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
@@ -69,12 +76,12 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
+    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task(
         &mut self,
         task: Task,
-        parent_ids: Vec<MetisId>,
+        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<MetisId, StoreError>;
 
@@ -97,13 +104,13 @@ pub trait Store: Send + Sync {
     /// # Arguments
     /// * `metis_id` - The MetisId to use for this task
     /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
+    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task_with_id(
         &mut self,
         metis_id: MetisId,
         task: Task,
-        parent_ids: Vec<MetisId>,
+        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
@@ -138,8 +145,8 @@ pub trait Store: Send + Sync {
     /// * `id` - The MetisId of the task
     ///
     /// # Returns
-    /// A vector of MetisIds representing the parent tasks, or an error if the task doesn't exist
-    async fn get_parents(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
+    /// A vector of dependency edges for the parent tasks, or an error if the task doesn't exist
+    async fn get_parents(&self, id: &MetisId) -> Result<Vec<Edge>, StoreError>;
 
     /// Gets the arguments for a task by collecting results from all parent tasks.
     ///

@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Store, StoreError, Task},
+    store::{Edge, Store, StoreError, Task},
 };
 use axum::{
     Json,
@@ -38,6 +38,13 @@ pub async fn create_job(
         error!("create_job received an empty parent_id");
         return Err(ApiError::bad_request("parent_ids must not be empty"));
     }
+    let parent_edges: Vec<Edge> = parent_ids
+        .iter()
+        .map(|id| Edge {
+            id: id.clone(),
+            name: None,
+        })
+        .collect();
 
     // Generate a unique ID for the job
     let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
@@ -52,7 +59,7 @@ pub async fn create_job(
             cleanup: vec![],
         };
         store
-            .add_task_with_id(job_id.clone(), task, parent_ids.clone(), Utc::now())
+            .add_task_with_id(job_id.clone(), task, parent_edges.clone(), Utc::now())
             .await
             .map_err(|err| match err {
                 StoreError::InvalidDependency(msg) => {

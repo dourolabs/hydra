@@ -397,7 +397,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         routes::workflows::WorkflowRecord,
-        store::{Status, Task, TaskError},
+        store::{Edge, Status, Task, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -406,7 +406,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         job_outputs::JobOutputPayload,
-        jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
+        jobs::{
+            Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
+        },
         workflows::{ListWorkflowsResponse, WorkflowSummary},
     };
     use serde_json::json;
@@ -519,7 +521,13 @@ mod tests {
 
         let store_read = store.read().await;
         let parents = store_read.get_parents(&body.job_id).await?;
-        assert_eq!(parents, vec!["parent-1".to_string()]);
+        assert_eq!(
+            parents,
+            vec![Edge {
+                id: "parent-1".to_string(),
+                name: None
+            }]
+        );
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Blocked);
         Ok(())
@@ -1100,7 +1108,10 @@ mod tests {
                         setup: vec![],
                         cleanup: vec![],
                     },
-                    vec!["parent-job".to_string()],
+                    vec![Edge {
+                        id: "parent-job".to_string(),
+                        name: None,
+                    }],
                     Utc::now(),
                 )
                 .await?;
@@ -1119,10 +1130,13 @@ mod tests {
         assert_eq!(body.parents.len(), 1);
         assert_eq!(
             body.parents.get("parent-job"),
-            Some(&JobOutputPayload {
-                last_message: "done".to_string(),
-                patch: "patch-content".to_string(),
-                bundle: Bundle::None,
+            Some(&ParentContext {
+                name: None,
+                output: JobOutputPayload {
+                    last_message: "done".to_string(),
+                    patch: "patch-content".to_string(),
+                    bundle: Bundle::None,
+                }
             })
         );
         Ok(())
@@ -1174,7 +1188,10 @@ mod tests {
                         setup: vec![],
                         cleanup: vec![],
                     },
-                    vec![first_task_id.clone()],
+                    vec![Edge {
+                        id: first_task_id.clone(),
+                        name: Some("first".to_string()),
+                    }],
                     created_at,
                 )
                 .await?;
@@ -1272,7 +1289,10 @@ mod tests {
                         setup: vec![],
                         cleanup: vec![],
                     },
-                    vec![first_task_id.clone()],
+                    vec![Edge {
+                        id: first_task_id.clone(),
+                        name: Some("first".to_string()),
+                    }],
                     created_at,
                 )
                 .await?;
