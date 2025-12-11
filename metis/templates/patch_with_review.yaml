@@ -34,6 +34,10 @@ tasks:
 
       The patch is available at .metis/parents/generate-patch/changes.patch and the 
       code review is in the text files under .metis/parents/code-review/
+
+      Once you've finished fixing problems, please generate a pull request title and
+      description for this change. The title should go in .metis/output/pr_title.txt 
+      and the body should go in .metis/output/pr_body.txt .
     setup:
       - echo "this is the setup"
     cleanup:
@@ -71,9 +75,11 @@ tasks:
           git remote set-url origin "https://github.com/dourolabs/metis.git"
           git push --force-with-lease origin "${branch_name}"
 
+          title=`cat .metis/output/pr_title.txt`
+
           echo "making PR"
           gh pr create \
             --repo dourolabs/metis \
             --head "${branch_name}" \
-            --title "Task ${METIS_ID}" \
-            --body "Automated PR for task ${METIS_ID}."
+            --title "${title}" \
+            --body-file .metis/output/pr_body.txt
