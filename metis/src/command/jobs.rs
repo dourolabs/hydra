@@ -209,9 +209,7 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
 }
 
 fn job_note(job: &JobSummary) -> Option<String> {
-    job.notes
-        .clone()
-        .or_else(|| job.status_log.failure_reason.clone())
+    job.notes.clone()
 }
 
 #[cfg(test)]
@@ -227,7 +225,6 @@ mod tests {
                 start_time: None,
                 end_time: None,
                 current_status: Status::Pending,
-                failure_reason: None,
             },
         }
     }

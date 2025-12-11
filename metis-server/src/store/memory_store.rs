@@ -112,7 +112,6 @@ impl Store for MemoryStore {
                 start_time: None,
                 end_time: None,
                 current_status: initial_status,
-                failure_reason: None,
             },
         );
 
@@ -186,7 +185,6 @@ impl Store for MemoryStore {
                 start_time: None,
                 end_time: None,
                 current_status: initial_status,
-                failure_reason: None,
             },
         );
 
@@ -368,9 +366,9 @@ impl Store for MemoryStore {
         }
 
         // Verify current status is Running
-        let (status, failure_reason) = match result {
-            Ok(_) => (Status::Complete, None),
-            Err(ref e) => (Status::Failed, Some(format!("{:?}", e))),
+        let status = match result {
+            Ok(_) => Status::Complete,
+            Err(_) => Status::Failed,
         };
 
         // Store the result
@@ -389,7 +387,6 @@ impl Store for MemoryStore {
             // Update status log
             status_log.current_status = status;
             status_log.end_time = Some(end_time);
-            status_log.failure_reason = failure_reason;
         }
 
         // Check all children (dependents) and update their status if needed
