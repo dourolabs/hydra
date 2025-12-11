@@ -397,7 +397,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         routes::workflows::WorkflowRecord,
-        store::{Status, Task},
+        store::{Status, Task, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -1221,6 +1221,102 @@ mod tests {
         let detail: WorkflowSummary = detail_response.json().await?;
         assert_eq!(detail.id, workflow_id);
         assert_eq!(detail.running_tasks, vec!["second".to_string()]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_workflow_surfaces_failure_reason() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let workflow_id = "wf-failed".to_string();
+        let created_at = Utc::now();
+        let first_task_id = "task-first".to_string();
+        let failed_task_id = "task-failed".to_string();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    first_task_id.clone(),
+                    Task::Spawn {
+                        prompt: "first".to_string(),
+                        context: Bundle::None,
+                        setup: vec![],
+                        cleanup: vec![],
+                    },
+                    vec![],
+                    created_at,
+                )
+                .await?;
+            store_write
+                .mark_task_running(&first_task_id, created_at + Duration::seconds(5))
+                .await?;
+            store_write
+                .mark_task_complete(
+                    &first_task_id,
+                    Ok(JobOutputPayload {
+                        last_message: "note from first".to_string(),
+                        patch: String::new(),
+                        bundle: Bundle::None,
+                    }),
+                    created_at + Duration::seconds(10),
+                )
+                .await?;
+
+            store_write
+                .add_task_with_id(
+                    failed_task_id.clone(),
+                    Task::Spawn {
+                        prompt: "second".to_string(),
+                        context: Bundle::None,
+                        setup: vec![],
+                        cleanup: vec![],
+                    },
+                    vec![first_task_id.clone()],
+                    created_at,
+                )
+                .await?;
+            store_write
+                .mark_task_running(&failed_task_id, created_at + Duration::seconds(15))
+                .await?;
+            store_write
+                .mark_task_complete(
+                    &failed_task_id,
+                    Err(TaskError::JobEngineError {
+                        reason: "boom".to_string(),
+                    }),
+                    created_at + Duration::seconds(20),
+                )
+                .await?;
+        }
+
+        {
+            let mut workflows = state.workflows.write().await;
+            workflows.insert(
+                workflow_id.clone(),
+                WorkflowRecord {
+                    created_at,
+                    task_ids: HashMap::from([
+                        ("first".to_string(), first_task_id.clone()),
+                        ("second".to_string(), failed_task_id.clone()),
+                    ]),
+                },
+            );
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/workflows/{workflow_id}", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let summary: WorkflowSummary = response.json().await?;
+        assert_eq!(summary.status, Status::Failed);
+        assert_eq!(summary.notes.as_deref(), Some("boom"));
+        assert_eq!(summary.status_log.failure_reason.as_deref(), Some("boom"));
 
         Ok(())
     }

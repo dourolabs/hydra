@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     routes::jobs::ApiError,
-    store::{Status, Store, StoreError, Task, TaskStatusLog},
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use axum::{
     Json,
@@ -306,10 +306,15 @@ async fn workflow_summary(
             Status::Failed => {
                 has_failed = true;
                 all_complete = false;
+                let failure_note = match store.get_result(task_id) {
+                    Some(Err(TaskError::JobEngineError { reason })) => Some(reason),
+                    _ => status_log.failure_reason.clone(),
+                };
+
                 if failure_reason.is_none() {
-                    failure_reason = status_log.failure_reason.clone();
+                    failure_reason = failure_note.clone();
                 }
-                if let Some(reason) = status_log.failure_reason.clone() {
+                if let Some(reason) = failure_note {
                     let failure_time = status_log
                         .end_time
                         .or(status_log.start_time)
@@ -364,6 +369,8 @@ async fn workflow_summary(
 
     running_tasks.sort();
 
+    let latest_failure_reason = latest_failure.as_ref().map(|(_, reason)| reason.clone());
+
     let status = if has_failed {
         Status::Failed
     } else if all_complete {
@@ -378,9 +385,15 @@ async fn workflow_summary(
         Status::Pending
     };
 
-    let notes = latest_note
-        .or_else(|| latest_failure.clone())
-        .map(|(_, note)| note);
+    let failure_reason = latest_failure_reason.clone().or(failure_reason);
+
+    let notes = if status == Status::Failed {
+        failure_reason
+            .clone()
+            .or_else(|| latest_note.map(|(_, note)| note))
+    } else {
+        latest_note.map(|(_, note)| note)
+    };
 
     let status_log = TaskStatusLog {
         creation_time: record.created_at,
