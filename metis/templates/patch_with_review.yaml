@@ -53,21 +53,27 @@ tasks:
           branch_name="metis-${METIS_ID}"
 
           git checkout -B "${branch_name}"
-          git add -A -- . ':!.metis/**'
+          echo "git add"
+          git add -A 
 
+          echo "checking diff"
           if git diff --cached --quiet; then
             echo "No changes to commit; skipping PR creation."
             exit 0
           fi
 
+          echo "remotes"
+          git remote -v
+
           echo "committing"
-          git commit -m "task ${task_id}"
+          git commit -m "task ${METIS_ID}"
           echo "pushing"
+          git remote set-url origin "https://github.com/dourolabs/metis.git"
           git push --force-with-lease origin "${branch_name}"
 
           echo "making PR"
           gh pr create \
             --repo dourolabs/metis \
             --head "${branch_name}" \
-            --title "Task ${task_id}" \
-            --body "Automated PR for task ${task_id}."
+            --title "Task ${METIS_ID}" \
+            --body "Automated PR for task ${METIS_ID}."
