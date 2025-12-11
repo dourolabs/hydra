@@ -6,6 +6,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use metis_common::{job_outputs::JobOutputPayload, jobs::Bundle};
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -21,7 +22,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
 
     // Get cleanup commands from the job context
     let context = client.get_job_context(&job_id).await?;
-    run_cleanup_commands(&context.cleanup)?;
+    run_cleanup_commands(&context.cleanup, &context.variables)?;
 
     let (last_message_file, patch_file, output_dir) = resolve_output_paths();
 
@@ -99,7 +100,7 @@ fn create_output_bundle(output_dir: &Path) -> Result<Bundle> {
     })
 }
 
-fn run_cleanup_commands(commands: &[String]) -> Result<()> {
+fn run_cleanup_commands(commands: &[String], variables: &HashMap<String, String>) -> Result<()> {
     if commands.is_empty() {
         return Ok(());
     }
@@ -111,6 +112,7 @@ fn run_cleanup_commands(commands: &[String]) -> Result<()> {
             .arg("-c")
             .arg(command)
             .current_dir(&current_dir)
+            .envs(variables)
             .status()
             .with_context(|| {
                 format!("failed to execute cleanup command {}: {}", idx + 1, command)
@@ -125,4 +127,45 @@ fn run_cleanup_commands(commands: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::tempdir;
+
+    struct CwdGuard(std::path::PathBuf);
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.0);
+        }
+    }
+
+    #[test]
+    fn run_cleanup_commands_injects_variables_into_environment() -> Result<()> {
+        let original_cwd = env::current_dir().context("failed to get current working directory")?;
+        let guard = CwdGuard(original_cwd);
+        let tempdir = tempdir().context("failed to create tempdir for test")?;
+        env::set_current_dir(tempdir.path()).context("failed to change working directory")?;
+
+        let mut variables = HashMap::new();
+        variables.insert("CLEANUP_SECRET".to_string(), "cleanup-value".to_string());
+
+        run_cleanup_commands(
+            &[r#"echo "$CLEANUP_SECRET" > cleanup_env.txt"#.to_string()],
+            &variables,
+        )?;
+
+        let output = std::fs::read_to_string(tempdir.path().join("cleanup_env.txt"))?;
+        assert_eq!(output.trim(), "cleanup-value");
+        assert!(
+            env::var("CLEANUP_SECRET").is_err(),
+            "cleanup variables must not leak into the parent process"
+        );
+
+        drop(guard);
+        Ok(())
+    }
 }

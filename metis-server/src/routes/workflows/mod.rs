@@ -136,6 +136,7 @@ pub async fn create_workflow(
 
     // Apply variable substitution to all task fields
     let workflow = workflow.with_substituted_variables();
+    let workflow_variables = workflow.variable_map();
 
     // Check for cycles using DFS
     if has_cycle(&workflow) {
@@ -226,6 +227,7 @@ pub async fn create_workflow(
                 context: payload.context.clone(),
                 setup: workflow.tasks[&task_name].setup.clone(),
                 cleanup: workflow.tasks[&task_name].cleanup.clone(),
+                env_vars: workflow_variables.clone(),
             };
 
             store

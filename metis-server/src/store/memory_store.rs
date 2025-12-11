@@ -446,6 +446,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store
             .add_task(root_task.clone(), vec![], Utc::now())
@@ -456,6 +457,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let child_id = store
             .add_task(child_task.clone(), vec![edge(&root_id)], Utc::now())
@@ -491,6 +493,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let err = store
             .add_task(spawn_task, vec![edge(&missing_parent)], Utc::now())
@@ -510,6 +513,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -519,6 +523,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -530,6 +535,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let grandchild_id = store
             .add_task(grandchild_task, vec![edge(&child_id)], Utc::now())
@@ -567,6 +573,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -582,6 +589,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -591,6 +599,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -612,6 +621,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -622,6 +632,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![Edge {
                     id: root_id.clone(),
@@ -651,6 +662,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -670,6 +682,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -688,6 +701,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -706,6 +720,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -732,6 +747,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -764,6 +780,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -773,6 +790,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -805,6 +823,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
@@ -814,6 +833,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -827,6 +847,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -859,6 +880,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root1_id = store
             .add_task(root1_task, vec![], Utc::now())
@@ -870,6 +892,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root2_id = store
             .add_task(root2_task, vec![], Utc::now())
@@ -884,6 +907,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root1_id), edge(&root2_id)],
                 Utc::now(),
@@ -926,6 +950,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
@@ -935,6 +960,7 @@ mod tests {
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
+                    env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
                 Utc::now(),
@@ -959,6 +985,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
@@ -979,6 +1006,7 @@ mod tests {
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 

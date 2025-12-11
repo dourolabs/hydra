@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
@@ -19,6 +20,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         request_context,
         parents,
         setup,
+        variables,
         ..
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
@@ -37,7 +39,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         }
     }
     write_parent_outputs(&parents, &dest)?;
-    run_setup_commands(&setup, &dest)?;
+    run_setup_commands(&setup, &dest, &variables)?;
     Ok(())
 }
 
@@ -183,7 +185,11 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
     Ok(())
 }
 
-fn run_setup_commands(commands: &[String], working_dir: &Path) -> Result<()> {
+fn run_setup_commands(
+    commands: &[String],
+    working_dir: &Path,
+    variables: &HashMap<String, String>,
+) -> Result<()> {
     if commands.is_empty() {
         return Ok(());
     }
@@ -193,6 +199,7 @@ fn run_setup_commands(commands: &[String], working_dir: &Path) -> Result<()> {
             .arg("-c")
             .arg(command)
             .current_dir(working_dir)
+            .envs(variables)
             .status()
             .with_context(|| format!("failed to execute setup command {}: {}", idx + 1, command))?;
         if !status.success() {
@@ -267,5 +274,27 @@ mod tests {
 
         let parents_dir = tempdir.path().join(".metis").join("parents");
         assert!(!parents_dir.join("../escape").exists());
+    }
+
+    #[test]
+    fn run_setup_commands_injects_variables_into_environment() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let mut variables = HashMap::new();
+        variables.insert("SECRET_TOKEN".to_string(), "super-secret".to_string());
+
+        run_setup_commands(
+            &[r#"echo "$SECRET_TOKEN" > env_output.txt"#.to_string()],
+            tempdir.path(),
+            &variables,
+        )?;
+
+        let output = std::fs::read_to_string(tempdir.path().join("env_output.txt"))?;
+        assert_eq!(output.trim(), "super-secret");
+        assert!(
+            std::env::var("SECRET_TOKEN").is_err(),
+            "setup variables must not leak into the parent process"
+        );
+
+        Ok(())
     }
 }

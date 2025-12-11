@@ -11,6 +11,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse};
 use serde_json::json;
+use std::collections::HashMap;
 use tracing::{error, info};
 
 pub mod context;
@@ -57,6 +58,7 @@ pub async fn create_job(
             context: payload.context.clone(),
             setup: vec![],
             cleanup: vec![],
+            env_vars: HashMap::new(),
         };
         store
             .add_task_with_id(job_id.clone(), task, parent_edges.clone(), Utc::now())

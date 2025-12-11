@@ -85,6 +85,8 @@ pub mod jobs {
         pub setup: Vec<String>,
         #[serde(default)]
         pub cleanup: Vec<String>,
+        #[serde(default)]
+        pub variables: HashMap<String, String>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

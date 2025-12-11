@@ -471,6 +471,7 @@ mod tests {
                 context,
                 setup: _,
                 cleanup: _,
+                env_vars: _,
             } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(context, Bundle::None);
@@ -501,6 +502,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     Utc::now(),
@@ -569,6 +571,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     now - Duration::seconds(30),
@@ -582,6 +585,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -595,6 +599,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     now - Duration::seconds(10),
@@ -638,6 +643,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     now - Duration::seconds(20),
@@ -877,6 +883,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     Utc::now(),
@@ -961,6 +968,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     Utc::now(),
@@ -1006,6 +1014,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     Utc::now(),
@@ -1084,6 +1093,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     Utc::now(),
@@ -1107,6 +1117,7 @@ mod tests {
                         context: context.clone(),
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![Edge {
                         id: "parent-job".to_string(),
@@ -1143,6 +1154,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    "env-job".to_string(),
+                    Task::Spawn {
+                        prompt: "do work".to_string(),
+                        context: Bundle::None,
+                        setup: vec![],
+                        cleanup: vec![],
+                        env_vars: HashMap::from([(
+                            "SECRET_VALUE".to_string(),
+                            "keep-me-safe".to_string(),
+                        )]),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/env-job/context", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: WorkerContext = response.json().await?;
+        assert_eq!(
+            body.variables,
+            HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_workflows_returns_summaries() -> anyhow::Result<()> {
         let state = test_state();
         let store = state.store.clone();
@@ -1160,6 +1212,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     created_at,
@@ -1187,6 +1240,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![Edge {
                         id: first_task_id.clone(),
@@ -1260,6 +1314,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![],
                     created_at,
@@ -1288,6 +1343,7 @@ mod tests {
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
+                        env_vars: HashMap::new(),
                     },
                     vec![Edge {
                         id: first_task_id.clone(),

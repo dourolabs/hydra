@@ -106,7 +106,7 @@ pub struct ListWorkflowsResponse {
 impl Workflow {
     /// Build a map of variable names to their values.
     /// Only includes variables that have a value set.
-    fn build_variable_map(&self) -> HashMap<String, String> {
+    pub fn variable_map(&self) -> HashMap<String, String> {
         self.variables
             .iter()
             .filter_map(|var| {
@@ -209,7 +209,7 @@ impl Workflow {
     /// Create a new workflow with all variable substitutions applied to task fields.
     /// This resolves all $VAR_NAME references in prompts, setup, and cleanup commands.
     pub fn with_substituted_variables(&self) -> Self {
-        let vars = self.build_variable_map();
+        let vars = self.variable_map();
 
         let tasks: HashMap<String, TaskDefinition> = self
             .tasks
