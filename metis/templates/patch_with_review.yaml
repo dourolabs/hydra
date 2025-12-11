@@ -33,7 +33,8 @@ tasks:
       You are assigned to fix problems with a given patch to the provided repository. 
       A code reviewer has looked at the patch and provided a review.
 
-      Please look in the .metis/parents/ directory to find the patch and the review.
+      The patch is available at .metis/parents/generate-patch/changes.patch and the 
+      code review is in the text files under .metis/parents/code-review/
     setup:
       - echo "this is the setup"
     cleanup:
