@@ -64,6 +64,11 @@ enum Commands {
         #[arg(long = "after", value_name = "JOB_ID")]
         after: Vec<String>,
 
+        /// Override or set workflow variable (format: KEY=VALUE). Can be repeated.
+        /// For workflows, overrides variables defined in the YAML file.
+        #[arg(long = "var", value_name = "KEY=VALUE")]
+        var: Vec<String>,
+
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
             value_name = "PROMPT",
@@ -141,6 +146,7 @@ async fn main() -> Result<()> {
             encode_directory,
             encode_git_bundle,
             after,
+            var,
             prompt,
         } => {
             command::spawn::run(
@@ -153,6 +159,7 @@ async fn main() -> Result<()> {
                 encode_directory,
                 encode_git_bundle,
                 after,
+                var,
                 prompt,
             )
             .await?

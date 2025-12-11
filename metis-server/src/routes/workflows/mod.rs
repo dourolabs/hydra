@@ -18,6 +18,28 @@ pub async fn create_workflow(
     
     let workflow = &payload.workflow;
     
+    // Validate variables: check that all referenced variables are defined
+    let undefined_vars = workflow.validate_variables();
+    if !undefined_vars.is_empty() {
+        error!(
+            undefined_vars = ?undefined_vars,
+            "workflow contains undefined variable references"
+        );
+        return Err(ApiError::bad_request(format!(
+            "Workflow references undefined variables: {}",
+            undefined_vars.join(", ")
+        )));
+    }
+    
+    // Apply variable substitution to all task fields
+    let workflow = workflow.with_substituted_variables();
+    
+    // Check for cycles using DFS
+    if has_cycle(&workflow) {
+        error!("workflow contains a cycle");
+        return Err(ApiError::bad_request("Workflow contains a cycle"));
+    }
+    
     // Validate workflow: check that all input references are valid
     for (task_name, task_def) in &workflow.tasks {
         if let Some(inputs) = &task_def.inputs {
@@ -35,12 +57,6 @@ pub async fn create_workflow(
                 }
             }
         }
-    }
-    
-    // Check for cycles using DFS
-    if has_cycle(workflow) {
-        error!("workflow contains a cycle");
-        return Err(ApiError::bad_request("Workflow contains a cycle"));
     }
     
     // Generate workflow ID

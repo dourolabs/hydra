@@ -1,3 +1,8 @@
+env:
+  - name: FOO
+    value: 0
+  - name: BAR
+
 tasks:
   generate-patch:
     type: codex
@@ -15,9 +20,13 @@ tasks:
       If the code *does not* meet your standards, please write the reasons it does not 
       into the .metis/output/error.txt file. If the code looks good, do not generate this file.
 
+      The value of foo is $FOO
+
       The task provided to the prior contributor was as follows      
     setup:
       - echo "this is the setup"
+      - echo "$PROMPT"
+      - echo "$FOO"
 
   merge:
     inputs: code-review
