@@ -7,7 +7,9 @@ use metis_common::{
     jobs::{CreateJobRequest, Bundle},
     logs::LogsQuery,
     task_status::Status,
+    workflows::CreateWorkflowRequest,
 };
+use serde_yaml;
 use std::{
     env, fs,
     io::{self, Write},
@@ -22,6 +24,7 @@ use tokio::time::sleep;
 pub async fn run(
     client: &dyn MetisClientInterface,
     wait: bool,
+    workflow_file: Option<PathBuf>,
     from_git_rev_arg: Option<String>,
     repo_url_arg: Option<String>,
     context_dir: Option<PathBuf>,
@@ -30,17 +33,6 @@ pub async fn run(
     after: Vec<String>,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
-    let prompt = if prompt_parts.is_empty() {
-        bail!("prompt is required")
-    } else {
-        prompt_parts.join(" ")
-    };
-
-    let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
-    if parent_ids.iter().any(|id| id.is_empty()) {
-        bail!("--after values must not be empty");
-    }
-
     let context = build_context(
         from_git_rev_arg,
         repo_url_arg,
@@ -48,20 +40,60 @@ pub async fn run(
         force_encode_directory,
         force_encode_git_bundle,
     )?;
-    let request = CreateJobRequest {
-        prompt,
-        context,
-        parent_ids,
-    };
-    let response = client.create_job(&request).await?;
-    let job_id = response.job_id;
 
-    println!("Requested Metis job {job_id}");
+    if let Some(workflow_path) = workflow_file {
+        // Spawn a workflow
+        let workflow_content = fs::read_to_string(&workflow_path)
+            .with_context(|| format!("failed to read workflow file '{}'", workflow_path.display()))?;
+        
+        let workflow: metis_common::workflows::Workflow = serde_yaml::from_str(&workflow_content)
+            .with_context(|| format!("failed to parse workflow file '{}'", workflow_path.display()))?;
+        
+        let request = CreateWorkflowRequest {
+            workflow,
+            context,
+        };
+        
+        let response = client.create_workflow(&request).await?;
+        
+        println!("Created workflow {}", response.workflow_id);
+        println!("Task IDs:");
+        for (task_name, task_id) in &response.task_ids {
+            println!("  {}: {}", task_name, task_id);
+        }
 
-    if wait {
-        println!("Streaming logs for job '{job_id}' via metis-server…");
-        stream_job_logs_via_server(client, &job_id, true).await?;
-        wait_for_job_completion_via_server(client, &job_id).await?;
+        // Note: wait functionality for workflows is not implemented yet
+        if wait {
+            eprintln!("Warning: --wait is not yet supported for workflows");
+        }
+    } else {
+        // Spawn a single task
+        let prompt = if prompt_parts.is_empty() {
+            bail!("prompt is required")
+        } else {
+            prompt_parts.join(" ")
+        };
+
+        let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
+        if parent_ids.iter().any(|id| id.is_empty()) {
+            bail!("--after values must not be empty");
+        }
+
+        let request = CreateJobRequest {
+            prompt,
+            context,
+            parent_ids,
+        };
+        let response = client.create_job(&request).await?;
+        let job_id = response.job_id;
+
+        println!("Requested Metis job {job_id}");
+
+        if wait {
+            println!("Streaming logs for job '{job_id}' via metis-server…");
+            stream_job_logs_via_server(client, &job_id, true).await?;
+            wait_for_job_completion_via_server(client, &job_id).await?;
+        }
     }
 
     Ok(())
@@ -327,6 +359,7 @@ mod tests {
         run(
             &client,
             true,
+            None,
             None,
             None,
             Some(tmp_dir.path().to_path_buf()),

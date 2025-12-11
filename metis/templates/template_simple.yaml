@@ -1,7 +1,8 @@
 tasks:
   generate-patch:
     type: codex
-    prompt: this is the prompt
+    prompt: >
+      please write unit tests for the metis spawn CLI command, making sure to consider corner cases.
   
   code-review:
     inputs: generate-patch
@@ -16,7 +17,7 @@ tasks:
 
       The task provided to the prior contributor was as follows      
     setup:
-      - cp .metis/parents/generate-patch/patch.txt .
+      - echo "this is the setup"
 
   merge:
     inputs: code-review
@@ -25,8 +26,6 @@ tasks:
       You are assigned to merge the given patch in to the provided repository. Please
       check for any merge conflicts and fix them.
     setup:
-      - cp .metis/parents/code-review/patch.txt .
-      - todo # TODO: some git nonsense to apply the patch to generate the merge conflicts to resolve
+      - echo "this is the setup"
     cleanup:
-      - git push ... 
-      - if failed # generate error.txt
+      - echo "this is the cleanup"

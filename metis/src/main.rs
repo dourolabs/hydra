@@ -33,8 +33,12 @@ enum Commands {
     /// Spawn a new orchestration worker.
     Spawn {
         /// Wait for the job to complete and stream its logs.
-        #[arg(short = 'w', long = "wait")]
+        #[arg(long = "wait")]
         wait: bool,
+
+        /// Path to a workflow YAML file. If provided, spawns a workflow instead of a single task.
+        #[arg(short = 'w', long = "workflow", value_name = "FILE")]
+        workflow: Option<PathBuf>,
 
         /// Branch or commit to use as the starting point for the job.
         #[arg(long = "from", value_name = "REV")]
@@ -130,6 +134,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Spawn {
             wait,
+            workflow,
             from,
             repo_url,
             context_dir,
@@ -141,6 +146,7 @@ async fn main() -> Result<()> {
             command::spawn::run(
                 &client,
                 wait,
+                workflow,
                 from,
                 repo_url,
                 context_dir,

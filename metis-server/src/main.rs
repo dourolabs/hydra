@@ -61,6 +61,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
+        .route("/v1/workflows", post(routes::workflows::create_workflow))
         .with_state(state);
 
     let addr = listener.local_addr()?;

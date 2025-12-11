@@ -9,6 +9,7 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
+    workflows::{CreateWorkflowRequest, CreateWorkflowResponse},
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -101,5 +102,9 @@ impl MetisClientInterface for MockMetisClient {
         Err(anyhow!(
             "get_job_context not implemented in MockMetisClient"
         ))
+    }
+
+    async fn create_workflow(&self, _request: &CreateWorkflowRequest) -> Result<CreateWorkflowResponse> {
+        Err(anyhow!("create_workflow not implemented in MockMetisClient"))
     }
 }

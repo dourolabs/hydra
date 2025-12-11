@@ -1264,6 +1264,7 @@ dependencies = [
  "owo-colors",
  "reqwest",
  "serde",
+ "serde_yaml",
  "shellexpand",
  "tar",
  "tempfile",
