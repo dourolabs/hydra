@@ -31,6 +31,7 @@ kind delete cluster --name local-dev
 
 
 ## Queue of prompts
+- test change: checking edit plumbing
 - rename the metis jobs command to metis tasks. Please also rename the relevant "job" structs etc in metis-common to be "task" instead. Job should only be used in the context of the job_engine (i.e., for kubernetes jobs).
 - if a job fails in the job engine, then subsequent tasks should be marked as "dropped" and not executed. Please implement this behavior and ensure it is tested.
 
@@ -139,6 +140,5 @@ The setup for a task is as follows:
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
 ## Variables
-
 
 
