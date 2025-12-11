@@ -1,5 +1,6 @@
 variables:
   - name: PROMPT
+  - name: GH_TOKEN
 
 tasks:
   generate-patch:
@@ -38,4 +39,49 @@ tasks:
     setup:
       - echo "this is the setup"
     cleanup:
-      - echo "this is the cleanup"
+      - |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "GH_TOKEN not set; skipping PR creation."
+            exit 0
+          fi
+
+          task_id="${METIS_TASK_ID:-${TASK_ID:-${METIS_ID:-}}}"
+          if [[ -z "${task_id}" ]]; then
+            echo "GH_TOKEN provided but task id not found in METIS_TASK_ID/TASK_ID/METIS_ID; skipping PR creation." >&2
+            exit 0
+          fi
+
+          branch_name="metis-${task_id}"
+
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "gh CLI not installed; skipping PR creation." >&2
+            exit 0
+          fi
+
+          git config user.name "${GIT_USER_NAME:-metis-bot}"
+          git config user.email "${GIT_USER_EMAIL:-metis-bot@dourolabs.com}"
+
+          git checkout -B "${branch_name}"
+
+          git add -A -- . ':!.metis/**'
+          if git diff --cached --quiet; then
+            echo "No changes to commit; skipping PR creation."
+            exit 0
+          fi
+
+          if ! gh auth status >/dev/null 2>&1; then
+            printf "%s\n" "${GH_TOKEN}" | gh auth login --with-token
+          fi
+
+          gh auth setup-git
+
+          git commit -m "task ${task_id}"
+          git push --force-with-lease origin "${branch_name}"
+
+          gh pr create \
+            --repo dourolabs/metis \
+            --head "${branch_name}" \
+            --title "Task ${task_id}" \
+            --body "Automated PR for task ${task_id}."

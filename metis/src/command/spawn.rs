@@ -66,7 +66,10 @@ pub async fn run(
             Some(prompt_parts.join(" "))
         };
 
-        // Merge variables: CLI overrides YAML, PROMPT is added if provided
+        // Apply environment overrides before merging CLI variables
+        apply_environment_variables(&mut workflow);
+
+        // Merge variables: CLI overrides YAML/env, PROMPT is added if provided
         workflow = merge_workflow_variables(workflow, parsed_cli_vars, prompt)?;
 
         let request = CreateWorkflowRequest { workflow, context };
@@ -424,6 +427,16 @@ fn merge_workflow_variables(
     Ok(workflow)
 }
 
+/// Update workflow variables with matching environment variable values.
+/// Environment variables override workflow defaults but are overridden by CLI flags later.
+fn apply_environment_variables(workflow: &mut metis_common::workflows::Workflow) {
+    for variable in &mut workflow.variables {
+        if let Ok(env_value) = env::var(&variable.name) {
+            variable.value = Some(env_value);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +628,96 @@ mod tests {
             .find(|v| v.name == "PROMPT")
             .unwrap();
         assert_eq!(prompt_var.value, Some("cli prompt".to_string()));
+    }
+
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn test_apply_environment_variables_overrides_defaults() {
+        use metis_common::workflows::{TaskDefinition, Workflow};
+        use std::collections::HashMap;
+        use std::env;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        let mut tasks = HashMap::new();
+        tasks.insert(
+            "test".to_string(),
+            TaskDefinition {
+                task_type: "codex".to_string(),
+                prompt: "test".to_string(),
+                inputs: None,
+                setup: vec![],
+                cleanup: vec![],
+            },
+        );
+
+        let mut workflow = Workflow {
+            variables: vec![
+                VariableDefinition {
+                    name: "FOO".to_string(),
+                    value: Some("default-foo".to_string()),
+                },
+                VariableDefinition {
+                    name: "BAR".to_string(),
+                    value: None,
+                },
+            ],
+            tasks,
+        };
+
+        env::set_var("FOO", "env-foo");
+        env::set_var("BAR", "env-bar");
+        apply_environment_variables(&mut workflow);
+        env::remove_var("FOO");
+        env::remove_var("BAR");
+
+        let foo_var = workflow.variables.iter().find(|v| v.name == "FOO").unwrap();
+        assert_eq!(foo_var.value, Some("env-foo".to_string()));
+
+        let bar_var = workflow.variables.iter().find(|v| v.name == "BAR").unwrap();
+        assert_eq!(bar_var.value, Some("env-bar".to_string()));
+    }
+
+    #[test]
+    fn test_cli_variables_override_environment_values() {
+        use metis_common::workflows::{TaskDefinition, Workflow};
+        use std::collections::HashMap;
+        use std::env;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        let mut tasks = HashMap::new();
+        tasks.insert(
+            "test".to_string(),
+            TaskDefinition {
+                task_type: "codex".to_string(),
+                prompt: "test".to_string(),
+                inputs: None,
+                setup: vec![],
+                cleanup: vec![],
+            },
+        );
+
+        let mut workflow = Workflow {
+            variables: vec![VariableDefinition {
+                name: "FOO".to_string(),
+                value: Some("default-foo".to_string()),
+            }],
+            tasks,
+        };
+
+        env::set_var("FOO", "env-foo");
+        apply_environment_variables(&mut workflow);
+        env::remove_var("FOO");
+
+        let mut cli_vars = HashMap::new();
+        cli_vars.insert("FOO".to_string(), "cli-foo".to_string());
+
+        let merged = merge_workflow_variables(workflow, cli_vars, None).unwrap();
+        let foo_var = merged.variables.iter().find(|v| v.name == "FOO").unwrap();
+        assert_eq!(foo_var.value, Some("cli-foo".to_string()));
     }
 }
