@@ -13,8 +13,9 @@ const STATUS_WIDTH: usize = 9;
 const RUNTIME_WIDTH: usize = 12;
 const MAX_NOTES_WIDTH: usize = 80;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
+pub const DEFAULT_JOB_LIMIT: usize = 10;
 
-pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> {
     let response = client.list_jobs().await?;
     let terminal_width = current_terminal_width();
     let now = Utc::now();
@@ -24,11 +25,14 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
         return Ok(());
     }
 
+    let limit = limit.max(1);
+    let total_jobs = response.jobs.len();
+    let (jobs, truncated) = truncate_jobs(response.jobs, limit);
     let (plain_header, colored_header) = header_row();
     println!("{colored_header}");
     println!("{}", "-".repeat(plain_header.len()));
 
-    for job in response.jobs {
+    for job in jobs {
         let status = format_status(&job.status_log.current_status);
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
@@ -48,7 +52,19 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
         }
     }
 
+    if truncated {
+        println!("Showing {limit} of {total_jobs} jobs. Use --limit to display more.");
+    }
+
     Ok(())
+}
+
+pub(crate) fn truncate_jobs(jobs: Vec<JobSummary>, limit: usize) -> (Vec<JobSummary>, bool) {
+    if jobs.len() <= limit {
+        return (jobs, false);
+    }
+
+    (jobs.into_iter().take(limit).collect(), true)
 }
 
 pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
@@ -201,6 +217,50 @@ fn job_note(job: &JobSummary) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_job(id: &str) -> JobSummary {
+        JobSummary {
+            id: id.to_string(),
+            notes: None,
+            status_log: TaskStatusLog {
+                creation_time: Utc::now(),
+                start_time: None,
+                end_time: None,
+                current_status: Status::Pending,
+                failure_reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn truncate_jobs_keeps_all_when_below_limit() {
+        let jobs = vec![
+            sample_job("job-1"),
+            sample_job("job-2"),
+            sample_job("job-3"),
+        ];
+
+        let (kept, truncated) = truncate_jobs(jobs, 5);
+
+        assert!(!truncated);
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept[0].id, "job-1");
+        assert_eq!(kept[2].id, "job-3");
+    }
+
+    #[test]
+    fn truncate_jobs_limits_to_requested_count() {
+        let jobs: Vec<JobSummary> = (0..12)
+            .map(|idx| sample_job(&format!("job-{idx}")))
+            .collect();
+
+        let (kept, truncated) = truncate_jobs(jobs, 10);
+
+        assert!(truncated);
+        assert_eq!(kept.len(), 10);
+        assert_eq!(kept.first().unwrap().id, "job-0");
+        assert_eq!(kept.last().unwrap().id, "job-9");
+    }
 
     #[test]
     fn wraps_notes_to_terminal_width_and_indents_followup_lines() {
