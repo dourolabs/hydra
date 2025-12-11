@@ -206,8 +206,8 @@ impl Workflow {
         result
     }
 
-    /// Create a new workflow with all variable substitutions applied to task fields.
-    /// This resolves all $VAR_NAME references in prompts, setup, and cleanup commands.
+    /// Create a new workflow with variable substitutions applied to prompts.
+    /// Setup and cleanup commands are left untouched so the shell can expand env vars.
     pub fn with_substituted_variables(&self) -> Self {
         let vars = self.variable_map();
 
@@ -217,16 +217,8 @@ impl Workflow {
             .map(|(name, task)| {
                 let substituted_task = TaskDefinition {
                     prompt: Self::substitute_variables_in_string(&task.prompt, &vars),
-                    setup: task
-                        .setup
-                        .iter()
-                        .map(|cmd| Self::substitute_variables_in_string(cmd, &vars))
-                        .collect(),
-                    cleanup: task
-                        .cleanup
-                        .iter()
-                        .map(|cmd| Self::substitute_variables_in_string(cmd, &vars))
-                        .collect(),
+                    setup: task.setup.clone(),
+                    cleanup: task.cleanup.clone(),
                     task_type: task.task_type.clone(),
                     inputs: task.inputs.clone(),
                 };
@@ -260,18 +252,12 @@ impl Workflow {
         undefined
     }
 
-    /// Collect all variable names referenced in task prompts, setup, and cleanup commands.
+    /// Collect all variable names referenced in task prompts.
     fn collect_referenced_variables(&self) -> Vec<String> {
         let mut vars = Vec::new();
 
         for task in self.tasks.values() {
             vars.extend(Self::extract_variable_names(&task.prompt));
-            for cmd in &task.setup {
-                vars.extend(Self::extract_variable_names(cmd));
-            }
-            for cmd in &task.cleanup {
-                vars.extend(Self::extract_variable_names(cmd));
-            }
         }
 
         vars
@@ -347,7 +333,7 @@ mod tests {
                 prompt: "Test prompt with $VAR1 and ${VAR2}".to_string(),
                 inputs: None,
                 setup: vec!["echo $VAR1".to_string(), "echo ${VAR3}".to_string()],
-                cleanup: vec![],
+                cleanup: vec!["echo cleanup ${VAR2}".to_string()],
             },
         );
 
@@ -414,8 +400,10 @@ mod tests {
 
         let task = &substituted.tasks["test-task"];
         assert_eq!(task.prompt, "Test prompt with value1 and value2");
-        assert_eq!(task.setup[0], "echo value1");
-        assert_eq!(task.setup[1], "echo value3");
+        // Setup/cleanup commands are left for the shell to expand.
+        assert_eq!(task.setup[0], "echo $VAR1");
+        assert_eq!(task.setup[1], "echo ${VAR3}");
+        assert_eq!(task.cleanup[0], "echo cleanup ${VAR2}");
     }
 
     #[test]
@@ -470,6 +458,29 @@ mod tests {
 
         let undefined = workflow.validate_variables();
         assert_eq!(undefined, vec!["UNDEFINED_VAR".to_string()]);
+    }
+
+    #[test]
+    fn test_validate_variables_ignores_setup_and_cleanup() {
+        let mut tasks = HashMap::new();
+        tasks.insert(
+            "test-task".to_string(),
+            TaskDefinition {
+                task_type: "codex".to_string(),
+                prompt: "No vars in prompt".to_string(),
+                inputs: None,
+                setup: vec!["echo $ENV_ONLY".to_string()],
+                cleanup: vec!["echo ${ANOTHER_ENV}".to_string()],
+            },
+        );
+
+        let workflow = Workflow {
+            variables: vec![],
+            tasks,
+        };
+
+        let undefined = workflow.validate_variables();
+        assert!(undefined.is_empty());
     }
 
     #[test]
