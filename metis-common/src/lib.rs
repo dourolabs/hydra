@@ -74,6 +74,10 @@ pub mod jobs {
         pub request_context: Bundle,
         #[serde(default)]
         pub parents: HashMap<String, JobOutputPayload>,
+        #[serde(default)]
+        pub setup: Vec<String>,
+        #[serde(default)]
+        pub cleanup: Vec<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

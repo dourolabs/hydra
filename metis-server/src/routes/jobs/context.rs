@@ -30,7 +30,7 @@ pub async fn get_job_context(
     // Get parent task IDs and their results
     let parent_ids = store.get_parents(&job_id_string).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to get parent tasks");
-        ApiError::internal(anyhow::anyhow!("Failed to get parent tasks: {err}"))
+        ApiError::internal(anyhow!("Failed to get parent tasks: {err}"))
     })?;
 
     let mut parents: HashMap<String, JobOutputPayload> = HashMap::new();
@@ -41,9 +41,16 @@ pub async fn get_job_context(
     }
 
     match task {
-        Task::Spawn { context, .. } => Ok(Json(WorkerContext {
+        Task::Spawn {
+            prompt: _,
+            context,
+            setup,
+            cleanup,
+        } => Ok(Json(WorkerContext {
             request_context: context.clone(),
             parents,
+            setup: setup.clone(),
+            cleanup: cleanup.clone(),
         })),
     }
 }

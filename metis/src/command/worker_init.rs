@@ -21,6 +21,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     let WorkerContext {
         request_context,
         parents,
+        setup,
         ..
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
@@ -39,6 +40,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         }
     }
     write_parent_outputs(&parents, &dest)?;
+    run_setup_commands(&setup, &dest)?;
     Ok(())
 }
 
@@ -145,6 +147,30 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
         .context("failed to spawn git clone from bundle")?;
     if !status.success() {
         return Err(anyhow!("git clone from bundle failed with status {status}"));
+    }
+    Ok(())
+}
+
+fn run_setup_commands(commands: &[String], working_dir: &Path) -> Result<()> {
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    for (idx, command) in commands.iter().enumerate() {
+        let status = Command::new("bash")
+            .arg("-c")
+            .arg(command)
+            .current_dir(working_dir)
+            .status()
+            .with_context(|| format!("failed to execute setup command {}: {}", idx + 1, command))?;
+        if !status.success() {
+            return Err(anyhow!(
+                "setup command {} failed with status {}: {}",
+                idx + 1,
+                status,
+                command
+            ));
+        }
     }
     Ok(())
 }

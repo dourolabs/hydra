@@ -1,5 +1,5 @@
 use crate::client::MetisClientInterface;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use flate2::write::GzEncoder;
@@ -12,6 +12,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
 };
 use tar::Builder;
 
@@ -20,6 +21,10 @@ pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
+
+    // Get cleanup commands from the job context
+    let context = client.get_job_context(&job_id).await?;
+    run_cleanup_commands(&context.cleanup)?;
 
     let (last_message_file, patch_file, output_dir) = resolve_output_paths();
 
@@ -93,4 +98,30 @@ fn create_output_bundle(output_dir: &Path) -> Result<Bundle> {
     Ok(Bundle::TarGz {
         archive_base64: Base64Engine.encode(compressed),
     })
+}
+
+fn run_cleanup_commands(commands: &[String]) -> Result<()> {
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    let current_dir = std::env::current_dir().context("failed to get current working directory")?;
+
+    for (idx, command) in commands.iter().enumerate() {
+        let status = Command::new("bash")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&current_dir)
+            .status()
+            .with_context(|| format!("failed to execute cleanup command {}: {}", idx + 1, command))?;
+        if !status.success() {
+            return Err(anyhow!(
+                "cleanup command {} failed with status {}: {}",
+                idx + 1,
+                status,
+                command
+            ));
+        }
+    }
+    Ok(())
 }
