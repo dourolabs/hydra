@@ -1,8 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{
-        color_status, current_terminal_width, format_job_lines, format_runtime, format_status,
-    },
+    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -11,11 +9,13 @@ use metis_common::{
     workflows::WorkflowSummary,
 };
 use owo_colors::OwoColorize;
+use textwrap::{Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 36;
 const STATUS_WIDTH: usize = 9;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
+const TEXT_COLUMN_WIDTH: usize = 80;
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let response = client.list_workflows().await?;
@@ -27,27 +27,32 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
         return Ok(());
     }
 
-    let (plain_header, colored_header) = header_row();
-    println!("{colored_header}");
-    println!("{}", "-".repeat(plain_header.len()));
+    let (plain_header, colored_header) = header_rows(terminal_width);
+    for line in &colored_header {
+        println!("{line}");
+    }
+    if let Some(first_header) = plain_header.first() {
+        println!("{}", "-".repeat(first_header.len()));
+    }
 
     for workflow in response.workflows {
         let status = format_status(&workflow.status);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let running = running_tasks_display(&workflow.running_tasks);
+        let prompt = workflow_prompt(&workflow);
         let notes = workflow_note(&workflow).unwrap_or_else(|| "-".into());
 
         let cells = workflow_row_cells(&workflow.id, status, &runtime, &running);
         let plain_prefix = workflow_row_prefix(&cells);
         let colored_prefix =
             colored_workflow_row_prefix(&cells, status, &running, &workflow.running_tasks);
-        for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
+        for (index, line) in format_workflow_lines(&plain_prefix, &prompt, &notes, terminal_width)
             .into_iter()
             .enumerate()
         {
             if index == 0 {
-                let note_body = line.strip_prefix(&plain_prefix).unwrap_or(&line);
-                println!("{colored_prefix}{note_body}");
+                let line_body = line.strip_prefix(&plain_prefix).unwrap_or(&line);
+                println!("{colored_prefix}{line_body}");
             } else {
                 println!("{line}");
             }
@@ -57,20 +62,37 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     Ok(())
 }
 
-fn header_row() -> (String, String) {
+fn header_rows(terminal_width: usize) -> (Vec<String>, Vec<String>) {
     let cells = workflow_row_cells("ID", "STATUS", "RUNTIME", "RUNNING");
-    let plain = format!(
-        "{} {} {} {} {}",
-        cells.id, cells.status, cells.runtime, cells.running, "NOTES"
-    );
-    let colored = format!(
-        "{} {} {} {} {}",
+    let plain_prefix = workflow_row_prefix(&cells);
+    let colored_prefix = format!(
+        "{} {} {} {} ",
         cells.id.bold(),
         cells.status.bold(),
         cells.runtime.bold(),
         cells.running.bold(),
-        "NOTES".bold()
     );
+
+    let plain = format_workflow_lines(&plain_prefix, "PROMPT", "NOTES", terminal_width);
+    let colored = plain
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 {
+                let body = line.strip_prefix(&plain_prefix).unwrap_or(line);
+                format!(
+                    "{}{}",
+                    colored_prefix,
+                    body.replace("PROMPT", &"PROMPT".bold().to_string())
+                        .replace("NOTES", &"NOTES".bold().to_string())
+                )
+            } else {
+                line.replace("PROMPT", &"PROMPT".bold().to_string())
+                    .replace("NOTES", &"NOTES".bold().to_string())
+            }
+        })
+        .collect();
+
     (plain, colored)
 }
 
@@ -81,12 +103,91 @@ fn workflow_note(workflow: &WorkflowSummary) -> Option<String> {
         .or_else(|| workflow.status_log.failure_reason.clone())
 }
 
+fn workflow_prompt(workflow: &WorkflowSummary) -> String {
+    workflow
+        .prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("-")
+        .to_string()
+}
+
 fn running_tasks_display(running_tasks: &[String]) -> String {
     if running_tasks.is_empty() {
         "-".to_string()
     } else {
         let joined = running_tasks.join(", ");
         clamp_text(&joined, RUNNING_WIDTH)
+    }
+}
+
+fn format_workflow_lines(
+    prefix: &str,
+    prompt: &str,
+    notes: &str,
+    terminal_width: usize,
+) -> Vec<String> {
+    let indent = " ".repeat(prefix.len());
+    let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
+
+    let mut prompt_width = available_width.saturating_sub(1) / 2;
+    if prompt_width == 0 {
+        prompt_width = 1;
+    }
+    prompt_width = prompt_width.min(TEXT_COLUMN_WIDTH);
+
+    let mut notes_width = available_width
+        .saturating_sub(prompt_width + 1)
+        .max(1)
+        .min(TEXT_COLUMN_WIDTH);
+
+    if prompt_width + 1 + notes_width > available_width && prompt_width > 1 {
+        let overflow = prompt_width + 1 + notes_width - available_width;
+        let adjustment = overflow.min(prompt_width - 1);
+        prompt_width -= adjustment;
+        notes_width = available_width
+            .saturating_sub(prompt_width + 1)
+            .max(1)
+            .min(TEXT_COLUMN_WIDTH);
+    }
+
+    let prompt_lines = wrap_column(prompt, prompt_width);
+    let notes_lines = wrap_column(notes, notes_width);
+    let max_lines = prompt_lines.len().max(notes_lines.len());
+
+    (0..max_lines)
+        .map(|index| {
+            let prompt_part = prompt_lines.get(index).map(String::as_str).unwrap_or("");
+            let notes_part = notes_lines.get(index).map(String::as_str).unwrap_or("");
+            let prompt_padded = format!("{prompt_part:<width$}", width = prompt_width);
+
+            if index == 0 {
+                format!("{prefix}{prompt_padded} {notes_part}")
+            } else {
+                format!("{indent}{prompt_padded} {notes_part}")
+            }
+        })
+        .collect()
+}
+
+fn wrap_column(value: &str, width: usize) -> Vec<String> {
+    let display = if value.trim().is_empty() {
+        "-".to_string()
+    } else {
+        value.to_string()
+    };
+
+    let wrapped = textwrap::wrap(
+        &display,
+        Options::new(width.max(1))
+            .break_words(true)
+            .wrap_algorithm(WrapAlgorithm::FirstFit),
+    );
+
+    if wrapped.is_empty() {
+        vec!["-".into()]
+    } else {
+        wrapped.into_iter().map(|line| line.into_owned()).collect()
     }
 }
 
@@ -172,6 +273,7 @@ mod tests {
     fn notes_fall_back_to_failure_reason() {
         let summary = WorkflowSummary {
             id: "wf-1".into(),
+            prompt: None,
             notes: None,
             status: Status::Failed,
             status_log: TaskStatusLog {
@@ -185,5 +287,16 @@ mod tests {
         };
 
         assert_eq!(workflow_note(&summary), Some("boom".into()));
+        assert_eq!(workflow_prompt(&summary), "-");
+    }
+
+    #[test]
+    fn format_workflow_lines_handles_prompt_and_notes() {
+        let cells = workflow_row_cells("wf-2", "running", "10s", "task");
+        let prefix = workflow_row_prefix(&cells);
+        let lines = format_workflow_lines(&prefix, "long prompt content", "note value", 50);
+
+        assert!(!lines.is_empty());
+        assert!(lines[0].starts_with(&prefix));
     }
 }
