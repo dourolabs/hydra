@@ -24,12 +24,16 @@ tasks:
     setup:
       - cp .metis/parents/**/changes.patch .
 
-  merge:
-    inputs: code-review
+  fix-problems:
+    inputs: 
+      - generate-patch 
+      - code-review
     type: codex
     prompt: >
-      You are assigned to merge the given patch in to the provided repository. Please
-      check for any merge conflicts and fix them.
+      You are assigned to fix problems with a given patch to the provided repository. 
+      A code reviewer has looked at the patch and provided a review.
+
+      Please look in the .metis/parents/ directory to find the patch and the review.
     setup:
       - echo "this is the setup"
     cleanup:
