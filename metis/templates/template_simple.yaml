@@ -1,0 +1,32 @@
+tasks:
+  generate-patch:
+    type: codex
+    prompt: this is the prompt
+  
+  code-review:
+    inputs: generate-patch
+    type: codex
+    prompt: >
+      You are a code review agent who is responsible for approving or 
+      rejecting the changes from a contributor. Please look at the changes in patch.txt 
+      as being applied to the current repository. 
+
+      If the code *does not* meet your standards, please write the reasons it does not 
+      into the .metis/output/error.txt file. If the code looks good, do not generate this file.
+
+      The task provided to the prior contributor was as follows      
+    setup:
+      - cp .metis/parents/generate-patch/patch.txt .
+
+  merge:
+    inputs: code-review
+    type: codex
+    prompt: >
+      You are assigned to merge the given patch in to the provided repository. Please
+      check for any merge conflicts and fix them.
+    setup:
+      - cp .metis/parents/code-review/patch.txt .
+      - todo # TODO: some git nonsense to apply the patch to generate the merge conflicts to resolve
+    cleanup:
+      - git push ... 
+      - if failed # generate error.txt
