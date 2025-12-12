@@ -78,7 +78,16 @@ enum Commands {
         prompt: Vec<String>,
     },
     /// List all Metis jobs in the configured namespace.
-    Jobs,
+    Jobs {
+        /// Number of jobs to display (most recent first).
+        #[arg(
+            short = 'n',
+            long = "limit",
+            value_name = "COUNT",
+            default_value_t = command::jobs::DEFAULT_JOB_LIMIT,
+        )]
+        limit: usize,
+    },
     /// List all Metis workflows in the configured namespace.
     Workflows,
     /// Show logs for an existing Metis job.
@@ -166,7 +175,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
-        Commands::Jobs => command::jobs::run(&client).await?,
+        Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
         Commands::Workflows => command::workflows::run(&client).await?,
         Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,

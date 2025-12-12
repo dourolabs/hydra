@@ -160,10 +160,9 @@ async fn wait_for_job_completion_via_server(
                 }
                 Status::Failed => {
                     let reason = job
-                        .status_log
-                        .failure_reason
+                        .notes
                         .as_deref()
-                        .unwrap_or("no failure reason provided");
+                        .unwrap_or("job failed without an error message");
                     bail!("Job '{job_id}' failed: {reason}");
                 }
                 _ => {}
@@ -467,7 +466,6 @@ mod tests {
                     start_time: Some(start_time),
                     end_time: None,
                     current_status: Status::Running,
-                    failure_reason: None,
                 },
             }],
         });
@@ -480,7 +478,6 @@ mod tests {
                     start_time: Some(start_time),
                     end_time: Some(start_time + ChronoDuration::seconds(1)),
                     current_status: Status::Complete,
-                    failure_reason: None,
                 },
             }],
         });

@@ -8,10 +8,13 @@ use crate::{
 use anyhow::Result;
 use chrono::Utc;
 use metis_common::{
-    task_status::{Status, TaskStatusLog},
+    task_status::Status,
     workflows::WorkflowSummary,
 };
 use owo_colors::OwoColorize;
+
+#[cfg(test)]
+use metis_common::task_status::TaskStatusLog;
 
 const NAME_WIDTH: usize = 36;
 const STATUS_WIDTH: usize = 26;
@@ -80,10 +83,7 @@ fn header_row() -> (String, String) {
 }
 
 fn workflow_note(workflow: &WorkflowSummary) -> Option<String> {
-    workflow
-        .notes
-        .clone()
-        .or_else(|| workflow.status_log.failure_reason.clone())
+    workflow.notes.clone()
 }
 
 fn running_tasks_display(running_tasks: &[String]) -> String {
@@ -174,17 +174,16 @@ mod tests {
     }
 
     #[test]
-    fn notes_fall_back_to_failure_reason() {
+    fn notes_use_workflow_notes_only() {
         let summary = WorkflowSummary {
             id: "wf-1".into(),
-            notes: None,
+            notes: Some("boom".into()),
             status: Status::Failed,
             status_log: TaskStatusLog {
                 creation_time: Utc::now(),
                 start_time: None,
                 end_time: None,
                 current_status: Status::Failed,
-                failure_reason: Some("boom".into()),
             },
             running_tasks: vec![],
         };
