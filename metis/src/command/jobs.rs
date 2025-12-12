@@ -346,7 +346,6 @@ mod tests {
             start_time: None,
             end_time: Some(now - ChronoDuration::minutes(5) - ChronoDuration::seconds(4)),
             current_status: Status::Complete,
-            failure_reason: None,
         };
 
         let status = format_status_with_finished(&status_log, now);
@@ -362,7 +361,6 @@ mod tests {
             start_time: None,
             end_time: None,
             current_status: Status::Failed,
-            failure_reason: None,
         };
 
         let status = format_status_with_finished(&status_log, now);
@@ -378,7 +376,6 @@ mod tests {
             start_time: None,
             end_time: Some(now + ChronoDuration::seconds(5)),
             current_status: Status::Complete,
-            failure_reason: None,
         };
 
         let status = format_status_with_finished(&status_log, now);
