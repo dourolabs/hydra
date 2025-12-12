@@ -1,19 +1,23 @@
 use crate::{
     client::MetisClientInterface,
     command::jobs::{
-        color_status, current_terminal_width, format_job_lines, format_runtime, format_status,
+        color_status, current_terminal_width, format_job_lines, format_runtime,
+        format_status_with_finished,
     },
 };
 use anyhow::Result;
 use chrono::Utc;
-use metis_common::workflows::WorkflowSummary;
+use metis_common::{
+    task_status::Status,
+    workflows::WorkflowSummary,
+};
 use owo_colors::OwoColorize;
 
 #[cfg(test)]
-use metis_common::task_status::{Status, TaskStatusLog};
+use metis_common::task_status::TaskStatusLog;
 
 const NAME_WIDTH: usize = 36;
-const STATUS_WIDTH: usize = 9;
+const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
 
@@ -32,15 +36,19 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     println!("{}", "-".repeat(plain_header.len()));
 
     for workflow in response.workflows {
-        let status = format_status(&workflow.status);
+        let status_display = format_status_with_finished(&workflow.status_log, now);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let running = running_tasks_display(&workflow.running_tasks);
         let notes = workflow_note(&workflow).unwrap_or_else(|| "-".into());
 
-        let cells = workflow_row_cells(&workflow.id, status, &runtime, &running);
+        let cells = workflow_row_cells(&workflow.id, &status_display, &runtime, &running);
         let plain_prefix = workflow_row_prefix(&cells);
-        let colored_prefix =
-            colored_workflow_row_prefix(&cells, status, &running, &workflow.running_tasks);
+        let colored_prefix = colored_workflow_row_prefix(
+            &cells,
+            &workflow.status,
+            &running,
+            &workflow.running_tasks,
+        );
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -130,7 +138,7 @@ fn workflow_row_prefix(cells: &WorkflowRowCells) -> String {
 
 fn colored_workflow_row_prefix(
     cells: &WorkflowRowCells,
-    status: &str,
+    status: &Status,
     running_display: &str,
     running_tasks: &[String],
 ) -> String {

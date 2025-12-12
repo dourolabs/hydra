@@ -9,7 +9,7 @@ use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 48;
-const STATUS_WIDTH: usize = 9;
+const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const MAX_NOTES_WIDTH: usize = 80;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
@@ -33,12 +33,12 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     println!("{}", "-".repeat(plain_header.len()));
 
     for job in jobs {
-        let status = format_status(&job.status_log.current_status);
+        let status_display = format_status_with_finished(&job.status_log, now);
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(&job.id, status, &runtime);
+        let cells = job_row_cells(&job.id, &status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, status);
+        let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status);
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -146,7 +146,7 @@ fn header_row() -> (String, String) {
     (plain, colored)
 }
 
-fn colored_job_row_prefix(cells: &JobRowCells, status: &str) -> String {
+fn colored_job_row_prefix(cells: &JobRowCells, status: &Status) -> String {
     format!(
         "{} {} {} ",
         cells.id.bright_cyan(),
@@ -155,15 +155,12 @@ fn colored_job_row_prefix(cells: &JobRowCells, status: &str) -> String {
     )
 }
 
-pub(crate) fn color_status(padded_status: &str, status: &str) -> String {
-    if status.eq_ignore_ascii_case("complete") {
-        padded_status.green().to_string()
-    } else if status.eq_ignore_ascii_case("running") {
-        padded_status.yellow().to_string()
-    } else if status.eq_ignore_ascii_case("failed") {
-        padded_status.red().to_string()
-    } else {
-        padded_status.bold().to_string()
+pub(crate) fn color_status(padded_status: &str, status: &Status) -> String {
+    match status {
+        Status::Complete => padded_status.green().to_string(),
+        Status::Running => padded_status.yellow().to_string(),
+        Status::Failed => padded_status.red().to_string(),
+        _ => padded_status.bold().to_string(),
     }
 }
 
@@ -175,6 +172,26 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
         Status::Complete => "complete",
         Status::Failed => "failed",
     }
+}
+
+pub(crate) fn format_status_with_finished(
+    status_log: &TaskStatusLog,
+    now: DateTime<Utc>,
+) -> String {
+    let base = format_status(&status_log.current_status);
+
+    if matches!(status_log.current_status, Status::Complete | Status::Failed) {
+        if let Some(end_time) = status_log.end_time {
+            let elapsed = if now < end_time {
+                ChronoDuration::zero()
+            } else {
+                now - end_time
+            };
+            return format!("{base} ({} ago)", format_compact_duration(elapsed));
+        }
+    }
+
+    base.to_string()
 }
 
 pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
@@ -208,6 +225,25 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
+fn format_compact_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h{minutes:02}m{seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 fn job_note(job: &JobSummary) -> Option<String> {
     job.notes.clone()
 }
@@ -215,6 +251,7 @@ fn job_note(job: &JobSummary) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn sample_job(id: &str) -> JobSummary {
         JobSummary {
@@ -299,5 +336,50 @@ mod tests {
         assert!(lines
             .iter()
             .all(|line| line.len() - prefix.len() <= MAX_NOTES_WIDTH));
+    }
+
+    #[test]
+    fn completed_status_includes_elapsed_since_end() {
+        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+        let status_log = TaskStatusLog {
+            creation_time: now,
+            start_time: None,
+            end_time: Some(now - ChronoDuration::minutes(5) - ChronoDuration::seconds(4)),
+            current_status: Status::Complete,
+        };
+
+        let status = format_status_with_finished(&status_log, now);
+
+        assert_eq!(status, "complete (5m04s ago)");
+    }
+
+    #[test]
+    fn failed_status_without_end_time_uses_base_status() {
+        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+        let status_log = TaskStatusLog {
+            creation_time: now,
+            start_time: None,
+            end_time: None,
+            current_status: Status::Failed,
+        };
+
+        let status = format_status_with_finished(&status_log, now);
+
+        assert_eq!(status, "failed");
+    }
+
+    #[test]
+    fn end_times_in_the_future_do_not_make_negative_durations() {
+        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+        let status_log = TaskStatusLog {
+            creation_time: now,
+            start_time: None,
+            end_time: Some(now + ChronoDuration::seconds(5)),
+            current_status: Status::Complete,
+        };
+
+        let status = format_status_with_finished(&status_log, now);
+
+        assert_eq!(status, "complete (0s ago)");
     }
 }
