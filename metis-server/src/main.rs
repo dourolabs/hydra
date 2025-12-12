@@ -1262,6 +1262,7 @@ mod tests {
                         ("first".to_string(), first_task_id.clone()),
                         ("second".to_string(), second_task_id.clone()),
                     ]),
+                    prompt: None,
                 },
             );
         }
@@ -1375,6 +1376,7 @@ mod tests {
                         ("first".to_string(), first_task_id.clone()),
                         ("second".to_string(), failed_task_id.clone()),
                     ]),
+                    prompt: None,
                 },
             );
         }

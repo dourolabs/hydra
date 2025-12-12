@@ -85,6 +85,9 @@ pub struct CreateWorkflowResponse {
 pub struct WorkflowSummary {
     /// Unique identifier for the workflow.
     pub id: String,
+    /// Prompt provided when creating the workflow, if any.
+    #[serde(default)]
+    pub prompt: Option<String>,
     /// Sanitized notes from the most recent completed task or failure reason.
     #[serde(default)]
     pub notes: Option<String>,

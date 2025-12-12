@@ -18,6 +18,7 @@ use tracing::{error, info};
 pub struct WorkflowRecord {
     pub created_at: DateTime<Utc>,
     pub task_ids: HashMap<String, String>,
+    pub prompt: Option<String>,
 }
 
 pub async fn list_workflows(
@@ -137,6 +138,7 @@ pub async fn create_workflow(
     // Apply variable substitution to all task fields
     let workflow = workflow.with_substituted_variables();
     let workflow_variables = workflow.variable_map();
+    let workflow_prompt = workflow_variables.get("PROMPT").cloned();
 
     // Check for cycles using DFS
     if has_cycle(&workflow) {
@@ -258,6 +260,7 @@ pub async fn create_workflow(
             WorkflowRecord {
                 created_at: workflow_created_at,
                 task_ids: task_ids.clone(),
+                prompt: workflow_prompt,
             },
         );
     }
@@ -414,6 +417,7 @@ async fn workflow_summary(
 
     Ok(WorkflowSummary {
         id: workflow_id.to_string(),
+        prompt: record.prompt.clone(),
         notes,
         status,
         status_log,
@@ -479,4 +483,57 @@ fn has_cycle_dfs(
 
     rec_stack.remove(task_name);
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::test_state;
+    use axum::{
+        Json,
+        extract::{Path, State},
+    };
+    use metis_common::{
+        jobs::Bundle,
+        workflows::{CreateWorkflowRequest, TaskDefinition, VariableDefinition, Workflow},
+    };
+
+    #[tokio::test]
+    async fn workflow_summary_includes_prompt_from_variables() {
+        let state = test_state();
+        let workflow = Workflow {
+            variables: vec![VariableDefinition {
+                name: "PROMPT".to_string(),
+                value: Some("describe the repo".to_string()),
+            }],
+            tasks: HashMap::from([(
+                "first".to_string(),
+                TaskDefinition {
+                    task_type: "codex".to_string(),
+                    prompt: "Do the work".to_string(),
+                    inputs: None,
+                    setup: vec![],
+                    cleanup: vec![],
+                },
+            )]),
+        };
+
+        let request = CreateWorkflowRequest {
+            workflow,
+            context: Bundle::None,
+        };
+
+        let response = create_workflow(State(state.clone()), Json(request))
+            .await
+            .expect("workflow created");
+        let workflow_id = response.0.workflow_id.clone();
+
+        let summary = get_workflow(State(state.clone()), Path(workflow_id.clone()))
+            .await
+            .expect("workflow summary loaded")
+            .0;
+
+        assert_eq!(summary.id, workflow_id);
+        assert_eq!(summary.prompt.as_deref(), Some("describe the repo"));
+    }
 }
