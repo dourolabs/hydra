@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     routes::jobs::ApiError,
-    store::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{Edge, Status, Store, StoreError, Task, TaskStatusLog},
 };
 use axum::{
     Json,
@@ -310,13 +310,17 @@ async fn workflow_summary(
 
     for (task_name, task_id) in &record.task_ids {
         let status_log = store.get_status_log(task_id).await?;
+        let result = store.get_result(task_id);
+        let task_note = result
+            .as_ref()
+            .and_then(|res| crate::routes::jobs::note_from_result(res));
         match status_log.current_status {
             Status::Failed => {
                 has_failed = true;
                 all_complete = false;
-                let failure_note = match store.get_result(task_id) {
-                    Some(Err(TaskError::JobEngineError { reason })) => Some(reason),
-                    _ => status_log.failure_reason.clone(),
+                let failure_note = match result.as_ref() {
+                    Some(Err(_)) => task_note.clone(),
+                    _ => None,
                 };
 
                 if failure_reason.is_none() {
@@ -362,15 +366,13 @@ async fn workflow_summary(
             }
         }
 
-        if status_log.current_status == Status::Complete {
-            if let Some(Ok(output)) = store.get_result(task_id) {
-                if let Some(note) = crate::routes::jobs::sanitize_note(&output.last_message) {
-                    let note_time = status_log
-                        .end_time
-                        .or(status_log.start_time)
-                        .unwrap_or(status_log.creation_time);
-                    latest_note = select_latest(latest_note, note_time, note);
-                }
+        if status_log.current_status == Status::Complete && matches!(result, Some(Ok(_))) {
+            if let Some(note) = task_note {
+                let note_time = status_log
+                    .end_time
+                    .or(status_log.start_time)
+                    .unwrap_or(status_log.creation_time);
+                latest_note = select_latest(latest_note, note_time, note);
             }
         }
     }
@@ -411,7 +413,6 @@ async fn workflow_summary(
             _ => None,
         },
         current_status: status,
-        failure_reason,
     };
 
     Ok(WorkflowSummary {

@@ -668,7 +668,6 @@ mod tests {
             summary.status_log.start_time,
             Some(now - Duration::seconds(10))
         );
-        assert!(summary.status_log.failure_reason.is_none());
         Ok(())
     }
 
@@ -1298,7 +1297,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_workflow_surfaces_failure_reason() -> anyhow::Result<()> {
+    async fn failed_workflow_surfaces_error_note() -> anyhow::Result<()> {
         let state = test_state();
         let store = state.store.clone();
         let workflow_id = "wf-failed".to_string();
@@ -1393,8 +1392,7 @@ mod tests {
         assert!(response.status().is_success());
         let summary: WorkflowSummary = response.json().await?;
         assert_eq!(summary.status, Status::Failed);
-        assert_eq!(summary.notes.as_deref(), Some("boom"));
-        assert_eq!(summary.status_log.failure_reason.as_deref(), Some("boom"));
+        assert_eq!(summary.notes.as_deref(), Some("error: boom"));
 
         Ok(())
     }

@@ -1,18 +1,24 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
+    command::jobs::{
+        color_status, current_terminal_width, format_job_lines, format_runtime,
+        format_status_with_finished,
+    },
 };
 use anyhow::Result;
 use chrono::Utc;
 use metis_common::{
-    task_status::{Status, TaskStatusLog},
+    task_status::Status,
     workflows::WorkflowSummary,
 };
 use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
 
+#[cfg(test)]
+use metis_common::task_status::TaskStatusLog;
+
 const NAME_WIDTH: usize = 36;
-const STATUS_WIDTH: usize = 9;
+const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
 const TEXT_COLUMN_WIDTH: usize = 80;
@@ -36,17 +42,20 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     }
 
     for workflow in response.workflows {
-        let status = format_status(&workflow.status);
+        let status_display = format_status_with_finished(&workflow.status_log, now);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let running = running_tasks_display(&workflow.running_tasks);
-        let prompt = workflow_prompt(&workflow);
         let notes = workflow_note(&workflow).unwrap_or_else(|| "-".into());
 
-        let cells = workflow_row_cells(&workflow.id, status, &runtime, &running);
+        let cells = workflow_row_cells(&workflow.id, &status_display, &runtime, &running);
         let plain_prefix = workflow_row_prefix(&cells);
-        let colored_prefix =
-            colored_workflow_row_prefix(&cells, status, &running, &workflow.running_tasks);
-        for (index, line) in format_workflow_lines(&plain_prefix, &prompt, &notes, terminal_width)
+        let colored_prefix = colored_workflow_row_prefix(
+            &cells,
+            &workflow.status,
+            &running,
+            &workflow.running_tasks,
+        );
+        for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
         {
@@ -97,10 +106,7 @@ fn header_rows(terminal_width: usize) -> (Vec<String>, Vec<String>) {
 }
 
 fn workflow_note(workflow: &WorkflowSummary) -> Option<String> {
-    workflow
-        .notes
-        .clone()
-        .or_else(|| workflow.status_log.failure_reason.clone())
+    workflow.notes.clone()
 }
 
 fn workflow_prompt(workflow: &WorkflowSummary) -> String {
@@ -234,7 +240,7 @@ fn workflow_row_prefix(cells: &WorkflowRowCells) -> String {
 
 fn colored_workflow_row_prefix(
     cells: &WorkflowRowCells,
-    status: &str,
+    status: &Status,
     running_display: &str,
     running_tasks: &[String],
 ) -> String {
@@ -270,18 +276,17 @@ mod tests {
     }
 
     #[test]
-    fn notes_fall_back_to_failure_reason() {
+    fn notes_use_workflow_notes_only() {
         let summary = WorkflowSummary {
             id: "wf-1".into(),
             prompt: None,
-            notes: None,
+            notes: Some("boom".into()),
             status: Status::Failed,
             status_log: TaskStatusLog {
                 creation_time: Utc::now(),
                 start_time: None,
                 end_time: None,
                 current_status: Status::Failed,
-                failure_reason: Some("boom".into()),
             },
             running_tasks: vec![],
         };
