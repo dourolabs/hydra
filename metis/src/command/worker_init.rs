@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     fs,
     io::{Cursor, Write},
     path::{Component, Path, PathBuf},
@@ -40,6 +41,8 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         }
     }
     write_parent_outputs(&parents, &dest, github_token)?;
+    configure_git_identity(&dest, &variables)?;
+    switch_to_worker_branch(&dest, &variables)?;
     run_setup_commands(&setup, &dest, &variables)?;
     Ok(())
 }
@@ -229,6 +232,69 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
     Ok(())
 }
 
+fn configure_git_identity(dest: &Path, variables: &HashMap<String, String>) -> Result<()> {
+    if !dest.join(".git").exists() {
+        return Ok(());
+    }
+
+    let repo = dest
+        .to_str()
+        .ok_or_else(|| anyhow!("destination path contains invalid UTF-8"))?;
+    let user_name = resolve_variable("GIT_USER_NAME", variables)
+        .unwrap_or_else(|| "metis-bot".to_string());
+    let user_email = resolve_variable("GIT_USER_EMAIL", variables)
+        .unwrap_or_else(|| "metis-bot@dourolabs.com".to_string());
+
+    for (key, value) in [("user.name", user_name), ("user.email", user_email)] {
+        let status = Command::new("git")
+            .args(["-C", repo, "config", key, &value])
+            .status()
+            .with_context(|| format!("failed to spawn git config for {key}"))?;
+        if !status.success() {
+            return Err(anyhow!("git config {key} failed with status {status}"));
+        }
+    }
+
+    Ok(())
+}
+
+fn switch_to_worker_branch(dest: &Path, variables: &HashMap<String, String>) -> Result<()> {
+    if !dest.join(".git").exists() {
+        return Ok(());
+    }
+
+    let repo = dest
+        .to_str()
+        .ok_or_else(|| anyhow!("destination path contains invalid UTF-8"))?;
+    let metis_id = resolve_variable("METIS_ID", variables)
+        .ok_or_else(|| anyhow!("METIS_ID is required to select the worker branch"))?;
+    let branch_name = format!("metis-{metis_id}");
+
+    let status = Command::new("git")
+        .args(["-C", repo, "checkout", "-B", &branch_name])
+        .status()
+        .context("failed to spawn git checkout for worker branch")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "git checkout failed with status {status} when creating {branch_name}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_variable(key: &str, variables: &HashMap<String, String>) -> Option<String> {
+    env::var(key)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            variables
+                .get(key)
+                .filter(|value| !value.is_empty())
+                .cloned()
+        })
+}
+
 fn run_setup_commands(
     commands: &[String],
     working_dir: &Path,
@@ -262,7 +328,7 @@ fn run_setup_commands(
 mod tests {
     use super::*;
     use metis_common::job_outputs::JobOutputPayload;
-    use std::{collections::HashMap, path::PathBuf};
+    use std::{collections::HashMap, env, path::PathBuf};
 
     #[test]
     fn write_parent_outputs_creates_symlink_for_named_parent() -> Result<()> {
@@ -340,5 +406,97 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn configure_git_identity_sets_local_config_from_env() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        Command::new("git")
+            .args(["init", tempdir.path().to_str().unwrap()])
+            .status()
+            .context("failed to initialize git repository for test")?;
+
+        let _name_guard = EnvGuard::set("GIT_USER_NAME", Some("cli-bot"));
+        let _email_guard = EnvGuard::set("GIT_USER_EMAIL", Some("cli-bot@example.com"));
+
+        configure_git_identity(tempdir.path(), &HashMap::new())?;
+
+        let user_name = Command::new("git")
+            .args(["-C", tempdir.path().to_str().unwrap(), "config", "user.name"])
+            .output()
+            .context("failed to read user.name from git config")?;
+        assert!(user_name.status.success(), "git config user.name failed");
+        assert_eq!(
+            String::from_utf8_lossy(&user_name.stdout).trim(),
+            "cli-bot"
+        );
+
+        let user_email = Command::new("git")
+            .args(["-C", tempdir.path().to_str().unwrap(), "config", "user.email"])
+            .output()
+            .context("failed to read user.email from git config")?;
+        assert!(
+            user_email.status.success(),
+            "git config user.email failed"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&user_email.stdout).trim(),
+            "cli-bot@example.com"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn switch_to_worker_branch_prefers_context_variables() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        Command::new("git")
+            .args(["init", tempdir.path().to_str().unwrap()])
+            .status()
+            .context("failed to initialize git repository for branch test")?;
+
+        let _metis_guard = EnvGuard::set("METIS_ID", None);
+        let mut variables = HashMap::new();
+        variables.insert("METIS_ID".to_string(), "branch-id".to_string());
+
+        switch_to_worker_branch(tempdir.path(), &variables)?;
+
+        let current_branch = Command::new("git")
+            .args(["-C", tempdir.path().to_str().unwrap(), "symbolic-ref", "--short", "HEAD"])
+            .output()
+            .context("failed to read current branch name")?;
+        assert!(current_branch.status.success(), "git rev-parse failed");
+        assert_eq!(
+            String::from_utf8_lossy(&current_branch.stdout).trim(),
+            "metis-branch-id"
+        );
+
+        Ok(())
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let original = env::var(key).ok();
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
     }
 }
