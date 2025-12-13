@@ -17,7 +17,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use tracing::{error, info};
 
-use crate::routes::bundles::resolve_bundle_spec;
 
 pub mod context;
 pub mod kill;
@@ -56,7 +55,7 @@ pub async fn create_job(
     let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
     let (context, github_token) =
-        resolve_bundle_spec(payload.context, &state.service_state)?;
+        state.service_state.resolve_bundle_spec(payload.context)?;
     let mut env_vars = HashMap::new();
     if let Some(token) = github_token {
         env_vars.insert("GH_TOKEN".to_string(), token);

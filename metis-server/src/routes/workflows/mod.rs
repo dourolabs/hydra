@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    routes::{bundles::resolve_bundle_spec, jobs::ApiError},
+    routes::jobs::ApiError,
     store::{Edge, Status, Store, StoreError, Task, TaskStatusLog},
 };
 use axum::{
@@ -166,7 +166,7 @@ pub async fn create_workflow(
     }
 
     let (context, github_token) =
-        resolve_bundle_spec(payload.context, &state.service_state)?;
+        state.service_state.resolve_bundle_spec(payload.context)?;
 
     // Generate workflow ID
     let workflow_id = uuid::Uuid::new_v4().hyphenated().to_string();
