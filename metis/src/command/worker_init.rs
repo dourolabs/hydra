@@ -40,6 +40,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         }
     }
     write_parent_outputs(&parents, &dest, github_token)?;
+    configure_git_repo(&dest, &job)?;
     run_setup_commands(&setup, &dest, &variables)?;
     Ok(())
 }
@@ -229,6 +230,52 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
     Ok(())
 }
 
+fn configure_git_repo(dest: &Path, job: &str) -> Result<()> {
+    let git_dir = dest.join(".git");
+    if !git_dir.exists() {
+        return Ok(());
+    }
+
+    let repo_path = dest
+        .to_str()
+        .ok_or_else(|| anyhow!("destination path contains invalid UTF-8"))?;
+
+    let status = Command::new("git")
+        .args(["-C", repo_path, "config", "user.name", "Metis Worker"])
+        .status()
+        .context("failed to set git user.name")?;
+    if !status.success() {
+        return Err(anyhow!("git config user.name failed with status {status}"));
+    }
+
+    let status = Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "config",
+            "user.email",
+            "metis-worker@example.com",
+        ])
+        .status()
+        .context("failed to set git user.email")?;
+    if !status.success() {
+        return Err(anyhow!("git config user.email failed with status {status}"));
+    }
+
+    let branch_name = format!("metis-{job}");
+    let status = Command::new("git")
+        .args(["-C", repo_path, "checkout", "-B", &branch_name])
+        .status()
+        .context("failed to switch to metis job branch")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "git checkout -B {branch_name} failed with status {status}"
+        ));
+    }
+
+    Ok(())
+}
+
 fn run_setup_commands(
     commands: &[String],
     working_dir: &Path,
@@ -262,7 +309,7 @@ fn run_setup_commands(
 mod tests {
     use super::*;
     use metis_common::job_outputs::JobOutputPayload;
-    use std::{collections::HashMap, path::PathBuf};
+    use std::{collections::HashMap, path::PathBuf, process::Command};
 
     #[test]
     fn write_parent_outputs_creates_symlink_for_named_parent() -> Result<()> {
@@ -290,6 +337,93 @@ mod tests {
         assert!(metadata.file_type().is_symlink());
         let target = std::fs::read_link(&symlink_path)?;
         assert_eq!(target, PathBuf::from("parent-id"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn configure_git_repo_sets_user_config_and_branch() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .context("failed to init git repo for test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.name", "Initial User"])
+            .status()
+            .context("failed to set initial git user.name")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "config",
+                "user.email",
+                "initial@example.com",
+            ])
+            .status()
+            .context("failed to set initial git user.email")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+        std::fs::write(repo_path.join("README.md"), "hello world")
+            .context("failed to write initial file for git repo")?;
+        Command::new("git")
+            .args(["-C", repo_str, "add", "."])
+            .status()
+            .context("failed to add file for initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "init"])
+            .status()
+            .context("failed to create initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        configure_git_repo(repo_path, "job-123")?;
+
+        let user_name = Command::new("git")
+            .args(["-C", repo_str, "config", "user.name"])
+            .output()
+            .context("failed to read git user.name")?;
+        assert!(user_name.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&user_name.stdout).trim(),
+            "Metis Worker"
+        );
+
+        let user_email = Command::new("git")
+            .args(["-C", repo_str, "config", "user.email"])
+            .output()
+            .context("failed to read git user.email")?;
+        assert!(user_email.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&user_email.stdout).trim(),
+            "metis-worker@example.com"
+        );
+
+        let branch_name = Command::new("git")
+            .args(["-C", repo_str, "rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .context("failed to read current branch")?;
+        assert!(branch_name.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&branch_name.stdout).trim(),
+            "metis-job-123"
+        );
 
         Ok(())
     }
