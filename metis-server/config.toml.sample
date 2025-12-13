@@ -9,6 +9,13 @@ worker_image = "sha256:36ac58f5eb66885ea504f908fa3637fc807d35ad1d843e8adec412106
 # Optional fallback if the OPENAI_API_KEY environment variable is unset.
 OPENAI_API_KEY = ""
 
+[service.repositories]
+# Example repository configuration; add additional tables per repository name.
+[service.repositories.example]
+remote_url = "https://github.com/example/repo.git"
+default_branch = "main"
+github_token = ""
+
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
 # its mounted ServiceAccount credentials.
@@ -25,4 +32,3 @@ cluster_name = "kind-local-dev"
 
 # Optional explicit API server endpoint; leave blank to use kubeconfig default.
 api_server = ""
-

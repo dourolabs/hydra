@@ -7,10 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::Utc;
-use metis_common::{
-    task_status::Status,
-    workflows::WorkflowSummary,
-};
+use metis_common::{task_status::Status, workflows::WorkflowSummary};
 use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
 

@@ -5,6 +5,7 @@ pub use kube::build_kube_client;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -15,6 +16,8 @@ pub struct AppConfig {
     pub metis: MetisSection,
     #[serde(default)]
     pub kubernetes: KubernetesSection,
+    #[serde(default)]
+    pub service: ServiceSection,
 }
 
 impl AppConfig {
@@ -78,6 +81,21 @@ impl Default for KubernetesSection {
             api_server: String::new(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ServiceSection {
+    #[serde(default)]
+    pub repositories: HashMap<String, Repository>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Repository {
+    pub remote_url: String,
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    #[serde(default)]
+    pub github_token: Option<String>,
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {

@@ -3,12 +3,14 @@
 mod config;
 mod job_engine;
 mod routes;
+mod state;
 mod store;
 #[cfg(test)]
 mod test;
 
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
+use crate::state::ServiceState;
 use crate::store::{MemoryStore, Status, Store, Task, TaskError};
 use axum::{
     Json, Router,
@@ -30,6 +32,7 @@ use tracing::{error, info, warn};
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub service_state: Arc<ServiceState>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
     pub workflows: Arc<RwLock<HashMap<String, crate::routes::workflows::WorkflowRecord>>>,
@@ -92,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
+    let service_state = ServiceState::from_config(&app_config.service);
 
     // Resolve OpenAI API key
     let openai_api_key = env::var("OPENAI_API_KEY")
@@ -120,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         config: Arc::new(app_config),
+        service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
         workflows: Arc::new(RwLock::new(HashMap::new())),

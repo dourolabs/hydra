@@ -1,8 +1,9 @@
 use crate::{
     AppState,
-    config::{AppConfig, KubernetesSection, MetisSection},
+    config::{AppConfig, KubernetesSection, MetisSection, ServiceSection},
     job_engine::{JobEngine, MockJobEngine},
     run_with_state,
+    state::ServiceState,
     store::MemoryStore,
 };
 use reqwest::Client;
@@ -32,12 +33,14 @@ pub(crate) fn test_app_config() -> AppConfig {
     AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
+        service: ServiceSection::default(),
     }
 }
 
 pub(crate) fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
     AppState {
         config: Arc::new(test_app_config()),
+        service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
         workflows: Arc::new(RwLock::new(HashMap::new())),
