@@ -402,6 +402,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         routes::workflows::WorkflowRecord,
+        state::{GitRepository, ServiceState},
         store::{Edge, Status, Task, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
@@ -537,6 +538,74 @@ mod tests {
         );
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Blocked);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
+        let mut state = test_state();
+        let repo = GitRepository {
+            name: "private-repo".to_string(),
+            remote_url: "https://example.com/private.git".to_string(),
+            default_branch: Some("develop".to_string()),
+            github_token: Some("token-123".to_string()),
+        };
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
+        });
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "prompt": "use service repo",
+                "context": { "type": "service_repository", "name": "private-repo" }
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn {
+                context,
+                env_vars,
+                ..
+            } => {
+                assert_eq!(
+                    context,
+                    Bundle::GitRepository {
+                        url: repo.remote_url.clone(),
+                        rev: "develop".to_string()
+                    }
+                );
+                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"token-123".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_rejects_unknown_service_repository() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "prompt": "bad repo",
+                "context": { "type": "service_repository", "name": "missing" }
+            }))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "unknown repository 'missing'" }));
         Ok(())
     }
 

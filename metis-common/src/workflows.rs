@@ -68,7 +68,7 @@ pub struct CreateWorkflowRequest {
     pub workflow: Workflow,
     /// Context bundle for the workflow (shared across all tasks).
     #[serde(default)]
-    pub context: crate::jobs::Bundle,
+    pub context: crate::jobs::BundleSpec,
 }
 
 /// Response from creating a workflow.

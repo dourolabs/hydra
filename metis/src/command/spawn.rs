@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine;
 use futures::StreamExt;
 use metis_common::{
-    jobs::{Bundle, CreateJobRequest},
+    jobs::{BundleSpec, CreateJobRequest},
     logs::LogsQuery,
     task_status::Status,
     workflows::{CreateWorkflowRequest, VariableDefinition},
@@ -179,7 +179,7 @@ fn build_context(
     context_dir: Option<&Path>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
-) -> Result<Bundle> {
+) -> Result<BundleSpec> {
     let git_context = match (git_url, git_rev) {
         (Some(url), Some(rev)) => {
             let trimmed_url = url.trim().to_string();
@@ -189,7 +189,7 @@ fn build_context(
                     "--repo-url and --from must not be empty when provided"
                 ));
             }
-            Some(Bundle::GitRepository {
+            Some(BundleSpec::GitRepository {
                 url: trimmed_url,
                 rev: trimmed_rev,
             })
@@ -229,11 +229,11 @@ fn build_context(
         )),
         (Some(context), None) => Ok(context),
         (None, Some(context)) => Ok(context),
-        (None, None) => Ok(Bundle::None),
+        (None, None) => Ok(BundleSpec::None),
     }
 }
 
-fn encode_directory(path: &Path) -> Result<Bundle> {
+fn encode_directory(path: &Path) -> Result<BundleSpec> {
     if !path.exists() {
         bail!("Context directory '{}' does not exist", path.display());
     }
@@ -252,7 +252,7 @@ fn encode_directory(path: &Path) -> Result<Bundle> {
             .context("failed to finalize context directory archive")?;
     }
 
-    Ok(Bundle::TarGz {
+    Ok(BundleSpec::TarGz {
         archive_base64: Base64Engine.encode(archive),
     })
 }
@@ -261,7 +261,7 @@ fn encode_context_directory(
     path: &Path,
     force_directory: bool,
     force_git_bundle: bool,
-) -> Result<Bundle> {
+) -> Result<BundleSpec> {
     if force_directory && force_git_bundle {
         bail!("--encode-directory and --encode-git-bundle cannot be used together");
     }
@@ -271,7 +271,7 @@ fn encode_context_directory(
     }
 
     if force_git_bundle || is_git_directory(path)? {
-        return Ok(Bundle::GitBundle {
+        return Ok(BundleSpec::GitBundle {
             bundle_base64: encode_git_bundle(path)?,
         });
     }
@@ -442,7 +442,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse},
+    jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Status, TaskStatusLog},
     };
     use tempfile::tempdir;
@@ -505,7 +505,7 @@ mod tests {
         assert!(request.parent_ids.is_empty());
         assert!(matches!(
             request.context,
-            Bundle::TarGz { ref archive_base64 } if !archive_base64.is_empty()
+            BundleSpec::TarGz { ref archive_base64 } if !archive_base64.is_empty()
         ));
         assert!(client.create_job_responses.lock().unwrap().is_empty());
         assert!(client.list_jobs_responses.lock().unwrap().is_empty());
