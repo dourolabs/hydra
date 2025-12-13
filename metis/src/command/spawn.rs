@@ -27,6 +27,8 @@ pub async fn run(
     workflow_file: Option<PathBuf>,
     from_git_rev_arg: Option<String>,
     repo_url_arg: Option<String>,
+    service_repo_arg: Option<String>,
+    service_repo_rev_arg: Option<String>,
     context_dir: Option<PathBuf>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
@@ -37,6 +39,8 @@ pub async fn run(
     let context = build_context(
         from_git_rev_arg,
         repo_url_arg,
+        service_repo_arg,
+        service_repo_rev_arg,
         context_dir.as_deref(),
         force_encode_directory,
         force_encode_git_bundle,
@@ -176,10 +180,16 @@ async fn wait_for_job_completion_via_server(
 fn build_context(
     git_rev: Option<String>,
     git_url: Option<String>,
+    service_repo: Option<String>,
+    service_repo_rev: Option<String>,
     context_dir: Option<&Path>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
 ) -> Result<BundleSpec> {
+    if (force_encode_directory || force_encode_git_bundle) && service_repo.is_some() {
+        bail!("--service-repo cannot be combined with context directory encoding options");
+    }
+
     let git_context = match (git_url, git_rev) {
         (Some(url), Some(rev)) => {
             let trimmed_url = url.trim().to_string();
@@ -202,14 +212,58 @@ fn build_context(
         (None, None) => None,
     };
 
-    let mut resolved_context_dir = context_dir.map(|path| path.to_path_buf());
+    let service_repo_context = match (service_repo, service_repo_rev) {
+        (Some(name), rev) => {
+            let trimmed_name = name.trim().to_string();
+            if trimmed_name.is_empty() {
+                bail!("--service-repo must not be empty");
+            }
 
-    if resolved_context_dir.is_none() && git_context.is_none() {
+            let trimmed_rev = match rev {
+                Some(rev) => {
+                    let trimmed = rev.trim().to_string();
+                    if trimmed.is_empty() {
+                        bail!("--service-repo-rev must not be empty when provided");
+                    }
+                    Some(trimmed)
+                }
+                None => None,
+            };
+
+            Some(BundleSpec::ServiceRepository {
+                name: trimmed_name,
+                rev: trimmed_rev,
+            })
+        }
+        (None, Some(_)) => {
+            bail!("--service-repo-rev requires --service-repo");
+        }
+        (None, None) => None,
+    };
+
+    if service_repo_context.is_some() && git_context.is_some() {
+        bail!("Provide either --service-repo or git context flags, not both");
+    }
+
+    if service_repo_context.is_some() && context_dir.is_some() {
+        bail!("Provide either --service-repo or --context-dir, not both");
+    }
+
+    let mut resolved_context_dir = if service_repo_context.is_some() {
+        None
+    } else {
+        context_dir.map(|path| path.to_path_buf())
+    };
+
+    if resolved_context_dir.is_none() && git_context.is_none() && service_repo_context.is_none() {
         let cwd = env::current_dir().context("failed to determine current working directory")?;
         resolved_context_dir = Some(cwd);
     }
 
-    if resolved_context_dir.is_none() && (force_encode_directory || force_encode_git_bundle) {
+    if resolved_context_dir.is_none()
+        && service_repo_context.is_none()
+        && (force_encode_directory || force_encode_git_bundle)
+    {
         bail!("--encode-directory and --encode-git-bundle require --context-dir");
     }
 
@@ -223,13 +277,20 @@ fn build_context(
         None
     };
 
-    match (dir_context, git_context) {
-        (Some(_), Some(_)) => Err(anyhow!(
+    match (dir_context, git_context, service_repo_context) {
+        (Some(_), Some(_), _) => Err(anyhow!(
             "Provide either --context-dir or git context flags, not both"
         )),
-        (Some(context), None) => Ok(context),
-        (None, Some(context)) => Ok(context),
-        (None, None) => Ok(BundleSpec::None),
+        (Some(_), _, Some(_)) => Err(anyhow!(
+            "Provide either --context-dir or --service-repo, not both"
+        )),
+        (None, Some(_), Some(_)) => Err(anyhow!(
+            "Provide either --service-repo or git context flags, not both"
+        )),
+        (Some(context), None, None) => Ok(context),
+        (None, Some(context), None) => Ok(context),
+        (None, None, Some(context)) => Ok(context),
+        (None, None, None) => Ok(BundleSpec::None),
     }
 }
 
@@ -442,7 +503,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-    jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
+        jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Status, TaskStatusLog},
     };
     use tempfile::tempdir;
@@ -488,6 +549,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
@@ -510,6 +573,42 @@ mod tests {
         assert!(client.create_job_responses.lock().unwrap().is_empty());
         assert!(client.list_jobs_responses.lock().unwrap().is_empty());
         assert!(client.log_responses.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn spawn_accepts_service_repository_context() {
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-service".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            Some("service-repo".into()),
+            Some("feature".into()),
+            None,
+            false,
+            false,
+            vec![],
+            vec![],
+            vec!["test prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].context,
+            BundleSpec::ServiceRepository {
+                name: "service-repo".into(),
+                rev: Some("feature".into())
+            }
+        );
     }
 
     #[test]

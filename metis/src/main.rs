@@ -48,6 +48,23 @@ enum Commands {
         #[arg(long = "repo-url", value_name = "URL")]
         repo_url: Option<String>,
 
+        /// Named GitHub repository configured on the server to use as context.
+        #[arg(
+            long = "service-repo",
+            value_name = "NAME",
+            conflicts_with_all = ["context_dir", "repo_url", "encode_directory", "encode_git_bundle", "from"]
+        )]
+        service_repo: Option<String>,
+
+        /// Optional revision to use for --service-repo.
+        #[arg(
+            long = "service-repo-rev",
+            value_name = "REV",
+            requires = "service_repo",
+            conflicts_with_all = ["context_dir", "repo_url", "encode_directory", "encode_git_bundle", "from"]
+        )]
+        service_repo_rev: Option<String>,
+
         /// Directory to upload as the job context (will be archived and base64 encoded).
         #[arg(long = "context-dir", value_name = "PATH")]
         context_dir: Option<PathBuf>,
@@ -153,6 +170,8 @@ async fn main() -> Result<()> {
             workflow,
             from,
             repo_url,
+            service_repo,
+            service_repo_rev,
             context_dir,
             encode_directory,
             encode_git_bundle,
@@ -166,6 +185,8 @@ async fn main() -> Result<()> {
                 workflow,
                 from,
                 repo_url,
+                service_repo,
+                service_repo_rev,
                 context_dir,
                 encode_directory,
                 encode_git_bundle,
