@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    routes::jobs::ApiError,
+    routes::{bundles::resolve_bundle_spec, jobs::ApiError},
     store::{Edge, Status, Store, StoreError, Task, TaskStatusLog},
 };
 use axum::{
@@ -165,6 +165,9 @@ pub async fn create_workflow(
         }
     }
 
+    let (context, github_token) =
+        resolve_bundle_spec(payload.context, &state.service_state)?;
+
     // Generate workflow ID
     let workflow_id = uuid::Uuid::new_v4().hyphenated().to_string();
     let workflow_created_at = Utc::now();
@@ -224,12 +227,17 @@ pub async fn create_workflow(
             let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
             // Create the task
+            let mut env_vars = workflow_variables.clone();
+            if let Some(token) = github_token.clone() {
+                env_vars.entry("GH_TOKEN".to_string()).or_insert(token);
+            }
+
             let task = Task::Spawn {
                 prompt: workflow.tasks[&task_name].prompt.clone(),
-                context: payload.context.clone(),
+                context: context.clone(),
                 setup: workflow.tasks[&task_name].setup.clone(),
                 cleanup: workflow.tasks[&task_name].cleanup.clone(),
-                env_vars: workflow_variables.clone(),
+                env_vars,
             };
 
             store
@@ -488,15 +496,16 @@ fn has_cycle_dfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::test_state;
+    use crate::{state::{GitRepository, ServiceState}, test::test_state};
     use axum::{
         Json,
         extract::{Path, State},
     };
     use metis_common::{
-        jobs::Bundle,
+        jobs::{Bundle, BundleSpec},
         workflows::{CreateWorkflowRequest, TaskDefinition, VariableDefinition, Workflow},
     };
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn workflow_summary_includes_prompt_from_variables() {
@@ -520,7 +529,7 @@ mod tests {
 
         let request = CreateWorkflowRequest {
             workflow,
-            context: Bundle::None,
+            context: BundleSpec::None,
         };
 
         let response = create_workflow(State(state.clone()), Json(request))
@@ -535,5 +544,68 @@ mod tests {
 
         assert_eq!(summary.id, workflow_id);
         assert_eq!(summary.prompt.as_deref(), Some("describe the repo"));
+    }
+
+    #[tokio::test]
+    async fn workflow_service_repository_context_sets_token_and_bundle() {
+        let mut state = test_state();
+        let repo = GitRepository {
+            name: "svc".to_string(),
+            remote_url: "https://example.com/service.git".to_string(),
+            default_branch: None,
+            github_token: Some("wf-token".to_string()),
+        };
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([("svc".to_string(), repo.clone())]),
+        });
+
+        let workflow = Workflow {
+            variables: vec![],
+            tasks: HashMap::from([(
+                "first".to_string(),
+                TaskDefinition {
+                    task_type: "codex".to_string(),
+                    prompt: "do it".to_string(),
+                    inputs: None,
+                    setup: vec![],
+                    cleanup: vec![],
+                },
+            )]),
+        };
+
+        let request = CreateWorkflowRequest {
+            workflow,
+            context: BundleSpec::ServiceRepository {
+                name: "svc".to_string(),
+                rev: None,
+            },
+        };
+
+        let response = create_workflow(State(state.clone()), Json(request))
+            .await
+            .expect("workflow created")
+            .0;
+        let first_task_id = response.task_ids.get("first").expect("first task id");
+        let store_read = state.store.read().await;
+        let task = store_read
+            .get_task(first_task_id)
+            .await
+            .expect("task stored");
+        match task {
+            Task::Spawn {
+                context,
+                env_vars,
+                ..
+            } => {
+                assert_eq!(
+                    context,
+                    Bundle::GitRepository {
+                        url: repo.remote_url.clone(),
+                        rev: "main".to_string()
+                    }
+                );
+                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"wf-token".to_string()));
+            }
+        }
     }
 }

@@ -42,9 +42,54 @@ pub mod jobs {
     pub struct CreateJobRequest {
         pub prompt: String,
         #[serde(default)]
-        pub context: Bundle,
+        pub context: BundleSpec,
         #[serde(default)]
         pub parent_ids: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum BundleSpec {
+        #[serde(rename = "none")]
+        None,
+        TarGz {
+            /// Base64-encoded archive (.tar.gz) of the directory contents.
+            archive_base64: String,
+        },
+        GitRepository {
+            /// Remote Git repository URL that should be cloned for the job context.
+            url: String,
+            /// Specific git revision (branch, tag, or commit) to checkout after cloning.
+            rev: String,
+        },
+        GitBundle {
+            /// Base64-encoded git bundle representing the repository HEAD.
+            bundle_base64: String,
+        },
+        ServiceRepository {
+            /// Name of a repository configured in the service configuration.
+            name: String,
+            /// Optional git revision (branch, tag, or commit) to checkout after cloning.
+            #[serde(default)]
+            rev: Option<String>,
+        },
+    }
+
+    impl Default for BundleSpec {
+        fn default() -> Self {
+            Self::None
+        }
+    }
+
+    impl From<Bundle> for BundleSpec {
+        fn from(bundle: Bundle) -> Self {
+            match bundle {
+                Bundle::None => BundleSpec::None,
+                Bundle::TarGz { archive_base64 } => BundleSpec::TarGz { archive_base64 },
+                Bundle::GitRepository { url, rev } => BundleSpec::GitRepository { url, rev },
+                Bundle::GitBundle { bundle_base64 } => BundleSpec::GitBundle { bundle_base64 },
+            }
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,12 +111,6 @@ pub mod jobs {
             /// Base64-encoded git bundle representing the repository HEAD.
             bundle_base64: String,
         },
-    }
-
-    impl Default for Bundle {
-        fn default() -> Self {
-            Self::None
-        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
