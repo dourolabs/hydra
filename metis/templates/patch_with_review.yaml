@@ -49,14 +49,8 @@ tasks:
             exit 0
           fi
 
-          git config user.name "${GIT_USER_NAME:-metis-bot}"
-          git config user.email "${GIT_USER_EMAIL:-metis-bot@dourolabs.com}"
-          
-          gh auth setup-git
-
           branch_name="metis-${METIS_ID}"
 
-          git checkout -B "${branch_name}"
           echo "git add"
           git add -A 
 
@@ -72,7 +66,6 @@ tasks:
           echo "committing"
           git commit -m "task ${METIS_ID}"
           echo "pushing"
-          git remote set-url origin "https://github.com/dourolabs/metis.git"
           git push --force-with-lease origin "${branch_name}"
 
           title=`cat .metis/output/pr_title.txt`
