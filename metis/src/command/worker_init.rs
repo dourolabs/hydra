@@ -1,9 +1,9 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -24,6 +24,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         ..
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
+    let github_token = variables.get("GH_TOKEN").map(String::as_str);
     match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -32,13 +33,13 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
             extract_tar_gz_base64(&archive_base64, &dest)?;
         }
         Bundle::GitRepository { url, rev } => {
-            clone_git_repo(&url, &rev, &dest)?;
+            clone_git_repo(&url, &rev, &dest, github_token)?;
         }
         Bundle::GitBundle { bundle_base64 } => {
             clone_from_git_bundle_base64(&bundle_base64, &dest)?;
         }
     }
-    write_parent_outputs(&parents, &dest)?;
+    write_parent_outputs(&parents, &dest, github_token)?;
     run_setup_commands(&setup, &dest, &variables)?;
     Ok(())
 }
@@ -61,6 +62,7 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
 fn write_parent_outputs(
     parents: &std::collections::HashMap<String, ParentContext>,
     dest: &Path,
+    github_token: Option<&str>,
 ) -> Result<()> {
     if parents.is_empty() {
         return Ok(());
@@ -83,7 +85,7 @@ fn write_parent_outputs(
                 extract_tar_gz_base64(archive_base64, &parent_dir)?;
             }
             Bundle::GitRepository { url, rev } => {
-                clone_git_repo(url, rev, &parent_dir)?;
+                clone_git_repo(url, rev, &parent_dir, github_token)?;
             }
             Bundle::GitBundle { bundle_base64 } => {
                 clone_from_git_bundle_base64(bundle_base64, &parent_dir)?;
@@ -141,7 +143,11 @@ fn extract_tar_gz_base64(archive_base64: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn clone_git_repo(url: &str, rev: &str, dest: &Path) -> Result<()> {
+fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
+    if let Some(token) = github_token {
+        authenticate_github(token)?;
+    }
+
     let status = Command::new("git")
         .args(["clone", "--no-checkout", url, dest.to_str().unwrap()])
         .status()
@@ -157,6 +163,44 @@ fn clone_git_repo(url: &str, rev: &str, dest: &Path) -> Result<()> {
     if !status.success() {
         return Err(anyhow!("git checkout failed with status {status}"));
     }
+    Ok(())
+}
+
+fn authenticate_github(token: &str) -> Result<()> {
+    // Authenticate the GitHub CLI and configure git credentials for private repo access.
+    let mut login_cmd = Command::new("gh")
+        .args(["auth", "login", "--with-token"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("failed to spawn gh auth login")?;
+
+    {
+        let mut stdin = login_cmd
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("failed to open stdin for gh auth login"))?;
+        stdin
+            .write_all(format!("{token}\n").as_bytes())
+            .context("failed to write GH_TOKEN to gh auth login")?;
+    }
+
+    let status = login_cmd
+        .wait()
+        .context("failed waiting for gh auth login to finish")?;
+    if !status.success() {
+        return Err(anyhow!("gh auth login failed with status {status}"));
+    }
+
+    let status = Command::new("gh")
+        .args(["auth", "setup-git"])
+        .status()
+        .context("failed to spawn gh auth setup-git")?;
+    if !status.success() {
+        return Err(anyhow!("gh auth setup-git failed with status {status}"));
+    }
+
     Ok(())
 }
 
@@ -236,7 +280,7 @@ mod tests {
             },
         );
 
-        write_parent_outputs(&parents, tempdir.path())?;
+        write_parent_outputs(&parents, tempdir.path(), None)?;
 
         let parents_dir = tempdir.path().join(".metis").join("parents");
         assert!(parents_dir.join("parent-id").is_dir());
@@ -266,7 +310,7 @@ mod tests {
             },
         );
 
-        let err = write_parent_outputs(&parents, tempdir.path()).unwrap_err();
+        let err = write_parent_outputs(&parents, tempdir.path(), None).unwrap_err();
         assert!(
             err.to_string().contains("parent alias"),
             "expected alias validation error, got {err:?}"
