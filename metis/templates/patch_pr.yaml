@@ -11,7 +11,7 @@ tasks:
       description for this change. The title should go in .metis/output/pr_title.txt 
       and the body should go in .metis/output/pr_body.txt .
     setup:
-      git checkout -b "metis-${METIS_ID}"
+      - git checkout -b "metis-${METIS_ID}"
     cleanup:
       - |
           set -euo pipefail
