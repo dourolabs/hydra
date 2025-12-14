@@ -40,7 +40,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         }
     }
     write_parent_outputs(&parents, &dest, github_token)?;
-    configure_git_repo(&dest, &job)?;
+    configure_git_repo(&dest)?;
     run_setup_commands(&setup, &dest, &variables)?;
     Ok(())
 }
@@ -230,7 +230,7 @@ fn clone_from_git_bundle_base64(bundle_base64: &str, dest: &Path) -> Result<()> 
     Ok(())
 }
 
-fn configure_git_repo(dest: &Path, job: &str) -> Result<()> {
+fn configure_git_repo(dest: &Path) -> Result<()> {
     let git_dir = dest.join(".git");
     if !git_dir.exists() {
         return Ok(());
@@ -260,17 +260,6 @@ fn configure_git_repo(dest: &Path, job: &str) -> Result<()> {
         .context("failed to set git user.email")?;
     if !status.success() {
         return Err(anyhow!("git config user.email failed with status {status}"));
-    }
-
-    let branch_name = format!("metis-{job}");
-    let status = Command::new("git")
-        .args(["-C", repo_path, "checkout", "-B", &branch_name])
-        .status()
-        .context("failed to switch to metis job branch")?;
-    if !status.success() {
-        return Err(anyhow!(
-            "git checkout -B {branch_name} failed with status {status}"
-        ));
     }
 
     Ok(())
@@ -393,7 +382,7 @@ mod tests {
             .then_some(())
             .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
-        configure_git_repo(repo_path, "job-123")?;
+        configure_git_repo(repo_path)?;
 
         let user_name = Command::new("git")
             .args(["-C", repo_str, "config", "user.name"])
@@ -413,16 +402,6 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&user_email.stdout).trim(),
             "metis-worker@example.com"
-        );
-
-        let branch_name = Command::new("git")
-            .args(["-C", repo_str, "rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .context("failed to read current branch")?;
-        assert!(branch_name.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&branch_name.stdout).trim(),
-            "metis-job-123"
         );
 
         Ok(())

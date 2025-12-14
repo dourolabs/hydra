@@ -1,6 +1,5 @@
 variables:
   - name: PROMPT
-  - name: GH_TOKEN
 
 tasks:
   generate-patch:
@@ -11,6 +10,8 @@ tasks:
       Once you have finished with the prompt, please generate a pull request title and
       description for this change. The title should go in .metis/output/pr_title.txt 
       and the body should go in .metis/output/pr_body.txt .
+    setup:
+      git checkout -b "metis-${METIS_ID}"
     cleanup:
       - |
           set -euo pipefail
