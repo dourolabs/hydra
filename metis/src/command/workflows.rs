@@ -5,7 +5,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use metis_common::{
     task_status::{Status, TaskStatusLog},
     workflows::WorkflowSummary,
@@ -15,7 +15,7 @@ use textwrap::{Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 36;
 const STATUS_WIDTH: usize = 26;
-const START_WIDTH: usize = 20;
+const START_WIDTH: usize = 25;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
 const TEXT_COLUMN_WIDTH: usize = 80;
@@ -267,7 +267,9 @@ fn format_start_time(status_log: &TaskStatusLog) -> String {
 }
 
 fn format_datetime(time: DateTime<Utc>) -> String {
-    time.format("%Y-%m-%d %H:%M:%SZ").to_string()
+    time.with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M:%S%:z")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -364,7 +366,12 @@ mod tests {
             current_status: Status::Running,
         };
 
-        assert_eq!(format_start_time(&status_log), "2024-01-02 03:04:05Z");
+        let expected = start_time
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S%:z")
+            .to_string();
+
+        assert_eq!(format_start_time(&status_log), expected);
     }
 
     #[test]
