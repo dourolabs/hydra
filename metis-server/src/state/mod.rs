@@ -59,8 +59,12 @@ impl ServiceState {
         match spec {
             BundleSpec::None => Ok((Bundle::None, None)),
             BundleSpec::TarGz { archive_base64 } => Ok((Bundle::TarGz { archive_base64 }, None)),
-            BundleSpec::GitRepository { url, rev } => Ok((Bundle::GitRepository { url, rev }, None)),
-            BundleSpec::GitBundle { bundle_base64 } => Ok((Bundle::GitBundle { bundle_base64 }, None)),
+            BundleSpec::GitRepository { url, rev } => {
+                Ok((Bundle::GitRepository { url, rev }, None))
+            }
+            BundleSpec::GitBundle { bundle_base64 } => {
+                Ok((Bundle::GitBundle { bundle_base64 }, None))
+            }
             BundleSpec::ServiceRepository { name, rev } => {
                 let repo = self
                     .repositories

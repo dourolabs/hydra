@@ -165,8 +165,7 @@ pub async fn create_workflow(
         }
     }
 
-    let (context, github_token) =
-        state.service_state.resolve_bundle_spec(payload.context)?;
+    let (context, github_token) = state.service_state.resolve_bundle_spec(payload.context)?;
 
     // Generate workflow ID
     let workflow_id = uuid::Uuid::new_v4().hyphenated().to_string();
@@ -496,7 +495,10 @@ fn has_cycle_dfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{state::{GitRepository, ServiceState}, test::test_state};
+    use crate::{
+        state::{GitRepository, ServiceState},
+        test::test_state,
+    };
     use axum::{
         Json,
         extract::{Path, State},
@@ -593,9 +595,7 @@ mod tests {
             .expect("task stored");
         match task {
             Task::Spawn {
-                context,
-                env_vars,
-                ..
+                context, env_vars, ..
             } => {
                 assert_eq!(
                     context,
