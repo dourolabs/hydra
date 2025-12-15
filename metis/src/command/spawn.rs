@@ -658,6 +658,7 @@ mod tests {
                 },
             ],
             tasks,
+            output: "test".to_string(),
         };
 
         let mut cli_vars = HashMap::new();
@@ -711,6 +712,7 @@ mod tests {
                 value: Some("original prompt".to_string()),
             }],
             tasks,
+            output: "test".to_string(),
         };
 
         let cli_vars = HashMap::new();
@@ -762,6 +764,7 @@ mod tests {
                 },
             ],
             tasks,
+            output: "test".to_string(),
         };
 
         env::set_var("FOO", "env-foo");
@@ -803,6 +806,7 @@ mod tests {
                 value: Some("default-foo".to_string()),
             }],
             tasks,
+            output: "test".to_string(),
         };
 
         env::set_var("FOO", "env-foo");
