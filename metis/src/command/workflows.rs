@@ -1,7 +1,7 @@
 use crate::{
     client::MetisClientInterface,
     command::jobs::{
-        color_status, current_terminal_width, format_runtime, format_status_with_finished,
+        color_status, current_terminal_width, format_runtime, format_status,
     },
 };
 use anyhow::Result;
@@ -14,7 +14,7 @@ use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 36;
-const STATUS_WIDTH: usize = 26;
+const STATUS_WIDTH: usize = 10;
 const START_WIDTH: usize = 20;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
@@ -52,7 +52,7 @@ fn render_workflows(
     }
 
     for workflow in workflows {
-        let status_display = format_status_with_finished(&workflow.status_log, now);
+        let status_display = format_status(&workflow.status_log.current_status);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let start_time = format_start_time(&workflow.status_log);
         let running = running_tasks_display(&workflow.running_tasks);
