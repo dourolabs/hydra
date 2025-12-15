@@ -12,6 +12,7 @@ const NAME_WIDTH: usize = 48;
 const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const MAX_NOTES_WIDTH: usize = 80;
+const MAX_NOTE_LINES: usize = 5;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
@@ -76,7 +77,11 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
         Options::new(notes_width)
             .break_words(true)
             .wrap_algorithm(WrapAlgorithm::FirstFit),
-    );
+    )
+    .into_iter()
+    .map(|line| line.into_owned())
+    .collect();
+    let wrapped_notes = truncate_lines(wrapped_notes, MAX_NOTE_LINES, notes_width);
 
     if wrapped_notes.is_empty() {
         vec![format!("{prefix}-")]
@@ -93,6 +98,27 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
             })
             .collect()
     }
+}
+
+fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
+    if max_lines == 0 || lines.len() <= max_lines {
+        return lines;
+    }
+
+    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
+    if let Some(last) = truncated.last_mut() {
+        let ellipsis = "...";
+        if max_width <= ellipsis.len() {
+            *last = ellipsis.chars().take(max_width).collect();
+        } else {
+            let keep = max_width - ellipsis.len();
+            let mut shortened: String = last.chars().take(keep).collect();
+            shortened.push_str(ellipsis);
+            *last = shortened;
+        }
+    }
+
+    truncated
 }
 
 struct JobRowCells {
@@ -336,6 +362,19 @@ mod tests {
         assert!(lines
             .iter()
             .all(|line| line.len() - prefix.len() <= MAX_NOTES_WIDTH));
+    }
+
+    #[test]
+    fn notes_are_truncated_after_five_lines() {
+        let cells = job_row_cells("job-123", "running", "12s");
+        let prefix = job_row_prefix(&cells);
+        let terminal_width = prefix.len() + 20;
+        let notes = "word ".repeat(120);
+
+        let lines = format_job_lines(&prefix, &notes, terminal_width);
+
+        assert_eq!(lines.len(), MAX_NOTE_LINES);
+        assert!(lines.last().unwrap().contains("..."));
     }
 
     #[test]
