@@ -1,6 +1,7 @@
 use crate::task_status::{Status, TaskStatusLog};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use indexmap::IndexMap;
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
+use std::{collections::HashMap, fmt};
 
 /// Definition of a workflow variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,13 +14,77 @@ pub struct VariableDefinition {
 }
 
 /// Represents a workflow consisting of a graph of tasks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Workflow {
     /// Workflow-level variables that can be referenced in tasks using $VAR_NAME syntax.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variables: Vec<VariableDefinition>,
     /// Map of task names to their definitions.
     pub tasks: HashMap<String, TaskDefinition>,
+    /// Name of the task whose output should be treated as the workflow output.
+    pub output: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowDeserializeHelper {
+    #[serde(default)]
+    variables: Vec<VariableDefinition>,
+    tasks: IndexMap<String, TaskDefinition>,
+    #[serde(default)]
+    output: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Workflow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct WorkflowVisitor;
+
+        impl<'de> Visitor<'de> for WorkflowVisitor {
+            type Value = Workflow;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a workflow definition with tasks and optional output")
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let helper = WorkflowDeserializeHelper::deserialize(
+                    serde::de::value::MapAccessDeserializer::new(map),
+                )?;
+
+                if helper.tasks.is_empty() {
+                    return Err(A::Error::custom("workflow must contain at least one task"));
+                }
+
+                let output = match helper.output {
+                    Some(name) => name,
+                    None => helper.tasks.keys().last().cloned().ok_or_else(|| {
+                        A::Error::custom(
+                            "workflow must contain at least one task to determine output",
+                        )
+                    })?,
+                };
+
+                if !helper.tasks.contains_key(&output) {
+                    return Err(A::Error::custom(format!(
+                        "output task '{output}' not found in tasks"
+                    )));
+                }
+
+                Ok(Workflow {
+                    variables: helper.variables,
+                    tasks: helper.tasks.into_iter().collect(),
+                    output,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(WorkflowVisitor)
+    }
 }
 
 /// Definition of a single task within a workflow.
@@ -232,6 +297,7 @@ impl Workflow {
         Self {
             variables: self.variables.clone(),
             tasks,
+            output: self.output.clone(),
         }
     }
 
@@ -356,7 +422,44 @@ mod tests {
                 },
             ],
             tasks,
+            output: "test-task".to_string(),
         }
+    }
+
+    #[test]
+    fn workflow_defaults_output_to_last_task() {
+        let yaml = r#"
+variables:
+  - name: SAMPLE
+    value: present
+tasks:
+  first:
+    type: codex
+    prompt: "do first"
+  final:
+    type: codex
+    prompt: "do last"
+"#;
+
+        let workflow: Workflow = serde_yaml::from_str(yaml).expect("workflow parses");
+        assert_eq!(workflow.output, "final");
+    }
+
+    #[test]
+    fn workflow_rejects_missing_output_task() {
+        let yaml = r#"
+output: missing
+tasks:
+  first:
+    type: codex
+    prompt: "do first"
+"#;
+
+        let err = serde_yaml::from_str::<Workflow>(yaml).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("output task 'missing' not found in tasks")
+        );
     }
 
     #[test]
@@ -457,6 +560,7 @@ mod tests {
         let workflow = Workflow {
             variables: vec![],
             tasks,
+            output: "test-task".to_string(),
         };
 
         let undefined = workflow.validate_variables();
@@ -480,6 +584,7 @@ mod tests {
         let workflow = Workflow {
             variables: vec![],
             tasks,
+            output: "test-task".to_string(),
         };
 
         let undefined = workflow.validate_variables();
@@ -506,6 +611,7 @@ mod tests {
                 value: None,
             }],
             tasks,
+            output: "test-task".to_string(),
         };
 
         let substituted = workflow.with_substituted_variables();
@@ -534,6 +640,7 @@ mod tests {
                 value: Some("".to_string()),
             }],
             tasks,
+            output: "test-task".to_string(),
         };
 
         let substituted = workflow.with_substituted_variables();

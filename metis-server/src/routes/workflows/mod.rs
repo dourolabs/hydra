@@ -122,6 +122,24 @@ pub async fn create_workflow(
 
     let workflow = &payload.workflow;
 
+    if workflow.output.trim().is_empty() {
+        error!("workflow output task is empty");
+        return Err(ApiError::bad_request(
+            "Workflow output task must be specified",
+        ));
+    }
+
+    if !workflow.tasks.contains_key(&workflow.output) {
+        error!(
+            output = %workflow.output,
+            "workflow output task is missing from tasks"
+        );
+        return Err(ApiError::bad_request(format!(
+            "Workflow output task '{}' does not exist",
+            workflow.output
+        )));
+    }
+
     // Validate variables: check that all referenced variables are defined
     let undefined_vars = workflow.validate_variables();
     if !undefined_vars.is_empty() {
@@ -527,6 +545,7 @@ mod tests {
                     cleanup: vec![],
                 },
             )]),
+            output: "first".to_string(),
         };
 
         let request = CreateWorkflowRequest {
@@ -573,6 +592,7 @@ mod tests {
                     cleanup: vec![],
                 },
             )]),
+            output: "first".to_string(),
         };
 
         let request = CreateWorkflowRequest {
