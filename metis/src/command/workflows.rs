@@ -6,16 +6,17 @@ use crate::{
     },
 };
 use anyhow::Result;
-use chrono::Utc;
-use metis_common::{task_status::Status, workflows::WorkflowSummary};
+use chrono::{DateTime, Utc};
+use metis_common::{
+    task_status::{Status, TaskStatusLog},
+    workflows::WorkflowSummary,
+};
 use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
 
-#[cfg(test)]
-use metis_common::task_status::TaskStatusLog;
-
 const NAME_WIDTH: usize = 36;
 const STATUS_WIDTH: usize = 26;
+const START_WIDTH: usize = 20;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
 const TEXT_COLUMN_WIDTH: usize = 80;
@@ -41,10 +42,17 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     for workflow in response.workflows {
         let status_display = format_status_with_finished(&workflow.status_log, now);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
+        let start_time = format_start_time(&workflow.status_log);
         let running = running_tasks_display(&workflow.running_tasks);
         let notes = workflow_note(&workflow).unwrap_or_else(|| "-".into());
 
-        let cells = workflow_row_cells(&workflow.id, &status_display, &runtime, &running);
+        let cells = workflow_row_cells(
+            &workflow.id,
+            &status_display,
+            &start_time,
+            &runtime,
+            &running,
+        );
         let plain_prefix = workflow_row_prefix(&cells);
         let colored_prefix = colored_workflow_row_prefix(
             &cells,
@@ -69,12 +77,13 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
 }
 
 fn header_rows(terminal_width: usize) -> (Vec<String>, Vec<String>) {
-    let cells = workflow_row_cells("ID", "STATUS", "RUNTIME", "RUNNING");
+    let cells = workflow_row_cells("ID", "STATUS", "STARTED", "RUNTIME", "RUNNING");
     let plain_prefix = workflow_row_prefix(&cells);
     let colored_prefix = format!(
-        "{} {} {} {} ",
+        "{} {} {} {} {} ",
         cells.id.bold(),
         cells.status.bold(),
+        cells.start_time.bold(),
         cells.runtime.bold(),
         cells.running.bold(),
     );
@@ -208,14 +217,22 @@ fn clamp_text(value: &str, max: usize) -> String {
 struct WorkflowRowCells {
     id: String,
     status: String,
+    start_time: String,
     runtime: String,
     running: String,
 }
 
-fn workflow_row_cells(id: &str, status: &str, runtime: &str, running: &str) -> WorkflowRowCells {
+fn workflow_row_cells(
+    id: &str,
+    status: &str,
+    start_time: &str,
+    runtime: &str,
+    running: &str,
+) -> WorkflowRowCells {
     WorkflowRowCells {
         id: format!("{id:<name_width$}", name_width = NAME_WIDTH),
         status: format!("{status:<status_width$}", status_width = STATUS_WIDTH),
+        start_time: format!("{start_time:<start_width$}", start_width = START_WIDTH),
         runtime: format!("{runtime:<runtime_width$}", runtime_width = RUNTIME_WIDTH),
         running: format!("{running:<running_width$}", running_width = RUNNING_WIDTH),
     }
@@ -223,13 +240,15 @@ fn workflow_row_cells(id: &str, status: &str, runtime: &str, running: &str) -> W
 
 fn workflow_row_prefix(cells: &WorkflowRowCells) -> String {
     format!(
-        "{:<name_width$} {:<status_width$} {:<runtime_width$} {:<running_width$} ",
+        "{:<name_width$} {:<status_width$} {:<start_width$} {:<runtime_width$} {:<running_width$} ",
         cells.id,
         cells.status,
+        cells.start_time,
         cells.runtime,
         cells.running,
         name_width = NAME_WIDTH,
         status_width = STATUS_WIDTH,
+        start_width = START_WIDTH,
         runtime_width = RUNTIME_WIDTH,
         running_width = RUNNING_WIDTH,
     )
@@ -253,17 +272,30 @@ fn colored_workflow_row_prefix(
     };
 
     format!(
-        "{} {} {} {} ",
+        "{} {} {} {} {} ",
         cells.id.bright_cyan(),
         color_status(&cells.status, status),
+        cells.start_time.bright_black(),
         cells.runtime.bright_magenta(),
         running_column,
     )
 }
 
+fn format_start_time(status_log: &TaskStatusLog) -> String {
+    status_log
+        .start_time
+        .map(|start| format_datetime(start))
+        .unwrap_or_else(|| "-".into())
+}
+
+fn format_datetime(time: DateTime<Utc>) -> String {
+    time.format("%Y-%m-%d %H:%M:%SZ").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn running_tasks_are_clamped() {
@@ -294,11 +326,37 @@ mod tests {
 
     #[test]
     fn format_workflow_lines_handles_prompt_and_notes() {
-        let cells = workflow_row_cells("wf-2", "running", "10s", "task");
+        let cells = workflow_row_cells("wf-2", "running", "start", "10s", "task");
         let prefix = workflow_row_prefix(&cells);
         let lines = format_workflow_lines(&prefix, "long prompt content", "note value", 50);
 
         assert!(!lines.is_empty());
         assert!(lines[0].starts_with(&prefix));
+    }
+
+    #[test]
+    fn format_start_time_uses_timestamp_when_present() {
+        let start_time = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+        let status_log = TaskStatusLog {
+            creation_time: start_time,
+            start_time: Some(start_time),
+            end_time: None,
+            current_status: Status::Running,
+        };
+
+        assert_eq!(format_start_time(&status_log), "2024-01-02 03:04:05Z");
+    }
+
+    #[test]
+    fn format_start_time_returns_dash_when_missing() {
+        let creation_time = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+        let status_log = TaskStatusLog {
+            creation_time,
+            start_time: None,
+            end_time: None,
+            current_status: Status::Pending,
+        };
+
+        assert_eq!(format_start_time(&status_log), "-");
     }
 }
