@@ -161,6 +161,9 @@ pub struct WorkflowSummary {
     pub id: String,
     /// Name of the task whose output is considered the workflow output.
     pub output: String,
+    /// Job ID assigned to the output task.
+    #[serde(default)]
+    pub output_task_id: Option<String>,
     /// Prompt provided when creating the workflow, if any.
     #[serde(default)]
     pub prompt: Option<String>,

@@ -320,6 +320,7 @@ mod tests {
         let mut summary = WorkflowSummary {
             id: "wf-1".into(),
             output: "task-1".into(),
+            output_task_id: Some("task-1-id".into()),
             prompt: Some("boom".into()),
             notes: Some("note".into()),
             status: Status::Failed,
@@ -369,6 +370,7 @@ mod tests {
         let workflows = vec![WorkflowSummary {
             id: "wf-3".into(),
             output: "task-1".into(),
+            output_task_id: Some("task-1-id".into()),
             prompt: Some("the prompt to show".into()),
             notes: Some("notes should be hidden".into()),
             status: Status::Running,

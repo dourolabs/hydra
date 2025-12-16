@@ -324,6 +324,16 @@ async fn workflow_summary(
     record: &WorkflowRecord,
     store: &dyn Store,
 ) -> Result<WorkflowSummary, StoreError> {
+    let output_task_id = record
+        .task_ids
+        .get(&record.output)
+        .cloned()
+        .ok_or_else(|| {
+            StoreError::Internal(format!(
+                "workflow '{}' is missing task id for output '{}'",
+                workflow_id, record.output
+            ))
+        })?;
     let mut running_tasks = Vec::new();
     let mut has_failed = false;
     let mut has_running = false;
@@ -449,6 +459,7 @@ async fn workflow_summary(
     Ok(WorkflowSummary {
         id: workflow_id.to_string(),
         output: record.output.clone(),
+        output_task_id: Some(output_task_id),
         prompt: record.prompt.clone(),
         notes,
         status,

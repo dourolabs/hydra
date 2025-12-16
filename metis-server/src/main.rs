@@ -1098,6 +1098,10 @@ mod tests {
         assert_eq!(summary.id, workflow_id);
         assert_eq!(summary.status, Status::Running);
         assert_eq!(
+            summary.output_task_id.as_deref(),
+            Some(second_task_id.as_str())
+        );
+        assert_eq!(
             summary.running_tasks,
             vec![RunningTaskSummary {
                 name: "second".to_string(),
@@ -1113,6 +1117,10 @@ mod tests {
         assert!(detail_response.status().is_success());
         let detail: WorkflowSummary = detail_response.json().await?;
         assert_eq!(detail.id, workflow_id);
+        assert_eq!(
+            detail.output_task_id.as_deref(),
+            Some(second_task_id.as_str())
+        );
         assert_eq!(
             detail.running_tasks,
             vec![RunningTaskSummary {
