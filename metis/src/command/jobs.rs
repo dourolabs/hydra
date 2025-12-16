@@ -34,7 +34,7 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     println!("{}", "-".repeat(plain_header.len()));
 
     for job in jobs {
-        let status_display = format_status_with_finished(&job.status_log, now);
+        let status_display = format_status(&job.status_log.current_status);
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(&job.id, &status_display, &runtime);
@@ -200,26 +200,6 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
     }
 }
 
-pub(crate) fn format_status_with_finished(
-    status_log: &TaskStatusLog,
-    now: DateTime<Utc>,
-) -> String {
-    let base = format_status(&status_log.current_status);
-
-    if matches!(status_log.current_status, Status::Complete | Status::Failed) {
-        if let Some(end_time) = status_log.end_time {
-            let elapsed = if now < end_time {
-                ChronoDuration::zero()
-            } else {
-                now - end_time
-            };
-            return format!("{base} ({} ago)", format_compact_duration(elapsed));
-        }
-    }
-
-    base.to_string()
-}
-
 pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
     let start = status_log.start_time.or(Some(status_log.creation_time))?;
     let end = status_log.end_time.unwrap_or(now);
@@ -251,25 +231,6 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
-fn format_compact_duration(duration: ChronoDuration) -> String {
-    let total_seconds = duration.num_seconds();
-    if total_seconds <= 0 {
-        return "0s".to_string();
-    }
-
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{hours}h{minutes:02}m{seconds:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m{seconds:02}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 fn job_note(job: &JobSummary) -> Option<String> {
     job.notes.clone()
 }
@@ -277,7 +238,6 @@ fn job_note(job: &JobSummary) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     fn sample_job(id: &str) -> JobSummary {
         JobSummary {
@@ -378,47 +338,11 @@ mod tests {
     }
 
     #[test]
-    fn completed_status_includes_elapsed_since_end() {
-        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
-        let status_log = TaskStatusLog {
-            creation_time: now,
-            start_time: None,
-            end_time: Some(now - ChronoDuration::minutes(5) - ChronoDuration::seconds(4)),
-            current_status: Status::Complete,
-        };
-
-        let status = format_status_with_finished(&status_log, now);
-
-        assert_eq!(status, "complete (5m04s ago)");
-    }
-
-    #[test]
-    fn failed_status_without_end_time_uses_base_status() {
-        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
-        let status_log = TaskStatusLog {
-            creation_time: now,
-            start_time: None,
-            end_time: None,
-            current_status: Status::Failed,
-        };
-
-        let status = format_status_with_finished(&status_log, now);
-
-        assert_eq!(status, "failed");
-    }
-
-    #[test]
-    fn end_times_in_the_future_do_not_make_negative_durations() {
-        let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
-        let status_log = TaskStatusLog {
-            creation_time: now,
-            start_time: None,
-            end_time: Some(now + ChronoDuration::seconds(5)),
-            current_status: Status::Complete,
-        };
-
-        let status = format_status_with_finished(&status_log, now);
-
-        assert_eq!(status, "complete (0s ago)");
+    fn format_status_returns_plain_labels() {
+        assert_eq!(format_status(&Status::Blocked), "blocked");
+        assert_eq!(format_status(&Status::Pending), "pending");
+        assert_eq!(format_status(&Status::Running), "running");
+        assert_eq!(format_status(&Status::Complete), "complete");
+        assert_eq!(format_status(&Status::Failed), "failed");
     }
 }
