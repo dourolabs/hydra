@@ -125,8 +125,8 @@ enum Commands {
     },
     /// Retrieve and display the patch for a completed job.
     Patch {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
+        /// Job or workflow identifier returned by `metis spawn`, `metis jobs`, or `metis workflows`.
+        #[arg(value_name = "ID")]
         job: String,
 
         /// Apply the patch to the current git repository using `git apply`.

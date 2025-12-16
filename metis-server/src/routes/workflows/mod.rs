@@ -335,6 +335,7 @@ async fn workflow_summary(
     let mut failure_reason: Option<String> = None;
     let mut latest_note: Option<(DateTime<Utc>, String)> = None;
     let mut latest_failure: Option<(DateTime<Utc>, String)> = None;
+    let output_job_id = record.task_ids.get(&record.output).cloned();
 
     for (task_name, task_id) in &record.task_ids {
         let status_log = store.get_status_log(task_id).await?;
@@ -449,6 +450,7 @@ async fn workflow_summary(
     Ok(WorkflowSummary {
         id: workflow_id.to_string(),
         output: record.output.clone(),
+        output_job_id,
         prompt: record.prompt.clone(),
         notes,
         status,

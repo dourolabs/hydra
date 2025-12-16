@@ -1,5 +1,6 @@
 use crate::client::MetisClientInterface;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use reqwest::StatusCode;
 use std::{fs, io::Write, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 
@@ -34,9 +35,24 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, apply: bool) ->
     }
     let job_id = job_id.to_string();
 
-    println!("Fetching patch for job '{job_id}' via metis-server…");
+    let target = resolve_patch_target(client, &job_id).await?;
 
-    let response = client.get_job_output(&job_id).await?;
+    match &target {
+        PatchTarget::Workflow {
+            workflow_id,
+            output_task,
+            job_id,
+        } => {
+            println!(
+                "Fetching patch for workflow '{workflow_id}' output task '{output_task}' (job '{job_id}') via metis-server…"
+            );
+        }
+        PatchTarget::Job { job_id } => {
+            println!("Fetching patch for job '{job_id}' via metis-server…");
+        }
+    }
+
+    let response = client.get_job_output(target.job_id()).await?;
 
     if apply {
         println!("\nApplying patch to current git repository…");
@@ -135,4 +151,57 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, apply: bool) ->
     }
 
     Ok(())
+}
+
+enum PatchTarget {
+    Workflow {
+        workflow_id: String,
+        output_task: String,
+        job_id: String,
+    },
+    Job {
+        job_id: String,
+    },
+}
+
+impl PatchTarget {
+    fn job_id(&self) -> &str {
+        match self {
+            PatchTarget::Workflow { job_id, .. } => job_id,
+            PatchTarget::Job { job_id } => job_id,
+        }
+    }
+}
+
+async fn resolve_patch_target(client: &dyn MetisClientInterface, id: &str) -> Result<PatchTarget> {
+    match client.get_workflow(id).await {
+        Ok(workflow) => {
+            let output_job_id = workflow.output_job_id.ok_or_else(|| {
+                anyhow!(
+                    "workflow '{}' does not include an output job for task '{}'",
+                    workflow.id,
+                    workflow.output
+                )
+            })?;
+
+            Ok(PatchTarget::Workflow {
+                workflow_id: workflow.id,
+                output_task: workflow.output,
+                job_id: output_job_id,
+            })
+        }
+        Err(err) if is_not_found(&err) => Ok(PatchTarget::Job {
+            job_id: id.to_string(),
+        }),
+        Err(err) => Err(err),
+    }
+}
+
+fn is_not_found(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .and_then(|reqwest_err| reqwest_err.status())
+            .is_some_and(|status| status == StatusCode::NOT_FOUND)
+    })
 }
