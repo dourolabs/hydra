@@ -1,5 +1,6 @@
 variables:
   - name: PROMPT
+  - name: GH_TOKEN
 
 tasks:
   generate-patch:
