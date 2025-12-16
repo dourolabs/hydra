@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
+use metis_cli_util::truncate_lines;
 use metis_common::{
     task_status::{Status, TaskStatusLog},
     workflows::{TaskSummary, WorkflowSummary},
@@ -196,27 +197,6 @@ fn wrap_column(value: &str, width: usize) -> Vec<String> {
     } else {
         wrapped.into_iter().map(|line| line.into_owned()).collect()
     }
-}
-
-fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
-    if max_lines == 0 || lines.len() <= max_lines {
-        return lines;
-    }
-
-    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
-    if let Some(last) = truncated.last_mut() {
-        let ellipsis = "...";
-        if max_width <= ellipsis.len() {
-            *last = ellipsis.chars().take(max_width).collect();
-        } else {
-            let keep = max_width - ellipsis.len();
-            let mut shortened: String = last.chars().take(keep).collect();
-            shortened.push_str(ellipsis);
-            *last = shortened;
-        }
-    }
-
-    truncated
 }
 
 fn clamp_text(value: &str, max: usize) -> String {

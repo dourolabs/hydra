@@ -1,6 +1,7 @@
 use crate::client::MetisClientInterface;
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use metis_cli_util::{format_compact_duration, truncate_lines};
 use metis_common::{
     jobs::JobSummary,
     task_status::{Status, TaskStatusLog},
@@ -98,27 +99,6 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
             })
             .collect()
     }
-}
-
-fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
-    if max_lines == 0 || lines.len() <= max_lines {
-        return lines;
-    }
-
-    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
-    if let Some(last) = truncated.last_mut() {
-        let ellipsis = "...";
-        if max_width <= ellipsis.len() {
-            *last = ellipsis.chars().take(max_width).collect();
-        } else {
-            let keep = max_width - ellipsis.len();
-            let mut shortened: String = last.chars().take(keep).collect();
-            shortened.push_str(ellipsis);
-            *last = shortened;
-        }
-    }
-
-    truncated
 }
 
 struct JobRowCells {
@@ -246,25 +226,6 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
         format!("{hours}h {minutes:02}m {seconds:02}s")
     } else if minutes > 0 {
         format!("{minutes}m {seconds:02}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
-fn format_compact_duration(duration: ChronoDuration) -> String {
-    let total_seconds = duration.num_seconds();
-    if total_seconds <= 0 {
-        return "0s".to_string();
-    }
-
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    if hours > 0 {
-        format!("{hours}h{minutes:02}m{seconds:02}s")
-    } else if minutes > 0 {
-        format!("{minutes}m{seconds:02}s")
     } else {
         format!("{seconds}s")
     }

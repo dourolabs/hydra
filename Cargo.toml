@@ -3,5 +3,6 @@ members = [
     "metis",
     "metis-server",
     "metis-common",
+    "metis-cli-util",
 ]
 resolver = "2"

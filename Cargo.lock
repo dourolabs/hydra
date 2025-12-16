@@ -1262,6 +1262,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures",
+ "metis-cli-util",
  "metis-common",
  "owo-colors",
  "reqwest",
@@ -1273,6 +1274,13 @@ dependencies = [
  "textwrap",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "metis-cli-util"
+version = "0.1.0"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]
