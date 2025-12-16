@@ -6,9 +6,10 @@ use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use metis_common::{
     task_status::{Status, TaskStatusLog},
-    workflows::{RunningTaskSummary, WorkflowSummary},
+    workflows::{TaskSummary, WorkflowSummary},
 };
 use owo_colors::OwoColorize;
+use std::collections::HashMap;
 use textwrap::{Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 28;
@@ -53,7 +54,8 @@ fn render_workflows(
         let status_display = format_status(&workflow.status_log.current_status);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let start_time = format_start_time(&workflow.status_log);
-        let running = running_tasks_display(&workflow.running_tasks);
+        let running_names = running_task_names(&workflow.tasks);
+        let running = running_tasks_display(&running_names);
         let prompt = workflow_prompt(workflow);
 
         let cells = workflow_row_cells(
@@ -68,7 +70,7 @@ fn render_workflows(
             &cells,
             &workflow.status,
             &running,
-            &workflow.running_tasks,
+            !running_names.is_empty(),
         );
 
         for (index, line) in format_workflow_lines(&plain_prefix, &prompt, terminal_width)
@@ -129,13 +131,23 @@ fn workflow_prompt(workflow: &WorkflowSummary) -> String {
         .to_string()
 }
 
-fn running_tasks_display(running_tasks: &[RunningTaskSummary]) -> String {
+fn running_task_names(tasks: &HashMap<String, TaskSummary>) -> Vec<String> {
+    let mut names: Vec<String> = tasks
+        .iter()
+        .filter_map(|(name, task)| (task.status == Status::Running).then(|| name.clone()))
+        .collect();
+
+    names.sort();
+    names
+}
+
+fn running_tasks_display(running_tasks: &[String]) -> String {
     if running_tasks.is_empty() {
         "-".to_string()
     } else {
         let joined = running_tasks
             .iter()
-            .map(|task| task.name.as_str())
+            .map(|task| task.as_str())
             .collect::<Vec<_>>()
             .join(", ");
         clamp_text(&joined, RUNNING_WIDTH)
@@ -237,9 +249,9 @@ fn colored_workflow_row_prefix(
     cells: &WorkflowRowCells,
     status: &Status,
     running_display: &str,
-    running_tasks: &[RunningTaskSummary],
+    has_running_tasks: bool,
 ) -> String {
-    let running_column = if running_tasks.is_empty() {
+    let running_column = if !has_running_tasks {
         cells.running.clone()
     } else {
         format!(
@@ -278,12 +290,17 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn running_tasks(names: &[&str]) -> Vec<RunningTaskSummary> {
-        names
+    fn tasks(statuses: &[(&str, Status)]) -> HashMap<String, TaskSummary> {
+        statuses
             .iter()
-            .map(|name| RunningTaskSummary {
-                name: (*name).into(),
-                metis_id: format!("{name}-id"),
+            .map(|(name, status)| {
+                (
+                    (*name).into(),
+                    TaskSummary {
+                        metis_id: format!("{name}-id"),
+                        status: *status,
+                    },
+                )
             })
             .collect()
     }
@@ -309,8 +326,12 @@ mod tests {
 
     #[test]
     fn running_tasks_are_clamped() {
-        let tasks = running_tasks(&["alpha", "beta", "gamma"]);
-        let display = running_tasks_display(&tasks);
+        let running = running_task_names(&tasks(&[
+            ("alpha", Status::Running),
+            ("beta", Status::Running),
+            ("gamma", Status::Running),
+        ]));
+        let display = running_tasks_display(&running);
         assert!(display.len() <= RUNNING_WIDTH);
     }
 
@@ -323,13 +344,13 @@ mod tests {
             prompt: Some("boom".into()),
             notes: Some("note".into()),
             status: Status::Failed,
+            tasks: HashMap::new(),
             status_log: TaskStatusLog {
                 creation_time: now,
                 start_time: None,
                 end_time: None,
                 current_status: Status::Failed,
             },
-            running_tasks: Vec::new(),
         };
 
         assert_eq!(workflow_prompt(&summary), "boom");
@@ -372,13 +393,13 @@ mod tests {
             prompt: Some("the prompt to show".into()),
             notes: Some("notes should be hidden".into()),
             status: Status::Running,
+            tasks: tasks(&[("task-1", Status::Running)]),
             status_log: TaskStatusLog {
                 creation_time: now,
                 start_time: Some(now),
                 end_time: None,
                 current_status: Status::Running,
             },
-            running_tasks: running_tasks(&["task-1"]),
         }];
 
         let lines = render_workflows(&workflows, 120, now);

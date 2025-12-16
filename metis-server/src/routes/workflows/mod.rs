@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::workflows::{
-    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, RunningTaskSummary,
+    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, TaskSummary,
     WorkflowSummary,
 };
 use std::collections::{HashMap, HashSet};
@@ -324,7 +324,7 @@ async fn workflow_summary(
     record: &WorkflowRecord,
     store: &dyn Store,
 ) -> Result<WorkflowSummary, StoreError> {
-    let mut running_tasks = Vec::new();
+    let mut tasks: HashMap<String, TaskSummary> = HashMap::new();
     let mut has_failed = false;
     let mut has_running = false;
     let mut has_pending = false;
@@ -338,6 +338,13 @@ async fn workflow_summary(
 
     for (task_name, task_id) in &record.task_ids {
         let status_log = store.get_status_log(task_id).await?;
+        tasks.insert(
+            task_name.clone(),
+            TaskSummary {
+                metis_id: task_id.clone(),
+                status: status_log.current_status,
+            },
+        );
         let result = store.get_result(task_id);
         let task_note = result
             .as_ref()
@@ -366,10 +373,6 @@ async fn workflow_summary(
             Status::Running => {
                 has_running = true;
                 all_complete = false;
-                running_tasks.push(RunningTaskSummary {
-                    name: task_name.clone(),
-                    metis_id: task_id.clone(),
-                });
             }
             Status::Pending => {
                 has_pending = true;
@@ -407,8 +410,6 @@ async fn workflow_summary(
             }
         }
     }
-
-    running_tasks.sort_by(|a, b| a.name.cmp(&b.name));
 
     let latest_failure_reason = latest_failure.as_ref().map(|(_, reason)| reason.clone());
 
@@ -452,8 +453,8 @@ async fn workflow_summary(
         prompt: record.prompt.clone(),
         notes,
         status,
+        tasks,
         status_log,
-        running_tasks,
     })
 }
 
