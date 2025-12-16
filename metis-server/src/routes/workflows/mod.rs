@@ -9,7 +9,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::workflows::{
-    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, WorkflowSummary,
+    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, RunningTaskSummary,
+    WorkflowSummary,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info};
@@ -363,7 +364,10 @@ async fn workflow_summary(
             Status::Running => {
                 has_running = true;
                 all_complete = false;
-                running_tasks.push(task_name.clone());
+                running_tasks.push(RunningTaskSummary {
+                    name: task_name.clone(),
+                    metis_id: task_id.clone(),
+                });
             }
             Status::Pending => {
                 has_pending = true;
@@ -402,7 +406,7 @@ async fn workflow_summary(
         }
     }
 
-    running_tasks.sort();
+    running_tasks.sort_by(|a, b| a.name.cmp(&b.name));
 
     let latest_failure_reason = latest_failure.as_ref().map(|(_, reason)| reason.clone());
 

@@ -8,13 +8,13 @@ use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use metis_common::{
     task_status::{Status, TaskStatusLog},
-    workflows::WorkflowSummary,
+    workflows::{RunningTaskSummary, WorkflowSummary},
 };
 use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
 
-const NAME_WIDTH: usize = 36;
-const STATUS_WIDTH: usize = 10;
+const NAME_WIDTH: usize = 28;
+const STATUS_WIDTH: usize = 18;
 const START_WIDTH: usize = 20;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
@@ -131,11 +131,15 @@ fn workflow_prompt(workflow: &WorkflowSummary) -> String {
         .to_string()
 }
 
-fn running_tasks_display(running_tasks: &[String]) -> String {
+fn running_tasks_display(running_tasks: &[RunningTaskSummary]) -> String {
     if running_tasks.is_empty() {
         "-".to_string()
     } else {
-        let joined = running_tasks.join(", ");
+        let joined = running_tasks
+            .iter()
+            .map(|task| task.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         clamp_text(&joined, RUNNING_WIDTH)
     }
 }
@@ -143,7 +147,6 @@ fn running_tasks_display(running_tasks: &[String]) -> String {
 fn format_workflow_lines(prefix: &str, prompt: &str, terminal_width: usize) -> Vec<String> {
     let indent = " ".repeat(prefix.len());
     let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
-
     let prompt_width = available_width.min(TEXT_COLUMN_WIDTH).max(1);
     let prompt_lines = wrap_column(prompt, prompt_width);
 
@@ -236,7 +239,7 @@ fn colored_workflow_row_prefix(
     cells: &WorkflowRowCells,
     status: &Status,
     running_display: &str,
-    running_tasks: &[String],
+    running_tasks: &[RunningTaskSummary],
 ) -> String {
     let running_column = if running_tasks.is_empty() {
         cells.running.clone()
@@ -277,10 +280,20 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    fn running_tasks(names: &[&str]) -> Vec<RunningTaskSummary> {
+        names
+            .iter()
+            .map(|name| RunningTaskSummary {
+                name: (*name).into(),
+                metis_id: format!("{name}-id"),
+            })
+            .collect()
+    }
+
     #[test]
     fn running_tasks_are_clamped() {
-        let names = vec!["alpha".into(), "beta".into(), "gamma".into()];
-        let display = running_tasks_display(&names);
+        let tasks = running_tasks(&["alpha", "beta", "gamma"]);
+        let display = running_tasks_display(&tasks);
         assert!(display.len() <= RUNNING_WIDTH);
     }
 
@@ -298,7 +311,7 @@ mod tests {
                 end_time: None,
                 current_status: Status::Failed,
             },
-            running_tasks: vec![],
+            running_tasks: Vec::new(),
         };
 
         assert_eq!(workflow_prompt(&summary), "boom");
@@ -346,7 +359,7 @@ mod tests {
                 end_time: None,
                 current_status: Status::Running,
             },
-            running_tasks: vec!["task-1".into()],
+            running_tasks: running_tasks(&["task-1"]),
         }];
 
         let lines = render_workflows(&workflows, 120, now);
