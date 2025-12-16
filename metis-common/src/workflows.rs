@@ -1,7 +1,8 @@
 use crate::task_status::{Status, TaskStatusLog};
 use indexmap::IndexMap;
-use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor, de::Error};
 use std::{collections::HashMap, fmt};
+
 
 /// Definition of a workflow variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
