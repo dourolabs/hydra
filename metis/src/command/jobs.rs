@@ -9,9 +9,10 @@ use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 48;
-const STATUS_WIDTH: usize = 10;
+const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const MAX_NOTES_WIDTH: usize = 80;
+const MAX_NOTE_LINES: usize = 5;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
@@ -33,7 +34,7 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     println!("{}", "-".repeat(plain_header.len()));
 
     for job in jobs {
-        let status_display = format_status(&job.status_log.current_status);
+        let status_display = format_status_with_finished(&job.status_log, now);
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(&job.id, &status_display, &runtime);
@@ -76,7 +77,11 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
         Options::new(notes_width)
             .break_words(true)
             .wrap_algorithm(WrapAlgorithm::FirstFit),
-    );
+    )
+    .into_iter()
+    .map(|line| line.into_owned())
+    .collect();
+    let wrapped_notes = truncate_lines(wrapped_notes, MAX_NOTE_LINES, notes_width);
 
     if wrapped_notes.is_empty() {
         vec![format!("{prefix}-")]
@@ -93,6 +98,27 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
             })
             .collect()
     }
+}
+
+fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
+    if max_lines == 0 || lines.len() <= max_lines {
+        return lines;
+    }
+
+    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
+    if let Some(last) = truncated.last_mut() {
+        let ellipsis = "...";
+        if max_width <= ellipsis.len() {
+            *last = ellipsis.chars().take(max_width).collect();
+        } else {
+            let keep = max_width - ellipsis.len();
+            let mut shortened: String = last.chars().take(keep).collect();
+            shortened.push_str(ellipsis);
+            *last = shortened;
+        }
+    }
+
+    truncated
 }
 
 struct JobRowCells {
@@ -174,6 +200,26 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
     }
 }
 
+pub(crate) fn format_status_with_finished(
+    status_log: &TaskStatusLog,
+    now: DateTime<Utc>,
+) -> String {
+    let base = format_status(&status_log.current_status);
+
+    if matches!(status_log.current_status, Status::Complete | Status::Failed) {
+        if let Some(end_time) = status_log.end_time {
+            let elapsed = if now < end_time {
+                ChronoDuration::zero()
+            } else {
+                now - end_time
+            };
+            return format!("{base} ({} ago)", format_compact_duration(elapsed));
+        }
+    }
+
+    base.to_string()
+}
+
 pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
     let start = status_log.start_time.or(Some(status_log.creation_time))?;
     let end = status_log.end_time.unwrap_or(now);
@@ -200,6 +246,25 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
         format!("{hours}h {minutes:02}m {seconds:02}s")
     } else if minutes > 0 {
         format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn format_compact_duration(duration: ChronoDuration) -> String {
+    let total_seconds = duration.num_seconds();
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h{minutes:02}m{seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m{seconds:02}s")
     } else {
         format!("{seconds}s")
     }
@@ -300,7 +365,20 @@ mod tests {
     }
 
     #[test]
-    fn completed_status_returns_base_status() {
+    fn notes_are_truncated_after_five_lines() {
+        let cells = job_row_cells("job-123", "running", "12s");
+        let prefix = job_row_prefix(&cells);
+        let terminal_width = prefix.len() + 20;
+        let notes = "word ".repeat(120);
+
+        let lines = format_job_lines(&prefix, &notes, terminal_width);
+
+        assert_eq!(lines.len(), MAX_NOTE_LINES);
+        assert!(lines.last().unwrap().contains("..."));
+    }
+
+    #[test]
+    fn completed_status_includes_elapsed_since_end() {
         let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
         let status_log = TaskStatusLog {
             creation_time: now,
@@ -309,9 +387,9 @@ mod tests {
             current_status: Status::Complete,
         };
 
-        let status = format_status(&status_log.current_status);
+        let status = format_status_with_finished(&status_log, now);
 
-        assert_eq!(status, "complete");
+        assert_eq!(status, "complete (5m04s ago)");
     }
 
     #[test]
@@ -324,13 +402,13 @@ mod tests {
             current_status: Status::Failed,
         };
 
-        let status = format_status(&status_log.current_status);
+        let status = format_status_with_finished(&status_log, now);
 
         assert_eq!(status, "failed");
     }
 
     #[test]
-    fn end_times_in_the_future_returns_base_status() {
+    fn end_times_in_the_future_do_not_make_negative_durations() {
         let now = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
         let status_log = TaskStatusLog {
             creation_time: now,
@@ -339,8 +417,8 @@ mod tests {
             current_status: Status::Complete,
         };
 
-        let status = format_status(&status_log.current_status);
+        let status = format_status_with_finished(&status_log, now);
 
-        assert_eq!(status, "complete");
+        assert_eq!(status, "complete (0s ago)");
     }
 }

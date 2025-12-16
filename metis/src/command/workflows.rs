@@ -1,6 +1,8 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
+    command::jobs::{
+        color_status, current_terminal_width, format_runtime, format_status_with_finished,
+    },
 };
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
@@ -12,12 +14,13 @@ use owo_colors::OwoColorize;
 use std::collections::HashMap;
 use textwrap::{Options, WrapAlgorithm};
 
-const NAME_WIDTH: usize = 28;
-const STATUS_WIDTH: usize = 18;
+const NAME_WIDTH: usize = 36;
+const STATUS_WIDTH: usize = 26;
 const START_WIDTH: usize = 20;
 const RUNTIME_WIDTH: usize = 12;
 const RUNNING_WIDTH: usize = 18;
 const TEXT_COLUMN_WIDTH: usize = 80;
+const MAX_PROMPT_LINES: usize = 5;
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let response = client.list_workflows().await?;
@@ -51,7 +54,7 @@ fn render_workflows(
     }
 
     for workflow in workflows {
-        let status_display = format_status(&workflow.status_log.current_status);
+        let status_display = format_status_with_finished(&workflow.status_log, now);
         let runtime = format_runtime(&workflow.status_log, now).unwrap_or_else(|| "-".into());
         let start_time = format_start_time(&workflow.status_log);
         let running_names = running_task_names(&workflow.tasks);
@@ -159,6 +162,7 @@ fn format_workflow_lines(prefix: &str, prompt: &str, terminal_width: usize) -> V
     let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
     let prompt_width = available_width.min(TEXT_COLUMN_WIDTH).max(1);
     let prompt_lines = wrap_column(prompt, prompt_width);
+    let prompt_lines = truncate_lines(prompt_lines, MAX_PROMPT_LINES, prompt_width);
 
     prompt_lines
         .into_iter()
@@ -192,6 +196,27 @@ fn wrap_column(value: &str, width: usize) -> Vec<String> {
     } else {
         wrapped.into_iter().map(|line| line.into_owned()).collect()
     }
+}
+
+fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
+    if max_lines == 0 || lines.len() <= max_lines {
+        return lines;
+    }
+
+    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
+    if let Some(last) = truncated.last_mut() {
+        let ellipsis = "...";
+        if max_width <= ellipsis.len() {
+            *last = ellipsis.chars().take(max_width).collect();
+        } else {
+            let keep = max_width - ellipsis.len();
+            let mut shortened: String = last.chars().take(keep).collect();
+            shortened.push_str(ellipsis);
+            *last = shortened;
+        }
+    }
+
+    truncated
 }
 
 fn clamp_text(value: &str, max: usize) -> String {
@@ -364,7 +389,11 @@ mod tests {
 
     #[test]
     fn header_rows_only_include_prompt_column() {
-        let (plain, colored) = header_rows(120);
+        let prefix_width = workflow_row_prefix(&workflow_row_cells(
+            "ID", "STATUS", "STARTED", "RUNTIME", "RUNNING",
+        ))
+        .len();
+        let (plain, colored) = header_rows(prefix_width + TEXT_COLUMN_WIDTH);
         assert_eq!(plain.len(), colored.len());
 
         let first_line = plain.first().expect("header line");
@@ -402,13 +431,29 @@ mod tests {
             },
         }];
 
-        let lines = render_workflows(&workflows, 120, now);
+        let prefix_width = workflow_row_prefix(&workflow_row_cells(
+            "wf-3", "STATUS", "STARTED", "RUNTIME", "RUNNING",
+        ))
+        .len();
+        let lines = render_workflows(&workflows, prefix_width + TEXT_COLUMN_WIDTH, now);
         let combined = lines.join("\n");
         let sanitized = strip_ansi(&combined);
         let normalized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
 
         assert!(normalized.contains("the prompt to show"));
         assert!(!combined.contains("notes should be hidden"));
+    }
+
+    #[test]
+    fn prompt_is_truncated_after_five_lines() {
+        let cells = workflow_row_cells("wf-4", "running", "start", "10s", "task");
+        let prefix = workflow_row_prefix(&cells);
+        let prompt = "chunk ".repeat(120);
+
+        let lines = format_workflow_lines(&prefix, &prompt, prefix.len() + 20);
+
+        assert_eq!(lines.len(), MAX_PROMPT_LINES);
+        assert!(lines.last().unwrap().contains("..."));
     }
 
     #[test]
