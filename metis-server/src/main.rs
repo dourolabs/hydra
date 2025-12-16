@@ -158,7 +158,7 @@ mod tests {
         jobs::{
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
         },
-        workflows::{ListWorkflowsResponse, RunningTaskSummary, WorkflowSummary},
+        workflows::{ListWorkflowsResponse, TaskSummary, WorkflowSummary},
     };
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
@@ -1098,11 +1098,23 @@ mod tests {
         assert_eq!(summary.id, workflow_id);
         assert_eq!(summary.status, Status::Running);
         assert_eq!(
-            summary.running_tasks,
-            vec![RunningTaskSummary {
-                name: "second".to_string(),
-                metis_id: second_task_id.clone()
-            }]
+            summary.tasks,
+            HashMap::from([
+                (
+                    "first".to_string(),
+                    TaskSummary {
+                        metis_id: first_task_id.clone(),
+                        status: Status::Complete
+                    }
+                ),
+                (
+                    "second".to_string(),
+                    TaskSummary {
+                        metis_id: second_task_id.clone(),
+                        status: Status::Running
+                    }
+                )
+            ])
         );
         assert_eq!(summary.notes.as_deref(), Some("note from first"));
 
@@ -1114,11 +1126,23 @@ mod tests {
         let detail: WorkflowSummary = detail_response.json().await?;
         assert_eq!(detail.id, workflow_id);
         assert_eq!(
-            detail.running_tasks,
-            vec![RunningTaskSummary {
-                name: "second".to_string(),
-                metis_id: second_task_id
-            }]
+            detail.tasks,
+            HashMap::from([
+                (
+                    "first".to_string(),
+                    TaskSummary {
+                        metis_id: first_task_id,
+                        status: Status::Complete
+                    }
+                ),
+                (
+                    "second".to_string(),
+                    TaskSummary {
+                        metis_id: second_task_id,
+                        status: Status::Running
+                    }
+                )
+            ])
         );
 
         Ok(())

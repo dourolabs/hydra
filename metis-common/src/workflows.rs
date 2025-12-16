@@ -145,13 +145,13 @@ pub struct CreateWorkflowResponse {
     pub task_ids: HashMap<String, String>,
 }
 
-/// Summary of a running task.
+/// Summary of an individual task in a workflow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunningTaskSummary {
-    /// Name of the task within the workflow definition.
-    pub name: String,
+pub struct TaskSummary {
     /// MetisId assigned to the task.
     pub metis_id: String,
+    /// Current status of the task.
+    pub status: Status,
 }
 
 /// Summary of a workflow's current state.
@@ -169,11 +169,10 @@ pub struct WorkflowSummary {
     pub notes: Option<String>,
     /// Aggregate workflow status derived from task states.
     pub status: Status,
+    /// Map of task names to their identifiers and current status.
+    pub tasks: HashMap<String, TaskSummary>,
     /// Aggregate timing information for the workflow.
     pub status_log: TaskStatusLog,
-    /// Tasks that are currently running.
-    #[serde(default)]
-    pub running_tasks: Vec<RunningTaskSummary>,
 }
 
 /// Response containing all workflows known to the server.
