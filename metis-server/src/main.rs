@@ -1078,6 +1078,7 @@ mod tests {
                         ("second".to_string(), second_task_id.clone()),
                     ]),
                     prompt: None,
+                    output: "second".to_string(),
                 },
             );
         }
@@ -1204,6 +1205,7 @@ mod tests {
                         ("second".to_string(), failed_task_id.clone()),
                     ]),
                     prompt: None,
+                    output: "second".to_string(),
                 },
             );
         }

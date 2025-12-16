@@ -20,6 +20,7 @@ pub struct WorkflowRecord {
     pub created_at: DateTime<Utc>,
     pub task_ids: HashMap<String, String>,
     pub prompt: Option<String>,
+    pub output: String,
 }
 
 pub async fn list_workflows(
@@ -287,6 +288,7 @@ pub async fn create_workflow(
                 created_at: workflow_created_at,
                 task_ids: task_ids.clone(),
                 prompt: workflow_prompt,
+                output: workflow.output.clone(),
             },
         );
     }
@@ -446,6 +448,7 @@ async fn workflow_summary(
 
     Ok(WorkflowSummary {
         id: workflow_id.to_string(),
+        output: record.output.clone(),
         prompt: record.prompt.clone(),
         notes,
         status,

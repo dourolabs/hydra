@@ -1,8 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{
-        color_status, current_terminal_width, format_runtime, format_status,
-    },
+    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
 };
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
@@ -290,6 +288,25 @@ mod tests {
             .collect()
     }
 
+    fn strip_ansi(input: &str) -> String {
+        let mut cleaned = String::new();
+        let mut chars = input.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' {
+                while let Some(next) = chars.next() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                cleaned.push(ch);
+            }
+        }
+
+        cleaned
+    }
+
     #[test]
     fn running_tasks_are_clamped() {
         let tasks = running_tasks(&["alpha", "beta", "gamma"]);
@@ -302,6 +319,7 @@ mod tests {
         let now = Utc::now();
         let mut summary = WorkflowSummary {
             id: "wf-1".into(),
+            output: "task-1".into(),
             prompt: Some("boom".into()),
             notes: Some("note".into()),
             status: Status::Failed,
@@ -350,6 +368,7 @@ mod tests {
         let now = Utc::now();
         let workflows = vec![WorkflowSummary {
             id: "wf-3".into(),
+            output: "task-1".into(),
             prompt: Some("the prompt to show".into()),
             notes: Some("notes should be hidden".into()),
             status: Status::Running,
@@ -364,8 +383,10 @@ mod tests {
 
         let lines = render_workflows(&workflows, 120, now);
         let combined = lines.join("\n");
+        let sanitized = strip_ansi(&combined);
+        let normalized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
 
-        assert!(combined.contains("the prompt to show"));
+        assert!(normalized.contains("the prompt to show"));
         assert!(!combined.contains("notes should be hidden"));
     }
 
