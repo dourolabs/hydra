@@ -27,14 +27,47 @@ fn pretty_print_patch(patch: &str) {
     }
 }
 
-pub async fn run(client: &dyn MetisClientInterface, job: String, apply: bool) -> Result<()> {
-    let job_id = job.trim();
-    if job_id.is_empty() {
-        bail!("Job ID must not be empty.");
-    }
-    let job_id = job_id.to_string();
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    job: Option<String>,
+    workflow_id: Option<String>,
+    apply: bool,
+) -> Result<()> {
+    let (job_id, descriptor) = match (job, workflow_id) {
+        (Some(job), None) => {
+            let job_id = job.trim();
+            if job_id.is_empty() {
+                bail!("Job ID must not be empty.");
+            }
+            let job_id = job_id.to_string();
+            (job_id.clone(), format!("job '{job_id}'"))
+        }
+        (None, Some(workflow_id)) => {
+            let workflow_id = workflow_id.trim();
+            if workflow_id.is_empty() {
+                bail!("Workflow ID must not be empty.");
+            }
 
-    println!("Fetching patch for job '{job_id}' via metis-server…");
+            let workflow = client.get_workflow(workflow_id).await?;
+            let output_job_id = match workflow
+                .output_job_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(id) => id.to_string(),
+                None => bail!("Workflow '{workflow_id}' does not have an output job yet."),
+            };
+
+            (
+                output_job_id.clone(),
+                format!("workflow '{workflow_id}' (output job: {output_job_id})"),
+            )
+        }
+        _ => bail!("Either a job ID or workflow ID must be provided."),
+    };
+
+    println!("Fetching patch for {descriptor} via metis-server…");
 
     let response = client.get_job_output(&job_id).await?;
 

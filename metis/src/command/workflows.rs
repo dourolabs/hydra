@@ -1,8 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{
-        color_status, current_terminal_width, format_runtime, format_status,
-    },
+    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
 };
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
@@ -312,6 +310,7 @@ mod tests {
                 current_status: Status::Failed,
             },
             running_tasks: Vec::new(),
+            output_job_id: None,
         };
 
         assert_eq!(workflow_prompt(&summary), "boom");
@@ -360,13 +359,15 @@ mod tests {
                 current_status: Status::Running,
             },
             running_tasks: running_tasks(&["task-1"]),
+            output_job_id: None,
         }];
 
         let lines = render_workflows(&workflows, 120, now);
         let combined = lines.join("\n");
+        let normalized = combined.split_whitespace().collect::<Vec<_>>().join(" ");
 
-        assert!(combined.contains("the prompt to show"));
-        assert!(!combined.contains("notes should be hidden"));
+        assert!(normalized.contains("the prompt to show"));
+        assert!(!normalized.contains("notes should be hidden"));
     }
 
     #[test]

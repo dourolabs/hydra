@@ -126,8 +126,20 @@ enum Commands {
     /// Retrieve and display the patch for a completed job.
     Patch {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
-        job: String,
+        #[arg(
+            value_name = "JOB_ID",
+            conflicts_with = "workflow_id",
+            required_unless_present = "workflow_id"
+        )]
+        job: Option<String>,
+
+        /// Workflow identifier whose output task patch should be fetched.
+        #[arg(
+            long = "workflow-id",
+            value_name = "WORKFLOW_ID",
+            conflicts_with = "job"
+        )]
+        workflow_id: Option<String>,
 
         /// Apply the patch to the current git repository using `git apply`.
         #[arg(short = 'a', long = "apply")]
@@ -200,7 +212,11 @@ async fn main() -> Result<()> {
         Commands::Workflows => command::workflows::run(&client).await?,
         Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
-        Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
+        Commands::Patch {
+            job,
+            workflow_id,
+            apply,
+        } => command::patch::run(&client, job, workflow_id, apply).await?,
 
         Commands::WorkerInit { job, path } => command::worker_init::run(&client, job, path).await?,
         Commands::WorkerSubmit { job } => command::worker_submit::run(&client, job).await?,

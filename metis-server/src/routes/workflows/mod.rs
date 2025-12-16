@@ -20,6 +20,7 @@ pub struct WorkflowRecord {
     pub created_at: DateTime<Utc>,
     pub task_ids: HashMap<String, String>,
     pub prompt: Option<String>,
+    pub output_task: String,
 }
 
 pub async fn list_workflows(
@@ -287,6 +288,7 @@ pub async fn create_workflow(
                 created_at: workflow_created_at,
                 task_ids: task_ids.clone(),
                 prompt: workflow_prompt,
+                output_task: workflow.output.clone(),
             },
         );
     }
@@ -322,6 +324,7 @@ async fn workflow_summary(
     record: &WorkflowRecord,
     store: &dyn Store,
 ) -> Result<WorkflowSummary, StoreError> {
+    let output_job_id = record.task_ids.get(&record.output_task).cloned();
     let mut running_tasks = Vec::new();
     let mut has_failed = false;
     let mut has_running = false;
@@ -451,6 +454,7 @@ async fn workflow_summary(
         status,
         status_log,
         running_tasks,
+        output_job_id,
     })
 }
 
