@@ -1,7 +1,8 @@
 use crate::task_status::{Status, TaskStatusLog};
 use indexmap::IndexMap;
-use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor, de::Error};
 use std::{collections::HashMap, fmt};
+
 
 /// Definition of a workflow variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +146,15 @@ pub struct CreateWorkflowResponse {
     pub task_ids: HashMap<String, String>,
 }
 
+/// Summary of a running task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunningTaskSummary {
+    /// Name of the task within the workflow definition.
+    pub name: String,
+    /// MetisId assigned to the task.
+    pub metis_id: String,
+}
+
 /// Summary of a workflow's current state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowSummary {
@@ -160,9 +170,9 @@ pub struct WorkflowSummary {
     pub status: Status,
     /// Aggregate timing information for the workflow.
     pub status_log: TaskStatusLog,
-    /// Names of tasks that are currently running.
+    /// Tasks that are currently running.
     #[serde(default)]
-    pub running_tasks: Vec<String>,
+    pub running_tasks: Vec<RunningTaskSummary>,
 }
 
 /// Response containing all workflows known to the server.
