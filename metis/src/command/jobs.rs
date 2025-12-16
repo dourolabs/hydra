@@ -174,7 +174,6 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
     }
 }
 
-
 pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
     let start = status_log.start_time.or(Some(status_log.creation_time))?;
     let end = status_log.end_time.unwrap_or(now);

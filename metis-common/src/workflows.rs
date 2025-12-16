@@ -1,8 +1,7 @@
 use crate::task_status::{Status, TaskStatusLog};
 use indexmap::IndexMap;
-use serde::{Deserialize, Deserializer, Serialize, de::Visitor, de::Error};
+use serde::{Deserialize, Deserializer, Serialize, de::Error, de::Visitor};
 use std::{collections::HashMap, fmt};
-
 
 /// Definition of a workflow variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +159,9 @@ pub struct RunningTaskSummary {
 pub struct WorkflowSummary {
     /// Unique identifier for the workflow.
     pub id: String,
+    /// Job ID for the workflow's output task, if known.
+    #[serde(default)]
+    pub output_task_id: Option<String>,
     /// Prompt provided when creating the workflow, if any.
     #[serde(default)]
     pub prompt: Option<String>,

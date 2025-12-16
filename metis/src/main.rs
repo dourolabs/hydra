@@ -109,9 +109,13 @@ enum Commands {
     Workflows,
     /// Show logs for an existing Metis job.
     Logs {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
-        job: String,
+        /// Job identifier returned by `metis spawn`/`metis jobs`, or a workflow id.
+        #[arg(value_name = "ID")]
+        id: String,
+
+        /// Interpret ID as a workflow id and show the relevant task logs.
+        #[arg(long = "workflow")]
+        workflow: bool,
 
         /// Stream logs if the job is still running.
         #[arg(short = 'w', long = "watch")]
@@ -198,7 +202,11 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
         Commands::Workflows => command::workflows::run(&client).await?,
-        Commands::Logs { job, watch } => command::logs::run(&client, job, watch).await?,
+        Commands::Logs {
+            id,
+            workflow,
+            watch,
+        } => command::logs::run(&client, id, workflow, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
 
