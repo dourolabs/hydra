@@ -9,7 +9,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::workflows::{
-    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, WorkflowSummary,
+    CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, RunningTaskSummary,
+    WorkflowSummary,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{error, info};
@@ -19,6 +20,7 @@ pub struct WorkflowRecord {
     pub created_at: DateTime<Utc>,
     pub task_ids: HashMap<String, String>,
     pub prompt: Option<String>,
+    pub output: String,
 }
 
 pub async fn list_workflows(
@@ -121,6 +123,24 @@ pub async fn create_workflow(
     info!("create_workflow invoked");
 
     let workflow = &payload.workflow;
+
+    if workflow.output.trim().is_empty() {
+        error!("workflow output task is empty");
+        return Err(ApiError::bad_request(
+            "Workflow output task must be specified",
+        ));
+    }
+
+    if !workflow.tasks.contains_key(&workflow.output) {
+        error!(
+            output = %workflow.output,
+            "workflow output task is missing from tasks"
+        );
+        return Err(ApiError::bad_request(format!(
+            "Workflow output task '{}' does not exist",
+            workflow.output
+        )));
+    }
 
     // Validate variables: check that all referenced variables are defined
     let undefined_vars = workflow.validate_variables();
@@ -268,6 +288,7 @@ pub async fn create_workflow(
                 created_at: workflow_created_at,
                 task_ids: task_ids.clone(),
                 prompt: workflow_prompt,
+                output: workflow.output.clone(),
             },
         );
     }
@@ -345,7 +366,10 @@ async fn workflow_summary(
             Status::Running => {
                 has_running = true;
                 all_complete = false;
-                running_tasks.push(task_name.clone());
+                running_tasks.push(RunningTaskSummary {
+                    name: task_name.clone(),
+                    metis_id: task_id.clone(),
+                });
             }
             Status::Pending => {
                 has_pending = true;
@@ -384,7 +408,7 @@ async fn workflow_summary(
         }
     }
 
-    running_tasks.sort();
+    running_tasks.sort_by(|a, b| a.name.cmp(&b.name));
 
     let latest_failure_reason = latest_failure.as_ref().map(|(_, reason)| reason.clone());
 
@@ -424,6 +448,7 @@ async fn workflow_summary(
 
     Ok(WorkflowSummary {
         id: workflow_id.to_string(),
+        output: record.output.clone(),
         prompt: record.prompt.clone(),
         notes,
         status,
@@ -527,6 +552,7 @@ mod tests {
                     cleanup: vec![],
                 },
             )]),
+            output: "first".to_string(),
         };
 
         let request = CreateWorkflowRequest {
@@ -573,6 +599,7 @@ mod tests {
                     cleanup: vec![],
                 },
             )]),
+            output: "first".to_string(),
         };
 
         let request = CreateWorkflowRequest {

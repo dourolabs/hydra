@@ -158,7 +158,7 @@ mod tests {
         jobs::{
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
         },
-        workflows::{ListWorkflowsResponse, WorkflowSummary},
+        workflows::{ListWorkflowsResponse, RunningTaskSummary, WorkflowSummary},
     };
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
@@ -1078,6 +1078,7 @@ mod tests {
                         ("second".to_string(), second_task_id.clone()),
                     ]),
                     prompt: None,
+                    output: "second".to_string(),
                 },
             );
         }
@@ -1096,7 +1097,13 @@ mod tests {
         let summary = &body.workflows[0];
         assert_eq!(summary.id, workflow_id);
         assert_eq!(summary.status, Status::Running);
-        assert_eq!(summary.running_tasks, vec!["second".to_string()]);
+        assert_eq!(
+            summary.running_tasks,
+            vec![RunningTaskSummary {
+                name: "second".to_string(),
+                metis_id: second_task_id.clone()
+            }]
+        );
         assert_eq!(summary.notes.as_deref(), Some("note from first"));
 
         let detail_response = client
@@ -1106,7 +1113,13 @@ mod tests {
         assert!(detail_response.status().is_success());
         let detail: WorkflowSummary = detail_response.json().await?;
         assert_eq!(detail.id, workflow_id);
-        assert_eq!(detail.running_tasks, vec!["second".to_string()]);
+        assert_eq!(
+            detail.running_tasks,
+            vec![RunningTaskSummary {
+                name: "second".to_string(),
+                metis_id: second_task_id
+            }]
+        );
 
         Ok(())
     }
@@ -1192,6 +1205,7 @@ mod tests {
                         ("second".to_string(), failed_task_id.clone()),
                     ]),
                     prompt: None,
+                    output: "second".to_string(),
                 },
             );
         }

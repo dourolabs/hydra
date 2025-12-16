@@ -1,17 +1,18 @@
 variables:
   - name: PROMPT
+  - name: GH_TOKEN
   - name: ONTO
     value: main
 
 tasks:
-  generate-patch:
+  fix-merge:
     type: codex
     prompt: >
       The current git repository is being rebased on to main and may contain conflicts.
       Please fix the conflicts and complete the rebase. You may look at the git log to
       understand the history of changes and determine how to resolve the conflicts.      
     setup:
-      git rebase $ONTO
+      - git merge $ONTO || true
     cleanup:
       - |
           set -euo pipefail
@@ -25,4 +26,4 @@ tasks:
 
           git commit -m "task ${METIS_ID}"
           branch_name=$(git rev-parse --abbrev-ref HEAD)
-          git push origin "${branch_name}"
+          git push --force-with-lease origin "${branch_name}"

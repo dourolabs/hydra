@@ -5,10 +5,10 @@ use crate::{
     },
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use metis_common::{
     task_status::{Status, TaskStatusLog},
-    workflows::WorkflowSummary,
+    workflows::{RunningTaskSummary, WorkflowSummary},
 };
 use owo_colors::OwoColorize;
 use textwrap::{Options, WrapAlgorithm};
@@ -132,11 +132,15 @@ fn workflow_prompt(workflow: &WorkflowSummary) -> String {
         .to_string()
 }
 
-fn running_tasks_display(running_tasks: &[String]) -> String {
+fn running_tasks_display(running_tasks: &[RunningTaskSummary]) -> String {
     if running_tasks.is_empty() {
         "-".to_string()
     } else {
-        let joined = running_tasks.join(", ");
+        let joined = running_tasks
+            .iter()
+            .map(|task| task.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         clamp_text(&joined, RUNNING_WIDTH)
     }
 }
@@ -144,7 +148,6 @@ fn running_tasks_display(running_tasks: &[String]) -> String {
 fn format_workflow_lines(prefix: &str, prompt: &str, terminal_width: usize) -> Vec<String> {
     let indent = " ".repeat(prefix.len());
     let available_width = terminal_width.saturating_sub(prefix.len()).max(1);
-
     let prompt_width = available_width.min(TEXT_COLUMN_WIDTH).max(1);
     let prompt_lines = wrap_column(prompt, prompt_width);
     let prompt_lines = truncate_lines(prompt_lines, MAX_PROMPT_LINES, prompt_width);
@@ -259,7 +262,7 @@ fn colored_workflow_row_prefix(
     cells: &WorkflowRowCells,
     status: &Status,
     running_display: &str,
-    running_tasks: &[String],
+    running_tasks: &[RunningTaskSummary],
 ) -> String {
     let running_column = if running_tasks.is_empty() {
         cells.running.clone()
@@ -290,7 +293,9 @@ fn format_start_time(status_log: &TaskStatusLog) -> String {
 }
 
 fn format_datetime(time: DateTime<Utc>) -> String {
-    time.format("%Y-%m-%d %H:%M:%SZ").to_string()
+    time.with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M:%S%:z")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -298,10 +303,39 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    fn running_tasks(names: &[&str]) -> Vec<RunningTaskSummary> {
+        names
+            .iter()
+            .map(|name| RunningTaskSummary {
+                name: (*name).into(),
+                metis_id: format!("{name}-id"),
+            })
+            .collect()
+    }
+
+    fn strip_ansi(input: &str) -> String {
+        let mut cleaned = String::new();
+        let mut chars = input.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' {
+                while let Some(next) = chars.next() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                cleaned.push(ch);
+            }
+        }
+
+        cleaned
+    }
+
     #[test]
     fn running_tasks_are_clamped() {
-        let names = vec!["alpha".into(), "beta".into(), "gamma".into()];
-        let display = running_tasks_display(&names);
+        let tasks = running_tasks(&["alpha", "beta", "gamma"]);
+        let display = running_tasks_display(&tasks);
         assert!(display.len() <= RUNNING_WIDTH);
     }
 
@@ -310,6 +344,7 @@ mod tests {
         let now = Utc::now();
         let mut summary = WorkflowSummary {
             id: "wf-1".into(),
+            output: "task-1".into(),
             prompt: Some("boom".into()),
             notes: Some("note".into()),
             status: Status::Failed,
@@ -319,7 +354,7 @@ mod tests {
                 end_time: None,
                 current_status: Status::Failed,
             },
-            running_tasks: vec![],
+            running_tasks: Vec::new(),
         };
 
         assert_eq!(workflow_prompt(&summary), "boom");
@@ -333,9 +368,10 @@ mod tests {
 
     #[test]
     fn header_rows_only_include_prompt_column() {
-        let prefix_width =
-            workflow_row_prefix(&workflow_row_cells("ID", "STATUS", "STARTED", "RUNTIME", "RUNNING"))
-                .len();
+        let prefix_width = workflow_row_prefix(&workflow_row_cells(
+            "ID", "STATUS", "STARTED", "RUNTIME", "RUNNING",
+        ))
+        .len();
         let (plain, colored) = header_rows(prefix_width + TEXT_COLUMN_WIDTH);
         assert_eq!(plain.len(), colored.len());
 
@@ -361,6 +397,7 @@ mod tests {
         let now = Utc::now();
         let workflows = vec![WorkflowSummary {
             id: "wf-3".into(),
+            output: "task-1".into(),
             prompt: Some("the prompt to show".into()),
             notes: Some("notes should be hidden".into()),
             status: Status::Running,
@@ -370,21 +407,19 @@ mod tests {
                 end_time: None,
                 current_status: Status::Running,
             },
-            running_tasks: vec!["task-1".into()],
+            running_tasks: running_tasks(&["task-1"]),
         }];
 
         let prefix_width = workflow_row_prefix(&workflow_row_cells(
-            "wf-3",
-            "STATUS",
-            "STARTED",
-            "RUNTIME",
-            "RUNNING",
+            "wf-3", "STATUS", "STARTED", "RUNTIME", "RUNNING",
         ))
         .len();
         let lines = render_workflows(&workflows, prefix_width + TEXT_COLUMN_WIDTH, now);
         let combined = lines.join("\n");
+        let sanitized = strip_ansi(&combined);
+        let normalized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
 
-        assert!(combined.contains("the prompt to show"));
+        assert!(normalized.contains("the prompt to show"));
         assert!(!combined.contains("notes should be hidden"));
     }
 
@@ -410,7 +445,12 @@ mod tests {
             current_status: Status::Running,
         };
 
-        assert_eq!(format_start_time(&status_log), "2024-01-02 03:04:05Z");
+        let expected = start_time
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S%:z")
+            .to_string();
+
+        assert_eq!(format_start_time(&status_log), expected);
     }
 
     #[test]
