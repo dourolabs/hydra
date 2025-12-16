@@ -23,6 +23,7 @@ pub struct MockMetisClient {
     pub list_workflows_responses: Mutex<VecDeque<ListWorkflowsResponse>>,
     pub workflow_summaries: Mutex<VecDeque<WorkflowSummary>>,
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
+    pub log_requests: Mutex<Vec<String>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
 }
 
@@ -60,6 +61,10 @@ impl MockMetisClient {
 
     pub fn recorded_requests(&self) -> Vec<CreateJobRequest> {
         self.recorded_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_log_requests(&self) -> Vec<String> {
+        self.log_requests.lock().unwrap().clone()
     }
 }
 
@@ -106,7 +111,8 @@ impl MetisClientInterface for MockMetisClient {
         Err(anyhow!("kill_job not implemented in MockMetisClient"))
     }
 
-    async fn get_job_logs(&self, _job_id: &str, _query: &LogsQuery) -> Result<LogStream> {
+    async fn get_job_logs(&self, job_id: &str, _query: &LogsQuery) -> Result<LogStream> {
+        self.log_requests.lock().unwrap().push(job_id.to_string());
         let lines = self
             .log_responses
             .lock()
