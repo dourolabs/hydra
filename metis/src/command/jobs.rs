@@ -1,4 +1,7 @@
-use crate::client::MetisClientInterface;
+use crate::{
+    client::MetisClientInterface,
+    util::{format_compact_duration, truncate_lines},
+};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
@@ -98,27 +101,6 @@ pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize)
             })
             .collect()
     }
-}
-
-fn truncate_lines(lines: Vec<String>, max_lines: usize, max_width: usize) -> Vec<String> {
-    if max_lines == 0 || lines.len() <= max_lines {
-        return lines;
-    }
-
-    let mut truncated: Vec<String> = lines.into_iter().take(max_lines).collect();
-    if let Some(last) = truncated.last_mut() {
-        let ellipsis = "...";
-        if max_width <= ellipsis.len() {
-            *last = ellipsis.chars().take(max_width).collect();
-        } else {
-            let keep = max_width - ellipsis.len();
-            let mut shortened: String = last.chars().take(keep).collect();
-            shortened.push_str(ellipsis);
-            *last = shortened;
-        }
-    }
-
-    truncated
 }
 
 struct JobRowCells {
