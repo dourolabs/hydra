@@ -24,6 +24,6 @@ tasks:
 
           git add -A 
 
-          git commit -m "task ${METIS_ID}"
+          git commit -m "task ${METIS_ID}" || true
           branch_name=$(git rev-parse --abbrev-ref HEAD)
           git push --force-with-lease origin "${branch_name}"
