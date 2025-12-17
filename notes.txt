@@ -30,8 +30,49 @@ kind delete cluster --name local-dev
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
 
+## Task system
+
+Tasks are programs in a programming language where the core types/operations occur on the filesystem.
+
+codex: (String) -> Context[()]
+
+Context is a state monad representing the effect of the operation on the filesystem.
+Context monad has the following methods for extracting values
+Context[A].sample(docker image) -> A
+
+Context operations
+- write(tar_gz) / write(git repo): Context[()] -- set the current context. this operation runs rm -rf on the current directory and replaces with the passed in argument.
+- read(path): Context[Option[String]] -- get the contents of a file at the current path
+- run(shell command): Context[String] -- note that this includes git pull / push / etc etc
+
+def spawn_more_jobs(prompt: String) -> Context[()] {
+    for {
+        () <- codex(prompt)
+        files <- read(paths)
+        results <- files.map(codex).flatten()
+    } yield {
+        ()
+    }
+}
+
+name: spawn_more_jobs
+inputs:
+    - name: prompt
+      type: String
+output:
+    - type: Context[()]
+type: lambda
+body:
+    - name: generate-tasks
+      
+
+
+---
+garbage below here
+
+
+
 ## Queue of prompts
-- rename the metis jobs command to metis tasks. Please also rename the relevant "job" structs etc in metis-common to be "task" instead. Job should only be used in the context of the job_engine (i.e., for kubernetes jobs).
 - if a job fails in the job engine, then subsequent tasks should be marked as "dropped" and not executed. Please implement this behavior and ensure it is tested.
 
 
