@@ -3,6 +3,7 @@
 mod client;
 mod command;
 mod config;
+mod util;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
