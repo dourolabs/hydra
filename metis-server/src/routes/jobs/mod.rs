@@ -64,6 +64,7 @@ pub async fn create_job(
         let mut store = state.store.write().await;
         let task = Task::Spawn {
             prompt: prompt.clone(),
+            program: payload.program.clone(),
             context,
             setup: vec![],
             cleanup: vec![],
@@ -228,6 +229,9 @@ async fn job_summary_with_time(
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let job_id = job_id.to_string();
     let status_log = store.get_status_log(&job_id).await?;
+    let program = match store.get_task(&job_id).await? {
+        Task::Spawn { program, .. } => program,
+    };
     let notes = job_notes_from_store(&job_id, store).await;
 
     let reference_time = status_log.start_time.or(Some(status_log.creation_time));
@@ -236,6 +240,7 @@ async fn job_summary_with_time(
         JobSummary {
             id: job_id,
             notes,
+            program,
             status_log,
         },
         reference_time,

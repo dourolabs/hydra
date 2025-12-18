@@ -95,6 +95,9 @@ pub struct TaskDefinition {
     pub task_type: String,
     /// Prompt for the task.
     pub prompt: String,
+    /// Optional program to run on the worker via rhai.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
     /// Input dependencies - can be a single task name or a list of task names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inputs: Option<TaskInputs>,
@@ -295,6 +298,10 @@ impl Workflow {
             .map(|(name, task)| {
                 let substituted_task = TaskDefinition {
                     prompt: Self::substitute_variables_in_string(&task.prompt, &vars),
+                    program: task
+                        .program
+                        .as_ref()
+                        .map(|program| Self::substitute_variables_in_string(program, &vars)),
                     setup: task.setup.clone(),
                     cleanup: task.cleanup.clone(),
                     task_type: task.task_type.clone(),
@@ -410,6 +417,7 @@ mod tests {
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "Test prompt with $VAR1 and ${VAR2}".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec!["echo $VAR1".to_string(), "echo ${VAR3}".to_string()],
                 cleanup: vec!["echo cleanup ${VAR2}".to_string()],
@@ -561,6 +569,7 @@ tasks:
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "Test $UNDEFINED_VAR".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -585,6 +594,7 @@ tasks:
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "No vars in prompt".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec!["echo $ENV_ONLY".to_string()],
                 cleanup: vec!["echo ${ANOTHER_ENV}".to_string()],
@@ -609,6 +619,7 @@ tasks:
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "Test $VAR_WITHOUT_VALUE".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -638,6 +649,7 @@ tasks:
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "Test $EMPTY_VAR".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],

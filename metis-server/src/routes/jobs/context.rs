@@ -48,6 +48,7 @@ pub async fn get_job_context(
     match task {
         Task::Spawn {
             prompt: _,
+            program,
             context,
             setup,
             cleanup,
@@ -55,6 +56,7 @@ pub async fn get_job_context(
         } => Ok(Json(WorkerContext {
             request_context: context.clone(),
             parents,
+            program: program.clone(),
             setup: setup.clone(),
             cleanup: cleanup.clone(),
             variables: env_vars.clone(),

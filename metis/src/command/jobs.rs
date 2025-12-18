@@ -225,6 +225,7 @@ mod tests {
         JobSummary {
             id: id.to_string(),
             notes: None,
+            program: None,
             status_log: TaskStatusLog {
                 creation_time: Utc::now(),
                 start_time: None,

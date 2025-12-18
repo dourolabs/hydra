@@ -25,6 +25,7 @@ pub enum Task {
     /// A spawn task that creates a new job.
     Spawn {
         prompt: String,
+        program: Option<String>,
         context: Bundle,
         setup: Vec<Command>,
         cleanup: Vec<Command>,
