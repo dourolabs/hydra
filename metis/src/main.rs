@@ -149,6 +149,12 @@ enum Commands {
         #[arg(value_name = "JOB_ID")]
         job: String,
     },
+    /// Run a Rhai script.
+    Run {
+        /// Rhai script to execute. Can be a file path or a one-line script.
+        #[arg(value_name = "SCRIPT_OR_FILE")]
+        script: String,
+    },
 }
 
 #[tokio::main]
@@ -205,6 +211,7 @@ async fn main() -> Result<()> {
 
         Commands::WorkerInit { job, path } => command::worker_init::run(&client, job, path).await?,
         Commands::WorkerSubmit { job } => command::worker_submit::run(&client, job).await?,
+        Commands::Run { script } => command::run::run(script)?,
     }
 
     Ok(())
