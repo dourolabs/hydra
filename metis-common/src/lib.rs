@@ -49,6 +49,8 @@ pub mod jobs {
         pub context: BundleSpec,
         #[serde(default)]
         pub parent_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        pub variables: HashMap<String, String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

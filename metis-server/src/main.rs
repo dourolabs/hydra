@@ -338,6 +338,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "prompt": "set variables",
+                "variables": { "FOO": "bar", "PROMPT": "custom prompt" }
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn { env_vars, .. } => {
+                assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
+                assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Result<()> {
+        let mut state = test_state();
+        let repo = GitRepository {
+            name: "private-repo".to_string(),
+            remote_url: "https://example.com/private.git".to_string(),
+            default_branch: Some("develop".to_string()),
+            github_token: Some("token-123".to_string()),
+        };
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
+        });
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "prompt": "use user token",
+                "context": { "type": "service_repository", "name": "private-repo" },
+                "variables": { "GH_TOKEN": "user-supplied" }
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn { env_vars, .. } => {
+                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"user-supplied".to_string()));
+                assert_eq!(
+                    env_vars.get("PROMPT"),
+                    None,
+                    "server should not inject prompt automatically"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn create_job_rejects_unknown_service_repository() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();

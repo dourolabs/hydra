@@ -111,6 +111,9 @@ pub async fn run(
             bail!("--after values must not be empty");
         }
 
+        let mut variables = parse_cli_variables(&cli_vars)?;
+        variables.insert("PROMPT".to_string(), prompt.clone());
+
         let params = vec![prompt.clone()];
         let request = CreateJobRequest {
             prompt,
@@ -118,6 +121,7 @@ pub async fn run(
             params,
             context,
             parent_ids,
+            variables,
         };
         let response = client.create_job(&request).await?;
         let job_id = response.job_id;
@@ -610,6 +614,10 @@ mod tests {
         assert!(request.program.is_none());
         assert_eq!(request.params, vec!["test prompt".to_string()]);
         assert!(request.parent_ids.is_empty());
+        assert_eq!(
+            request.variables.get("PROMPT"),
+            Some(&"test prompt".to_string())
+        );
         assert!(matches!(
             request.context,
             BundleSpec::TarGz { ref archive_base64 } if !archive_base64.is_empty()
@@ -655,6 +663,40 @@ mod tests {
             }
         );
         assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn spawn_forwards_cli_variables_into_job_request() {
+        let tmp_dir = tempdir().unwrap();
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-with-vars".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
+            false,
+            vec![],
+            vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
+            None,
+            vec!["variable prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        let vars = &requests[0].variables;
+        assert_eq!(vars.get("FOO"), Some(&"bar".to_string()));
+        assert_eq!(vars.get("PROMPT"), Some(&"variable prompt".to_string()));
     }
 
     #[tokio::test]
