@@ -25,10 +25,10 @@ fn shell(command: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
     (AsyncOp::Shell { command }, continuation)
 }
 
-fn evaluate_async_op(op: &AsyncOp) -> Result<String> {
+fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Result<String> {
     match op {
         AsyncOp::Codex { prompt } => evaluate_codex_op(prompt),
-        AsyncOp::Shell { command } => evaluate_shell_command(command),
+        AsyncOp::Shell { command } => evaluate_shell_command(command, env),
     }
 }
 
@@ -60,9 +60,10 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
         .with_context(|| format!("failed to read codex output from {output_path:?}"))
 }
 
-fn evaluate_shell_command(command: &str) -> Result<String> {
+fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Result<String> {
     let output = Command::new("sh")
         .args(["-c", command])
+        .envs(env)
         .output()
         .with_context(|| format!("failed to spawn shell command: {command}"))?;
 
@@ -114,7 +115,7 @@ pub fn eval_with_closure_unwrapping(
     loop {
         if let Some((op, fn_ptr)) = result.clone().try_cast::<(AsyncOp, rhai::FnPtr)>() {
             println!("Async op: {}", op);
-            let op_result = evaluate_async_op(&op)?;
+            let op_result = evaluate_async_op(&op, env)?;
             match fn_ptr.call(&engine, &ast, (op_result,)) {
                 Ok(new_result) => {
                     println!("Result: {:?}", &new_result);
@@ -154,6 +155,27 @@ mod tests {
                 .try_cast::<String>()
                 .expect("Rhai result should be a string"),
             "secret"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn shell_commands_use_provided_env() -> Result<()> {
+        let mut env = HashMap::new();
+        env.insert("GREETING".to_string(), "hello".to_string());
+
+        let result = eval_with_closure_unwrapping(
+            r#"shell("printf %s \"$GREETING\"", |output| output)"#,
+            Vec::new(),
+            &env,
+        )?;
+
+        assert_eq!(
+            result
+                .try_cast::<String>()
+                .expect("Rhai result should be a string"),
+            "hello"
         );
 
         Ok(())
