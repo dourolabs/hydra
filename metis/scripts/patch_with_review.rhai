@@ -1,29 +1,12 @@
 //! Rough equivalent of templates/patch_with_review.yaml.
 
-fn env_or_default(key, default_value) {
-    if env.contains(key) {
-        let value = env[key];
-        if value == "" {
-            return default_value;
-        }
-        return value;
-    }
-
-    default_value
-}
-
-fn escape_single_quotes(input) {
-    input.replace("'", "'\"'\"'")
-}
-
 fn snapshot_patch(next) {
     // We approximate the parent patch by capturing the current git diff because a single
     // script does not have task-level context like the workflow runner.
     let body = "mkdir -p .metis/generate-patch .metis/parents/generate-patch\n\
 git diff > .metis/generate-patch/changes.patch\n\
 cp .metis/generate-patch/changes.patch .metis/parents/generate-patch/changes.patch";
-    let command = `bash -lc '${escape_single_quotes(body)}'`;
-    shell(command, next)
+    shell(body, next)
 }
 
 fn copy_review_outputs(next) {
@@ -31,8 +14,7 @@ fn copy_review_outputs(next) {
 if [ -d .metis/output ]; then\n\
   cp -R .metis/output/. .metis/parents/code-review/\n\
 fi";
-    let command = `bash -lc '${escape_single_quotes(body)}'`;
-    shell(command, next)
+    shell(body, next)
 }
 
 fn cleanup(metis_id, gh_token) {
@@ -43,7 +25,7 @@ fn cleanup(metis_id, gh_token) {
 
     let cleanup_body = `set -euo pipefail
 
-export GH_TOKEN='${escape_single_quotes(gh_token)}'
+export GH_TOKEN='${gh_token}'
 
 git add -A 
 
@@ -57,7 +39,7 @@ echo "remotes"
 git remote -v
 
 echo "committing"
-git commit -m 'task ${escape_single_quotes(metis_id)}'
+git commit -m 'task ${metis_id}'
 echo "pushing"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 git push --force-with-lease origin "${branch_name}"
@@ -71,14 +53,16 @@ gh pr create \
   --title "${title}" \
   --body-file .metis/output/pr_body.txt`;
 
-    let command = `bash -lc '${escape_single_quotes(cleanup_body)}'`;
-    shell(command, |output| output)
+    shell(cleanup_body, |output| output)
 }
 
 fn run() {
-    let prompt_input = env_or_default("PROMPT", "");
-    let metis_id = env_or_default("METIS_ID", "unknown");
-    let gh_token = env_or_default("GH_TOKEN", "");
+    let prompt_input = env["PROMPT"] ?? "";
+    let metis_id = env["METIS_ID"] ?? "unknown";
+    let gh_token = env["GH_TOKEN"] ?? "";
+    if metis_id == "" {
+        metis_id = "unknown";
+    }
 
     let review_prompt = "You are a code review agent who is responsible for approving or \n\
 rejecting the changes from a contributor. Please look at the changes in .metis/generate-patch/changes.patch \n\
