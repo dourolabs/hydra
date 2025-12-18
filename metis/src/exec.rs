@@ -5,12 +5,14 @@ use anyhow::{anyhow, Context, Result};
 #[derive(Debug, Clone)]
 enum AsyncOp {
     Codex { prompt: String },
+    Shell { command: String },
 }
 
 impl std::fmt::Display for AsyncOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AsyncOp::Codex { prompt } => write!(f, "Codex {{ prompt: {prompt} }}"),
+            AsyncOp::Shell { command } => write!(f, "Shell {{ command: {command} }}"),
         }
     }
 }
@@ -19,9 +21,14 @@ fn codex(prompt: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
     (AsyncOp::Codex { prompt }, continuation)
 }
 
+fn shell(command: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
+    (AsyncOp::Shell { command }, continuation)
+}
+
 fn evaluate_async_op(op: &AsyncOp) -> Result<String> {
     match op {
         AsyncOp::Codex { prompt } => evaluate_codex_op(prompt),
+        AsyncOp::Shell { command } => evaluate_shell_command(command),
     }
 }
 
@@ -53,11 +60,35 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
         .with_context(|| format!("failed to read codex output from {output_path:?}"))
 }
 
+fn evaluate_shell_command(command: &str) -> Result<String> {
+    let output = Command::new("sh")
+        .args(["-c", command])
+        .output()
+        .with_context(|| format!("failed to spawn shell command: {command}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "shell command `{command}` failed with status {}{}",
+            output.status,
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        ));
+    }
+
+    String::from_utf8(output.stdout)
+        .map_err(|err| anyhow!("failed to decode shell command output as UTF-8: {err}"))
+}
+
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
 pub fn eval_with_closure_unwrapping(script: &str, params: Vec<String>) -> Result<rhai::Dynamic> {
     let mut engine = rhai::Engine::new();
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
+    engine.register_fn("shell", shell);
 
     let ast = engine
         .compile(script)
