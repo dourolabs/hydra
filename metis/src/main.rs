@@ -87,6 +87,10 @@ enum Commands {
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
 
+        /// Rhai program to execute. Can be a file path or an inline script. Only valid for single jobs.
+        #[arg(long = "program", value_name = "PROGRAM", conflicts_with = "workflow")]
+        program: Option<String>,
+
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
             value_name = "PROMPT",
@@ -184,6 +188,7 @@ async fn main() -> Result<()> {
             encode_git_bundle,
             after,
             var,
+            program,
             prompt,
         } => {
             command::spawn::run(
@@ -199,6 +204,7 @@ async fn main() -> Result<()> {
                 encode_git_bundle,
                 after,
                 var,
+                program,
                 prompt,
             )
             .await?

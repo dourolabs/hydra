@@ -1,7 +1,7 @@
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as Base64Engine;
-use base64::Engine;
+use base64::Engine as Base64EngineTrait;
 use futures::StreamExt;
 use metis_common::{
     jobs::{BundleSpec, CreateJobRequest},
@@ -9,6 +9,7 @@ use metis_common::{
     task_status::Status,
     workflows::{CreateWorkflowRequest, VariableDefinition},
 };
+use rhai::Engine as RhaiEngine;
 use serde_yaml;
 use std::{
     env, fs,
@@ -34,6 +35,7 @@ pub async fn run(
     force_encode_git_bundle: bool,
     after: Vec<String>,
     cli_vars: Vec<String>,
+    program: Option<String>,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
     let context = build_context(
@@ -98,6 +100,12 @@ pub async fn run(
             prompt_parts.join(" ")
         };
 
+        let program = if let Some(program_arg) = program {
+            Some(load_program(&program_arg)?)
+        } else {
+            None
+        };
+
         let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
         if parent_ids.iter().any(|id| id.is_empty()) {
             bail!("--after values must not be empty");
@@ -105,7 +113,7 @@ pub async fn run(
 
         let request = CreateJobRequest {
             prompt,
-            program: None,
+            program,
             context,
             parent_ids,
         };
@@ -341,6 +349,31 @@ fn encode_context_directory(
     encode_directory(path)
 }
 
+fn load_program(program_arg: &str) -> Result<String> {
+    let trimmed = program_arg.trim();
+    if trimmed.is_empty() {
+        bail!("--program value must not be empty");
+    }
+
+    let program_source = if Path::new(trimmed).exists() {
+        fs::read_to_string(trimmed)
+            .with_context(|| format!("failed to read program file '{}'", trimmed))?
+    } else {
+        program_arg.to_string()
+    };
+
+    validate_program_syntax(&program_source)?;
+    Ok(program_source)
+}
+
+fn validate_program_syntax(program: &str) -> Result<()> {
+    let engine = RhaiEngine::new();
+    engine
+        .compile(program)
+        .map(|_| ())
+        .map_err(|err| anyhow!("invalid Rhai program: {err}"))
+}
+
 fn is_git_directory(path: &Path) -> Result<bool> {
     let output = Command::new("git")
         .arg("-C")
@@ -507,6 +540,7 @@ mod tests {
         jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Status, TaskStatusLog},
     };
+    use std::fs;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -559,6 +593,7 @@ mod tests {
             false,
             vec![],
             vec![],
+            None,
             vec!["test prompt".into()],
         )
         .await
@@ -568,6 +603,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
         assert_eq!(request.prompt, "test prompt");
+        assert!(request.program.is_none());
         assert!(request.parent_ids.is_empty());
         assert!(matches!(
             request.context,
@@ -598,6 +634,7 @@ mod tests {
             false,
             vec![],
             vec![],
+            None,
             vec!["test prompt".into()],
         )
         .await
@@ -612,6 +649,100 @@ mod tests {
                 rev: Some("feature".into())
             }
         );
+    }
+
+    #[tokio::test]
+    async fn spawn_accepts_inline_program_and_validates() {
+        let tmp_dir = tempdir().unwrap();
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-inline-program".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
+            false,
+            vec![],
+            vec![],
+            Some("let x = 1 + 2;".into()),
+            vec!["test prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].program.as_deref(), Some("let x = 1 + 2;"));
+    }
+
+    #[tokio::test]
+    async fn spawn_reads_program_from_file() {
+        let tmp_dir = tempdir().unwrap();
+        let program_path = tmp_dir.path().join("script.rhai");
+        fs::write(&program_path, "let answer = 42;").unwrap();
+
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-file-program".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
+            false,
+            vec![],
+            vec![],
+            Some(program_path.to_string_lossy().into_owned()),
+            vec!["file prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].program.as_deref(), Some("let answer = 42;"));
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_invalid_program() {
+        let tmp_dir = tempdir().unwrap();
+        let client = MockMetisClient::default();
+
+        let result = run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
+            false,
+            vec![],
+            vec![],
+            Some("let =".into()),
+            vec!["bad prompt".into()],
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(client.recorded_requests().is_empty());
     }
 
     #[test]
