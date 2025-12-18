@@ -14,7 +14,6 @@ use metis_common::{
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
 use serde_json::json;
-use std::collections::HashMap;
 use tracing::{error, info};
 
 pub mod context;
@@ -54,9 +53,9 @@ pub async fn create_job(
     let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
     let (context, github_token) = state.service_state.resolve_bundle_spec(payload.context)?;
-    let mut env_vars = HashMap::new();
+    let mut env_vars = payload.variables;
     if let Some(token) = github_token {
-        env_vars.insert("GH_TOKEN".to_string(), token);
+        env_vars.entry("GH_TOKEN".to_string()).or_insert(token);
     }
 
     // Store the task with context and prompt (status will be Pending)
