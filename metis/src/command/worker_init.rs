@@ -13,12 +13,13 @@ use flate2::read::GzDecoder;
 use metis_common::jobs::{Bundle, ParentContext, WorkerContext};
 use tar::Archive;
 
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, command::exec};
 
 pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) -> Result<()> {
     let WorkerContext {
         request_context,
         parents,
+        program,
         setup,
         variables,
         ..
@@ -42,6 +43,10 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     write_parent_outputs(&parents, &dest, github_token)?;
     configure_git_repo(&dest)?;
     run_setup_commands(&setup, &dest, &variables)?;
+    if let Some(program) = program {
+        exec::run_script(program, Some(&dest))
+            .context("failed to execute Rhai program for worker-init")?;
+    }
     Ok(())
 }
 

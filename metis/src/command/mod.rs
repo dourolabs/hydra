@@ -1,3 +1,4 @@
+pub mod exec;
 pub mod jobs;
 pub mod kill;
 pub mod logs;
