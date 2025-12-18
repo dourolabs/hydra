@@ -43,6 +43,8 @@ pub mod jobs {
         pub prompt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub program: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub params: Vec<String>,
         #[serde(default)]
         pub context: BundleSpec,
         #[serde(default)]
@@ -122,6 +124,8 @@ pub mod jobs {
         pub parents: HashMap<String, ParentContext>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub program: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub params: Vec<String>,
         #[serde(default)]
         pub setup: Vec<String>,
         #[serde(default)]
@@ -147,6 +151,8 @@ pub mod jobs {
         pub notes: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub program: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub params: Vec<String>,
         pub status_log: TaskStatusLog,
     }
 

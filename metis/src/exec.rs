@@ -54,7 +54,7 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
 }
 
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
-pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
+pub fn eval_with_closure_unwrapping(script: &str, params: Vec<String>) -> Result<rhai::Dynamic> {
     let mut engine = rhai::Engine::new();
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
@@ -64,6 +64,8 @@ pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
         .map_err(|err| anyhow!("failed to compile Rhai script: {}", err))?;
 
     let mut scope = rhai::Scope::new();
+    let params_array: rhai::Array = params.into_iter().map(|value| value.into()).collect();
+    scope.push("params", params_array);
     let mut result = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
         .map_err(|err| anyhow!("failed to evaluate Rhai script: {}", err))?;

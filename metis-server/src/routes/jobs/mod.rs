@@ -65,6 +65,7 @@ pub async fn create_job(
         let task = Task::Spawn {
             prompt: prompt.clone(),
             program: payload.program.clone(),
+            params: payload.params.clone(),
             context,
             setup: vec![],
             cleanup: vec![],
@@ -229,8 +230,10 @@ async fn job_summary_with_time(
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let job_id = job_id.to_string();
     let status_log = store.get_status_log(&job_id).await?;
-    let program = match store.get_task(&job_id).await? {
-        Task::Spawn { program, .. } => program,
+    let (program, params) = match store.get_task(&job_id).await? {
+        Task::Spawn {
+            program, params, ..
+        } => (program, params),
     };
     let notes = job_notes_from_store(&job_id, store).await;
 
@@ -241,6 +244,7 @@ async fn job_summary_with_time(
             id: job_id,
             notes,
             program,
+            params,
             status_log,
         },
         reference_time,

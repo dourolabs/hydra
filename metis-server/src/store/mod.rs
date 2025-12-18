@@ -26,6 +26,7 @@ pub enum Task {
     Spawn {
         prompt: String,
         program: Option<String>,
+        params: Vec<String>,
         context: Bundle,
         setup: Vec<Command>,
         cleanup: Vec<Command>,
