@@ -46,7 +46,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     configure_git_repo(&dest)?;
     run_setup_commands(&setup, &dest, &variables)?;
     if let Some(program) = program {
-        let _ = eval_with_closure_unwrapping(&program, params)
+        let _ = eval_with_closure_unwrapping(&program, params, &variables)
             .with_context(|| "failed to execute Rhai program from worker context")?;
     }
     Ok(())

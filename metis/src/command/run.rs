@@ -1,6 +1,6 @@
 use crate::exec::eval_with_closure_unwrapping;
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 pub fn run(script_input: String) -> Result<()> {
     // Determine if input is a file path or a script string
@@ -12,7 +12,7 @@ pub fn run(script_input: String) -> Result<()> {
     };
 
     // Run the script
-    let _ = eval_with_closure_unwrapping(&script, Vec::new())
+    let _ = eval_with_closure_unwrapping(&script, Vec::new(), &HashMap::new())
         .map_err(|err| anyhow::anyhow!("failed to execute Rhai script: {}", err))?;
 
     Ok(())
