@@ -3,6 +3,7 @@
 mod client;
 mod command;
 mod config;
+mod exec;
 mod util;
 
 use anyhow::Result;

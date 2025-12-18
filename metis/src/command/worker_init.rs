@@ -14,6 +14,7 @@ use metis_common::jobs::{Bundle, ParentContext, WorkerContext};
 use tar::Archive;
 
 use crate::client::MetisClientInterface;
+use crate::exec::eval_with_closure_unwrapping;
 
 pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) -> Result<()> {
     let WorkerContext {
@@ -21,6 +22,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         parents,
         setup,
         variables,
+        program,
         ..
     } = client.get_job_context(&job).await?;
     ensure_clean_destination(&dest)?;
@@ -42,6 +44,10 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     write_parent_outputs(&parents, &dest, github_token)?;
     configure_git_repo(&dest)?;
     run_setup_commands(&setup, &dest, &variables)?;
+    if let Some(program) = program {
+        eval_with_closure_unwrapping(&program)
+            .with_context(|| "failed to execute Rhai program from worker context")?;
+    }
     Ok(())
 }
 
