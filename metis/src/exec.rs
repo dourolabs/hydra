@@ -1,4 +1,4 @@
-use std::{fs, path::Path, process::Command};
+use std::{collections::HashMap, fs, path::Path, process::Command};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -84,7 +84,11 @@ fn evaluate_shell_command(command: &str) -> Result<String> {
 }
 
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
-pub fn eval_with_closure_unwrapping(script: &str, params: Vec<String>) -> Result<rhai::Dynamic> {
+pub fn eval_with_closure_unwrapping(
+    script: &str,
+    params: Vec<String>,
+    env: &HashMap<String, String>,
+) -> Result<rhai::Dynamic> {
     let mut engine = rhai::Engine::new();
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
@@ -97,6 +101,11 @@ pub fn eval_with_closure_unwrapping(script: &str, params: Vec<String>) -> Result
     let mut scope = rhai::Scope::new();
     let params_array: rhai::Array = params.into_iter().map(|value| value.into()).collect();
     scope.push("params", params_array);
+    let mut env_map = rhai::Map::new();
+    for (key, value) in env {
+        env_map.insert(key.into(), value.clone().into());
+    }
+    scope.push("env", env_map);
     let mut result = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
         .map_err(|err| anyhow!("failed to evaluate Rhai script: {}", err))?;
@@ -128,4 +137,25 @@ pub fn eval_with_closure_unwrapping(script: &str, params: Vec<String>) -> Result
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_with_closure_unwrapping_pushes_env_map() -> Result<()> {
+        let mut env = HashMap::new();
+        env.insert("API_KEY".to_string(), "secret".to_string());
+
+        let result = eval_with_closure_unwrapping(r#"env["API_KEY"]"#, Vec::new(), &env)?;
+        assert_eq!(
+            result
+                .try_cast::<String>()
+                .expect("Rhai result should be a string"),
+            "secret"
+        );
+
+        Ok(())
+    }
 }
