@@ -105,6 +105,7 @@ pub async fn run(
 
         let request = CreateJobRequest {
             prompt,
+            program: None,
             context,
             parent_ids,
         };
@@ -522,6 +523,7 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
+                program: None,
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),
@@ -534,6 +536,7 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
+                program: None,
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),
@@ -640,6 +643,7 @@ mod tests {
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -700,6 +704,7 @@ mod tests {
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -746,6 +751,7 @@ mod tests {
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -794,6 +800,7 @@ mod tests {
             TaskDefinition {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
+                program: None,
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],

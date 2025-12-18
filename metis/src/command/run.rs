@@ -4,17 +4,15 @@ use std::path::Path;
 pub fn run(script_input: String) -> Result<()> {
     // Determine if input is a file path or a script string
     let script = if Path::new(&script_input).exists() {
-        std::fs::read_to_string(&script_input).with_context(|| {
-            format!("failed to read script file '{}'", script_input)
-        })?
+        std::fs::read_to_string(&script_input)
+            .with_context(|| format!("failed to read script file '{}'", script_input))?
     } else {
         script_input
     };
 
     // Run the script
-    eval_with_closure_unwrapping(&script).map_err(|err| {
-        anyhow::anyhow!("failed to execute Rhai script: {}", err)
-    })?;
+    eval_with_closure_unwrapping(&script)
+        .map_err(|err| anyhow::anyhow!("failed to execute Rhai script: {}", err))?;
 
     Ok(())
 }
@@ -22,14 +20,14 @@ pub fn run(script_input: String) -> Result<()> {
 /// Evaluates a script and recursively evaluates no-argument closures until the result is no longer a closure.
 pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
     let engine = rhai::Engine::new();
-    let ast = engine.compile(script).map_err(|err| {
-        anyhow::anyhow!("failed to compile Rhai script: {}", err)
-    })?;
+    let ast = engine
+        .compile(script)
+        .map_err(|err| anyhow::anyhow!("failed to compile Rhai script: {}", err))?;
 
     let mut scope = rhai::Scope::new();
-    let mut result = engine.eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast).map_err(|err| {
-        anyhow::anyhow!("failed to evaluate Rhai script: {}", err)
-    })?;
+    let mut result = engine
+        .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
+        .map_err(|err| anyhow::anyhow!("failed to evaluate Rhai script: {}", err))?;
 
     // Recursively evaluate closures with no arguments
     loop {
@@ -61,4 +59,3 @@ pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
 
     Ok(result)
 }
-

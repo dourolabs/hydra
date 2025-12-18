@@ -1,8 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::jobs::{
-        color_status, current_terminal_width, format_runtime, format_status,
-    },
+    command::jobs::{color_status, current_terminal_width, format_runtime, format_status},
     util::truncate_lines,
 };
 use anyhow::Result;

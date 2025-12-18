@@ -440,6 +440,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -451,6 +452,7 @@ mod tests {
             .unwrap();
         let child_task = Task::Spawn {
             prompt: "child".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -487,6 +489,7 @@ mod tests {
 
         let spawn_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -507,6 +510,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -517,6 +521,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -529,6 +534,7 @@ mod tests {
             .unwrap();
         let grandchild_task = Task::Spawn {
             prompt: "test2".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -567,6 +573,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -583,6 +590,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -593,6 +601,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -615,6 +624,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -626,6 +636,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -656,6 +667,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -676,6 +688,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -695,6 +708,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -714,6 +728,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -741,6 +756,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -774,6 +790,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -784,6 +801,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -817,6 +835,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -827,6 +846,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -841,6 +861,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -874,6 +895,7 @@ mod tests {
 
         let root1_task = Task::Spawn {
             prompt: "test1".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -886,6 +908,7 @@ mod tests {
 
         let root2_task = Task::Spawn {
             prompt: "test2".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -901,6 +924,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -944,6 +968,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -954,6 +979,7 @@ mod tests {
             .add_task(
                 Task::Spawn {
                     prompt: "child".to_string(),
+                    program: None,
                     context: Bundle::None,
                     setup: vec![],
                     cleanup: vec![],
@@ -979,6 +1005,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],
@@ -1000,6 +1027,7 @@ mod tests {
 
         let root_task = Task::Spawn {
             prompt: "test".to_string(),
+            program: None,
             context: Bundle::None,
             setup: vec![],
             cleanup: vec![],

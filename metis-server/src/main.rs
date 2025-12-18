@@ -218,11 +218,13 @@ mod tests {
             Task::Spawn {
                 prompt,
                 context,
+                program,
                 setup: _,
                 cleanup: _,
                 env_vars: _,
             } => {
                 assert_eq!(prompt, "run tests");
+                assert_eq!(program, None);
                 assert_eq!(context, Bundle::None);
             }
         }
@@ -248,6 +250,7 @@ mod tests {
                     "parent-1".to_string(),
                     Task::Spawn {
                         prompt: "parent task".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -383,6 +386,7 @@ mod tests {
                     oldest_id.clone(),
                     Task::Spawn {
                         prompt: "old".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -397,6 +401,7 @@ mod tests {
                     middle_id.clone(),
                     Task::Spawn {
                         prompt: "mid".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -411,6 +416,7 @@ mod tests {
                     newest_id.clone(),
                     Task::Spawn {
                         prompt: "new".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -455,6 +461,7 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "demo".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -694,6 +701,7 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -779,6 +787,7 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -825,6 +834,7 @@ mod tests {
                     job_id.clone(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -904,6 +914,7 @@ mod tests {
                     "parent-job".to_string(),
                     Task::Spawn {
                         prompt: "prepare".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -928,6 +939,7 @@ mod tests {
                     "ctx-job".to_string(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
+                        program: None,
                         context: context.clone(),
                         setup: vec![],
                         cleanup: vec![],
@@ -978,6 +990,7 @@ mod tests {
                     "env-job".to_string(),
                     Task::Spawn {
                         prompt: "do work".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1023,6 +1036,7 @@ mod tests {
                     first_task_id.clone(),
                     Task::Spawn {
                         prompt: "first".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1051,6 +1065,7 @@ mod tests {
                     second_task_id.clone(),
                     Task::Spawn {
                         prompt: "second".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1163,6 +1178,7 @@ mod tests {
                     first_task_id.clone(),
                     Task::Spawn {
                         prompt: "first".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1192,6 +1208,7 @@ mod tests {
                     failed_task_id.clone(),
                     Task::Spawn {
                         prompt: "second".to_string(),
+                        program: None,
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],

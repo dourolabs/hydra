@@ -41,6 +41,8 @@ pub mod jobs {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CreateJobRequest {
         pub prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub program: Option<String>,
         #[serde(default)]
         pub context: BundleSpec,
         #[serde(default)]
@@ -118,6 +120,8 @@ pub mod jobs {
         pub request_context: Bundle,
         #[serde(default)]
         pub parents: HashMap<String, ParentContext>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub program: Option<String>,
         #[serde(default)]
         pub setup: Vec<String>,
         #[serde(default)]
@@ -141,6 +145,8 @@ pub mod jobs {
         pub id: String,
         #[serde(default)]
         pub notes: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub program: Option<String>,
         pub status_log: TaskStatusLog,
     }
 
