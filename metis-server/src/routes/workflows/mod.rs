@@ -254,6 +254,7 @@ pub async fn create_workflow(
             let task = Task::Spawn {
                 prompt: workflow.tasks[&task_name].prompt.clone(),
                 program: workflow.tasks[&task_name].program.clone(),
+                params: workflow.tasks[&task_name].params.clone(),
                 context: context.clone(),
                 setup: workflow.tasks[&task_name].setup.clone(),
                 cleanup: workflow.tasks[&task_name].cleanup.clone(),
@@ -550,6 +551,7 @@ mod tests {
                     task_type: "codex".to_string(),
                     prompt: "Do the work".to_string(),
                     program: None,
+                    params: vec![],
                     inputs: None,
                     setup: vec![],
                     cleanup: vec![],
@@ -598,6 +600,7 @@ mod tests {
                     task_type: "codex".to_string(),
                     prompt: "do it".to_string(),
                     program: None,
+                    params: vec![],
                     inputs: None,
                     setup: vec![],
                     cleanup: vec![],

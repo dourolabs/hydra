@@ -12,7 +12,7 @@ pub fn run(script_input: String) -> Result<()> {
     };
 
     // Run the script
-    eval_with_closure_unwrapping(&script)
+    let _ = eval_with_closure_unwrapping(&script, Vec::new())
         .map_err(|err| anyhow::anyhow!("failed to execute Rhai script: {}", err))?;
 
     Ok(())

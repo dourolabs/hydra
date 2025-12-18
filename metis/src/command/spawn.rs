@@ -111,9 +111,11 @@ pub async fn run(
             bail!("--after values must not be empty");
         }
 
+        let params = vec![prompt.clone()];
         let request = CreateJobRequest {
             prompt,
             program,
+            params,
             context,
             parent_ids,
         };
@@ -558,6 +560,7 @@ mod tests {
                 id: "job-123".into(),
                 notes: None,
                 program: None,
+                params: vec![],
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),
@@ -571,6 +574,7 @@ mod tests {
                 id: "job-123".into(),
                 notes: None,
                 program: None,
+                params: vec![],
                 status_log: TaskStatusLog {
                     creation_time: start_time,
                     start_time: Some(start_time),
@@ -604,6 +608,7 @@ mod tests {
         let request = &requests[0];
         assert_eq!(request.prompt, "test prompt");
         assert!(request.program.is_none());
+        assert_eq!(request.params, vec!["test prompt".to_string()]);
         assert!(request.parent_ids.is_empty());
         assert!(matches!(
             request.context,
@@ -649,6 +654,7 @@ mod tests {
                 rev: Some("feature".into())
             }
         );
+        assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
     }
 
     #[tokio::test]
@@ -681,6 +687,7 @@ mod tests {
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].program.as_deref(), Some("let x = 1 + 2;"));
+        assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
     }
 
     #[tokio::test]
@@ -716,6 +723,7 @@ mod tests {
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].program.as_deref(), Some("let answer = 42;"));
+        assert_eq!(requests[0].params, vec!["file prompt".to_string()]);
     }
 
     #[tokio::test]
@@ -775,6 +783,7 @@ mod tests {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
                 program: None,
+                params: vec![],
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -836,6 +845,7 @@ mod tests {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
                 program: None,
+                params: vec![],
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -883,6 +893,7 @@ mod tests {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
                 program: None,
+                params: vec![],
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],
@@ -932,6 +943,7 @@ mod tests {
                 task_type: "codex".to_string(),
                 prompt: "test".to_string(),
                 program: None,
+                params: vec![],
                 inputs: None,
                 setup: vec![],
                 cleanup: vec![],

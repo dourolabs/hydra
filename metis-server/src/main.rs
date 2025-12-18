@@ -219,12 +219,14 @@ mod tests {
                 prompt,
                 context,
                 program,
+                params,
                 setup: _,
                 cleanup: _,
                 env_vars: _,
             } => {
                 assert_eq!(prompt, "run tests");
                 assert_eq!(program, None);
+                assert!(params.is_empty());
                 assert_eq!(context, Bundle::None);
             }
         }
@@ -251,6 +253,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "parent task".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -387,6 +390,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "old".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -402,6 +406,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "mid".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -417,6 +422,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "new".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -462,6 +468,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "demo".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -702,6 +709,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -788,6 +796,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -835,6 +844,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -915,6 +925,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "prepare".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -940,6 +951,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         program: None,
+                        params: vec![],
                         context: context.clone(),
                         setup: vec![],
                         cleanup: vec![],
@@ -964,6 +976,7 @@ mod tests {
         assert!(response.status().is_success());
         let body: WorkerContext = response.json().await?;
         assert_eq!(body.request_context, context);
+        assert!(body.params.is_empty());
         assert_eq!(body.parents.len(), 1);
         assert_eq!(
             body.parents.get("parent-job"),
@@ -991,6 +1004,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "do work".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1037,6 +1051,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "first".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1066,6 +1081,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "second".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1179,6 +1195,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "first".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],
@@ -1209,6 +1226,7 @@ mod tests {
                     Task::Spawn {
                         prompt: "second".to_string(),
                         program: None,
+                        params: vec![],
                         context: Bundle::None,
                         setup: vec![],
                         cleanup: vec![],

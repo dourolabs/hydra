@@ -49,6 +49,7 @@ pub async fn get_job_context(
         Task::Spawn {
             prompt: _,
             program,
+            params,
             context,
             setup,
             cleanup,
@@ -57,6 +58,7 @@ pub async fn get_job_context(
             request_context: context.clone(),
             parents,
             program: program.clone(),
+            params: params.clone(),
             setup: setup.clone(),
             cleanup: cleanup.clone(),
             variables: env_vars.clone(),
