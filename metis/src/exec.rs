@@ -1,8 +1,28 @@
 use anyhow::{anyhow, Result};
 
-/// Evaluates a script and recursively evaluates no-argument closures until the result is no longer a closure.
+#[derive(Debug, Clone)]
+enum AsyncOp {
+    Codex { prompt: String },
+}
+
+impl std::fmt::Display for AsyncOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AsyncOp::Codex { prompt } => write!(f, "Codex {{ prompt: {prompt} }}"),
+        }
+    }
+}
+
+fn codex(prompt: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
+    (AsyncOp::Codex { prompt }, continuation)
+}
+
+/// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
 pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
-    let engine = rhai::Engine::new();
+    let mut engine = rhai::Engine::new();
+    engine.register_type_with_name::<AsyncOp>("AsyncOp");
+    engine.register_fn("codex", codex);
+
     let ast = engine
         .compile(script)
         .map_err(|err| anyhow!("failed to compile Rhai script: {}", err))?;
@@ -12,13 +32,10 @@ pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
         .map_err(|err| anyhow!("failed to evaluate Rhai script: {}", err))?;
 
-    // Recursively evaluate closures with no arguments
+    // Recursively evaluate async operations by executing their continuations
     loop {
-        // Check if the result is a closure (FnPtr)
-        if let Some(fn_ptr) = result.clone().try_cast::<rhai::FnPtr>() {
-            println!("Evaluating closure");
-            // Try to call the closure with no arguments
-            // If it succeeds, it's a no-argument closure; if it fails, it requires arguments
+        if let Some((op, fn_ptr)) = result.clone().try_cast::<(AsyncOp, rhai::FnPtr)>() {
+            println!("Async op: {}", op);
             match fn_ptr.call(&engine, &ast, ()) {
                 Ok(new_result) => {
                     println!("Result: {:?}", &new_result);
@@ -29,13 +46,13 @@ pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
                 Err(err) => {
                     println!("Error: {:?}", &err);
                     // Failed to call - either requires arguments or is not callable
-                    // Break the loop and return the closure as-is
+                    // Break the loop and return the continuation as-is
                     break;
                 }
             }
         } else {
-            println!("Not a closure -- done!. Result {:?}", result);
-            // Not a closure, return the result
+            println!("Not an async op tuple -- done!. Result {:?}", result);
+            // Not an async operation tuple, return the result
             break;
         }
     }
