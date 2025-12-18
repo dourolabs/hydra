@@ -18,7 +18,7 @@ fn escape_single_quotes(input) {
 
 fn snapshot_patch(next) {
     // We approximate the parent patch by capturing the current git diff because a single
-    // script does not have task-level context like the workflow runner.
+    // script does not have task-level context like the job runner.
     let body = "mkdir -p .metis/generate-patch .metis/parents/generate-patch\n\
 git diff > .metis/generate-patch/changes.patch\n\
 cp .metis/generate-patch/changes.patch .metis/parents/generate-patch/changes.patch";

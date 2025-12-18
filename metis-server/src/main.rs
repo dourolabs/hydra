@@ -19,7 +19,7 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
-use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -29,7 +29,6 @@ pub struct AppState {
     pub service_state: Arc<ServiceState>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
-    pub workflows: Arc<RwLock<HashMap<String, crate::routes::workflows::WorkflowRecord>>>,
 }
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
@@ -64,12 +63,6 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         .route(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
-        )
-        .route("/v1/workflows/", get(routes::workflows::list_workflows))
-        .route("/v1/workflows", post(routes::workflows::create_workflow))
-        .route(
-            "/v1/workflows/:workflow_id",
-            get(routes::workflows::get_workflow),
         )
         .with_state(state);
 
@@ -121,7 +114,6 @@ async fn main() -> anyhow::Result<()> {
         service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
-        workflows: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -144,7 +136,6 @@ fn config_path() -> PathBuf {
 mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
-        routes::workflows::WorkflowRecord,
         state::{GitRepository, ServiceState},
         store::{Edge, Status, Task, TaskError},
         test::{
@@ -158,7 +149,6 @@ mod tests {
         jobs::{
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
         },
-        workflows::{ListWorkflowsResponse, TaskSummary, WorkflowSummary},
     };
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
@@ -1109,266 +1099,4 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn list_workflows_returns_summaries() -> anyhow::Result<()> {
-        let state = test_state();
-        let store = state.store.clone();
-        let workflow_id = "wf-123".to_string();
-        let created_at = Utc::now();
-        let first_task_id = "task-first".to_string();
-        let second_task_id = "task-second".to_string();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_task_with_id(
-                    first_task_id.clone(),
-                    Task::Spawn {
-                        prompt: "first".to_string(),
-                        program: None,
-                        params: vec![],
-                        context: Bundle::None,
-                        setup: vec![],
-                        cleanup: vec![],
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
-                    created_at,
-                )
-                .await?;
-            store_write
-                .mark_task_running(&first_task_id, created_at + Duration::seconds(5))
-                .await?;
-            store_write
-                .mark_task_complete(
-                    &first_task_id,
-                    Ok(JobOutputPayload {
-                        last_message: "note from first".to_string(),
-                        patch: String::new(),
-                        bundle: Bundle::None,
-                    }),
-                    created_at + Duration::seconds(10),
-                )
-                .await?;
-            store_write
-                .add_task_with_id(
-                    second_task_id.clone(),
-                    Task::Spawn {
-                        prompt: "second".to_string(),
-                        program: None,
-                        params: vec![],
-                        context: Bundle::None,
-                        setup: vec![],
-                        cleanup: vec![],
-                        env_vars: HashMap::new(),
-                    },
-                    vec![Edge {
-                        id: first_task_id.clone(),
-                        name: Some("first".to_string()),
-                    }],
-                    created_at,
-                )
-                .await?;
-            store_write
-                .mark_task_running(&second_task_id, created_at + Duration::seconds(15))
-                .await?;
-        }
-        {
-            let mut workflows = state.workflows.write().await;
-            workflows.insert(
-                workflow_id.clone(),
-                WorkflowRecord {
-                    created_at,
-                    task_ids: HashMap::from([
-                        ("first".to_string(), first_task_id.clone()),
-                        ("second".to_string(), second_task_id.clone()),
-                    ]),
-                    prompt: None,
-                    output: "second".to_string(),
-                },
-            );
-        }
-
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/workflows/", server.base_url()))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let body: ListWorkflowsResponse = response.json().await?;
-        assert_eq!(body.workflows.len(), 1);
-        let summary = &body.workflows[0];
-        assert_eq!(summary.id, workflow_id);
-        assert_eq!(summary.status, Status::Running);
-        assert_eq!(
-            summary.tasks,
-            HashMap::from([
-                (
-                    "first".to_string(),
-                    TaskSummary {
-                        metis_id: first_task_id.clone(),
-                        status: Status::Complete
-                    }
-                ),
-                (
-                    "second".to_string(),
-                    TaskSummary {
-                        metis_id: second_task_id.clone(),
-                        status: Status::Running
-                    }
-                )
-            ])
-        );
-        assert_eq!(summary.notes.as_deref(), Some("note from first"));
-
-        let detail_response = client
-            .get(format!("{}/v1/workflows/{workflow_id}", server.base_url()))
-            .send()
-            .await?;
-        assert!(detail_response.status().is_success());
-        let detail: WorkflowSummary = detail_response.json().await?;
-        assert_eq!(detail.id, workflow_id);
-        assert_eq!(
-            detail.tasks,
-            HashMap::from([
-                (
-                    "first".to_string(),
-                    TaskSummary {
-                        metis_id: first_task_id,
-                        status: Status::Complete
-                    }
-                ),
-                (
-                    "second".to_string(),
-                    TaskSummary {
-                        metis_id: second_task_id,
-                        status: Status::Running
-                    }
-                )
-            ])
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn failed_workflow_surfaces_error_note() -> anyhow::Result<()> {
-        let state = test_state();
-        let store = state.store.clone();
-        let workflow_id = "wf-failed".to_string();
-        let created_at = Utc::now();
-        let first_task_id = "task-first".to_string();
-        let failed_task_id = "task-failed".to_string();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_task_with_id(
-                    first_task_id.clone(),
-                    Task::Spawn {
-                        prompt: "first".to_string(),
-                        program: None,
-                        params: vec![],
-                        context: Bundle::None,
-                        setup: vec![],
-                        cleanup: vec![],
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
-                    created_at,
-                )
-                .await?;
-            store_write
-                .mark_task_running(&first_task_id, created_at + Duration::seconds(5))
-                .await?;
-            store_write
-                .mark_task_complete(
-                    &first_task_id,
-                    Ok(JobOutputPayload {
-                        last_message: "note from first".to_string(),
-                        patch: String::new(),
-                        bundle: Bundle::None,
-                    }),
-                    created_at + Duration::seconds(10),
-                )
-                .await?;
-
-            store_write
-                .add_task_with_id(
-                    failed_task_id.clone(),
-                    Task::Spawn {
-                        prompt: "second".to_string(),
-                        program: None,
-                        params: vec![],
-                        context: Bundle::None,
-                        setup: vec![],
-                        cleanup: vec![],
-                        env_vars: HashMap::new(),
-                    },
-                    vec![Edge {
-                        id: first_task_id.clone(),
-                        name: Some("first".to_string()),
-                    }],
-                    created_at,
-                )
-                .await?;
-            store_write
-                .mark_task_running(&failed_task_id, created_at + Duration::seconds(15))
-                .await?;
-            store_write
-                .mark_task_complete(
-                    &failed_task_id,
-                    Err(TaskError::JobEngineError {
-                        reason: "boom".to_string(),
-                    }),
-                    created_at + Duration::seconds(20),
-                )
-                .await?;
-        }
-
-        {
-            let mut workflows = state.workflows.write().await;
-            workflows.insert(
-                workflow_id.clone(),
-                WorkflowRecord {
-                    created_at,
-                    task_ids: HashMap::from([
-                        ("first".to_string(), first_task_id.clone()),
-                        ("second".to_string(), failed_task_id.clone()),
-                    ]),
-                    prompt: None,
-                    output: "second".to_string(),
-                },
-            );
-        }
-
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/workflows/{workflow_id}", server.base_url()))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let summary: WorkflowSummary = response.json().await?;
-        assert_eq!(summary.status, Status::Failed);
-        assert_eq!(summary.notes.as_deref(), Some("error: boom"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_workflow_returns_not_found_for_unknown_id() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/workflows/missing", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-        Ok(())
-    }
 }

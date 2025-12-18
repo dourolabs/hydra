@@ -7,7 +7,6 @@ use crate::{
     store::MemoryStore,
 };
 use reqwest::Client;
-use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
@@ -43,7 +42,6 @@ pub(crate) fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
-        workflows: Arc::new(RwLock::new(HashMap::new())),
     }
 }
 

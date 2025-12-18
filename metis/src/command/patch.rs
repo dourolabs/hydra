@@ -142,31 +142,8 @@ async fn resolve_job_output(
     client: &dyn MetisClientInterface,
     id: &str,
 ) -> Result<JobOutputResponse> {
-    match client.get_workflow(id).await {
-        Ok(workflow) => {
-            let output_task = workflow.output.clone();
-            let output_job_id = workflow
-                .tasks
-                .get(&output_task)
-                .map(|task| task.metis_id.clone())
-                .with_context(|| {
-                    format!("workflow '{id}' output task '{output_task}' not found")
-                })?;
-
-            println!(
-                "Workflow '{id}' output task '{output_task}' resolved to job '{output_job_id}'."
-            );
-
-            client
-                .get_job_output(&output_job_id)
-                .await
-                .with_context(|| format!("failed to fetch output for workflow '{id}'"))
-        }
-        Err(workflow_err) => match client.get_job_output(id).await {
-            Ok(response) => Ok(response),
-            Err(job_err) => {
-                bail!("Failed to resolve '{id}' as workflow ({workflow_err}) or job ({job_err}).")
-            }
-        },
-    }
+    client
+        .get_job_output(id)
+        .await
+        .with_context(|| format!("failed to fetch output for job '{id}'"))
 }

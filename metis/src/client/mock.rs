@@ -9,9 +9,6 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
-    workflows::{
-        CreateWorkflowRequest, CreateWorkflowResponse, ListWorkflowsResponse, WorkflowSummary,
-    },
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -20,8 +17,6 @@ use std::sync::Mutex;
 pub struct MockMetisClient {
     pub create_job_responses: Mutex<VecDeque<CreateJobResponse>>,
     pub list_jobs_responses: Mutex<VecDeque<ListJobsResponse>>,
-    pub list_workflows_responses: Mutex<VecDeque<ListWorkflowsResponse>>,
-    pub workflow_summaries: Mutex<VecDeque<WorkflowSummary>>,
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
     pub log_requests: Mutex<Vec<String>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
@@ -37,17 +32,6 @@ impl MockMetisClient {
 
     pub fn push_list_jobs_response(&self, response: ListJobsResponse) {
         self.list_jobs_responses.lock().unwrap().push_back(response);
-    }
-
-    pub fn push_list_workflows_response(&self, response: ListWorkflowsResponse) {
-        self.list_workflows_responses
-            .lock()
-            .unwrap()
-            .push_back(response);
-    }
-
-    pub fn push_workflow_summary(&self, summary: WorkflowSummary) {
-        self.workflow_summaries.lock().unwrap().push_back(summary);
     }
 
     pub fn push_log_lines<I, S>(&self, lines: I)
@@ -87,24 +71,8 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
     }
 
-    async fn list_workflows(&self) -> Result<ListWorkflowsResponse> {
-        self.list_workflows_responses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .ok_or_else(|| anyhow!("no mock response configured for list_workflows"))
-    }
-
     async fn get_job(&self, _job_id: &str) -> Result<JobSummary> {
         Err(anyhow!("get_job not implemented in MockMetisClient"))
-    }
-
-    async fn get_workflow(&self, _workflow_id: &str) -> Result<WorkflowSummary> {
-        self.workflow_summaries
-            .lock()
-            .unwrap()
-            .pop_front()
-            .ok_or_else(|| anyhow!("no mock response configured for get_workflow"))
     }
 
     async fn kill_job(&self, _job_id: &str) -> Result<KillJobResponse> {
@@ -138,15 +106,6 @@ impl MetisClientInterface for MockMetisClient {
     async fn get_job_context(&self, _job_id: &str) -> Result<WorkerContext> {
         Err(anyhow!(
             "get_job_context not implemented in MockMetisClient"
-        ))
-    }
-
-    async fn create_workflow(
-        &self,
-        _request: &CreateWorkflowRequest,
-    ) -> Result<CreateWorkflowResponse> {
-        Err(anyhow!(
-            "create_workflow not implemented in MockMetisClient"
         ))
     }
 }
