@@ -1,7 +1,4 @@
-use crate::{
-    client::MetisClientInterface,
-    util::{format_compact_duration, truncate_lines},
-};
+use crate::{client::MetisClientInterface, util::truncate_lines};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{

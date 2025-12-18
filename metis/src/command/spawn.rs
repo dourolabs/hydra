@@ -7,10 +7,8 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest},
     logs::LogsQuery,
     task_status::Status,
-    workflows::{CreateWorkflowRequest, VariableDefinition},
 };
 use rhai::Engine as RhaiEngine;
-use serde_yaml;
 use std::{
     env, fs,
     io::{self, Write},
@@ -25,7 +23,6 @@ use tokio::time::sleep;
 pub async fn run(
     client: &dyn MetisClientInterface,
     wait: bool,
-    workflow_file: Option<PathBuf>,
     from_git_rev_arg: Option<String>,
     repo_url_arg: Option<String>,
     service_repo_arg: Option<String>,
@@ -48,91 +45,44 @@ pub async fn run(
         force_encode_git_bundle,
     )?;
 
-    if let Some(workflow_path) = workflow_file {
-        // Spawn a workflow
-        let workflow_content = fs::read_to_string(&workflow_path).with_context(|| {
-            format!("failed to read workflow file '{}'", workflow_path.display())
-        })?;
-
-        let mut workflow: metis_common::workflows::Workflow =
-            serde_yaml::from_str(&workflow_content).with_context(|| {
-                format!(
-                    "failed to parse workflow file '{}'",
-                    workflow_path.display()
-                )
-            })?;
-
-        // Parse CLI variables
-        let parsed_cli_vars = parse_cli_variables(&cli_vars)?;
-
-        // Add default $PROMPT variable if prompt was provided
-        let prompt = if prompt_parts.is_empty() {
-            None
-        } else {
-            Some(prompt_parts.join(" "))
-        };
-
-        // Apply environment overrides before merging CLI variables
-        apply_environment_variables(&mut workflow);
-
-        // Merge variables: CLI overrides YAML/env, PROMPT is added if provided
-        workflow = merge_workflow_variables(workflow, parsed_cli_vars, prompt)?;
-
-        let request = CreateWorkflowRequest { workflow, context };
-
-        let response = client.create_workflow(&request).await?;
-
-        println!("Created workflow {}", response.workflow_id);
-        println!("Task IDs:");
-        for (task_name, task_id) in &response.task_ids {
-            println!("  {}: {}", task_name, task_id);
-        }
-
-        // Note: wait functionality for workflows is not implemented yet
-        if wait {
-            eprintln!("Warning: --wait is not yet supported for workflows");
-        }
+    let prompt = if prompt_parts.is_empty() {
+        bail!("prompt is required")
     } else {
-        // Spawn a single task
-        let prompt = if prompt_parts.is_empty() {
-            bail!("prompt is required")
-        } else {
-            prompt_parts.join(" ")
-        };
+        prompt_parts.join(" ")
+    };
 
-        let program = if let Some(program_arg) = program {
-            Some(load_program(&program_arg)?)
-        } else {
-            None
-        };
+    let program = if let Some(program_arg) = program {
+        Some(load_program(&program_arg)?)
+    } else {
+        None
+    };
 
-        let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
-        if parent_ids.iter().any(|id| id.is_empty()) {
-            bail!("--after values must not be empty");
-        }
+    let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
+    if parent_ids.iter().any(|id| id.is_empty()) {
+        bail!("--after values must not be empty");
+    }
 
-        let mut variables = parse_cli_variables(&cli_vars)?;
-        variables.insert("PROMPT".to_string(), prompt.clone());
+    let mut variables = parse_cli_variables(&cli_vars)?;
+    variables.insert("PROMPT".to_string(), prompt.clone());
 
-        let params = vec![prompt.clone()];
-        let request = CreateJobRequest {
-            prompt,
-            program,
-            params,
-            context,
-            parent_ids,
-            variables,
-        };
-        let response = client.create_job(&request).await?;
-        let job_id = response.job_id;
+    let params = vec![prompt.clone()];
+    let request = CreateJobRequest {
+        prompt,
+        program,
+        params,
+        context,
+        parent_ids,
+        variables,
+    };
+    let response = client.create_job(&request).await?;
+    let job_id = response.job_id;
 
-        println!("Requested Metis job {job_id}");
+    println!("Requested Metis job {job_id}");
 
-        if wait {
-            println!("Streaming logs for job '{job_id}' via metis-server…");
-            stream_job_logs_via_server(client, &job_id, true).await?;
-            wait_for_job_completion_via_server(client, &job_id).await?;
-        }
+    if wait {
+        println!("Streaming logs for job '{job_id}' via metis-server…");
+        stream_job_logs_via_server(client, &job_id, true).await?;
+        wait_for_job_completion_via_server(client, &job_id).await?;
     }
 
     Ok(())
@@ -483,60 +433,6 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
     Ok(vars)
 }
 
-/// Merge CLI variables with workflow variables.
-/// CLI variables override YAML-defined variables.
-/// If a prompt is provided, it is added as the PROMPT variable (overriding any existing).
-/// Returns the workflow with merged variables.
-fn merge_workflow_variables(
-    mut workflow: metis_common::workflows::Workflow,
-    cli_vars: std::collections::HashMap<String, String>,
-    prompt: Option<String>,
-) -> Result<metis_common::workflows::Workflow> {
-    // Build a map of existing variables for quick lookup
-    let mut var_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for (idx, var) in workflow.variables.iter().enumerate() {
-        var_map.insert(var.name.clone(), idx);
-    }
-
-    // Update existing variables or add new ones from CLI
-    for (key, value) in cli_vars {
-        if let Some(&idx) = var_map.get(&key) {
-            // Update existing variable
-            workflow.variables[idx].value = Some(value);
-        } else {
-            // Add new variable
-            workflow.variables.push(VariableDefinition {
-                name: key,
-                value: Some(value),
-            });
-        }
-    }
-
-    // Add or update PROMPT variable if provided
-    if let Some(prompt_value) = prompt {
-        if let Some(&idx) = var_map.get("PROMPT") {
-            workflow.variables[idx].value = Some(prompt_value);
-        } else {
-            workflow.variables.push(VariableDefinition {
-                name: "PROMPT".to_string(),
-                value: Some(prompt_value),
-            });
-        }
-    }
-
-    Ok(workflow)
-}
-
-/// Update workflow variables with matching environment variable values.
-/// Environment variables override workflow defaults but are overridden by CLI flags later.
-fn apply_environment_variables(workflow: &mut metis_common::workflows::Workflow) {
-    for variable in &mut workflow.variables {
-        if let Ok(env_value) = env::var(&variable.name) {
-            variable.value = Some(env_value);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,7 +491,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
@@ -639,7 +534,6 @@ mod tests {
             false,
             None,
             None,
-            None,
             Some("service-repo".into()),
             Some("feature".into()),
             None,
@@ -680,7 +574,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
@@ -710,7 +603,6 @@ mod tests {
         run(
             &client,
             false,
-            None,
             None,
             None,
             None,
@@ -750,7 +642,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
@@ -776,7 +667,6 @@ mod tests {
         let result = run(
             &client,
             false,
-            None,
             None,
             None,
             None,
@@ -811,205 +701,5 @@ mod tests {
         assert!(parse_cli_variables(&vec!["invalid".to_string()]).is_err());
         assert!(parse_cli_variables(&vec!["=value".to_string()]).is_err());
         assert!(parse_cli_variables(&vec!["123KEY=value".to_string()]).is_err());
-    }
-
-    #[test]
-    fn test_merge_workflow_variables() {
-        use metis_common::workflows::{TaskDefinition, Workflow};
-        use std::collections::HashMap;
-
-        let mut tasks = HashMap::new();
-        tasks.insert(
-            "test".to_string(),
-            TaskDefinition {
-                task_type: "codex".to_string(),
-                prompt: "test".to_string(),
-                program: None,
-                params: vec![],
-                inputs: None,
-                setup: vec![],
-                cleanup: vec![],
-            },
-        );
-
-        let workflow = Workflow {
-            variables: vec![
-                VariableDefinition {
-                    name: "FOO".to_string(),
-                    value: Some("original".to_string()),
-                },
-                VariableDefinition {
-                    name: "BAR".to_string(),
-                    value: Some("unchanged".to_string()),
-                },
-            ],
-            tasks,
-            output: "test".to_string(),
-        };
-
-        let mut cli_vars = HashMap::new();
-        cli_vars.insert("FOO".to_string(), "overridden".to_string());
-        cli_vars.insert("NEW".to_string(), "added".to_string());
-
-        let merged =
-            merge_workflow_variables(workflow, cli_vars, Some("test prompt".to_string())).unwrap();
-
-        // FOO should be overridden
-        let foo_var = merged.variables.iter().find(|v| v.name == "FOO").unwrap();
-        assert_eq!(foo_var.value, Some("overridden".to_string()));
-
-        // BAR should be unchanged
-        let bar_var = merged.variables.iter().find(|v| v.name == "BAR").unwrap();
-        assert_eq!(bar_var.value, Some("unchanged".to_string()));
-
-        // NEW should be added
-        let new_var = merged.variables.iter().find(|v| v.name == "NEW").unwrap();
-        assert_eq!(new_var.value, Some("added".to_string()));
-
-        // PROMPT should be added
-        let prompt_var = merged
-            .variables
-            .iter()
-            .find(|v| v.name == "PROMPT")
-            .unwrap();
-        assert_eq!(prompt_var.value, Some("test prompt".to_string()));
-    }
-
-    #[test]
-    fn test_merge_workflow_variables_prompt_override() {
-        use metis_common::workflows::{TaskDefinition, Workflow};
-        use std::collections::HashMap;
-
-        let mut tasks = HashMap::new();
-        tasks.insert(
-            "test".to_string(),
-            TaskDefinition {
-                task_type: "codex".to_string(),
-                prompt: "test".to_string(),
-                program: None,
-                params: vec![],
-                inputs: None,
-                setup: vec![],
-                cleanup: vec![],
-            },
-        );
-
-        let workflow = Workflow {
-            variables: vec![VariableDefinition {
-                name: "PROMPT".to_string(),
-                value: Some("original prompt".to_string()),
-            }],
-            tasks,
-            output: "test".to_string(),
-        };
-
-        let cli_vars = HashMap::new();
-
-        // CLI prompt should override existing PROMPT variable
-        let merged =
-            merge_workflow_variables(workflow, cli_vars, Some("cli prompt".to_string())).unwrap();
-        let prompt_var = merged
-            .variables
-            .iter()
-            .find(|v| v.name == "PROMPT")
-            .unwrap();
-        assert_eq!(prompt_var.value, Some("cli prompt".to_string()));
-    }
-
-    use std::sync::{LazyLock, Mutex};
-
-    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    #[test]
-    fn test_apply_environment_variables_overrides_defaults() {
-        use metis_common::workflows::{TaskDefinition, Workflow};
-        use std::collections::HashMap;
-        use std::env;
-
-        let _guard = ENV_MUTEX.lock().unwrap();
-
-        let mut tasks = HashMap::new();
-        tasks.insert(
-            "test".to_string(),
-            TaskDefinition {
-                task_type: "codex".to_string(),
-                prompt: "test".to_string(),
-                program: None,
-                params: vec![],
-                inputs: None,
-                setup: vec![],
-                cleanup: vec![],
-            },
-        );
-
-        let mut workflow = Workflow {
-            variables: vec![
-                VariableDefinition {
-                    name: "FOO".to_string(),
-                    value: Some("default-foo".to_string()),
-                },
-                VariableDefinition {
-                    name: "BAR".to_string(),
-                    value: None,
-                },
-            ],
-            tasks,
-            output: "test".to_string(),
-        };
-
-        env::set_var("FOO", "env-foo");
-        env::set_var("BAR", "env-bar");
-        apply_environment_variables(&mut workflow);
-        env::remove_var("FOO");
-        env::remove_var("BAR");
-
-        let foo_var = workflow.variables.iter().find(|v| v.name == "FOO").unwrap();
-        assert_eq!(foo_var.value, Some("env-foo".to_string()));
-
-        let bar_var = workflow.variables.iter().find(|v| v.name == "BAR").unwrap();
-        assert_eq!(bar_var.value, Some("env-bar".to_string()));
-    }
-
-    #[test]
-    fn test_cli_variables_override_environment_values() {
-        use metis_common::workflows::{TaskDefinition, Workflow};
-        use std::collections::HashMap;
-        use std::env;
-
-        let _guard = ENV_MUTEX.lock().unwrap();
-
-        let mut tasks = HashMap::new();
-        tasks.insert(
-            "test".to_string(),
-            TaskDefinition {
-                task_type: "codex".to_string(),
-                prompt: "test".to_string(),
-                program: None,
-                params: vec![],
-                inputs: None,
-                setup: vec![],
-                cleanup: vec![],
-            },
-        );
-
-        let mut workflow = Workflow {
-            variables: vec![VariableDefinition {
-                name: "FOO".to_string(),
-                value: Some("default-foo".to_string()),
-            }],
-            tasks,
-            output: "test".to_string(),
-        };
-
-        env::set_var("FOO", "env-foo");
-        apply_environment_variables(&mut workflow);
-        env::remove_var("FOO");
-
-        let mut cli_vars = HashMap::new();
-        cli_vars.insert("FOO".to_string(), "cli-foo".to_string());
-
-        let merged = merge_workflow_variables(workflow, cli_vars, None).unwrap();
-        let foo_var = merged.variables.iter().find(|v| v.name == "FOO").unwrap();
-        assert_eq!(foo_var.value, Some("cli-foo".to_string()));
     }
 }

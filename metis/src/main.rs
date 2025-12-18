@@ -38,10 +38,6 @@ enum Commands {
         #[arg(long = "wait")]
         wait: bool,
 
-        /// Path to a workflow YAML file. If provided, spawns a workflow instead of a single task.
-        #[arg(short = 'w', long = "workflow", value_name = "FILE")]
-        workflow: Option<PathBuf>,
-
         /// Branch or commit to use as the starting point for the job.
         #[arg(long = "from", value_name = "REV")]
         from: Option<String>,
@@ -83,13 +79,12 @@ enum Commands {
         #[arg(long = "after", value_name = "JOB_ID")]
         after: Vec<String>,
 
-        /// Override or set workflow variable (format: KEY=VALUE). Can be repeated.
-        /// For workflows, overrides variables defined in the YAML file.
+        /// Override or set job variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
 
-        /// Rhai program to execute. Can be a file path or an inline script. Only valid for single jobs.
-        #[arg(long = "program", value_name = "PROGRAM", conflicts_with = "workflow")]
+        /// Rhai program to execute. Can be a file path or an inline script.
+        #[arg(long = "program", value_name = "PROGRAM")]
         program: Option<String>,
 
         /// Prompt to execute, captured as trailing varargs.
@@ -111,11 +106,9 @@ enum Commands {
         )]
         limit: usize,
     },
-    /// List all Metis workflows in the configured namespace.
-    Workflows,
-    /// Show logs for an existing Metis workflow or job.
+    /// Show logs for an existing Metis job.
     Logs {
-        /// Workflow or job identifier returned by `metis spawn`, `metis jobs`, or `metis workflows`.
+        /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "ID")]
         id: String,
 
@@ -179,7 +172,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Spawn {
             wait,
-            workflow,
             from,
             repo_url,
             service_repo,
@@ -195,7 +187,6 @@ async fn main() -> Result<()> {
             command::spawn::run(
                 &client,
                 wait,
-                workflow,
                 from,
                 repo_url,
                 service_repo,
@@ -211,7 +202,6 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
-        Commands::Workflows => command::workflows::run(&client).await?,
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
