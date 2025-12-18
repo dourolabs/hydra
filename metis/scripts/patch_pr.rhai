@@ -1,21 +1,5 @@
 //! Rough equivalent of templates/patch_pr.yaml.
 
-fn env_or_default(key, default_value) {
-    if env.contains(key) {
-        let value = env[key];
-        if value == "" {
-            return default_value;
-        }
-        return value;
-    }
-
-    default_value
-}
-
-fn escape_single_quotes(input) {
-    input.replace("'", "'\"'\"'")
-}
-
 fn cleanup(metis_id, gh_token) {
     if gh_token == "" {
         print("GH_TOKEN not set; skipping PR creation.");
@@ -24,7 +8,7 @@ fn cleanup(metis_id, gh_token) {
 
     let cleanup_body = `set -euo pipefail
 
-export GH_TOKEN='${escape_single_quotes(gh_token)}'
+export GH_TOKEN='${gh_token}'
 
 git add -A 
 
@@ -35,7 +19,7 @@ if git diff --cached --quiet; then
 fi
 
 echo "committing"
-git commit -m 'task ${escape_single_quotes(metis_id)}'
+git commit -m 'task ${metis_id}'
 echo "pushing"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 git push origin "${branch_name}"
@@ -49,14 +33,16 @@ gh pr create \
   --title "${title}" \
   --body-file .metis/output/pr_body.txt`;
 
-    let command = `bash -lc '${escape_single_quotes(cleanup_body)}'`;
-    shell(command, |output| output)
+    shell(cleanup_body, |output| output)
 }
 
 fn run() {
-    let metis_id = env_or_default("METIS_ID", "unknown");
-    let gh_token = env_or_default("GH_TOKEN", "");
-    let prompt_input = env_or_default("PROMPT", "");
+    let metis_id = env["METIS_ID"] ?? "unknown";
+    let gh_token = env["GH_TOKEN"] ?? "";
+    let prompt_input = env["PROMPT"] ?? "";
+    if metis_id == "" {
+        metis_id = "unknown";
+    }
     let branch_name = `metis-${metis_id}`;
     let full_prompt = `${prompt_input}
 
