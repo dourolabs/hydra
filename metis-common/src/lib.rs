@@ -194,5 +194,3 @@ pub mod job_outputs {
         pub output: JobOutputPayload,
     }
 }
-
-pub mod workflows;
