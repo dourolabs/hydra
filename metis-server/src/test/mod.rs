@@ -7,13 +7,11 @@ use crate::{
     store::MemoryStore,
 };
 use reqwest::Client;
-use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
 pub(crate) struct TestServer {
     pub(crate) address: String,
-    pub(crate) state: AppState,
     handle: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -43,7 +41,6 @@ pub(crate) fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
-        workflows: Arc::new(RwLock::new(HashMap::new())),
     }
 }
 
@@ -66,7 +63,6 @@ pub(crate) async fn spawn_test_server_with_state(state: AppState) -> anyhow::Res
     let handle = tokio::spawn(async move { run_with_state(server_state, listener).await });
     let server = TestServer {
         address: addr.to_string(),
-        state,
         handle,
     };
 
