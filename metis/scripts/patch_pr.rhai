@@ -1,14 +1,12 @@
 //! Rough equivalent of templates/patch_pr.yaml.
 
-fn cleanup(metis_id, gh_token) {
-    if gh_token == "" {
-        print("GH_TOKEN not set; skipping PR creation.");
-        return "Skipped PR creation";
-    }
-
+fn cleanup(metis_id) {
     let cleanup_body = `set -euo pipefail
 
-export GH_TOKEN='${gh_token}'
+if [ -z "${GH_TOKEN:-}" ]; then
+  echo "GH_TOKEN not set; skipping PR creation."
+  exit 0
+fi
 
 git add -A 
 
@@ -38,7 +36,6 @@ gh pr create \
 
 fn run() {
     let metis_id = env["METIS_ID"] ?? "unknown";
-    let gh_token = env["GH_TOKEN"] ?? "";
     let prompt_input = env["PROMPT"] ?? "";
     if metis_id == "" {
         metis_id = "unknown";
@@ -51,7 +48,7 @@ description for this change. The title should go in .metis/output/pr_title.txt
 and the body should go in .metis/output/pr_body.txt .`;
 
     shell(`git checkout -b "${branch_name}"`, |setup_output| {
-        codex(full_prompt, |codex_output| cleanup(metis_id, gh_token))
+        codex(full_prompt, |codex_output| cleanup(metis_id))
     })
 }
 
