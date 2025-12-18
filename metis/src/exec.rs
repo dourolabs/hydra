@@ -1,4 +1,6 @@
-use anyhow::{anyhow, Result};
+use std::{fs, path::Path, process::Command};
+
+use anyhow::{anyhow, Context, Result};
 
 #[derive(Debug, Clone)]
 enum AsyncOp {
@@ -15,6 +17,40 @@ impl std::fmt::Display for AsyncOp {
 
 fn codex(prompt: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
     (AsyncOp::Codex { prompt }, continuation)
+}
+
+fn evaluate_async_op(op: &AsyncOp) -> Result<String> {
+    match op {
+        AsyncOp::Codex { prompt } => evaluate_codex_op(prompt),
+    }
+}
+
+fn evaluate_codex_op(prompt: &str) -> Result<String> {
+    let output_path = Path::new(".metis/output/output.txt");
+    if let Some(dir) = output_path.parent() {
+        fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
+    }
+
+    let status = Command::new("codex")
+        .args([
+            "exec",
+            "-o",
+            output_path
+                .to_str()
+                .expect("codex output path should be valid UTF-8"),
+            "--dangerously-bypass-approvals-and-sandbox",
+            prompt,
+        ])
+        .status()
+        .context("failed to spawn codex command")?;
+
+    if !status.success() {
+        return Err(anyhow!("codex command failed with status {status}"));
+    }
+
+    fs::read_to_string(output_path)
+        .with_context(|| format!("failed to read codex output from {output_path:?}"))
 }
 
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
@@ -36,10 +72,11 @@ pub fn eval_with_closure_unwrapping(script: &str) -> Result<rhai::Dynamic> {
     loop {
         if let Some((op, fn_ptr)) = result.clone().try_cast::<(AsyncOp, rhai::FnPtr)>() {
             println!("Async op: {}", op);
-            match fn_ptr.call(&engine, &ast, ()) {
+            let op_result = evaluate_async_op(&op)?;
+            match fn_ptr.call(&engine, &ast, (op_result,)) {
                 Ok(new_result) => {
                     println!("Result: {:?}", &new_result);
-                    // Successfully called with no arguments, continue recursion
+                    // Successfully called with async op output, continue recursion
                     result = new_result;
                     continue;
                 }
