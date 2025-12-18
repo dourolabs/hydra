@@ -17,15 +17,13 @@ fi";
     shell(body, next)
 }
 
-fn cleanup(metis_id, gh_token) {
-    if gh_token == "" {
-        print("GH_TOKEN not set; skipping PR creation.");
-        return "Skipped PR creation";
-    }
-
+fn cleanup(metis_id) {
     let cleanup_body = `set -euo pipefail
 
-export GH_TOKEN='${gh_token}'
+if [ -z "${GH_TOKEN:-}" ]; then
+  echo "GH_TOKEN not set; skipping PR creation."
+  exit 0
+fi
 
 git add -A 
 
@@ -59,7 +57,6 @@ gh pr create \
 fn run() {
     let prompt_input = env["PROMPT"] ?? "";
     let metis_id = env["METIS_ID"] ?? "unknown";
-    let gh_token = env["GH_TOKEN"] ?? "";
     if metis_id == "" {
         metis_id = "unknown";
     }
@@ -90,7 +87,7 @@ and the body should go in .metis/output/pr_body.txt .";
             snapshot_patch(|_| {
                 codex(review_prompt, |review_output| {
                     copy_review_outputs(|_| {
-                        codex(fix_prompt, |fix_output| cleanup(metis_id, gh_token))
+                        codex(fix_prompt, |fix_output| cleanup(metis_id))
                     })
                 })
             })
