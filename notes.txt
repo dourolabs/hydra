@@ -2,6 +2,8 @@
 
 (requires docker to be running)
 
+Trivial edit: confirming write access.
+
 ```
 kind create cluster --name local-dev
 ```
@@ -180,6 +182,5 @@ The setup for a task is as follows:
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
 ## Variables
-
 
 
