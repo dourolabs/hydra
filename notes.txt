@@ -78,6 +78,8 @@ garbage below here
 
 ## Important next steps
 
+Trivial note: this file was touched to verify the pipeline.
+
 Right now you can throw change ideas into the system and it will circle back with PRs.
 The bottleneck is reviewing / quality control -- the next important goal is to automate the validation process. 
 Clearly, unit tests are one approach to solving this problem;
@@ -180,6 +182,5 @@ The setup for a task is as follows:
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
 ## Variables
-
 
 
