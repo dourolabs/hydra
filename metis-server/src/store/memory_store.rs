@@ -439,8 +439,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -450,8 +449,7 @@ mod tests {
             .await
             .unwrap();
         let child_task = Task::Spawn {
-            prompt: "child".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -486,8 +484,7 @@ mod tests {
         let missing_parent = "missing".to_string();
 
         let spawn_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -506,8 +503,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -516,8 +512,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -528,8 +523,7 @@ mod tests {
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
-            prompt: "test2".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -566,8 +560,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -582,8 +575,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -592,8 +584,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -614,8 +605,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -625,8 +615,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -655,8 +644,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -675,8 +663,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -694,8 +681,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -713,8 +699,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -740,8 +725,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -773,8 +757,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -783,8 +766,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -816,8 +798,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -826,8 +807,7 @@ mod tests {
         let child1_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -840,8 +820,7 @@ mod tests {
         let child2_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -873,8 +852,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root1_task = Task::Spawn {
-            prompt: "test1".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -885,8 +863,7 @@ mod tests {
             .unwrap();
 
         let root2_task = Task::Spawn {
-            prompt: "test2".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -900,8 +877,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -943,8 +919,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -953,8 +928,7 @@ mod tests {
         let child_id = store
             .add_task(
                 Task::Spawn {
-                    prompt: "child".to_string(),
-                    program: None,
+                    program: "0".to_string(),
                     params: vec![],
                     context: Bundle::None,
                     env_vars: HashMap::new(),
@@ -978,8 +952,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),
@@ -999,8 +972,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let root_task = Task::Spawn {
-            prompt: "test".to_string(),
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             env_vars: HashMap::new(),

@@ -222,7 +222,7 @@ mod tests {
         JobSummary {
             id: id.to_string(),
             notes: None,
-            program: None,
+            program: "0".to_string(),
             params: vec![],
             status_log: TaskStatusLog {
                 creation_time: Utc::now(),

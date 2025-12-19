@@ -32,7 +32,7 @@ pub async fn run(
     force_encode_git_bundle: bool,
     after: Vec<String>,
     cli_vars: Vec<String>,
-    program: Option<String>,
+    program: String,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
     let context = build_context(
@@ -51,11 +51,7 @@ pub async fn run(
         prompt_parts.join(" ")
     };
 
-    let program = if let Some(program_arg) = program {
-        Some(load_program(&program_arg)?)
-    } else {
-        None
-    };
+    let program = load_program(&program)?;
 
     let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
     if parent_ids.iter().any(|id| id.is_empty()) {
@@ -67,7 +63,6 @@ pub async fn run(
 
     let params = vec![prompt.clone()];
     let request = CreateJobRequest {
-        prompt,
         program,
         params,
         context,
@@ -464,7 +459,7 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
-                program: None,
+                program: "0".to_string(),
                 params: vec![],
                 status_log: TaskStatusLog {
                     creation_time: start_time,
@@ -478,7 +473,7 @@ mod tests {
             jobs: vec![JobSummary {
                 id: "job-123".into(),
                 notes: None,
-                program: None,
+                program: "0".to_string(),
                 params: vec![],
                 status_log: TaskStatusLog {
                     creation_time: start_time,
@@ -488,6 +483,10 @@ mod tests {
                 },
             }],
         });
+
+        let program_content = "0";
+        let program_file = tmp_dir.path().join("program.rhai");
+        fs::write(&program_file, program_content).unwrap();
 
         run(
             &client,
@@ -501,7 +500,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            None,
+            Some(program_file.to_string_lossy().to_string()),
             vec!["test prompt".into()],
         )
         .await
@@ -510,8 +509,7 @@ mod tests {
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
-        assert_eq!(request.prompt, "test prompt");
-        assert!(request.program.is_none());
+        assert_eq!(request.program, program_content);
         assert_eq!(request.params, vec!["test prompt".to_string()]);
         assert!(request.parent_ids.is_empty());
         assert_eq!(
@@ -546,7 +544,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            None,
+            "0".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -584,7 +582,7 @@ mod tests {
             false,
             vec![],
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
-            None,
+            "0".into(),
             vec!["variable prompt".into()],
         )
         .await
@@ -625,7 +623,7 @@ mod tests {
 
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].program.as_deref(), Some("let x = 1 + 2;"));
+        assert_eq!(requests[0].program, "let x = 1 + 2;");
         assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
     }
 
@@ -660,7 +658,7 @@ mod tests {
 
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].program.as_deref(), Some("let answer = 42;"));
+        assert_eq!(requests[0].program, "let answer = 42;");
         assert_eq!(requests[0].params, vec!["file prompt".to_string()]);
     }
 

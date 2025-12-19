@@ -26,11 +26,6 @@ pub async fn create_job(
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let prompt = payload.prompt.trim().to_string();
-    if prompt.is_empty() {
-        error!("create_job received an empty prompt");
-        return Err(ApiError::bad_request("prompt is required"));
-    }
 
     let parent_ids: Vec<String> = payload
         .parent_ids
@@ -59,11 +54,10 @@ pub async fn create_job(
     }
     env_vars.insert("METIS_ID".to_string(), job_id.clone());
 
-    // Store the task with context and prompt (status will be Pending)
+    // Store the task with context (status will be Pending)
     {
         let mut store = state.store.write().await;
         let task = Task::Spawn {
-            prompt: prompt.clone(),
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,

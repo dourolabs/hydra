@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status, Task, TaskError},
+    store::{Status, TaskError},
 };
 use chrono::Utc;
 use std::time::Duration;
@@ -38,20 +38,10 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
-            // Get the task to extract the prompt
-            let prompt = {
-                let store = state.store.read().await;
-                match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn { prompt, .. }) => prompt,
-                    Err(err) => {
-                        error!(metis_id = %metis_id, error = %err, "failed to get task");
-                        continue;
-                    }
-                }
-            };
 
-            // Spawn the job using the prompt from the task
-            match state.job_engine.create_job(&metis_id, &prompt).await {
+
+            // Spawn the job
+            match state.job_engine.create_job(&metis_id).await {
                 Ok(()) => {
                     let mut store = state.store.write().await;
                     match store.mark_task_running(&metis_id, Utc::now()).await {

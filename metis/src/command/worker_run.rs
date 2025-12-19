@@ -16,6 +16,7 @@ use metis_common::jobs::{Bundle, ParentContext, WorkerContext};
 use tar::{Archive, Builder};
 
 use crate::client::MetisClientInterface;
+use crate::constants;
 use crate::exec::eval_with_closure_unwrapping;
 
 pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) -> Result<()> {
@@ -27,6 +28,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         params,
         ..
     } = client.get_job_context(&job).await?;
+    // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get("GH_TOKEN").map(String::as_str);
     match request_context {
@@ -43,16 +45,14 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
             clone_from_git_bundle_base64(&bundle_base64, &dest)?;
         }
     }
-    write_parent_outputs(&parents, &dest, github_token)?;
-    configure_git_repo(&dest)?;
-    if let Some(program) = program {
-        let _ = eval_with_closure_unwrapping(&program, params, &variables)
-            .with_context(|| "failed to execute Rhai program from worker context")?;
-    }
-
-    // Startup tasks: codex login and create output directory
-    login_codex()?;
     create_output_directory(&dest)?;
+    write_parent_outputs(&parents, &dest, github_token)?;
+
+    login_codex()?;    
+    configure_git_repo(&dest)?;
+    
+    let _ = eval_with_closure_unwrapping(&program, params, &variables)
+        .with_context(|| "failed to execute Rhai program from worker context")?;
 
     // Submit job output (merge of worker-submit functionality)
     submit_job_output(client, &job, &dest).await?;
@@ -84,7 +84,7 @@ fn write_parent_outputs(
         return Ok(());
     }
 
-    let parents_dir = dest.join(".metis").join("parents");
+    let parents_dir = dest.join(constants::METIS_DIR).join(constants::PARENTS_DIR);
     fs::create_dir_all(&parents_dir)
         .with_context(|| format!("failed to create parents directory at {parents_dir:?}"))?;
 
@@ -314,7 +314,7 @@ fn login_codex() -> Result<()> {
 }
 
 fn create_output_directory(dest: &Path) -> Result<()> {
-    let output_dir = dest.join(".metis").join("output");
+    let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create output directory at {output_dir:?}"))?;
     Ok(())
@@ -330,7 +330,7 @@ async fn submit_job_output(
         bail!("Job ID must not be empty.");
     }
 
-    // Create patch file from git changes (excluding .metis directory)
+    // Create patch file from git changes (excluding METIS_DIR directory)
     create_patch_file(dest)?;
 
     let (last_message_file, patch_file, output_dir) = resolve_output_paths(dest);
@@ -368,9 +368,9 @@ async fn submit_job_output(
 }
 
 fn resolve_output_paths(dest: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    let output_dir = dest.join(".metis").join("output");
-    let last_message_file = output_dir.join("output.txt");
-    let patch_file = output_dir.join("changes.patch");
+    let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
+    let last_message_file = output_dir.join(constants::OUTPUT_TXT_FILE);
+    let patch_file = output_dir.join(constants::CHANGES_PATCH_FILE);
     (last_message_file, patch_file, output_dir)
 }
 
@@ -410,7 +410,10 @@ fn create_output_bundle(output_dir: &Path) -> Result<Bundle> {
 }
 
 fn create_patch_file(dest: &Path) -> Result<()> {
-    let patch_file = dest.join(".metis").join("output").join("changes.patch");
+    let patch_file = dest
+        .join(constants::METIS_DIR)
+        .join(constants::OUTPUT_DIR)
+        .join(constants::CHANGES_PATCH_FILE);
 
     // Ensure the output directory exists
     if let Some(parent) = patch_file.parent() {
@@ -418,9 +421,9 @@ fn create_patch_file(dest: &Path) -> Result<()> {
             .with_context(|| format!("failed to create output directory at {parent:?}"))?;
     }
 
-    // Stage all changes excluding .metis directory
+    // Stage all changes excluding METIS_DIR directory
     let status = Command::new("git")
-        .args(["add", "-A", "--", ".", ":!.metis/**"])
+        .args(["add", "-A", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
         .current_dir(dest)
         .status()
         .context("failed to spawn git add")?;
@@ -431,7 +434,7 @@ fn create_patch_file(dest: &Path) -> Result<()> {
     // Create patch file from staged changes
     // Note: git diff returns exit code 1 when there are no changes (normal case)
     let output = Command::new("git")
-        .args(["diff", "--cached", "--", ".", ":!.metis/**"])
+        .args(["diff", "--cached", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
         .current_dir(dest)
         .output()
         .context("failed to spawn git diff")?;
@@ -469,7 +472,7 @@ mod tests {
 
         write_parent_outputs(&parents, tempdir.path(), None)?;
 
-        let parents_dir = tempdir.path().join(".metis").join("parents");
+        let parents_dir = tempdir.path().join(constants::METIS_DIR).join(constants::PARENTS_DIR);
         assert!(parents_dir.join("parent-id").is_dir());
 
         let symlink_path = parents_dir.join("parent-name");
@@ -580,7 +583,7 @@ mod tests {
             "expected alias validation error, got {err:?}"
         );
 
-        let parents_dir = tempdir.path().join(".metis").join("parents");
+        let parents_dir = tempdir.path().join(constants::METIS_DIR).join(constants::PARENTS_DIR);
         assert!(!parents_dir.join("../escape").exists());
     }
 

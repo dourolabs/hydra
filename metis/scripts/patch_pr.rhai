@@ -1,5 +1,3 @@
-//! Rough equivalent of templates/patch_pr.yaml.
-
 fn cleanup(metis_id) {
     let cleanup_body = `
 set -euo pipefail
@@ -29,8 +27,6 @@ gh pr create \
 
     shell(cleanup_body, |output| output)
 }
-
-print(env);
 
 let metis_id = env["METIS_ID"] ?? "unknown";
 let prompt_input = env["PROMPT"] ?? "";

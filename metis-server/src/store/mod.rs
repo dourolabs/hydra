@@ -20,8 +20,7 @@ pub struct Edge {
 pub enum Task {
     /// A spawn task that creates a new job.
     Spawn {
-        prompt: String,
-        program: Option<String>,
+        program: String,
         params: Vec<String>,
         context: Bundle,
         env_vars: HashMap<String, String>,

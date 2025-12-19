@@ -47,7 +47,6 @@ pub async fn get_job_context(
 
     match task {
         Task::Spawn {
-            prompt: _,
             program,
             params,
             context,

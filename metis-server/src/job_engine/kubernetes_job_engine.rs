@@ -199,7 +199,7 @@ async fn wait_for_pod_name_impl(
 
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
-    async fn create_job(&self, metis_id: &MetisId, prompt: &str) -> Result<(), JobEngineError> {
+    async fn create_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
         info!(metis_id = %metis_id, namespace = %self.namespace, "creating Kubernetes job");
@@ -224,14 +224,7 @@ impl JobEngine for KubernetesJobEngine {
                             name: "metis-worker".to_string(),
                             image: Some(self.worker_image.clone()),
                             image_pull_policy: Some("IfNotPresent".into()),
-                            args: Some(vec![
-                                "codex".into(),
-                                "exec".into(),
-                                "-o".into(),
-                                ".metis/output/output.txt".into(),
-                                "--dangerously-bypass-approvals-and-sandbox".into(),
-                                prompt.to_string(),
-                            ]),
+                            args: None,
                             env: self.build_env_vars(metis_id),
                             ..Default::default()
                         }],

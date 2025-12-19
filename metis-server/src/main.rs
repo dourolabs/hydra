@@ -170,23 +170,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_job_rejects_empty_prompt() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "prompt": "   " }))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "prompt is required" }));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_job_trims_prompt_and_enqueues_task() -> anyhow::Result<()> {
+    async fn create_job_enqueues_task() -> anyhow::Result<()> {
         let state = test_state();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
@@ -194,7 +178,7 @@ mod tests {
         let client = test_client();
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "prompt": "  run tests  " }))
+            .json(&json!({ "program": "0" }))
             .send()
             .await?;
 
@@ -206,14 +190,12 @@ mod tests {
         let task = store_read.get_task(&body.job_id).await?;
         match task {
             Task::Spawn {
-                prompt,
                 context,
                 program,
                 params,
                 env_vars: _,
             } => {
-                assert_eq!(prompt, "run tests");
-                assert_eq!(program, None);
+                assert_eq!(program, "0");
                 assert!(params.is_empty());
                 assert_eq!(context, Bundle::None);
             }
@@ -239,8 +221,7 @@ mod tests {
                 .add_task_with_id(
                     "parent-1".to_string(),
                     Task::Spawn {
-                        prompt: "parent task".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -254,7 +235,7 @@ mod tests {
         let client = test_client();
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "prompt": "child task", "parent_ids": ["parent-1"] }))
+            .json(&json!({ "parent_ids": ["parent-1"] }))
             .send()
             .await?;
 
@@ -295,7 +276,6 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "prompt": "use service repo",
                 "context": { "type": "service_repository", "name": "private-repo" }
             }))
             .send()
@@ -372,7 +352,6 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "prompt": "use user token",
                 "context": { "type": "service_repository", "name": "private-repo" },
                 "variables": { "GH_TOKEN": "user-supplied" }
             }))
@@ -404,7 +383,6 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "prompt": "bad repo",
                 "context": { "type": "service_repository", "name": "missing" }
             }))
             .send()
@@ -448,8 +426,7 @@ mod tests {
                 .add_task_with_id(
                     oldest_id.clone(),
                     Task::Spawn {
-                        prompt: "old".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -462,8 +439,7 @@ mod tests {
                 .add_task_with_id(
                     middle_id.clone(),
                     Task::Spawn {
-                        prompt: "mid".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -476,8 +452,7 @@ mod tests {
                 .add_task_with_id(
                     newest_id.clone(),
                     Task::Spawn {
-                        prompt: "new".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -520,8 +495,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task::Spawn {
-                        prompt: "demo".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -759,8 +733,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task::Spawn {
-                        prompt: "do work".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -844,8 +817,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task::Spawn {
-                        prompt: "do work".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -890,8 +862,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task::Spawn {
-                        prompt: "do work".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -969,8 +940,7 @@ mod tests {
                 .add_task_with_id(
                     "parent-job".to_string(),
                     Task::Spawn {
-                        prompt: "prepare".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::new(),
@@ -993,8 +963,7 @@ mod tests {
                 .add_task_with_id(
                     "ctx-job".to_string(),
                     Task::Spawn {
-                        prompt: "do work".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: context.clone(),
                         env_vars: HashMap::new(),
@@ -1044,8 +1013,7 @@ mod tests {
                 .add_task_with_id(
                     "env-job".to_string(),
                     Task::Spawn {
-                        prompt: "do work".to_string(),
-                        program: None,
+                        program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         env_vars: HashMap::from([(

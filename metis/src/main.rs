@@ -3,6 +3,7 @@
 mod client;
 mod command;
 mod config;
+mod constants;
 mod exec;
 mod util;
 
@@ -84,8 +85,8 @@ enum Commands {
         var: Vec<String>,
 
         /// Rhai program to execute. Can be a file path or an inline script.
-        #[arg(long = "program", value_name = "PROGRAM")]
-        program: Option<String>,
+        #[arg(long = "program", value_name = "PROGRAM", required = true)]
+        program: String,
 
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
@@ -157,7 +158,7 @@ async fn main() -> Result<()> {
             server: config::ServerSection { url },
         },
         _ => {
-            let config_path = cli.config.unwrap_or_else(|| PathBuf::from("config.toml"));
+            let config_path = cli.config.unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
             AppConfig::load(&config_path)?
         }
     };

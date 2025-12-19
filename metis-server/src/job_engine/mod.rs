@@ -83,11 +83,10 @@ pub trait JobEngine: Send + Sync {
     ///
     /// # Arguments
     /// * `metis_id` - The Metis ID to use for the job
-    /// * `prompt` - The prompt/command to execute in the job
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
-    async fn create_job(&self, metis_id: &MetisId, prompt: &str) -> Result<(), JobEngineError>;
+    async fn create_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
     ///

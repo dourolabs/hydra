@@ -2,6 +2,8 @@ use std::{collections::HashMap, fs, path::Path, process::Command};
 
 use anyhow::{anyhow, Context, Result};
 
+use crate::constants;
+
 #[derive(Debug, Clone)]
 enum AsyncOp {
     Codex { prompt: String },
@@ -33,7 +35,9 @@ fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Result<Stri
 }
 
 fn evaluate_codex_op(prompt: &str) -> Result<String> {
-    let output_path = Path::new(".metis/output/output.txt");
+    let output_path = Path::new(constants::METIS_DIR)
+        .join(constants::OUTPUT_DIR)
+        .join(constants::OUTPUT_TXT_FILE);
     if let Some(dir) = output_path.parent() {
         fs::create_dir_all(dir)
             .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
@@ -56,7 +60,7 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
         return Err(anyhow!("codex command failed with status {status}"));
     }
 
-    fs::read_to_string(output_path)
+    fs::read_to_string(&output_path)
         .with_context(|| format!("failed to read codex output from {output_path:?}"))
 }
 
