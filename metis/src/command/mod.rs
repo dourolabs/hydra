@@ -4,5 +4,4 @@ pub mod logs;
 pub mod patch;
 pub mod run;
 pub mod spawn;
-pub mod worker_init;
-pub mod worker_submit;
+pub mod worker_run;

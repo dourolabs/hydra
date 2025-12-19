@@ -443,8 +443,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store
@@ -456,8 +454,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let child_id = store
@@ -494,8 +490,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let err = store
@@ -516,8 +510,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -528,8 +520,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -542,8 +532,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let grandchild_id = store
@@ -582,8 +570,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -600,8 +586,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -612,8 +596,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -636,8 +618,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -649,8 +629,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![Edge {
@@ -681,8 +659,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -703,8 +679,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -724,8 +698,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -745,8 +717,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -774,8 +744,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -809,8 +777,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -821,8 +787,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -856,8 +820,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -868,8 +830,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -884,8 +844,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -919,8 +877,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root1_id = store
@@ -933,8 +889,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root2_id = store
@@ -950,8 +904,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root1_id), edge(&root2_id)],
@@ -995,8 +947,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -1007,8 +957,6 @@ mod tests {
                     program: None,
                     params: vec![],
                     context: Bundle::None,
-                    setup: vec![],
-                    cleanup: vec![],
                     env_vars: HashMap::new(),
                 },
                 vec![edge(&root_id)],
@@ -1034,8 +982,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
@@ -1057,8 +1003,6 @@ mod tests {
             program: None,
             params: vec![],
             context: Bundle::None,
-            setup: vec![],
-            cleanup: vec![],
             env_vars: HashMap::new(),
         };
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();

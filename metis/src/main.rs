@@ -132,20 +132,14 @@ enum Commands {
         #[arg(short = 'a', long = "apply")]
         apply: bool,
     },
-    /// Retrieve a job's context and extract/copy it to a directory.
-    WorkerInit {
+    /// Retrieve a job's context and extract/copy it to a directory, then submit the job output.
+    WorkerRun {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
         job: String,
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
-    },
-    /// Set the recorded output for a job.
-    WorkerSubmit {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
-        job: String,
     },
     /// Run a Rhai script.
     Run {
@@ -206,8 +200,7 @@ async fn main() -> Result<()> {
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
 
-        Commands::WorkerInit { job, path } => command::worker_init::run(&client, job, path).await?,
-        Commands::WorkerSubmit { job } => command::worker_submit::run(&client, job).await?,
+        Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
         Commands::Run { script } => command::run::run(script)?,
     }
 

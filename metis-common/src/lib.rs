@@ -129,10 +129,6 @@ pub mod jobs {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
         #[serde(default)]
-        pub setup: Vec<String>,
-        #[serde(default)]
-        pub cleanup: Vec<String>,
-        #[serde(default)]
         pub variables: HashMap<String, String>,
     }
 

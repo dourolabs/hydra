@@ -8,10 +8,6 @@ mod memory_store;
 
 pub use metis_common::task_status::{Status, TaskStatusLog};
 
-/// Type alias for a command. Currently represents a bash command as a string.
-/// In the future, this will be a more structured type.
-pub type Command = String;
-
 /// Represents a dependency edge between tasks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
@@ -28,8 +24,6 @@ pub enum Task {
         program: Option<String>,
         params: Vec<String>,
         context: Bundle,
-        setup: Vec<Command>,
-        cleanup: Vec<Command>,
         env_vars: HashMap<String, String>,
     },
 }

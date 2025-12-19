@@ -67,8 +67,6 @@ pub async fn create_job(
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,
-            setup: vec![],
-            cleanup: vec![],
             env_vars,
         };
         store

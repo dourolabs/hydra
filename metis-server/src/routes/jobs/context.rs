@@ -51,16 +51,12 @@ pub async fn get_job_context(
             program,
             params,
             context,
-            setup,
-            cleanup,
             env_vars,
         } => Ok(Json(WorkerContext {
             request_context: context.clone(),
             parents,
             program: program.clone(),
             params: params.clone(),
-            setup: setup.clone(),
-            cleanup: cleanup.clone(),
             variables: env_vars.clone(),
         })),
     }
