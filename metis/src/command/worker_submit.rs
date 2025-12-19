@@ -24,6 +24,9 @@ pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
     let context = client.get_job_context(&job_id).await?;
     run_cleanup_commands(&context.cleanup, &context.variables)?;
 
+    // Create patch file from git changes (excluding .metis directory)
+    create_patch_file()?;
+
     let (last_message_file, patch_file, output_dir) = resolve_output_paths();
 
     let last_message = fs::read_to_string(&last_message_file).with_context(|| {
@@ -126,6 +129,43 @@ fn run_cleanup_commands(commands: &[String], variables: &HashMap<String, String>
             ));
         }
     }
+    Ok(())
+}
+
+fn create_patch_file() -> Result<()> {
+    let current_dir = std::env::current_dir().context("failed to get current working directory")?;
+    let patch_file = current_dir.join(".metis").join("output").join("changes.patch");
+
+    // Ensure the output directory exists
+    if let Some(parent) = patch_file.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory at {parent:?}"))?;
+    }
+
+    // Stage all changes excluding .metis directory
+    let status = Command::new("git")
+        .args(["add", "-A", "--", ".", ":!.metis/**"])
+        .current_dir(&current_dir)
+        .status()
+        .context("failed to spawn git add")?;
+    if !status.success() {
+        return Err(anyhow!("git add failed with status {status}"));
+    }
+
+    // Create patch file from staged changes
+    // Note: git diff returns exit code 1 when there are no changes (normal case)
+    let output = Command::new("git")
+        .args(["diff", "--cached", "--", ".", ":!.metis/**"])
+        .current_dir(&current_dir)
+        .output()
+        .context("failed to spawn git diff")?;
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(anyhow!("git diff failed with status {}", output.status));
+    }
+
+    fs::write(&patch_file, &output.stdout)
+        .with_context(|| format!("failed to write patch file to {patch_file:?}"))?;
+
     Ok(())
 }
 

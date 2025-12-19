@@ -49,6 +49,11 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         let _ = eval_with_closure_unwrapping(&program, params, &variables)
             .with_context(|| "failed to execute Rhai program from worker context")?;
     }
+
+    // Startup tasks: codex login and create output directory
+    login_codex()?;
+    create_output_directory(&dest)?;
+
     Ok(())
 }
 
@@ -298,6 +303,45 @@ fn run_setup_commands(
             ));
         }
     }
+    Ok(())
+}
+
+fn login_codex() -> Result<()> {
+    let openai_api_key = std::env::var("OPENAI_API_KEY")
+        .context("OPENAI_API_KEY is not set; unable to login Codex CLI")?;
+
+    let mut login_cmd = Command::new("codex")
+        .args(["login", "--with-api-key"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("failed to spawn codex login")?;
+
+    {
+        let mut stdin = login_cmd
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("failed to open stdin for codex login"))?;
+        stdin
+            .write_all(format!("{openai_api_key}\n").as_bytes())
+            .context("failed to write OPENAI_API_KEY to codex login")?;
+    }
+
+    let status = login_cmd
+        .wait()
+        .context("failed waiting for codex login to finish")?;
+    if !status.success() {
+        return Err(anyhow!("codex login failed with status {status}"));
+    }
+
+    Ok(())
+}
+
+fn create_output_directory(dest: &Path) -> Result<()> {
+    let output_dir = dest.join(".metis").join("output");
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create output directory at {output_dir:?}"))?;
     Ok(())
 }
 

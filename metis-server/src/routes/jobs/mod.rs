@@ -57,6 +57,7 @@ pub async fn create_job(
     if let Some(token) = github_token {
         env_vars.entry("GH_TOKEN".to_string()).or_insert(token);
     }
+    env_vars.insert("METIS_ID".to_string(), job_id.clone());
 
     // Store the task with context and prompt (status will be Pending)
     {

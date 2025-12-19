@@ -323,7 +323,12 @@ fn load_program(program_arg: &str) -> Result<String> {
 }
 
 fn validate_program_syntax(program: &str) -> Result<()> {
-    let engine = RhaiEngine::new();
+    let mut engine = RhaiEngine::new();
+    // TODO: can we just max these out here? at minimum these constants need to be shared
+    // with the server.
+    engine.set_max_expr_depths(256, 256);
+    engine.set_max_call_levels(128);
+    engine.set_max_operations(50_000);
     engine
         .compile(program)
         .map(|_| ())

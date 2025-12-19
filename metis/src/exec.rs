@@ -61,7 +61,7 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
 }
 
 fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Result<String> {
-    let output = Command::new("sh")
+    let output = Command::new("bash")
         .args(["-c", command])
         .envs(env)
         .output()
@@ -91,6 +91,10 @@ pub fn eval_with_closure_unwrapping(
     env: &HashMap<String, String>,
 ) -> Result<rhai::Dynamic> {
     let mut engine = rhai::Engine::new();
+    // Configure engine limits to support complex scripts with nested closures and function calls
+    engine.set_max_expr_depths(256, 256);
+    engine.set_max_call_levels(128);
+    engine.set_max_operations(50_000);
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
     engine.register_fn("shell", shell);
