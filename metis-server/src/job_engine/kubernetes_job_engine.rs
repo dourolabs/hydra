@@ -197,6 +197,35 @@ async fn wait_for_pod_name_impl(
     }
 }
 
+async fn find_pod_by_metis_id_impl(
+    client: &Client,
+    namespace: &str,
+    job_id: &str,
+) -> Result<Pod, JobEngineError> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let selector = format!("metis-id={job_id}");
+    let lp = ListParams::default().labels(&selector);
+    let items = pods
+        .list(&lp)
+        .await
+        .map_err(JobEngineError::Kubernetes)?
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    match items.len() {
+        0 => Err(JobEngineError::NotFound(format!(
+            "No pod found with Metis ID '{job_id}'."
+        ))),
+        1 => Ok(items
+            .into_iter()
+            .next()
+            .expect("validated single pod response")),
+        _ => Err(JobEngineError::MultipleFound(format!(
+            "Multiple pods found with Metis ID '{job_id}'."
+        ))),
+    }
+}
+
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
     async fn create_job(&self, metis_id: &MetisId, prompt: &str) -> Result<(), JobEngineError> {
@@ -360,12 +389,25 @@ impl JobEngine for KubernetesJobEngine {
         job_id: &str,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
-        let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
-        let job_name = job.metadata.name.ok_or_else(|| {
-            JobEngineError::Internal(format!("Job '{job_id}' is missing a Kubernetes name."))
-        })?;
-
-        let pod_name = self.wait_for_pod_name(&job_name).await?;
+        let pod_name = match self.find_kubernetes_job_by_metis_id(job_id).await {
+            Ok(job) => {
+                let job_name = job.metadata.name.ok_or_else(|| {
+                    JobEngineError::Internal(format!(
+                        "Job '{job_id}' is missing a Kubernetes name."
+                    ))
+                })?;
+                self.wait_for_pod_name(&job_name).await?
+            }
+            Err(JobEngineError::NotFound(_)) => {
+                let pod = find_pod_by_metis_id_impl(&self.client, &self.namespace, job_id).await?;
+                pod.metadata.name.ok_or_else(|| {
+                    JobEngineError::Internal(format!(
+                        "Pod for job '{job_id}' is missing a Kubernetes name."
+                    ))
+                })?
+            }
+            Err(err) => return Err(err),
+        };
 
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let params = LogParams {
@@ -409,55 +451,60 @@ impl JobEngine for KubernetesJobEngine {
         let sender = tx;
 
         tokio::spawn(async move {
-            match find_kubernetes_job_by_metis_id_impl(&client, &namespace, &job_id).await {
-                Ok(job) => {
-                    let job_name = match job.metadata.name {
-                        Some(name) => name,
-                        None => {
-                            let _ = sender.unbounded_send(format!(
-                                "Error: Job '{job_id}' is missing a Kubernetes name."
-                            ));
-                            return;
+            let pod_name_result =
+                match find_kubernetes_job_by_metis_id_impl(&client, &namespace, &job_id).await {
+                    Ok(job) => match job.metadata.name {
+                        Some(job_name) => {
+                            wait_for_pod_name_impl(&client, &namespace, &job_name).await
                         }
+                        None => Err(JobEngineError::Internal(format!(
+                            "Job '{job_id}' is missing a Kubernetes name."
+                        ))),
+                    },
+                    Err(JobEngineError::NotFound(_)) => {
+                        find_pod_by_metis_id_impl(&client, &namespace, &job_id)
+                            .await
+                            .and_then(|pod| {
+                                pod.metadata.name.ok_or_else(|| {
+                                    JobEngineError::Internal(format!(
+                                        "Pod for job '{job_id}' is missing a Kubernetes name."
+                                    ))
+                                })
+                            })
+                    }
+                    Err(err) => Err(err),
+                };
+
+            match pod_name_result {
+                Ok(pod_name) => {
+                    let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
+                    let params = LogParams {
+                        follow,
+                        ..Default::default()
                     };
 
-                    match wait_for_pod_name_impl(&client, &namespace, &job_name).await {
-                        Ok(pod_name) => {
-                            let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-                            let params = LogParams {
-                                follow,
-                                ..Default::default()
-                            };
+                    match pods.log_stream(&pod_name, &params).await {
+                        Ok(mut reader) => {
+                            let mut buffer = vec![0u8; 1024];
 
-                            match pods.log_stream(&pod_name, &params).await {
-                                Ok(mut reader) => {
-                                    let mut buffer = vec![0u8; 1024];
+                            loop {
+                                match reader.read(&mut buffer).await {
+                                    Ok(0) => break,
+                                    Ok(read) => {
+                                        if read == 0 {
+                                            continue;
+                                        }
 
-                                    loop {
-                                        match reader.read(&mut buffer).await {
-                                            Ok(0) => break,
-                                            Ok(read) => {
-                                                if read == 0 {
-                                                    continue;
-                                                }
-
-                                                let chunk =
-                                                    String::from_utf8_lossy(&buffer[..read])
-                                                        .to_string();
-                                                if sender.unbounded_send(chunk).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            Err(err) => {
-                                                let _ =
-                                                    sender.unbounded_send(format!("Error: {err}"));
-                                                break;
-                                            }
+                                        let chunk =
+                                            String::from_utf8_lossy(&buffer[..read]).to_string();
+                                        if sender.unbounded_send(chunk).is_err() {
+                                            break;
                                         }
                                     }
-                                }
-                                Err(err) => {
-                                    let _ = sender.unbounded_send(format!("Error: {err}"));
+                                    Err(err) => {
+                                        let _ = sender.unbounded_send(format!("Error: {err}"));
+                                        break;
+                                    }
                                 }
                             }
                         }

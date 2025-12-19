@@ -14,7 +14,7 @@ use axum::{
 use futures::{StreamExt, channel::mpsc};
 use metis_common::logs::LogsQuery;
 use std::convert::Infallible;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub async fn get_job_logs(
     State(state): State<AppState>,
@@ -33,27 +33,34 @@ pub async fn get_job_logs(
         return Err(ApiError::bad_request("job_id must not be empty"));
     }
 
-    // Check if job exists and get its status to determine if we should follow logs
-    let job = state
+    // Check if job exists and get its status to determine if we should follow logs.
+    // If the job is missing (for example, if the pod errored and the job was removed),
+    // continue so we can still surface any available logs.
+    let job_status = match state
         .job_engine
         .find_job_by_metis_id(&job_id.to_string())
         .await
-        .map_err(|err| match err {
-            JobEngineError::NotFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "job not found");
-                ApiError::not_found(msg)
-            }
-            JobEngineError::MultipleFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "multiple jobs found");
-                ApiError::bad_request(msg)
-            }
-            err => {
-                error!(job_id = %job_id, error = ?err, "failed to find job");
-                ApiError::internal(err)
-            }
-        })?;
+    {
+        Ok(job) => Some(job.status),
+        Err(JobEngineError::NotFound(msg)) => {
+            warn!(
+                job_id = %job_id,
+                error = %msg,
+                "job not found, continuing to attempt log retrieval"
+            );
+            None
+        }
+        Err(JobEngineError::MultipleFound(msg)) => {
+            error!(job_id = %job_id, error = %msg, "multiple jobs found");
+            return Err(ApiError::bad_request(msg));
+        }
+        Err(err) => {
+            error!(job_id = %job_id, error = ?err, "failed to find job");
+            return Err(ApiError::internal(err));
+        }
+    };
 
-    let follow = watch_requested && job.status == JobStatus::Running;
+    let follow = watch_requested && job_status == Some(JobStatus::Running);
 
     if watch_requested {
         info!(

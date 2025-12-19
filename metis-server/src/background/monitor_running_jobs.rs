@@ -156,9 +156,10 @@ pub async fn monitor_running_jobs(state: AppState) {
                 Err(crate::job_engine::JobEngineError::NotFound(_)) => {
                     // Job not found in Kubernetes - might have been deleted or never created
                     // This could happen if the job was cleaned up externally
-                    warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
+                    warn!(metis_id = %metis_id, "job not found in job engine, marking as errored");
                     let mut store = state.store.write().await;
-                    let failure_reason = "Job not found in job engine".to_string();
+                    let failure_reason =
+                        "Job errored in job engine (missing Kubernetes job)".to_string();
                     if let Err(update_err) = store
                         .mark_task_complete(
                             &metis_id,
