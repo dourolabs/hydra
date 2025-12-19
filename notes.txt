@@ -29,6 +29,9 @@ kind delete cluster --name local-dev
 
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
+---
+This is a trivial edit for a test change.
+
 
 ## Task system
 
@@ -180,6 +183,5 @@ The setup for a task is as follows:
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
 ## Variables
-
 
 
