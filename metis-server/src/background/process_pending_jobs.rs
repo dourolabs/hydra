@@ -38,8 +38,6 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
-
-
             // Spawn the job
             match state.job_engine.create_job(&metis_id).await {
                 Ok(()) => {
