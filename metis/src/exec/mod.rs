@@ -1,9 +1,14 @@
-use std::{collections::HashMap, path::Path};
+mod codex;
+mod shell;
 
-use anyhow::{anyhow, Context, Result};
-use tokio::{fs, process::Command};
+use std::collections::HashMap;
 
-use crate::constants;
+use anyhow::{anyhow, Result};
+
+use self::{
+    codex::{codex, evaluate_codex_op},
+    shell::{evaluate_shell_command, shell},
+};
 
 #[derive(Debug, Clone)]
 enum AsyncOp {
@@ -20,77 +25,11 @@ impl std::fmt::Display for AsyncOp {
     }
 }
 
-fn codex(prompt: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
-    (AsyncOp::Codex { prompt }, continuation)
-}
-
-fn shell(command: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
-    (AsyncOp::Shell { command }, continuation)
-}
-
 async fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Result<String> {
     match op {
         AsyncOp::Codex { prompt } => evaluate_codex_op(prompt).await,
         AsyncOp::Shell { command } => evaluate_shell_command(command, env).await,
     }
-}
-
-async fn evaluate_codex_op(prompt: &str) -> Result<String> {
-    let output_path = Path::new(constants::METIS_DIR)
-        .join(constants::OUTPUT_DIR)
-        .join(constants::OUTPUT_TXT_FILE);
-    if let Some(dir) = output_path.parent() {
-        fs::create_dir_all(dir)
-            .await
-            .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
-    }
-
-    let status = Command::new("codex")
-        .args([
-            "exec",
-            "-o",
-            output_path
-                .to_str()
-                .expect("codex output path should be valid UTF-8"),
-            "--dangerously-bypass-approvals-and-sandbox",
-            prompt,
-        ])
-        .status()
-        .await
-        .context("failed to spawn codex command")?;
-
-    if !status.success() {
-        return Err(anyhow!("codex command failed with status {status}"));
-    }
-
-    fs::read_to_string(&output_path)
-        .await
-        .with_context(|| format!("failed to read codex output from {output_path:?}"))
-}
-
-async fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Result<String> {
-    let output = Command::new("bash")
-        .args(["-c", command])
-        .envs(env)
-        .output()
-        .await
-        .with_context(|| format!("failed to spawn shell command: {command}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
-            "shell command `{command}` failed with status {}{}",
-            output.status,
-            if stderr.trim().is_empty() {
-                String::new()
-            } else {
-                format!(": {}", stderr.trim())
-            }
-        ));
-    }
-
-    String::from_utf8(output.stdout)
-        .map_err(|err| anyhow!("failed to decode shell command output as UTF-8: {err}"))
 }
 
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
