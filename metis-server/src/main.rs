@@ -235,7 +235,7 @@ mod tests {
         let client = test_client();
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "parent_ids": ["parent-1"] }))
+            .json(&json!({ "program": "0", "parent_ids": ["parent-1"] }))
             .send()
             .await?;
 
@@ -276,6 +276,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
+                "program": "0",
                 "context": { "type": "service_repository", "name": "private-repo" }
             }))
             .send()
@@ -313,7 +314,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "prompt": "set variables",
+                "program": "0",
                 "variables": { "FOO": "bar", "PROMPT": "custom prompt" }
             }))
             .send()
@@ -352,6 +353,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
+                "program": "0",
                 "context": { "type": "service_repository", "name": "private-repo" },
                 "variables": { "GH_TOKEN": "user-supplied" }
             }))
@@ -383,6 +385,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
+                "program": "0",
                 "context": { "type": "service_repository", "name": "missing" }
             }))
             .send()

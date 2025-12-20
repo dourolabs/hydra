@@ -587,4 +587,210 @@ mod tests {
         assert!(!parents_dir.join("../escape").exists());
     }
 
+    #[test]
+    fn create_patch_file_includes_untracked_files() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        // Initialize git repository
+        Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .context("failed to init git repo for test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.name", "Test User"])
+            .status()
+            .context("failed to set git user.name")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .status()
+            .context("failed to set git user.email")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+
+        // Create initial file and commit
+        std::fs::write(repo_path.join("README.md"), "initial content")
+            .context("failed to write initial file")?;
+        Command::new("git")
+            .args(["-C", repo_str, "add", "README.md"])
+            .status()
+            .context("failed to add initial file")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "initial commit"])
+            .status()
+            .context("failed to create initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        // Create new untracked files
+        std::fs::write(repo_path.join("new_file.txt"), "new content")
+            .context("failed to write new file")?;
+        std::fs::create_dir_all(repo_path.join("src"))
+            .context("failed to create src directory")?;
+        std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
+            .context("failed to write main.rs")?;
+
+        // Create patch file
+        create_patch_file(repo_path)?;
+
+        // Read and verify patch file
+        let patch_file = repo_path
+            .join(constants::METIS_DIR)
+            .join(constants::OUTPUT_DIR)
+            .join(constants::CHANGES_PATCH_FILE);
+        let patch_content = fs::read_to_string(&patch_file)
+            .context("failed to read patch file")?;
+
+        // Verify new files are included in patch
+        assert!(
+            patch_content.contains("new_file.txt"),
+            "patch should include new_file.txt"
+        );
+        assert!(
+            patch_content.contains("new content"),
+            "patch should include content of new_file.txt"
+        );
+        assert!(
+            patch_content.contains("src/main.rs"),
+            "patch should include src/main.rs"
+        );
+        assert!(
+            patch_content.contains("fn main() {}"),
+            "patch should include content of src/main.rs"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_patch_file_excludes_metis_directory() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        // Initialize git repository
+        Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .context("failed to init git repo for test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.name", "Test User"])
+            .status()
+            .context("failed to set git user.name")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .status()
+            .context("failed to set git user.email")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+
+        // Create initial file and commit
+        std::fs::write(repo_path.join("README.md"), "initial content")
+            .context("failed to write initial file")?;
+        Command::new("git")
+            .args(["-C", repo_str, "add", "README.md"])
+            .status()
+            .context("failed to add initial file")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "initial commit"])
+            .status()
+            .context("failed to create initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        // Create files in .metis directory (should be excluded)
+        let metis_dir = repo_path.join(constants::METIS_DIR);
+        std::fs::create_dir_all(&metis_dir).context("failed to create .metis directory")?;
+        std::fs::write(metis_dir.join("internal_file.txt"), "internal content")
+            .context("failed to write file in .metis")?;
+        std::fs::create_dir_all(metis_dir.join("subdir"))
+            .context("failed to create subdir in .metis")?;
+        std::fs::write(metis_dir.join("subdir").join("nested.txt"), "nested content")
+            .context("failed to write nested file in .metis")?;
+
+        // Also create a regular file that should be included
+        std::fs::write(repo_path.join("regular_file.txt"), "regular content")
+            .context("failed to write regular file")?;
+
+        // Create patch file
+        create_patch_file(repo_path)?;
+
+        // Read and verify patch file
+        let patch_file = repo_path
+            .join(constants::METIS_DIR)
+            .join(constants::OUTPUT_DIR)
+            .join(constants::CHANGES_PATCH_FILE);
+        let patch_content = fs::read_to_string(&patch_file)
+            .context("failed to read patch file")?;
+
+        // Verify .metis files are excluded from patch
+        assert!(
+            !patch_content.contains(".metis/internal_file.txt"),
+            "patch should not include .metis/internal_file.txt"
+        );
+        assert!(
+            !patch_content.contains("internal content"),
+            "patch should not include content from .metis/internal_file.txt"
+        );
+        assert!(
+            !patch_content.contains(".metis/subdir/nested.txt"),
+            "patch should not include .metis/subdir/nested.txt"
+        );
+        assert!(
+            !patch_content.contains("nested content"),
+            "patch should not include content from .metis/subdir/nested.txt"
+        );
+
+        // Verify regular file is included
+        assert!(
+            patch_content.contains("regular_file.txt"),
+            "patch should include regular_file.txt"
+        );
+        assert!(
+            patch_content.contains("regular content"),
+            "patch should include content of regular_file.txt"
+        );
+
+        Ok(())
+    }
+
 }

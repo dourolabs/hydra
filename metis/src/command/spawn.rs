@@ -500,7 +500,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            Some(program_file.to_string_lossy().to_string()),
+            program_file.to_string_lossy().to_string(),
             vec!["test prompt".into()],
         )
         .await
@@ -615,7 +615,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            Some("let x = 1 + 2;".into()),
+            "let x = 1 + 2;".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -650,7 +650,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            Some(program_path.to_string_lossy().into_owned()),
+            program_path.to_string_lossy().into_owned(),
             vec!["file prompt".into()],
         )
         .await
@@ -679,7 +679,7 @@ mod tests {
             false,
             vec![],
             vec![],
-            Some("let =".into()),
+            "let =".into(),
             vec!["bad prompt".into()],
         )
         .await;
