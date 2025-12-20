@@ -158,7 +158,9 @@ async fn main() -> Result<()> {
             server: config::ServerSection { url },
         },
         _ => {
-            let config_path = cli.config.unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
+            let config_path = cli
+                .config
+                .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
             AppConfig::load(&config_path)?
         }
     };
@@ -202,7 +204,7 @@ async fn main() -> Result<()> {
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
-        Commands::Run { script } => command::run::run(script)?,
+        Commands::Run { script } => command::run::run(script).await?,
     }
 
     Ok(())

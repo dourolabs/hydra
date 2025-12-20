@@ -48,10 +48,11 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     create_output_directory(&dest)?;
     write_parent_outputs(&parents, &dest, github_token)?;
 
-    login_codex()?;    
+    login_codex()?;
     configure_git_repo(&dest)?;
-    
+
     let _ = eval_with_closure_unwrapping(&program, params, &variables)
+        .await
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
     // Submit job output (merge of worker-submit functionality)
@@ -280,7 +281,6 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
     Ok(())
 }
 
-
 fn login_codex() -> Result<()> {
     let openai_api_key = std::env::var("OPENAI_API_KEY")
         .context("OPENAI_API_KEY is not set; unable to login Codex CLI")?;
@@ -424,7 +424,13 @@ fn create_patch_file(dest: &Path) -> Result<()> {
     // Stage all changes excluding METIS_DIR directory
     // Note that we don't care if this fails, as it fails if there are no changes.
     Command::new("git")
-        .args(["add", "-A", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
+        .args([
+            "add",
+            "-A",
+            "--",
+            ".",
+            &format!(":!{}/**", constants::METIS_DIR),
+        ])
         .current_dir(dest)
         .status()
         .context("failed to spawn git add")?;
@@ -432,7 +438,13 @@ fn create_patch_file(dest: &Path) -> Result<()> {
     // Create patch file from staged changes
     // Note: git diff returns exit code 1 when there are no changes (normal case)
     let output = Command::new("git")
-        .args(["diff", "--cached", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
+        .args([
+            "diff",
+            "--cached",
+            "--",
+            ".",
+            &format!(":!{}/**", constants::METIS_DIR),
+        ])
         .current_dir(dest)
         .output()
         .context("failed to spawn git diff")?;
@@ -475,13 +487,7 @@ mod tests {
             .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
 
         Command::new("git")
-            .args([
-                "-C",
-                repo_str,
-                "config",
-                "user.email",
-                "test@example.com",
-            ])
+            .args(["-C", repo_str, "config", "user.email", "test@example.com"])
             .status()
             .context("failed to set git user.email")?
             .success()
@@ -491,7 +497,12 @@ mod tests {
         Ok(repo_str.to_string())
     }
 
-    fn create_initial_commit(repo_path: &Path, repo_str: &str, filename: &str, content: &str) -> Result<()> {
+    fn create_initial_commit(
+        repo_path: &Path,
+        repo_str: &str,
+        filename: &str,
+        content: &str,
+    ) -> Result<()> {
         std::fs::write(repo_path.join(filename), content)
             .with_context(|| format!("failed to write initial file {}", filename))?;
 
@@ -547,7 +558,10 @@ mod tests {
 
         write_parent_outputs(&parents, tempdir.path(), None)?;
 
-        let parents_dir = tempdir.path().join(constants::METIS_DIR).join(constants::PARENTS_DIR);
+        let parents_dir = tempdir
+            .path()
+            .join(constants::METIS_DIR)
+            .join(constants::PARENTS_DIR);
         assert!(parents_dir.join("parent-id").is_dir());
 
         let symlink_path = parents_dir.join("parent-name");
@@ -658,7 +672,10 @@ mod tests {
             "expected alias validation error, got {err:?}"
         );
 
-        let parents_dir = tempdir.path().join(constants::METIS_DIR).join(constants::PARENTS_DIR);
+        let parents_dir = tempdir
+            .path()
+            .join(constants::METIS_DIR)
+            .join(constants::PARENTS_DIR);
         assert!(!parents_dir.join("../escape").exists());
     }
 
@@ -672,8 +689,7 @@ mod tests {
         // Create new untracked files
         std::fs::write(repo_path.join("new_file.txt"), "new content")
             .context("failed to write new file")?;
-        std::fs::create_dir_all(repo_path.join("src"))
-            .context("failed to create src directory")?;
+        std::fs::create_dir_all(repo_path.join("src")).context("failed to create src directory")?;
         std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
             .context("failed to write main.rs")?;
 
@@ -718,8 +734,11 @@ mod tests {
             .context("failed to write file in .metis")?;
         std::fs::create_dir_all(metis_dir.join("subdir"))
             .context("failed to create subdir in .metis")?;
-        std::fs::write(metis_dir.join("subdir").join("nested.txt"), "nested content")
-            .context("failed to write nested file in .metis")?;
+        std::fs::write(
+            metis_dir.join("subdir").join("nested.txt"),
+            "nested content",
+        )
+        .context("failed to write nested file in .metis")?;
 
         // Also create a regular file that should be included
         std::fs::write(repo_path.join("regular_file.txt"), "regular content")
@@ -791,12 +810,14 @@ mod tests {
             .context("failed to write build.log")?;
         std::fs::create_dir_all(repo_path.join("target"))
             .context("failed to create target directory")?;
-        std::fs::write(repo_path.join("target").join("artifact.bin"), "binary content")
-            .context("failed to write target/artifact.bin")?;
+        std::fs::write(
+            repo_path.join("target").join("artifact.bin"),
+            "binary content",
+        )
+        .context("failed to write target/artifact.bin")?;
 
         // Create a file that should be included (not in .gitignore)
-        std::fs::create_dir_all(repo_path.join("src"))
-            .context("failed to create src directory")?;
+        std::fs::create_dir_all(repo_path.join("src")).context("failed to create src directory")?;
         std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
             .context("failed to write src/main.rs")?;
 
@@ -860,5 +881,4 @@ mod tests {
 
         Ok(())
     }
-
 }

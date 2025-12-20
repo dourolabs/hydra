@@ -1,6 +1,7 @@
-use std::{collections::HashMap, fs, path::Path, process::Command};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::{anyhow, Context, Result};
+use tokio::{fs, process::Command};
 
 use crate::constants;
 
@@ -27,19 +28,20 @@ fn shell(command: String, continuation: rhai::FnPtr) -> (AsyncOp, rhai::FnPtr) {
     (AsyncOp::Shell { command }, continuation)
 }
 
-fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Result<String> {
+async fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Result<String> {
     match op {
-        AsyncOp::Codex { prompt } => evaluate_codex_op(prompt),
-        AsyncOp::Shell { command } => evaluate_shell_command(command, env),
+        AsyncOp::Codex { prompt } => evaluate_codex_op(prompt).await,
+        AsyncOp::Shell { command } => evaluate_shell_command(command, env).await,
     }
 }
 
-fn evaluate_codex_op(prompt: &str) -> Result<String> {
+async fn evaluate_codex_op(prompt: &str) -> Result<String> {
     let output_path = Path::new(constants::METIS_DIR)
         .join(constants::OUTPUT_DIR)
         .join(constants::OUTPUT_TXT_FILE);
     if let Some(dir) = output_path.parent() {
         fs::create_dir_all(dir)
+            .await
             .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
     }
 
@@ -54,6 +56,7 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
             prompt,
         ])
         .status()
+        .await
         .context("failed to spawn codex command")?;
 
     if !status.success() {
@@ -61,14 +64,16 @@ fn evaluate_codex_op(prompt: &str) -> Result<String> {
     }
 
     fs::read_to_string(&output_path)
+        .await
         .with_context(|| format!("failed to read codex output from {output_path:?}"))
 }
 
-fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Result<String> {
+async fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Result<String> {
     let output = Command::new("bash")
         .args(["-c", command])
         .envs(env)
         .output()
+        .await
         .with_context(|| format!("failed to spawn shell command: {command}"))?;
 
     if !output.status.success() {
@@ -89,7 +94,7 @@ fn evaluate_shell_command(command: &str, env: &HashMap<String, String>) -> Resul
 }
 
 /// Evaluates a script and recursively evaluates async operation continuations until the result is no longer a tuple of operation + closure.
-pub fn eval_with_closure_unwrapping(
+pub async fn eval_with_closure_unwrapping(
     script: &str,
     params: Vec<String>,
     env: &HashMap<String, String>,
@@ -123,7 +128,7 @@ pub fn eval_with_closure_unwrapping(
     loop {
         if let Some((op, fn_ptr)) = result.clone().try_cast::<(AsyncOp, rhai::FnPtr)>() {
             println!("Async op: {}", op);
-            let op_result = evaluate_async_op(&op, env)?;
+            let op_result = evaluate_async_op(&op, env).await?;
             match fn_ptr.call(&engine, &ast, (op_result,)) {
                 Ok(new_result) => {
                     println!("Result: {:?}", &new_result);
@@ -152,12 +157,12 @@ pub fn eval_with_closure_unwrapping(
 mod tests {
     use super::*;
 
-    #[test]
-    fn eval_with_closure_unwrapping_pushes_env_map() -> Result<()> {
+    #[tokio::test]
+    async fn eval_with_closure_unwrapping_pushes_env_map() -> Result<()> {
         let mut env = HashMap::new();
         env.insert("API_KEY".to_string(), "secret".to_string());
 
-        let result = eval_with_closure_unwrapping(r#"env["API_KEY"]"#, Vec::new(), &env)?;
+        let result = eval_with_closure_unwrapping(r#"env["API_KEY"]"#, Vec::new(), &env).await?;
         assert_eq!(
             result
                 .try_cast::<String>()
@@ -168,8 +173,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn shell_commands_use_provided_env() -> Result<()> {
+    #[tokio::test]
+    async fn shell_commands_use_provided_env() -> Result<()> {
         let mut env = HashMap::new();
         env.insert("GREETING".to_string(), "hello".to_string());
 
@@ -177,7 +182,8 @@ mod tests {
             r#"shell("printf %s \"$GREETING\"", |output| output)"#,
             Vec::new(),
             &env,
-        )?;
+        )
+        .await?;
 
         assert_eq!(
             result

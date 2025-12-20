@@ -27,4 +27,3 @@ pub const CHANGES_PATCH_FILE: &str = "changes.patch";
 /// The default configuration file name (`config.toml`) used when no config
 /// file is explicitly specified via the `--config` flag.
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
-
