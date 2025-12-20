@@ -2,7 +2,7 @@ fn cleanup(metis_id) {
     let cleanup_body = `
 set -euo pipefail
 
-git add -A 
+git add -A .
 
 echo "checking diff"
 if git diff --cached --quiet; then

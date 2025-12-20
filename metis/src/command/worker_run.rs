@@ -422,14 +422,12 @@ fn create_patch_file(dest: &Path) -> Result<()> {
     }
 
     // Stage all changes excluding METIS_DIR directory
-    let status = Command::new("git")
+    // Note that we don't care if this fails, as it fails if there are no changes.
+    Command::new("git")
         .args(["add", "-A", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
         .current_dir(dest)
         .status()
         .context("failed to spawn git add")?;
-    if !status.success() {
-        return Err(anyhow!("git add failed with status {status}"));
-    }
 
     // Create patch file from staged changes
     // Note: git diff returns exit code 1 when there are no changes (normal case)
@@ -453,6 +451,83 @@ mod tests {
     use super::*;
     use metis_common::job_outputs::JobOutputPayload;
     use std::{collections::HashMap, path::PathBuf, process::Command};
+
+    // Test helpers for create_patch_file tests
+    fn init_git_repo(repo_path: &Path) -> Result<String> {
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("repo path contains invalid UTF-8"))?;
+
+        Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .context("failed to init git repo for test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
+
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.name", "Test User"])
+            .status()
+            .context("failed to set git user.name")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
+
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .status()
+            .context("failed to set git user.email")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+
+        Ok(repo_str.to_string())
+    }
+
+    fn create_initial_commit(repo_path: &Path, repo_str: &str, filename: &str, content: &str) -> Result<()> {
+        std::fs::write(repo_path.join(filename), content)
+            .with_context(|| format!("failed to write initial file {}", filename))?;
+
+        Command::new("git")
+            .args(["-C", repo_str, "add", filename])
+            .status()
+            .with_context(|| format!("failed to add initial file {}", filename))?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "initial commit"])
+            .status()
+            .context("failed to create initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        Ok(())
+    }
+
+    fn setup_git_repo_with_initial_commit(repo_path: &Path) -> Result<String> {
+        let repo_str = init_git_repo(repo_path)?;
+        create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
+        Ok(repo_str)
+    }
+
+    fn read_patch_file(repo_path: &Path) -> Result<String> {
+        let patch_file = repo_path
+            .join(constants::METIS_DIR)
+            .join(constants::OUTPUT_DIR)
+            .join(constants::CHANGES_PATCH_FILE);
+        fs::read_to_string(&patch_file)
+            .with_context(|| format!("failed to read patch file at {}", patch_file.display()))
+    }
 
     #[test]
     fn write_parent_outputs_creates_symlink_for_named_parent() -> Result<()> {
@@ -591,56 +666,8 @@ mod tests {
     fn create_patch_file_includes_untracked_files() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        let repo_str = repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
 
-        // Initialize git repository
-        Command::new("git")
-            .args(["init", repo_str])
-            .status()
-            .context("failed to init git repo for test")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.name", "Test User"])
-            .status()
-            .context("failed to set git user.name")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-        Command::new("git")
-            .args([
-                "-C",
-                repo_str,
-                "config",
-                "user.email",
-                "test@example.com",
-            ])
-            .status()
-            .context("failed to set git user.email")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
-
-        // Create initial file and commit
-        std::fs::write(repo_path.join("README.md"), "initial content")
-            .context("failed to write initial file")?;
-        Command::new("git")
-            .args(["-C", repo_str, "add", "README.md"])
-            .status()
-            .context("failed to add initial file")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "commit", "-m", "initial commit"])
-            .status()
-            .context("failed to create initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        setup_git_repo_with_initial_commit(repo_path)?;
 
         // Create new untracked files
         std::fs::write(repo_path.join("new_file.txt"), "new content")
@@ -654,12 +681,7 @@ mod tests {
         create_patch_file(repo_path)?;
 
         // Read and verify patch file
-        let patch_file = repo_path
-            .join(constants::METIS_DIR)
-            .join(constants::OUTPUT_DIR)
-            .join(constants::CHANGES_PATCH_FILE);
-        let patch_content = fs::read_to_string(&patch_file)
-            .context("failed to read patch file")?;
+        let patch_content = read_patch_file(repo_path)?;
 
         // Verify new files are included in patch
         assert!(
@@ -686,56 +708,8 @@ mod tests {
     fn create_patch_file_excludes_metis_directory() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        let repo_str = repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
 
-        // Initialize git repository
-        Command::new("git")
-            .args(["init", repo_str])
-            .status()
-            .context("failed to init git repo for test")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.name", "Test User"])
-            .status()
-            .context("failed to set git user.name")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-        Command::new("git")
-            .args([
-                "-C",
-                repo_str,
-                "config",
-                "user.email",
-                "test@example.com",
-            ])
-            .status()
-            .context("failed to set git user.email")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
-
-        // Create initial file and commit
-        std::fs::write(repo_path.join("README.md"), "initial content")
-            .context("failed to write initial file")?;
-        Command::new("git")
-            .args(["-C", repo_str, "add", "README.md"])
-            .status()
-            .context("failed to add initial file")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "commit", "-m", "initial commit"])
-            .status()
-            .context("failed to create initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        setup_git_repo_with_initial_commit(repo_path)?;
 
         // Create files in .metis directory (should be excluded)
         let metis_dir = repo_path.join(constants::METIS_DIR);
@@ -755,12 +729,7 @@ mod tests {
         create_patch_file(repo_path)?;
 
         // Read and verify patch file
-        let patch_file = repo_path
-            .join(constants::METIS_DIR)
-            .join(constants::OUTPUT_DIR)
-            .join(constants::CHANGES_PATCH_FILE);
-        let patch_content = fs::read_to_string(&patch_file)
-            .context("failed to read patch file")?;
+        let patch_content = read_patch_file(repo_path)?;
 
         // Verify .metis files are excluded from patch
         assert!(
@@ -788,6 +757,105 @@ mod tests {
         assert!(
             patch_content.contains("regular content"),
             "patch should include content of regular_file.txt"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_patch_file_ignores_gitignored_paths() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
+
+        // Create .gitignore that ignores *.log files
+        std::fs::write(repo_path.join(".gitignore"), "*.log\ntarget/\n")
+            .context("failed to write .gitignore")?;
+        Command::new("git")
+            .args(["-C", &repo_str, "add", ".gitignore"])
+            .status()
+            .context("failed to add .gitignore")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add .gitignore returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", &repo_str, "commit", "-m", "add .gitignore"])
+            .status()
+            .context("failed to commit .gitignore")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit .gitignore returned non-zero exit code"))?;
+
+        // Create files that match .gitignore patterns (should be ignored)
+        std::fs::write(repo_path.join("build.log"), "log content")
+            .context("failed to write build.log")?;
+        std::fs::create_dir_all(repo_path.join("target"))
+            .context("failed to create target directory")?;
+        std::fs::write(repo_path.join("target").join("artifact.bin"), "binary content")
+            .context("failed to write target/artifact.bin")?;
+
+        // Create a file that should be included (not in .gitignore)
+        std::fs::create_dir_all(repo_path.join("src"))
+            .context("failed to create src directory")?;
+        std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
+            .context("failed to write src/main.rs")?;
+
+        // Create patch file
+        create_patch_file(repo_path)?;
+
+        // Read and verify patch file
+        let patch_content = read_patch_file(repo_path)?;
+
+        // Verify gitignored files are excluded from patch
+        assert!(
+            !patch_content.contains("build.log"),
+            "patch should not include build.log (matched by *.log pattern)"
+        );
+        assert!(
+            !patch_content.contains("log content"),
+            "patch should not include content from build.log"
+        );
+        assert!(
+            !patch_content.contains("target/artifact.bin"),
+            "patch should not include target/artifact.bin (matched by target/ pattern)"
+        );
+        assert!(
+            !patch_content.contains("binary content"),
+            "patch should not include content from target/artifact.bin"
+        );
+
+        // Verify non-ignored file is included
+        assert!(
+            patch_content.contains("src/main.rs"),
+            "patch should include src/main.rs (not in .gitignore)"
+        );
+        assert!(
+            patch_content.contains("fn main() {}"),
+            "patch should include content of src/main.rs"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_patch_file_generates_empty_patch_when_no_changes() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+
+        setup_git_repo_with_initial_commit(repo_path)?;
+
+        // No changes made after the commit - directory is clean
+
+        // Create patch file
+        create_patch_file(repo_path)?;
+
+        // Read and verify patch file is empty
+        let patch_content = read_patch_file(repo_path)?;
+
+        // Verify patch is empty when there are no changes
+        assert!(
+            patch_content.is_empty(),
+            "patch should be empty when directory has no changes, but got: {patch_content:?}"
         );
 
         Ok(())
