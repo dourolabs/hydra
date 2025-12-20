@@ -1,5 +1,7 @@
 ## Kubernetes setup
 
+(Trivial change added to validate workflow behavior.)
+
 (requires docker to be running)
 
 ```
@@ -180,6 +182,5 @@ The setup for a task is as follows:
 * create the .metis/input/<parent> directories and copy over the outputs from parent tasks
 
 ## Variables
-
 
 
