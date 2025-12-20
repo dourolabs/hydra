@@ -1,4 +1,5 @@
 mod codex;
+mod github;
 mod shell;
 
 use std::collections::HashMap;
@@ -7,13 +8,35 @@ use anyhow::{anyhow, Result};
 
 use self::{
     codex::{codex, evaluate_codex_op},
+    github::{
+        create_pull_request, evaluate_create_pull_request, evaluate_wait_for_pull_request,
+        wait_for_pull_request,
+    },
     shell::{evaluate_shell_command, shell},
 };
 
 #[derive(Debug, Clone)]
 enum AsyncOp {
-    Codex { prompt: String },
-    Shell { command: String },
+    Codex {
+        prompt: String,
+    },
+    Shell {
+        command: String,
+    },
+    GithubCreatePullRequest {
+        owner: String,
+        repo: String,
+        title: String,
+        head: String,
+        base: String,
+        body: Option<String>,
+    },
+    GithubWaitForPullRequest {
+        owner: String,
+        repo: String,
+        number: i64,
+        poll_interval_secs: u64,
+    },
 }
 
 impl std::fmt::Display for AsyncOp {
@@ -21,6 +44,26 @@ impl std::fmt::Display for AsyncOp {
         match self {
             AsyncOp::Codex { prompt } => write!(f, "Codex {{ prompt: {prompt} }}"),
             AsyncOp::Shell { command } => write!(f, "Shell {{ command: {command} }}"),
+            AsyncOp::GithubCreatePullRequest {
+                owner,
+                repo,
+                title,
+                head,
+                base,
+                body,
+            } => write!(
+                f,
+                "GithubCreatePullRequest {{ owner: {owner}, repo: {repo}, title: {title}, head: {head}, base: {base}, body: {body:?} }}"
+            ),
+            AsyncOp::GithubWaitForPullRequest {
+                owner,
+                repo,
+                number,
+                poll_interval_secs,
+            } => write!(
+                f,
+                "GithubWaitForPullRequest {{ owner: {owner}, repo: {repo}, number: {number}, poll_interval_secs: {poll_interval_secs} }}"
+            ),
         }
     }
 }
@@ -29,6 +72,20 @@ async fn evaluate_async_op(op: &AsyncOp, env: &HashMap<String, String>) -> Resul
     match op {
         AsyncOp::Codex { prompt } => evaluate_codex_op(prompt).await,
         AsyncOp::Shell { command } => evaluate_shell_command(command, env).await,
+        AsyncOp::GithubCreatePullRequest {
+            owner,
+            repo,
+            title,
+            head,
+            base,
+            body,
+        } => evaluate_create_pull_request(owner, repo, title, head, base, body, env).await,
+        AsyncOp::GithubWaitForPullRequest {
+            owner,
+            repo,
+            number,
+            poll_interval_secs,
+        } => evaluate_wait_for_pull_request(owner, repo, *number, *poll_interval_secs, env).await,
     }
 }
 
@@ -45,6 +102,8 @@ pub async fn eval_with_closure_unwrapping(
     engine.set_max_operations(50_000);
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
+    engine.register_fn("github_create_pull_request", create_pull_request);
+    engine.register_fn("github_wait_for_pull_request", wait_for_pull_request);
     engine.register_fn("shell", shell);
 
     let ast = engine
