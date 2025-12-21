@@ -3,6 +3,7 @@ mod shell;
 
 use std::collections::HashMap;
 
+use crate::constants;
 use anyhow::{anyhow, Result};
 
 use self::{
@@ -40,9 +41,12 @@ pub async fn eval_with_closure_unwrapping(
 ) -> Result<rhai::Dynamic> {
     let mut engine = rhai::Engine::new();
     // Configure engine limits to support complex scripts with nested closures and function calls
-    engine.set_max_expr_depths(256, 256);
-    engine.set_max_call_levels(128);
-    engine.set_max_operations(50_000);
+    engine.set_max_expr_depths(
+        constants::RHAI_MAX_EXPR_DEPTHS.0,
+        constants::RHAI_MAX_EXPR_DEPTHS.1,
+    );
+    engine.set_max_call_levels(constants::RHAI_MAX_CALL_LEVELS);
+    engine.set_max_operations(constants::RHAI_MAX_OPERATIONS);
     engine.register_type_with_name::<AsyncOp>("AsyncOp");
     engine.register_fn("codex", codex);
     engine.register_fn("shell", shell);

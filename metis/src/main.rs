@@ -11,6 +11,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use client::MetisClient;
 use config::AppConfig;
+use metis_common::constants::ENV_METIS_SERVER_URL;
 use std::env;
 use std::path::PathBuf;
 
@@ -157,7 +158,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let app_config = match env::var("METIS_SERVER_URL") {
+    let app_config = match env::var(ENV_METIS_SERVER_URL) {
         Ok(url) if !url.trim().is_empty() => AppConfig {
             server: config::ServerSection { url },
         },

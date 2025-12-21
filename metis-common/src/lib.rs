@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
+pub mod constants;
 pub mod task_status {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
