@@ -18,6 +18,7 @@ use axum::{
     Json, Router,
     routing::{get, post},
 };
+use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -85,13 +86,13 @@ async fn main() -> anyhow::Result<()> {
     let service_state = ServiceState::from_config(&app_config.service);
 
     // Resolve OpenAI API key
-    let openai_api_key = env::var("OPENAI_API_KEY")
+    let openai_api_key = env::var(ENV_OPENAI_API_KEY)
         .ok()
         .or_else(|| app_config.metis.openai_api_key.clone())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "OPENAI_API_KEY is not set. Provide it via the environment or config.toml."
+                "{ENV_OPENAI_API_KEY} is not set. Provide it via the environment or config.toml."
             )
         })?;
 
@@ -126,7 +127,7 @@ async fn health_check() -> Json<serde_json::Value> {
 }
 
 fn config_path() -> PathBuf {
-    std::env::var("METIS_CONFIG")
+    std::env::var(ENV_METIS_CONFIG)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
 }
@@ -144,6 +145,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
+        constants::ENV_GH_TOKEN,
         job_outputs::JobOutputPayload,
         jobs::{
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
@@ -309,7 +311,7 @@ mod tests {
                         rev: "develop".to_string()
                     }
                 );
-                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"token-123".to_string()));
+                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
                 assert_eq!(image, "ghcr.io/example/repo:main");
             }
         }
@@ -382,7 +384,7 @@ mod tests {
                 image, env_vars, ..
             } => {
                 assert_eq!(image, "ghcr.io/example/override:main");
-                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"token-123".to_string()));
+                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
             }
         }
 
@@ -441,7 +443,7 @@ mod tests {
             .json(&json!({
                 "program": "0",
                 "context": { "type": "service_repository", "name": "private-repo" },
-                "variables": { "GH_TOKEN": "user-supplied" }
+                "variables": { ENV_GH_TOKEN: "user-supplied" }
             }))
             .send()
             .await?;
@@ -454,7 +456,10 @@ mod tests {
             Task::Spawn {
                 env_vars, image, ..
             } => {
-                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"user-supplied".to_string()));
+                assert_eq!(
+                    env_vars.get(ENV_GH_TOKEN),
+                    Some(&"user-supplied".to_string())
+                );
                 assert_eq!(
                     env_vars.get("PROMPT"),
                     None,

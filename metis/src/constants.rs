@@ -27,3 +27,12 @@ pub const CHANGES_PATCH_FILE: &str = "changes.patch";
 /// The default configuration file name (`config.toml`) used when no config
 /// file is explicitly specified via the `--config` flag.
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
+
+/// Expression depth limits used when configuring the Rhai engine.
+pub const RHAI_MAX_EXPR_DEPTHS: (usize, usize) = (256, 256);
+
+/// Maximum call stack depth for the Rhai engine.
+pub const RHAI_MAX_CALL_LEVELS: usize = 128;
+
+/// Maximum number of operations a Rhai script may execute.
+pub const RHAI_MAX_OPERATIONS: u64 = 50_000;

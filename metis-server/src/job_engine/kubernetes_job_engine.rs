@@ -14,6 +14,7 @@ use kube::{
     Api, Client,
     api::{DeleteParams, ListParams, LogParams, PostParams},
 };
+use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_OPENAI_API_KEY};
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
@@ -36,12 +37,12 @@ impl KubernetesJobEngine {
     fn build_env_vars(&self, job_uuid: &str) -> Option<Vec<EnvVar>> {
         let mut vars = vec![
             EnvVar {
-                name: "OPENAI_API_KEY".to_string(),
+                name: ENV_OPENAI_API_KEY.to_string(),
                 value: Some(self.openai_api_key.clone()),
                 ..Default::default()
             },
             EnvVar {
-                name: "METIS_ID".to_string(),
+                name: ENV_METIS_ID.to_string(),
                 value: Some(job_uuid.to_string()),
                 ..Default::default()
             },
@@ -49,7 +50,7 @@ impl KubernetesJobEngine {
 
         if !self.server_hostname.trim().is_empty() {
             vars.push(EnvVar {
-                name: "METIS_SERVER_URL".to_string(),
+                name: ENV_METIS_SERVER_URL.to_string(),
                 value: Some(format!("http://{}", self.server_hostname.trim())),
                 ..Default::default()
             });
