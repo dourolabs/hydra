@@ -20,7 +20,7 @@ fi";
 fn cleanup(metis_id) {
     let cleanup_body = `set -euo pipefail
 
-if [ -z "${GH_TOKEN:-}" ]; then
+if [ -z "${"${GH_TOKEN:-}"}" ]; then
   echo "GH_TOKEN not set; skipping PR creation."
   exit 0
 fi
@@ -40,15 +40,15 @@ echo "committing"
 git commit -m 'task ${metis_id}'
 echo "pushing"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
-git push --force-with-lease origin "${branch_name}"
+git push --force-with-lease origin "${"${branch_name}"}"
 
 title=$(cat .metis/output/pr_title.txt)
 
 echo "making PR"
 gh pr create \
   --repo dourolabs/metis \
-  --head "${branch_name}" \
-  --title "${title}" \
+  --head "${"${branch_name}"}" \
+  --title "${"${title}"}" \
   --body-file .metis/output/pr_body.txt`;
 
     shell(cleanup_body, |output| output)
@@ -84,15 +84,20 @@ and the body should go in .metis/output/pr_body.txt .";
 
     shell(`echo "this is the setup"`, |setup_output| {
         codex(prompt_input, |generate_output| {
-            snapshot_patch(|_| {
+            snapshot_patch(|parent_patch_output| {
                 codex(review_prompt, |review_output| {
-                    copy_review_outputs(|_| {
-                        codex(fix_prompt, |fix_output| cleanup(metis_id))
-                    })
-                })
-            })
-        })
-    })
+                    copy_review_outputs(|copy_output| {
+                        codex(fix_prompt, |fix_output| cleanup(metis_id));
+                        fix_output
+                    });
+                    review_output
+                });
+                parent_patch_output
+            });
+            generate_output
+        });
+        setup_output
+    });
 }
 
 run();
