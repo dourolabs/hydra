@@ -27,6 +27,7 @@ pub async fn run(
     repo_url_arg: Option<String>,
     service_repo_arg: Option<String>,
     service_repo_rev_arg: Option<String>,
+    image: Option<String>,
     context_dir: Option<PathBuf>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
@@ -62,9 +63,20 @@ pub async fn run(
     variables.insert("PROMPT".to_string(), prompt.clone());
 
     let params = vec![prompt.clone()];
+    let image = match image {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("--image must not be empty when provided");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
     let request = CreateJobRequest {
         program,
         params,
+        image,
         context,
         parent_ids,
         variables,
@@ -495,7 +507,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some(tmp_dir.path().to_path_buf()),
+            None,
             true,
             false,
             vec![],
@@ -540,6 +554,7 @@ mod tests {
             Some("service-repo".into()),
             Some("feature".into()),
             None,
+            None,
             false,
             false,
             vec![],
@@ -563,6 +578,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_allows_overriding_image() {
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-image".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            None,
+            Some("ghcr.io/example/metis:dev".into()),
+            None,
+            false,
+            false,
+            vec![],
+            vec![],
+            "0".into(),
+            vec!["custom image".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].image,
+            Some("ghcr.io/example/metis:dev".to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn spawn_forwards_cli_variables_into_job_request() {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
@@ -573,6 +622,9 @@ mod tests {
         run(
             &client,
             false,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -606,6 +658,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             None,
             None,
             None,

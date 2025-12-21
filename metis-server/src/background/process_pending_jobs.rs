@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status, TaskError},
+    store::{Status, Task, TaskError},
 };
 use chrono::Utc;
 use std::time::Duration;
@@ -38,8 +38,19 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
+            let image = {
+                let store = state.store.read().await;
+                match store.get_task(&metis_id).await {
+                    Ok(Task::Spawn { image, .. }) => image,
+                    Err(err) => {
+                        warn!(metis_id = %metis_id, error = %err, "failed to load task for spawning");
+                        continue;
+                    }
+                }
+            };
+
             // Spawn the job
-            match state.job_engine.create_job(&metis_id).await {
+            match state.job_engine.create_job(&metis_id, &image).await {
                 Ok(()) => {
                     let mut store = state.store.write().await;
                     match store.mark_task_running(&metis_id, Utc::now()).await {

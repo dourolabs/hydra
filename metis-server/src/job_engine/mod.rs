@@ -83,10 +83,11 @@ pub trait JobEngine: Send + Sync {
     ///
     /// # Arguments
     /// * `metis_id` - The Metis ID to use for the job
+    /// * `image` - The container image the job should run
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
-    async fn create_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError>;
+    async fn create_job(&self, metis_id: &MetisId, image: &str) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
     ///
