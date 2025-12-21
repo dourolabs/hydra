@@ -1,3 +1,4 @@
+use metis::constants;
 use std::{fs, path::Path};
 
 #[test]
@@ -26,9 +27,12 @@ fn all_rhai_scripts_compile() {
     );
 
     let mut engine = rhai::Engine::new();
-    engine.set_max_expr_depths(256, 256);
-    engine.set_max_call_levels(128);
-    engine.set_max_operations(50_000);
+    engine.set_max_expr_depths(
+        constants::RHAI_MAX_EXPR_DEPTHS.0,
+        constants::RHAI_MAX_EXPR_DEPTHS.1,
+    );
+    engine.set_max_call_levels(constants::RHAI_MAX_CALL_LEVELS);
+    engine.set_max_operations(constants::RHAI_MAX_OPERATIONS);
 
     for script in scripts {
         engine

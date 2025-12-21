@@ -11,8 +11,11 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use metis_common::job_outputs::JobOutputPayload;
-use metis_common::jobs::{Bundle, ParentContext, WorkerContext};
+use metis_common::{
+    constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
+    job_outputs::JobOutputPayload,
+    jobs::{Bundle, ParentContext, WorkerContext},
+};
 use tar::{Archive, Builder};
 
 use crate::client::MetisClientInterface;
@@ -30,7 +33,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
     } = client.get_job_context(&job).await?;
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
-    let github_token = variables.get("GH_TOKEN").map(String::as_str);
+    let github_token = variables.get(ENV_GH_TOKEN).map(String::as_str);
     match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -200,7 +203,7 @@ fn authenticate_github(token: &str) -> Result<()> {
             .ok_or_else(|| anyhow!("failed to open stdin for gh auth login"))?;
         stdin
             .write_all(format!("{token}\n").as_bytes())
-            .context("failed to write GH_TOKEN to gh auth login")?;
+            .with_context(|| format!("failed to write {ENV_GH_TOKEN} to gh auth login"))?;
     }
 
     let status = login_cmd
@@ -282,8 +285,8 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
 }
 
 fn login_codex() -> Result<()> {
-    let openai_api_key = std::env::var("OPENAI_API_KEY")
-        .context("OPENAI_API_KEY is not set; unable to login Codex CLI")?;
+    let openai_api_key = std::env::var(ENV_OPENAI_API_KEY)
+        .with_context(|| format!("{ENV_OPENAI_API_KEY} is not set; unable to login Codex CLI"))?;
 
     let mut login_cmd = Command::new("codex")
         .args(["login", "--with-api-key"])
@@ -300,7 +303,7 @@ fn login_codex() -> Result<()> {
             .ok_or_else(|| anyhow!("failed to open stdin for codex login"))?;
         stdin
             .write_all(format!("{openai_api_key}\n").as_bytes())
-            .context("failed to write OPENAI_API_KEY to codex login")?;
+            .with_context(|| format!("failed to write {ENV_OPENAI_API_KEY} to codex login"))?;
     }
 
     let status = login_cmd

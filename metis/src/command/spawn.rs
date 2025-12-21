@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, constants};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine as Base64EngineTrait;
@@ -331,11 +331,12 @@ fn load_program(program_arg: &str) -> Result<String> {
 
 fn validate_program_syntax(program: &str) -> Result<()> {
     let mut engine = RhaiEngine::new();
-    // TODO: can we just max these out here? at minimum these constants need to be shared
-    // with the server.
-    engine.set_max_expr_depths(256, 256);
-    engine.set_max_call_levels(128);
-    engine.set_max_operations(50_000);
+    engine.set_max_expr_depths(
+        constants::RHAI_MAX_EXPR_DEPTHS.0,
+        constants::RHAI_MAX_EXPR_DEPTHS.1,
+    );
+    engine.set_max_call_levels(constants::RHAI_MAX_CALL_LEVELS);
+    engine.set_max_operations(constants::RHAI_MAX_OPERATIONS);
     engine
         .compile(program)
         .map(|_| ())

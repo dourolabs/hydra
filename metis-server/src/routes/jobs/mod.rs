@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{
+    constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     job_outputs::JobOutputPayload,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
@@ -56,9 +57,9 @@ pub async fn create_job(
     } = state.service_state.resolve_bundle_spec(payload.context)?;
     let mut env_vars = payload.variables;
     if let Some(token) = github_token {
-        env_vars.entry("GH_TOKEN".to_string()).or_insert(token);
+        env_vars.entry(ENV_GH_TOKEN.to_string()).or_insert(token);
     }
-    env_vars.insert("METIS_ID".to_string(), job_id.clone());
+    env_vars.insert(ENV_METIS_ID.to_string(), job_id.clone());
     let image = resolve_image(payload.image, default_image, &fallback_image)?;
 
     // Store the task with context (status will be Pending)
