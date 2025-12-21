@@ -10,7 +10,7 @@ if [ -z "${"${GH_TOKEN:-}"}" ]; then
 fi
 
 echo "Collecting PR comments and reviews"
-gh pr view --json comments,reviews,reviewThreads,author,number,title --jq '.' > .metis/output/pr_feedback.json`;
+gh pr view --json comments,reviews,author,number,title --jq '.' > .metis/output/pr_feedback.json`;
 
     shell(body, next)
 }
@@ -35,14 +35,13 @@ git push --force-with-lease origin "${"${branch_name}"}"`;
     shell(cleanup_body, |output| output)
 }
 
-fn run() {
-    let prompt_input = env["PROMPT"] ?? "";
-    let metis_id = env["METIS_ID"] ?? "unknown";
-    if metis_id == "" {
-        metis_id = "unknown";
-    }
+let prompt_input = env["PROMPT"] ?? "";
+let metis_id = env["METIS_ID"] ?? "unknown";
+if metis_id == "" {
+    metis_id = "unknown";
+}
 
-    let fix_prompt = prompt_input + `
+let fix_prompt = prompt_input + `
 
 You are responsible for addressing outstanding feedback on this pull request.
 All PR comments and reviews have been fetched with gh pr view and stored in
@@ -53,10 +52,6 @@ Once you have finished with the prompt, please generate a pull request title and
 description for this change. The title should go in .metis/output/pr_title.txt 
 and the body should go in .metis/output/pr_body.txt .`;
 
-    fetch_feedback(|feedback_output| {
-        codex(fix_prompt, |codex_output| cleanup(metis_id));
-        feedback_output
-    });
-}
-
-run();
+fetch_feedback(|feedback_output| {
+    codex(fix_prompt, |codex_output| cleanup(metis_id))
+});
