@@ -3,7 +3,7 @@
 fn cleanup(metis_id) {
     let cleanup_body = `set -euo pipefail
 
-if [ -z "${GH_TOKEN:-}" ]; then
+if [ -z "${"${GH_TOKEN:-}"}" ]; then
   echo "GH_TOKEN not set; skipping push."
   exit 0
 fi
@@ -12,7 +12,7 @@ git add -A
 
 git commit -m 'task ${metis_id}' || true
 branch_name=$(git rev-parse --abbrev-ref HEAD)
-git push --force-with-lease origin "${branch_name}"`;
+git push --force-with-lease origin "${"${branch_name}"}"`;
     shell(cleanup_body, |output| output)
 }
 
