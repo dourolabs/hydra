@@ -23,6 +23,7 @@ pub enum Task {
         program: String,
         params: Vec<String>,
         context: Bundle,
+        image: String,
         env_vars: HashMap<String, String>,
     },
 }

@@ -38,7 +38,7 @@ impl MockJobEngine {
 
 #[async_trait]
 impl JobEngine for MockJobEngine {
-    async fn create_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+    async fn create_job(&self, metis_id: &MetisId, _image: &str) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
             return Err(JobEngineError::AlreadyExists(metis_id.clone()));
