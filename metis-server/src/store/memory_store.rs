@@ -418,6 +418,16 @@ mod tests {
     use metis_common::jobs::Bundle;
     use std::collections::HashSet;
 
+    fn spawn_task() -> Task {
+        Task::Spawn {
+            program: "0".to_string(),
+            params: vec![],
+            context: Bundle::None,
+            image: "metis-worker:latest".to_string(),
+            env_vars: HashMap::new(),
+        }
+    }
+
     // Helper function for tests to create a dummy payload
     fn dummy_payload() -> JobOutputPayload {
         JobOutputPayload {
@@ -438,22 +448,12 @@ mod tests {
     async fn add_and_retrieve_tasks_with_dependencies() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store
             .add_task(root_task.clone(), vec![], Utc::now())
             .await
             .unwrap();
-        let child_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let child_task = spawn_task();
         let child_id = store
             .add_task(child_task.clone(), vec![edge(&root_id)], Utc::now())
             .await
@@ -483,14 +483,9 @@ mod tests {
         let mut store = MemoryStore::new();
         let missing_parent = "missing".to_string();
 
-        let spawn_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let task = spawn_task();
         let err = store
-            .add_task(spawn_task, vec![edge(&missing_parent)], Utc::now())
+            .add_task(task, vec![edge(&missing_parent)], Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
@@ -502,30 +497,17 @@ mod tests {
     async fn remove_task_updates_relationships() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
         let grandchild_task = Task::Spawn {
             program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
+            image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
         };
         let grandchild_id = store
@@ -559,12 +541,7 @@ mod tests {
     async fn task_without_parents_starts_as_pending() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
@@ -574,24 +551,10 @@ mod tests {
     async fn task_with_incomplete_parent_starts_as_blocked() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
 
@@ -604,22 +567,12 @@ mod tests {
     async fn get_parents_returns_edge_names() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         let child_id = store
             .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
+                spawn_task(),
                 vec![Edge {
                     id: root_id.clone(),
                     name: Some("root".to_string()),
@@ -643,12 +596,7 @@ mod tests {
     async fn task_with_complete_parents_starts_as_pending() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         // Complete the root task (first mark as running, then complete)
@@ -661,16 +609,7 @@ mod tests {
 
         // Add a child - it should start as pending since parent is complete
         let child_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -680,12 +619,7 @@ mod tests {
     async fn mark_task_running_transitions_from_pending() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
@@ -698,12 +632,7 @@ mod tests {
     async fn mark_task_complete_transitions_from_running() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
@@ -724,12 +653,7 @@ mod tests {
     async fn mark_task_failed_transitions_from_running() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
@@ -756,24 +680,10 @@ mod tests {
     async fn mark_task_complete_unblocks_dependents() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
 
@@ -797,37 +707,14 @@ mod tests {
     async fn mark_task_complete_with_multiple_dependents() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child1_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
         let child2_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
 
@@ -851,23 +738,13 @@ mod tests {
     async fn mark_task_complete_with_multiple_parents() {
         let mut store = MemoryStore::new();
 
-        let root1_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root1_task = spawn_task();
         let root1_id = store
             .add_task(root1_task, vec![], Utc::now())
             .await
             .unwrap();
 
-        let root2_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root2_task = spawn_task();
         let root2_id = store
             .add_task(root2_task, vec![], Utc::now())
             .await
@@ -876,12 +753,7 @@ mod tests {
         // Child depends on both parents
         let child_id = store
             .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
+                spawn_task(),
                 vec![edge(&root1_id), edge(&root2_id)],
                 Utc::now(),
             )
@@ -918,24 +790,10 @@ mod tests {
     async fn mark_task_running_from_blocked_fails() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
         let child_id = store
-            .add_task(
-                Task::Spawn {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: Bundle::None,
-                    env_vars: HashMap::new(),
-                },
-                vec![edge(&root_id)],
-                Utc::now(),
-            )
+            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
             .await
             .unwrap();
 
@@ -951,12 +809,7 @@ mod tests {
     async fn mark_task_complete_from_pending_fails() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         // Trying to mark as complete from pending should fail
@@ -971,12 +824,7 @@ mod tests {
     async fn mark_task_failed_from_pending_fails() {
         let mut store = MemoryStore::new();
 
-        let root_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            env_vars: HashMap::new(),
-        };
+        let root_task = spawn_task();
         let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
 
         // Trying to mark as failed from pending should fail

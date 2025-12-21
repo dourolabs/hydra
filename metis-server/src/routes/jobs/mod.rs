@@ -1,5 +1,6 @@
 use crate::{
     AppState,
+    state::ResolvedBundle,
     store::{Edge, Store, StoreError, Task, TaskError},
 };
 use axum::{
@@ -26,6 +27,7 @@ pub async fn create_job(
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<CreateJobResponse>, ApiError> {
     info!("create_job invoked");
+    let fallback_image = state.config.metis.worker_image.clone();
 
     let parent_ids: Vec<String> = payload
         .parent_ids
@@ -47,12 +49,17 @@ pub async fn create_job(
     // Generate a unique ID for the job
     let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
 
-    let (context, github_token) = state.service_state.resolve_bundle_spec(payload.context)?;
+    let ResolvedBundle {
+        bundle: context,
+        github_token,
+        default_image,
+    } = state.service_state.resolve_bundle_spec(payload.context)?;
     let mut env_vars = payload.variables;
     if let Some(token) = github_token {
         env_vars.entry("GH_TOKEN".to_string()).or_insert(token);
     }
     env_vars.insert("METIS_ID".to_string(), job_id.clone());
+    let image = resolve_image(payload.image, default_image, &fallback_image)?;
 
     // Store the task with context (status will be Pending)
     {
@@ -61,6 +68,7 @@ pub async fn create_job(
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,
+            image,
             env_vars,
         };
         store
@@ -89,6 +97,36 @@ pub async fn create_job(
     );
 
     Ok(Json(CreateJobResponse { job_id }))
+}
+
+fn resolve_image(
+    user_supplied: Option<String>,
+    repo_default: Option<String>,
+    fallback: &str,
+) -> Result<String, ApiError> {
+    if let Some(image) = user_supplied {
+        let trimmed = image.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request("image must not be empty"));
+        }
+        return Ok(trimmed.to_string());
+    }
+
+    if let Some(default_image) = repo_default {
+        let trimmed = default_image.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let trimmed = fallback.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::internal(anyhow::anyhow!(
+            "default worker image must not be empty"
+        )));
+    }
+
+    Ok(trimmed.to_string())
 }
 
 pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {

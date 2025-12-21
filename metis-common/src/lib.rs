@@ -43,6 +43,8 @@ pub mod jobs {
         pub program: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub image: Option<String>,
         #[serde(default)]
         pub context: BundleSpec,
         #[serde(default)]

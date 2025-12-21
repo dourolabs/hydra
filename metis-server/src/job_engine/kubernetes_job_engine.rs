@@ -21,7 +21,6 @@ use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
-    pub worker_image: String,
     pub openai_api_key: String,
     pub server_hostname: String,
     pub client: Client,
@@ -199,7 +198,7 @@ async fn wait_for_pod_name_impl(
 
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
-    async fn create_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+    async fn create_job(&self, metis_id: &MetisId, image: &str) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
         info!(metis_id = %metis_id, namespace = %self.namespace, "creating Kubernetes job");
@@ -222,7 +221,7 @@ impl JobEngine for KubernetesJobEngine {
                     spec: Some(PodSpec {
                         containers: vec![Container {
                             name: "metis-worker".to_string(),
-                            image: Some(self.worker_image.clone()),
+                            image: Some(image.to_string()),
                             image_pull_policy: Some("IfNotPresent".into()),
                             args: None,
                             env: self.build_env_vars(metis_id),

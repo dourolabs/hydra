@@ -64,6 +64,10 @@ enum Commands {
         )]
         service_repo_rev: Option<String>,
 
+        /// Override the worker Docker image for this task.
+        #[arg(long = "image", value_name = "IMAGE")]
+        image: Option<String>,
+
         /// Directory to upload as the job context (will be archived and base64 encoded).
         #[arg(long = "context-dir", value_name = "PATH")]
         context_dir: Option<PathBuf>,
@@ -173,6 +177,7 @@ async fn main() -> Result<()> {
             repo_url,
             service_repo,
             service_repo_rev,
+            image,
             context_dir,
             encode_directory,
             encode_git_bundle,
@@ -188,6 +193,7 @@ async fn main() -> Result<()> {
                 repo_url,
                 service_repo,
                 service_repo_rev,
+                image,
                 context_dir,
                 encode_directory,
                 encode_git_bundle,

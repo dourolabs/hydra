@@ -96,6 +96,8 @@ pub struct Repository {
     pub default_branch: Option<String>,
     #[serde(default)]
     pub github_token: Option<String>,
+    #[serde(default)]
+    pub default_image: Option<String>,
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {

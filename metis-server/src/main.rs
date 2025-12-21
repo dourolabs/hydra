@@ -101,7 +101,6 @@ async fn main() -> anyhow::Result<()> {
     // Create job engine
     let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
-        worker_image: app_config.metis.worker_image.clone(),
         openai_api_key,
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
@@ -153,6 +152,10 @@ mod tests {
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
 
+    fn default_image() -> String {
+        crate::config::MetisSection::default().worker_image
+    }
+
     #[tokio::test]
     async fn health_route_runs_with_injected_dependencies() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
@@ -172,6 +175,7 @@ mod tests {
     #[tokio::test]
     async fn create_job_enqueues_task() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -193,11 +197,13 @@ mod tests {
                 context,
                 program,
                 params,
+                image,
                 env_vars: _,
             } => {
                 assert_eq!(program, "0");
                 assert!(params.is_empty());
                 assert_eq!(context, Bundle::None);
+                assert_eq!(image, default_image);
             }
         }
 
@@ -211,6 +217,7 @@ mod tests {
     #[tokio::test]
     async fn create_job_respects_parent_dependencies() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -224,6 +231,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -265,6 +273,7 @@ mod tests {
             remote_url: "https://example.com/private.git".to_string(),
             default_branch: Some("develop".to_string()),
             github_token: Some("token-123".to_string()),
+            default_image: Some("ghcr.io/example/repo:main".to_string()),
         };
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
@@ -288,7 +297,10 @@ mod tests {
         let task = store_read.get_task(&body.job_id).await?;
         match task {
             Task::Spawn {
-                context, env_vars, ..
+                context,
+                env_vars,
+                image,
+                ..
             } => {
                 assert_eq!(
                     context,
@@ -297,6 +309,79 @@ mod tests {
                         rev: "develop".to_string()
                     }
                 );
+                assert_eq!(env_vars.get("GH_TOKEN"), Some(&"token-123".to_string()));
+                assert_eq!(image, "ghcr.io/example/repo:main");
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_respects_image_override() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "program": "0",
+                "image": "ghcr.io/example/custom:dev"
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn { image, .. } => {
+                assert_eq!(image, "ghcr.io/example/custom:dev");
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
+        let mut state = test_state();
+        let repo = GitRepository {
+            name: "private-repo".to_string(),
+            remote_url: "https://example.com/private.git".to_string(),
+            default_branch: Some("develop".to_string()),
+            github_token: Some("token-123".to_string()),
+            default_image: Some("ghcr.io/example/repo:main".to_string()),
+        };
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
+        });
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({
+                "program": "0",
+                "context": { "type": "service_repository", "name": "private-repo" },
+                "image": "ghcr.io/example/override:main"
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: CreateJobResponse = response.json().await?;
+        let store_read = store.read().await;
+        let task = store_read.get_task(&body.job_id).await?;
+        match task {
+            Task::Spawn {
+                image, env_vars, ..
+            } => {
+                assert_eq!(image, "ghcr.io/example/override:main");
                 assert_eq!(env_vars.get("GH_TOKEN"), Some(&"token-123".to_string()));
             }
         }
@@ -342,6 +427,7 @@ mod tests {
             remote_url: "https://example.com/private.git".to_string(),
             default_branch: Some("develop".to_string()),
             github_token: Some("token-123".to_string()),
+            default_image: Some("ghcr.io/example/repo:main".to_string()),
         };
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
@@ -365,13 +451,16 @@ mod tests {
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
         match task {
-            Task::Spawn { env_vars, .. } => {
+            Task::Spawn {
+                env_vars, image, ..
+            } => {
                 assert_eq!(env_vars.get("GH_TOKEN"), Some(&"user-supplied".to_string()));
                 assert_eq!(
                     env_vars.get("PROMPT"),
                     None,
                     "server should not inject prompt automatically"
                 );
+                assert_eq!(image, "ghcr.io/example/repo:main");
             }
         }
 
@@ -416,6 +505,7 @@ mod tests {
     async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
         let engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(engine);
+        let default_image = default_image();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -432,6 +522,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -445,6 +536,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -458,6 +550,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -488,6 +581,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
         let job_id = "job-123".to_string();
@@ -501,6 +595,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -728,6 +823,7 @@ mod tests {
     #[tokio::test]
     async fn set_job_output_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
@@ -739,6 +835,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -807,6 +904,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_output_returns_stored_output() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         let payload = JobOutputPayload {
             last_message: "all good".to_string(),
@@ -823,6 +921,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -857,6 +956,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_output_errors_when_result_is_missing() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
@@ -868,6 +968,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -927,6 +1028,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         let context = Bundle::GitRepository {
             url: "https://example.com/repo.git".to_string(),
@@ -946,6 +1048,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![],
@@ -969,6 +1072,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: context.clone(),
+                        image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
                     vec![Edge {
@@ -1009,6 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
         let state = test_state();
+        let default_image = default_image();
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
@@ -1019,6 +1124,7 @@ mod tests {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
+                        image: default_image.clone(),
                         env_vars: HashMap::from([(
                             "SECRET_VALUE".to_string(),
                             "keep-me-safe".to_string(),

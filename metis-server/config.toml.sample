@@ -14,6 +14,7 @@ OPENAI_API_KEY = ""
 [service.repositories.example]
 remote_url = "https://github.com/example/repo.git"
 default_branch = "main"
+default_image = "metis-worker:latest"
 github_token = ""
 
 [kubernetes]
