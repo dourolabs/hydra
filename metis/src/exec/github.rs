@@ -157,6 +157,26 @@ fn issue_state_as_str(state: &IssueState) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn github_token_returns_gh_token() {
+        let mut env = HashMap::new();
+        env.insert("GH_TOKEN".to_string(), "token".to_string());
+
+        let token = github_token(&env).expect("expected GH_TOKEN to be returned");
+
+        assert_eq!(token, "token");
+    }
+
+    #[test]
+    fn github_token_errors_without_gh_token_even_if_github_token_present() {
+        let mut env = HashMap::new();
+        env.insert("GITHUB_TOKEN".to_string(), "token".to_string());
+
+        let error = github_token(&env).expect_err("expected GH_TOKEN to be required");
+
+        assert!(error.to_string().contains("GH_TOKEN"));
+    }
+
     #[tokio::test]
     async fn missing_token_returns_error_for_create() {
         let env = HashMap::new();
