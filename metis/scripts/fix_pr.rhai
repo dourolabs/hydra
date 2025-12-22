@@ -10,7 +10,7 @@ if [ -z "${"${GH_TOKEN:-}"}" ]; then
 fi
 
 branch_name=$(git rev-parse --abbrev-ref HEAD)
-pr_number=$(gh pr status --json currentBranch --jq '.currentBranch[0].number')
+pr_number=$(gh pr status --json number --jq '.currentBranch.number')
 
 if [ -z "${"${pr_number}"}" ]; then
   echo "Unable to determine PR number for branch ${"${branch_name}"}." >&2
@@ -18,35 +18,10 @@ if [ -z "${"${pr_number}"}" ]; then
 fi
 
 headers=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
-
-echo "Collecting PR metadata"
-gh api "${"${headers[@]}"}" "/repos/:owner/:repo/pulls/${"${pr_number}"}" \
-  | jq '{number, title, state, draft, html_url, user: {login: .user.login}}' \
-  > "${"${tmpdir}"}/pr.json"
-
-echo "Collecting issue comments"
-gh api "${"${headers[@]}"}" "/repos/:owner/:repo/issues/${"${pr_number}"}/comments" --paginate \
-  | jq -s 'flatten | map({id, body, user: {login: .user.login}, created_at, updated_at, html_url})' \
-  > "${"${tmpdir}"}/issue_comments.json"
-
-echo "Collecting review summaries"
-gh api "${"${headers[@]}"}" "/repos/:owner/:repo/pulls/${"${pr_number}"}/reviews" --paginate \
-  | jq -s 'flatten | map({id, body, state, submitted_at, commit_id, html_url, user: {login: .user.login}})' \
-  > "${"${tmpdir}"}/reviews.json"
 
 echo "Collecting review comments"
-gh api "${"${headers[@]}"}" /repos/:owner/:repo/pulls/comments --paginate \
-  | jq -s --arg pr_number "${"${pr_number}"}" 'flatten | map(select(.pull_request_url | endswith("/\($pr_number)")) | {id, pull_request_review_id, in_reply_to_id, body, commit_id, path, line, start_line, original_line, diff_hunk, created_at, updated_at, html_url, state, user: {login: .user.login}})' \
-  > "${"${tmpdir}"}/review_comments.json"
-
-jq -n \
-  --slurpfile pr "${"${tmpdir}"}/pr.json" \
-  --slurpfile comments "${"${tmpdir}"}/issue_comments.json" \
-  --slurpfile reviews "${"${tmpdir}"}/reviews.json" \
-  --slurpfile review_comments "${"${tmpdir}"}/review_comments.json" \
-  '{pull_request: $pr[0], comments: $comments[0], reviews: $reviews[0], review_comments: $review_comments[0]}' \
+gh api "${"${headers[@]}"}" /repos/:owner/:repo/pulls/${"${pr_number}"}/comments --paginate \
+  | jq -s 'flatten | map({id, pull_request_review_id, in_reply_to_id, body, commit_id, path, line, start_line, original_line, diff_hunk, created_at, updated_at, html_url, state, user: {login: .user.login}})' \
   > .metis/output/pr_feedback.json`;
 
     shell(body, next)

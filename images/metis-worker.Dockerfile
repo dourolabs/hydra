@@ -35,6 +35,7 @@ RUN apt-get update \
         file \
         git \
         gnupg \
+        jq \
         nodejs \
         npm \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
