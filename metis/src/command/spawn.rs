@@ -213,24 +213,21 @@ fn build_repo_context(repo: Option<String>, rev: Option<String>) -> Result<Optio
             if trimmed.is_empty() {
                 bail!("--rev must not be empty when provided");
             }
-            Some(trimmed)
+            trimmed
         }
-        None => None,
+        None => "main".to_string(),
     };
 
     if looks_like_git_url(&trimmed_repo) {
-        let rev = trimmed_rev
-            .ok_or_else(|| anyhow!("--rev is required when using a git repository URL"))?;
-
         return Ok(Some(BundleSpec::GitRepository {
             url: trimmed_repo,
-            rev,
+            rev: trimmed_rev,
         }));
     }
 
     Ok(Some(BundleSpec::ServiceRepository {
         name: trimmed_repo,
-        rev: trimmed_rev,
+        rev: Some(trimmed_rev),
     }))
 }
 
@@ -546,6 +543,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_defaults_rev_to_main_for_service_repositories() {
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-service-default-rev".into(),
+        });
+
+        run(
+            &client,
+            false,
+            Some("service-repo".into()),
+            None,
+            None,
+            None,
+            false,
+            false,
+            vec![],
+            vec![],
+            "0".into(),
+            vec!["test prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].context,
+            BundleSpec::ServiceRepository {
+                name: "service-repo".into(),
+                rev: Some("main".into())
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
@@ -557,6 +589,41 @@ mod tests {
             false,
             Some("https://example.com/repo.git".into()),
             Some("main".into()),
+            None,
+            None,
+            false,
+            false,
+            vec![],
+            vec![],
+            "0".into(),
+            vec!["test prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].context,
+            BundleSpec::GitRepository {
+                url: "https://example.com/repo.git".into(),
+                rev: "main".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_defaults_rev_to_main_for_git_urls() {
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-git-default-rev".into(),
+        });
+
+        run(
+            &client,
+            false,
+            Some("https://example.com/repo.git".into()),
+            None,
             None,
             None,
             false,
@@ -727,30 +794,6 @@ mod tests {
             vec![],
             "let =".into(),
             vec!["bad prompt".into()],
-        )
-        .await;
-
-        assert!(result.is_err());
-        assert!(client.recorded_requests().is_empty());
-    }
-
-    #[tokio::test]
-    async fn spawn_requires_rev_for_git_urls() {
-        let client = MockMetisClient::default();
-
-        let result = run(
-            &client,
-            false,
-            Some("https://example.com/repo.git".into()),
-            None,
-            None,
-            None,
-            false,
-            false,
-            vec![],
-            vec![],
-            "0".into(),
-            vec!["missing rev".into()],
         )
         .await;
 
