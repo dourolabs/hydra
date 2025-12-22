@@ -40,30 +40,22 @@ enum Commands {
         #[arg(long = "wait")]
         wait: bool,
 
-        /// Branch or commit to use as the starting point for the job.
-        #[arg(long = "from", value_name = "REV")]
-        from: Option<String>,
-
-        /// Git repository URL to clone when providing --from.
-        #[arg(long = "repo-url", value_name = "URL")]
-        repo_url: Option<String>,
-
-        /// Named GitHub repository configured on the server to use as context.
+        /// Service repo name (preferred) or git URL to use as the job context.
         #[arg(
-            long = "service-repo",
-            value_name = "NAME",
-            conflicts_with_all = ["context_dir", "repo_url", "encode_directory", "encode_git_bundle", "from"]
+            long = "repo",
+            value_name = "REPO",
+            conflicts_with_all = ["context_dir", "encode_directory", "encode_git_bundle"]
         )]
-        service_repo: Option<String>,
+        repo: Option<String>,
 
-        /// Optional revision to use for --service-repo.
+        /// Revision to use with --repo (optional for service repos, required for URLs).
         #[arg(
-            long = "service-repo-rev",
+            long = "rev",
             value_name = "REV",
-            requires = "service_repo",
-            conflicts_with_all = ["context_dir", "repo_url", "encode_directory", "encode_git_bundle", "from"]
+            requires = "repo",
+            conflicts_with_all = ["context_dir", "encode_directory", "encode_git_bundle"]
         )]
-        service_repo_rev: Option<String>,
+        rev: Option<String>,
 
         /// Override the worker Docker image for this task.
         #[arg(long = "image", value_name = "IMAGE")]
@@ -174,10 +166,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Spawn {
             wait,
-            from,
-            repo_url,
-            service_repo,
-            service_repo_rev,
+            repo,
+            rev,
             image,
             context_dir,
             encode_directory,
@@ -190,10 +180,8 @@ async fn main() -> Result<()> {
             command::spawn::run(
                 &client,
                 wait,
-                from,
-                repo_url,
-                service_repo,
-                service_repo_rev,
+                repo,
+                rev,
                 image,
                 context_dir,
                 encode_directory,
