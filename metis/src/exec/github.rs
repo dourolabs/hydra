@@ -49,10 +49,9 @@ pub(super) fn wait_for_pull_request(
 }
 
 fn github_token(env: &HashMap<String, String>) -> Result<String> {
-    env.get("GITHUB_TOKEN")
-        .or_else(|| env.get("GH_TOKEN"))
+    env.get("GH_TOKEN")
         .cloned()
-        .ok_or_else(|| anyhow!("GITHUB_TOKEN or GH_TOKEN must be set in env"))
+        .ok_or_else(|| anyhow!("GH_TOKEN must be set in env"))
 }
 
 fn github_client(env: &HashMap<String, String>) -> Result<Octocrab> {
