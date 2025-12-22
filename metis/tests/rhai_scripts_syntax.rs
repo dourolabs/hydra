@@ -15,4 +15,20 @@ fn compile_script(script: &Path) {
         .unwrap_or_else(|err| panic!("failed to compile {}: {err}", script.display()));
 }
 
-include!(concat!(env!("OUT_DIR"), "/rhai_script_tests.rs"));
+macro_rules! script_test {
+    ($name:ident, $file:literal) => {
+        #[test]
+        fn $name() {
+            compile_script(Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/scripts/",
+                $file
+            )));
+        }
+    };
+}
+
+script_test!(compile_fix_merge, "fix_merge.rhai");
+script_test!(compile_fix_pr, "fix_pr.rhai");
+script_test!(compile_patch_pr, "patch_pr.rhai");
+script_test!(compile_patch_with_review, "patch_with_review.rhai");
