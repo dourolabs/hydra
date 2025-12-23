@@ -11,7 +11,7 @@ if [ -z "$target_branch" ]; then
   exit 1
 fi
 
-if [ -z "${GH_TOKEN:-}" ]; then
+if [ -z "$GH_TOKEN" ]; then
   echo "GH_TOKEN not set; gh api may require authentication." >&2
 fi
 
@@ -92,20 +92,23 @@ let work_branch = if metis_id == "unknown" {
     "learn-".to_string() + metis_id
 };
 
-let learn_prompt = prompt_input
-    + `
-
+let learn_prompt = `
 You are improving AGENTS.md to prevent recurring issues flagged in PR feedback.
 Context:
 - Feedback source branch: ` + target_branch + `
 - Review comments: .metis/output/pr_feedback.json
 - PR reviews: .metis/output/pr_reviews.json
 - General PR comments: .metis/output/pr_general_comments.json
+- The user has also provided some additional feedback below
+
+Additional Feedback
+${prompt_input}
 
 Tasks:
 1) Read the feedback files to understand the root causes and expectations reviewers expressed.
 2) Update AGENTS.md with concise, prescriptive guidance that would have prevented the issues.
    Keep existing structure when possible; add short subsections only when necessary.
+   You may choose not to update AGENTS.md if it seems like there is nothing actionable in the feedback.
 3) Make the guidance actionable for future contributors working on any branch, not just the one under review.
 4) Capture the outcome in PR collateral: write .metis/output/pr_title.txt and .metis/output/pr_body.txt
    describing the AGENTS.md updates and the feedback they address.
