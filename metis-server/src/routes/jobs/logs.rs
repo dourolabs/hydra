@@ -1,10 +1,10 @@
 use crate::{
     AppState,
     job_engine::{JobEngineError, JobStatus},
-    routes::jobs::ApiError,
+    routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::{HeaderValue, header},
     response::{
         IntoResponse, Response,
@@ -18,25 +18,20 @@ use tracing::{error, info};
 
 pub async fn get_job_logs(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    JobIdPath(job_id): JobIdPath,
     Query(query): Query<LogsQuery>,
 ) -> Result<Response, ApiError> {
     let watch_requested = query.watch.unwrap_or(false);
-    let job_id = job_id.trim();
     info!(
         job_id = %job_id,
         watch = watch_requested,
         "get_job_logs invoked"
     );
-    if job_id.is_empty() {
-        error!("get_job_logs received an empty job_id");
-        return Err(ApiError::bad_request("job_id must not be empty"));
-    }
 
     // Check if job exists and get its status to determine if we should follow logs
     let job = state
         .job_engine
-        .find_job_by_metis_id(&job_id.to_string())
+        .find_job_by_metis_id(&job_id)
         .await
         .map_err(|err| match err {
             JobEngineError::NotFound(msg) => {
@@ -61,13 +56,13 @@ pub async fn get_job_logs(
             follow = follow,
             "streaming job logs via SSE"
         );
-        stream_logs_sse(state.job_engine.as_ref(), job_id, follow).await
+        stream_logs_sse(state.job_engine.as_ref(), job_id.as_str(), follow).await
     } else {
         info!(
             job_id = %job_id,
             "fetching job logs once"
         );
-        fetch_logs(state.job_engine.as_ref(), job_id, query.tail_lines).await
+        fetch_logs(state.job_engine.as_ref(), job_id.as_str(), query.tail_lines).await
     }
 }
 

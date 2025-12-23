@@ -1,22 +1,14 @@
 use crate::{AppState, job_engine::JobEngineError};
-use axum::{
-    Json,
-    extract::{Path, State},
-};
+use axum::{Json, extract::State};
 use metis_common::jobs::KillJobResponse;
 use tracing::{error, info};
 
-use super::ApiError;
+use super::{ApiError, JobIdPath};
 
 pub async fn kill_job(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    JobIdPath(job_id): JobIdPath,
 ) -> Result<Json<KillJobResponse>, ApiError> {
-    let job_id = job_id.trim().to_string();
-    if job_id.is_empty() {
-        return Err(ApiError::bad_request("job_id is required"));
-    }
-
     state
         .job_engine
         .kill_job(&job_id)

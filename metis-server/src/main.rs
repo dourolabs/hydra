@@ -630,6 +630,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/%20", server.base_url()))
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_trims_job_id_path() -> anyhow::Result<()> {
+        let state = test_state();
+        let default_image = default_image();
+        let store = state.store.clone();
+        let server = spawn_test_server_with_state(state).await?;
+        let job_id = "trim-job".to_string();
+        let now = Utc::now();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image.clone(),
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    now - Duration::seconds(30),
+                )
+                .await?;
+            store_write
+                .mark_task_running(&job_id, now - Duration::seconds(10))
+                .await?;
+        }
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/%20{}%20", server.base_url(), job_id))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let summary: JobSummary = response.json().await?;
+        assert_eq!(summary.id, job_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
@@ -740,7 +796,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id is required" }));
+        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
         Ok(())
     }
 

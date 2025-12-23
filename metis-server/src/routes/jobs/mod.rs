@@ -4,9 +4,9 @@ use crate::{
     store::{Edge, Store, StoreError, Task, TaskError},
 };
 use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
+    Json, async_trait,
+    extract::{FromRequestParts, Path, State},
+    http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
@@ -183,18 +183,14 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
 
 pub async fn get_job(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    JobIdPath(job_id): JobIdPath,
 ) -> Result<Json<JobSummary>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
-    let job_id = job_id.trim();
-    if job_id.is_empty() {
-        return Err(ApiError::bad_request("job_id must not be empty"));
-    }
 
     let store_read = state.store.read().await;
     let store = store_read.as_ref();
 
-    let (summary, _) = job_summary_with_time(job_id, store)
+    let (summary, _) = job_summary_with_time(&job_id, store)
         .await
         .map_err(|err| match err {
             StoreError::TaskNotFound(_) => {
@@ -252,6 +248,30 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = Json(json!({ "error": self.message }));
         (self.status, body).into_response()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JobIdPath(pub String);
+
+#[async_trait]
+impl<S> FromRequestParts<S> for JobIdPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path(job_id) = Path::<String>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        let trimmed = job_id.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request("job_id must not be empty"));
+        }
+
+        Ok(Self(trimmed.to_string()))
     }
 }
 
