@@ -286,6 +286,8 @@ fn load_program(program_arg: &str) -> Result<String> {
     let program_source = if Path::new(trimmed).exists() {
         fs::read_to_string(trimmed)
             .with_context(|| format!("failed to read program file '{}'", trimmed))?
+    } else if trimmed == constants::DEFAULT_PROGRAM_PATH {
+        constants::DEFAULT_PROGRAM_SOURCE.to_string()
     } else {
         program_arg.to_string()
     };
@@ -774,6 +776,12 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].program, "let answer = 42;");
         assert_eq!(requests[0].params, vec!["file prompt".to_string()]);
+    }
+
+    #[test]
+    fn default_program_constant_loads_file_contents() {
+        let program = load_program(constants::DEFAULT_PROGRAM_PATH).unwrap();
+        assert_eq!(program, constants::DEFAULT_PROGRAM_SOURCE);
     }
 
     #[tokio::test]

@@ -82,7 +82,11 @@ enum Commands {
         var: Vec<String>,
 
         /// Rhai program to execute. Can be a file path or an inline script.
-        #[arg(long = "program", value_name = "PROGRAM", required = true)]
+        #[arg(
+            long = "program",
+            value_name = "PROGRAM",
+            default_value = constants::DEFAULT_PROGRAM_PATH
+        )]
         program: String,
 
         /// Prompt to execute, captured as trailing varargs.

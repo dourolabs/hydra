@@ -28,6 +28,18 @@ pub const CHANGES_PATCH_FILE: &str = "changes.patch";
 /// file is explicitly specified via the `--config` flag.
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
+/// Absolute path to the default Rhai program executed when `--program` is not provided.
+pub const DEFAULT_PROGRAM_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/scripts/default_codex_prompt.rhai"
+);
+
+/// Contents of the default Rhai program used by the CLI.
+pub const DEFAULT_PROGRAM_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/scripts/default_codex_prompt.rhai"
+));
+
 /// Expression depth limits used when configuring the Rhai engine.
 pub const RHAI_MAX_EXPR_DEPTHS: (usize, usize) = (256, 256);
 
