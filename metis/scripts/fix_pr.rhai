@@ -22,7 +22,12 @@ headers=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022
 echo "Collecting review comments"
 gh api "${"${headers[@]}"}" /repos/:owner/:repo/pulls/${"${pr_number}"}/comments --paginate \
   | jq -s 'flatten | map({id, pull_request_review_id, in_reply_to_id, body, commit_id, path, line, start_line, original_line, diff_hunk, created_at, updated_at, html_url, state, user: {login: .user.login}})' \
-  > .metis/output/pr_feedback.json`;
+  > .metis/output/pr_feedback.json
+  
+gh api "${"${headers[@]}"}" /repos/:owner/:repo/pulls/${"${pr_number}"}/reviews --paginate \
+  | jq -s 'flatten | map({id, body, commit_id, html_url, state, user: {login: .user.login}})' \
+  > .metis/output/pr_reviews.json
+`;
 
     shell(body, next)
 }
@@ -54,11 +59,10 @@ if metis_id == "" {
 }
 
 let fix_prompt = prompt_input + `
-
 You are responsible for addressing outstanding feedback on this pull request.
-All PR comments and reviews have been fetched with gh api and stored in
-.metis/output/pr_feedback.json. Read that file and make the requested changes,
-adding or updating tests if needed. Work directly in this repository.
+All PR line-by-line comments and overall reviews have been fetched with gh api and stored in
+.metis/output/pr_feedback.json and .metis/output/pr_reviews.json. Read those files and make
+the requested changes, adding or updating tests if needed. Work directly in this repository.
 
 Once you have finished with the prompt, please generate a pull request title and
 description for this change. The title should go in .metis/output/pr_title.txt 
