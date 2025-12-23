@@ -51,17 +51,27 @@ pub async fn eval_with_closure_unwrapping(
     engine.register_fn("codex", codex);
     engine.register_fn("shell", shell);
 
+    let params_array: rhai::Array = params.into_iter().map(|value| value.into()).collect();
+    let mut env_map = rhai::Map::new();
+    for (key, value) in env {
+        env_map.insert(key.into(), value.clone().into());
+    }
+
+    let params_for_var_resolver = params_array.clone();
+    let env_for_var_resolver = env_map.clone();
+    #[allow(deprecated)]
+    engine.on_var(move |name, _, _| match name {
+        "params" => Ok(Some(params_for_var_resolver.clone().into())),
+        "env" => Ok(Some(env_for_var_resolver.clone().into())),
+        _ => Ok(None),
+    });
+
     let ast = engine
         .compile(script)
         .map_err(|err| anyhow!("failed to compile Rhai script: {}", err))?;
 
     let mut scope = rhai::Scope::new();
-    let params_array: rhai::Array = params.into_iter().map(|value| value.into()).collect();
     scope.push("params", params_array);
-    let mut env_map = rhai::Map::new();
-    for (key, value) in env {
-        env_map.insert(key.into(), value.clone().into());
-    }
     scope.push("env", env_map);
     let mut result = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
@@ -133,6 +143,36 @@ mod tests {
                 .try_cast::<String>()
                 .expect("Rhai result should be a string"),
             "hello"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn env_and_params_are_available_inside_functions() -> Result<()> {
+        let mut env = HashMap::new();
+        env.insert("PROMPT".to_string(), "hello".to_string());
+
+        let result = eval_with_closure_unwrapping(
+            r#"
+                fn run() {
+                    let prompt = env["PROMPT"];
+                    let arg = params[0];
+                    `${prompt} ${arg}`
+                }
+
+                run()
+            "#,
+            vec!["world".to_string()],
+            &env,
+        )
+        .await?;
+
+        assert_eq!(
+            result
+                .try_cast::<String>()
+                .expect("Rhai result should be a string"),
+            "hello world"
         );
 
         Ok(())
