@@ -1,6 +1,9 @@
 ## Kubernetes setup
 
-(requires docker to be running)
+### Prerequisites
+- Docker must be installed and the daemon running
+- `kind` and `kubectl` binaries installed and available in PATH
+- A kind cluster named `local-dev` (create with the command below)
 
 ```
 kind create cluster --name local-dev

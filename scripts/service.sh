@@ -55,6 +55,11 @@ echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
 echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
 echo
 
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "kubectl is required but was not found in PATH. Install kubectl and configure access to your cluster." >&2
+  exit 1
+fi
+
 # Make sure kubectl works
 kubectl version >/dev/null
 
