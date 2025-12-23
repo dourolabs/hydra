@@ -5,7 +5,7 @@ fn fetch_feedback(target_branch, next) {
 
 mkdir -p .metis/output
 
-target_branch="` + target_branch + `"
+target_branch="${target_branch}"
 if [ -z "$target_branch" ]; then
   echo "TARGET_BRANCH or BRANCH must be set to the branch with feedback." >&2
   exit 1
@@ -21,30 +21,29 @@ if [ -z "$pr_number" ]; then
   exit 1
 fi
 
-headers=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
 echo "Collecting review comments for $target_branch (PR #$pr_number)"
-gh api "${headers[@]}" /repos/:owner/:repo/pulls/$pr_number/comments --paginate \
+gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /repos/:owner/:repo/pulls/$pr_number/comments --paginate \
   | jq -s 'flatten | map({id, pull_request_review_id, in_reply_to_id, body, commit_id, path, line, start_line, original_line, diff_hunk, created_at, updated_at, html_url, state, user: {login: .user.login}})' \
   > .metis/output/pr_feedback.json
-gh api "${headers[@]}" /repos/:owner/:repo/issues/$pr_number/comments --paginate \
+gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /repos/:owner/:repo/issues/$pr_number/comments --paginate \
   | jq -s 'flatten' \
   > .metis/output/pr_general_comments.json
-gh api "${headers[@]}" /repos/:owner/:repo/pulls/$pr_number/reviews --paginate \
+gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /repos/:owner/:repo/pulls/$pr_number/reviews --paginate \
   | jq -s 'flatten' \
   > .metis/output/pr_reviews.json
 `;
 
-    shell(body, next)
+    shell(body, next);
 }
 
 fn prepare_branch(branch_name, next) {
     let body = `set -euo pipefail
 
 git checkout main
-git checkout -b "` + branch_name + `" main
+git checkout -b "${branch_name}" main
 `;
 
-    shell(body, next)
+    shell(body, next);
 }
 
 fn cleanup(branch_name, metis_id) {
@@ -59,43 +58,43 @@ if git diff --cached --quiet; then
 fi
 
 echo "committing"
-git commit -m 'task ` + metis_id + `'
+git commit -m 'task ${metis_id}'
 echo "pushing"
-git push origin "` + branch_name + `"
+git push origin "${branch_name}"
 
 title=$(cat .metis/output/pr_title.txt)
 
 echo "making PR"
 gh pr create \
   --repo dourolabs/metis \
-  --head "` + branch_name + `" \
+  --head "${branch_name}" \
   --title "$title" \
   --body-file .metis/output/pr_body.txt`;
-
-    shell(cleanup_body, |output| output)
+    shell(cleanup_body, |output| output);
 }
 
-let prompt_input = env["PROMPT"] ?? "";
-let mut metis_id = env["METIS_ID"] ?? "unknown";
-if metis_id == "" {
-    metis_id = "unknown";
-}
+fn run() {
+    let prompt_input = env["PROMPT"] ?? "";
+    let metis_id = env["METIS_ID"] ?? "unknown";
+    if metis_id == "" {
+        metis_id = "unknown";
+    }
 
-let mut target_branch = env["TARGET_BRANCH"] ?? env["BRANCH"] ?? "";
-if target_branch == "" {
-    target_branch = env["branch"] ?? "";
-}
+    let target_branch = env["TARGET_BRANCH"] ?? env["BRANCH"] ?? "";
+    if target_branch == "" {
+        target_branch = env["branch"] ?? "";
+    }
 
-let work_branch = if metis_id == "unknown" {
-    "learn-agents".to_string()
-} else {
-    "learn-".to_string() + metis_id
-};
+    let work_branch = if metis_id == "unknown" {
+        "learn-agents".to_string()
+    } else {
+        "learn-".to_string() + metis_id
+    };
 
-let learn_prompt = `
+    let learn_prompt = `
 You are improving AGENTS.md to prevent recurring issues flagged in PR feedback.
 Context:
-- Feedback source branch: ` + target_branch + `
+- Feedback source branch: ${target_branch}
 - Review comments: .metis/output/pr_feedback.json
 - PR reviews: .metis/output/pr_reviews.json
 - General PR comments: .metis/output/pr_general_comments.json
@@ -115,8 +114,11 @@ Tasks:
 Do not modify files other than AGENTS.md and the required PR output files unless strictly necessary.
 `;
 
-prepare_branch(work_branch.clone(), |setup_output| {
-    fetch_feedback(target_branch, |feedback_output| {
-        codex(learn_prompt, |codex_output| cleanup(work_branch, metis_id))
-    })
-})
+    prepare_branch(work_branch.clone(), |setup_output| {
+        fetch_feedback(target_branch, |feedback_output| {
+            codex(learn_prompt, |codex_output| cleanup(work_branch, metis_id))
+        })
+    });
+}
+
+run();
