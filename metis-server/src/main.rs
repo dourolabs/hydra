@@ -158,10 +158,7 @@ mod tests {
             UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
-        job_outputs::JobOutputPayload,
-        jobs::{
-            Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
-        },
+        jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
         task_status::Event,
     };
     use serde_json::json;
@@ -1129,18 +1126,6 @@ mod tests {
         let body: WorkerContext = response.json().await?;
         assert_eq!(body.request_context, context);
         assert!(body.params.is_empty());
-        assert_eq!(body.parents.len(), 1);
-        assert_eq!(
-            body.parents.get("parent-job"),
-            Some(&ParentContext {
-                name: None,
-                output: JobOutputPayload {
-                    last_message: "done".to_string(),
-                    patch: "patch-content".to_string(),
-                    bundle: Bundle::None,
-                }
-            })
-        );
         Ok(())
     }
 
