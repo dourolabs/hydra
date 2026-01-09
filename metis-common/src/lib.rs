@@ -28,10 +28,24 @@ pub mod task_status {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum Event {
-        Created { at: DateTime<Utc>, status: Status },
-        Started { at: DateTime<Utc> },
-        Completed { at: DateTime<Utc> },
-        Failed { at: DateTime<Utc> },
+        Created {
+            at: DateTime<Utc>,
+            status: Status,
+        },
+        Started {
+            at: DateTime<Utc>,
+        },
+        Emitted {
+            at: DateTime<Utc>,
+            /// MetisIds for any artifacts produced by the task at this moment.
+            artifact_ids: Vec<String>,
+        },
+        Completed {
+            at: DateTime<Utc>,
+        },
+        Failed {
+            at: DateTime<Utc>,
+        },
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,13 +65,17 @@ pub mod task_status {
         }
 
         pub fn current_status(&self) -> Status {
-            match self.events.last() {
-                Some(Event::Created { status, .. }) => *status,
-                Some(Event::Started { .. }) => Status::Running,
-                Some(Event::Completed { .. }) => Status::Complete,
-                Some(Event::Failed { .. }) => Status::Failed,
-                None => Status::Pending,
-            }
+            self.events
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    Event::Created { status, .. } => Some(*status),
+                    Event::Started { .. } => Some(Status::Running),
+                    Event::Completed { .. } => Some(Status::Complete),
+                    Event::Failed { .. } => Some(Status::Failed),
+                    Event::Emitted { .. } => None,
+                })
+                .unwrap_or(Status::Pending)
         }
 
         pub fn creation_time(&self) -> Option<DateTime<Utc>> {
@@ -79,6 +97,25 @@ pub mod task_status {
                 Event::Completed { at } | Event::Failed { at } => Some(*at),
                 _ => None,
             })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use chrono::Utc;
+
+        #[test]
+        fn current_status_ignores_emitted_events() {
+            let now = Utc::now();
+            let mut log = TaskStatusLog::new(Status::Pending, now);
+            log.events.push(Event::Started { at: now });
+            log.events.push(Event::Emitted {
+                at: now,
+                artifact_ids: vec!["artifact-1".into(), "artifact-2".into()],
+            });
+
+            assert_eq!(log.current_status(), Status::Running);
         }
     }
 }
