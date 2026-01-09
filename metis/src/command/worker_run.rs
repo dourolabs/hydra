@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{Cursor, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -16,7 +16,7 @@ use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
     job_outputs::JobOutputPayload,
-    jobs::{Bundle, ParentContext, WorkerContext},
+    jobs::{Bundle, WorkerContext},
 };
 use tar::{Archive, Builder};
 use tempfile::NamedTempFile;
@@ -33,7 +33,6 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
 
     let WorkerContext {
         request_context,
-        parents,
         variables,
         program,
         params,
@@ -57,7 +56,6 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
         }
     }
     create_output_directory(&dest)?;
-    write_parent_outputs(&parents, &dest, github_token)?;
 
     login_codex()?;
     configure_git_repo(&dest)?;
@@ -84,78 +82,6 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
         Ok(())
     } else {
         fs::create_dir_all(dest).with_context(|| format!("failed to create {dest:?}"))
-    }
-}
-
-fn write_parent_outputs(
-    parents: &std::collections::HashMap<MetisId, ParentContext>,
-    dest: &Path,
-    github_token: Option<&str>,
-) -> Result<()> {
-    if parents.is_empty() {
-        return Ok(());
-    }
-
-    let parents_dir = dest.join(constants::METIS_DIR).join(constants::PARENTS_DIR);
-    fs::create_dir_all(&parents_dir)
-        .with_context(|| format!("failed to create parents directory at {parents_dir:?}"))?;
-
-    for (metis_id, parent) in parents {
-        let parent_dir = parents_dir.join(metis_id);
-        fs::create_dir_all(&parent_dir)
-            .with_context(|| format!("failed to create directory {parent_dir:?}"))?;
-
-        match &parent.output.bundle {
-            Bundle::None => {
-                // Directory already created above, nothing to extract
-            }
-            Bundle::TarGz { archive_base64 } => {
-                extract_tar_gz_base64(archive_base64, &parent_dir)?;
-            }
-            Bundle::GitRepository { url, rev } => {
-                clone_git_repo(url, rev, &parent_dir, github_token)?;
-            }
-            Bundle::GitBundle { bundle_base64 } => {
-                clone_from_git_bundle_base64(bundle_base64, &parent_dir)?;
-            }
-        }
-
-        if let Some(name) = &parent.name {
-            if !name.is_empty() && name != metis_id {
-                let alias = validate_parent_alias(name).with_context(|| {
-                    format!("parent alias must be a single path segment: {:?}", name)
-                })?;
-                let symlink_path = parents_dir.join(alias);
-                create_symlink(Path::new(metis_id), &symlink_path).with_context(|| {
-                    format!("failed to create symlink {symlink_path:?} -> {metis_id}")
-                })?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn create_symlink(target: &Path, link: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).context("failed to create symlink")?;
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).context("failed to create symlink")?;
-    }
-    Ok(())
-}
-
-fn validate_parent_alias(alias: &str) -> Result<&str> {
-    let mut components = Path::new(alias).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(alias),
-        _ => Err(anyhow!(
-            "invalid parent alias {:?}: must not contain separators, traversal, or prefixes",
-            alias
-        )),
     }
 }
 
@@ -513,8 +439,7 @@ fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metis_common::job_outputs::JobOutputPayload;
-    use std::{collections::HashMap, path::PathBuf, process::Command};
+    use std::{path::PathBuf, process::Command};
 
     // Test helpers for create_patch_file tests
     fn init_git_repo(repo_path: &Path) -> Result<String> {
@@ -593,39 +518,6 @@ mod tests {
     }
 
     #[test]
-    fn write_parent_outputs_creates_symlink_for_named_parent() -> Result<()> {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let mut parents = HashMap::new();
-        parents.insert(
-            "parent-id".to_string(),
-            ParentContext {
-                name: Some("parent-name".to_string()),
-                output: JobOutputPayload {
-                    last_message: String::new(),
-                    patch: String::new(),
-                    bundle: Bundle::None,
-                },
-            },
-        );
-
-        write_parent_outputs(&parents, tempdir.path(), None)?;
-
-        let parents_dir = tempdir
-            .path()
-            .join(constants::METIS_DIR)
-            .join(constants::PARENTS_DIR);
-        assert!(parents_dir.join("parent-id").is_dir());
-
-        let symlink_path = parents_dir.join("parent-name");
-        let metadata = std::fs::symlink_metadata(&symlink_path)?;
-        assert!(metadata.file_type().is_symlink());
-        let target = std::fs::read_link(&symlink_path)?;
-        assert_eq!(target, PathBuf::from("parent-id"));
-
-        Ok(())
-    }
-
-    #[test]
     fn configure_git_repo_sets_user_config_and_branch() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
@@ -700,35 +592,6 @@ mod tests {
         );
 
         Ok(())
-    }
-
-    #[test]
-    fn write_parent_outputs_rejects_traversal_aliases() {
-        let tempdir = tempfile::tempdir().expect("failed to create tempdir for test");
-        let mut parents = HashMap::new();
-        parents.insert(
-            "parent-id".to_string(),
-            ParentContext {
-                name: Some("../escape".to_string()),
-                output: JobOutputPayload {
-                    last_message: String::new(),
-                    patch: String::new(),
-                    bundle: Bundle::None,
-                },
-            },
-        );
-
-        let err = write_parent_outputs(&parents, tempdir.path(), None).unwrap_err();
-        assert!(
-            err.to_string().contains("parent alias"),
-            "expected alias validation error, got {err:?}"
-        );
-
-        let parents_dir = tempdir
-            .path()
-            .join(constants::METIS_DIR)
-            .join(constants::PARENTS_DIR);
-        assert!(!parents_dir.join("../escape").exists());
     }
 
     #[test]
