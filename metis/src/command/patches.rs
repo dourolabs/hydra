@@ -21,7 +21,6 @@ use tempfile::NamedTempFile;
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const RESET: &str = "\x1b[0m";
-const DEFAULT_PATCH_DESCRIPTION: &str = "Patch created from repository changes";
 
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -43,8 +42,8 @@ pub enum PatchesCommand {
     /// Create a patch artifact from the current git repository.
     Create {
         /// Description for the patch artifact.
-        #[arg(long = "description", value_name = "DESCRIPTION")]
-        description: Option<String>,
+        #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
+        description: String,
     },
 
     /// Apply a patch artifact to the current git repository.
@@ -111,17 +110,12 @@ async fn list_patches(
     Ok(())
 }
 
-async fn create_patch(
-    client: &dyn MetisClientInterface,
-    description: Option<String>,
-) -> Result<()> {
+async fn create_patch(client: &dyn MetisClientInterface, description: String) -> Result<()> {
     let repo_root = git_repository_root()?;
     let patch = create_patch_from_repo(&repo_root)?;
     if patch.trim().is_empty() {
         bail!("No changes detected. Make edits before creating a patch artifact.");
     }
-
-    let description = description.unwrap_or_else(|| DEFAULT_PATCH_DESCRIPTION.to_string());
 
     let response = client
         .create_artifact(&UpsertArtifactRequest {
@@ -385,7 +379,8 @@ mod tests {
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "patch-1".to_string(),
         });
-        create_patch(&client, None).await?;
+        let patch_description = "custom patch description".to_string();
+        create_patch(&client, patch_description.clone()).await?;
 
         env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
@@ -398,8 +393,8 @@ mod tests {
             other => panic!("expected patch artifact, got {other:?}"),
         };
         assert_eq!(
-            generated_description, DEFAULT_PATCH_DESCRIPTION,
-            "expected default description to be applied"
+            generated_description, &patch_description,
+            "expected provided description to be applied"
         );
 
         let add_status = Command::new("git")
