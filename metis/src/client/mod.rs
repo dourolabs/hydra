@@ -3,6 +3,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
+    artifacts::{
+        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
+        UpsertArtifactResponse,
+    },
     job_outputs::{JobOutputPayload, JobOutputResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
@@ -40,6 +44,17 @@ pub trait MetisClientInterface: Send + Sync {
         payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse>;
     async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext>;
+    async fn create_artifact(
+        &self,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse>;
+    async fn update_artifact(
+        &self,
+        artifact_id: &str,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse>;
+    async fn get_artifact(&self, artifact_id: &str) -> Result<ArtifactRecord>;
+    async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse>;
 }
 
 impl MetisClient {
@@ -301,6 +316,103 @@ impl MetisClient {
             .context("failed to decode job context response")
     }
 
+    /// Call `POST /v1/artifacts` to create a new artifact.
+    pub async fn create_artifact(
+        &self,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        let url = self.endpoint("/v1/artifacts")?;
+        let response = self
+            .http
+            .post(url)
+            .json(payload)
+            .send()
+            .await
+            .context("failed to submit create artifact request")?
+            .error_for_status()
+            .context("metis-server rejected create artifact request")?;
+
+        response
+            .json::<UpsertArtifactResponse>()
+            .await
+            .context("failed to decode create artifact response")
+    }
+
+    /// Call `PUT /v1/artifacts/:artifact_id` to update an existing artifact.
+    pub async fn update_artifact(
+        &self,
+        artifact_id: &str,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
+        }
+
+        let path = format!("/v1/artifacts/{artifact_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .put(url)
+            .json(payload)
+            .send()
+            .await
+            .context("failed to submit update artifact request")?
+            .error_for_status()
+            .context("metis-server returned an error while updating artifact")?;
+
+        response
+            .json::<UpsertArtifactResponse>()
+            .await
+            .context("failed to decode update artifact response")
+    }
+
+    /// Call `GET /v1/artifacts/:artifact_id` to fetch an artifact.
+    pub async fn get_artifact(&self, artifact_id: &str) -> Result<ArtifactRecord> {
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
+        }
+
+        let path = format!("/v1/artifacts/{artifact_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to request artifact")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching artifact")?;
+
+        response
+            .json::<ArtifactRecord>()
+            .await
+            .context("failed to decode artifact response")
+    }
+
+    /// Call `GET /v1/artifacts` to list artifacts with optional filters.
+    pub async fn list_artifacts(
+        &self,
+        query: &SearchArtifactsQuery,
+    ) -> Result<ListArtifactsResponse> {
+        let url = self.endpoint("/v1/artifacts")?;
+        let response = self
+            .http
+            .get(url)
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch artifacts list")?
+            .error_for_status()
+            .context("metis-server returned an error while listing artifacts")?;
+
+        response
+            .json::<ListArtifactsResponse>()
+            .await
+            .context("failed to decode list artifacts response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -436,6 +548,29 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext> {
         MetisClient::get_job_context(self, job_id).await
+    }
+
+    async fn create_artifact(
+        &self,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        MetisClient::create_artifact(self, payload).await
+    }
+
+    async fn update_artifact(
+        &self,
+        artifact_id: &str,
+        payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        MetisClient::update_artifact(self, artifact_id, payload).await
+    }
+
+    async fn get_artifact(&self, artifact_id: &str) -> Result<ArtifactRecord> {
+        MetisClient::get_artifact(self, artifact_id).await
+    }
+
+    async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse> {
+        MetisClient::list_artifacts(self, query).await
     }
 }
 

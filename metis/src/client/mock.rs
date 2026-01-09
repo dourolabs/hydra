@@ -3,6 +3,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::stream;
 use metis_common::{
+    artifacts::{
+        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
+        UpsertArtifactResponse,
+    },
     job_outputs::{JobOutputPayload, JobOutputResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
@@ -107,5 +111,32 @@ impl MetisClientInterface for MockMetisClient {
         Err(anyhow!(
             "get_job_context not implemented in MockMetisClient"
         ))
+    }
+
+    async fn create_artifact(
+        &self,
+        _payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        Err(anyhow!(
+            "create_artifact not implemented in MockMetisClient"
+        ))
+    }
+
+    async fn update_artifact(
+        &self,
+        _artifact_id: &str,
+        _payload: &UpsertArtifactRequest,
+    ) -> Result<UpsertArtifactResponse> {
+        Err(anyhow!(
+            "update_artifact not implemented in MockMetisClient"
+        ))
+    }
+
+    async fn get_artifact(&self, _artifact_id: &str) -> Result<ArtifactRecord> {
+        Err(anyhow!("get_artifact not implemented in MockMetisClient"))
+    }
+
+    async fn list_artifacts(&self, _query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse> {
+        Err(anyhow!("list_artifacts not implemented in MockMetisClient"))
     }
 }
