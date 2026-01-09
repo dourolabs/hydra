@@ -11,7 +11,7 @@ if git diff --cached --quiet; then
 fi
 
 echo "committing"
-git commit -m 'task $METIS_ID'
+git commit -m 'task ${metis_id}'
 echo "pushing"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 git push origin $branch_name
@@ -29,6 +29,9 @@ gh pr create \
 }
 
 let metis_id = env["METIS_ID"] ?? "unknown";
+if metis_id == "" {
+    metis_id = "unknown";
+}
 let prompt_input = env["PROMPT"] ?? "";
 
 let branch_name = `metis-${metis_id}`;
