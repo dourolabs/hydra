@@ -423,7 +423,8 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
+        job_outputs::JobOutputPayload,
+        jobs::{Bundle, BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Event, Status, TaskStatusLog},
     };
     use std::fs;
@@ -471,6 +472,11 @@ mod tests {
                         Event::Started { at: start_time },
                         Event::Completed {
                             at: start_time + ChronoDuration::seconds(1),
+                            output: JobOutputPayload {
+                                last_message: "done".to_string(),
+                                patch: String::new(),
+                                bundle: Bundle::None,
+                            },
                         },
                     ],
                 },
