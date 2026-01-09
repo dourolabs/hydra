@@ -366,16 +366,14 @@ async fn submit_job_output(
         patch,
         bundle,
     };
-    let artifact = client
+    client
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
                 diff: payload.patch.clone(),
                 description: payload.last_message.clone(),
             },
+            job_id: Some(job.clone()),
         })
-        .await?;
-    client
-        .emit_artifacts(job, &[artifact.artifact_id.clone()])
         .await?;
     println!("Setting output for job '{job}' via metis-server…");
     let response = client.set_job_output(job, &payload).await?;

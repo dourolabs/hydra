@@ -52,11 +52,7 @@ pub enum PatchesCommand {
 
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
-        PatchesCommand::List {
-            id,
-            query,
-            pretty,
-        } => list_patches(client, id, query, pretty).await,
+        PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
         PatchesCommand::Create => create_patch(client).await,
         PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
     }
@@ -121,7 +117,9 @@ async fn create_patch(client: &dyn MetisClientInterface) -> Result<()> {
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
                 diff: patch.clone(),
+                description: "Patch created via metis patches create".to_string(),
             },
+            job_id: None,
         })
         .await
         .context("failed to create patch artifact")?;
@@ -164,7 +162,7 @@ fn ensure_patch(record: &ArtifactRecord, id: &str) -> Result<()> {
 
 fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
     match &record.artifact {
-        Artifact::Patch { diff } => Ok(diff),
+        Artifact::Patch { diff, .. } => Ok(diff),
         _ => bail!("artifact '{id}' is not a patch"),
     }
 }
@@ -213,8 +211,7 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
     println!("Applying patch to current git repository...\n");
     pretty_print_patch(patch);
 
-    let patch_file =
-        NamedTempFile::new().context("Failed to create temporary file for patch")?;
+    let patch_file = NamedTempFile::new().context("Failed to create temporary file for patch")?;
     fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
 
     let output = Command::new("git")
@@ -262,8 +259,8 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
     use crate::{client::MockMetisClient, constants};
+    use anyhow::anyhow;
     use metis_common::artifacts::{
         Artifact, ArtifactRecord, ListArtifactsResponse, UpsertArtifactResponse,
     };
@@ -378,7 +375,7 @@ mod tests {
 
         let (_, request) = &requests[0];
         let generated_patch = match &request.artifact {
-            Artifact::Patch { diff } => diff,
+            Artifact::Patch { diff, .. } => diff,
             other => panic!("expected patch artifact, got {other:?}"),
         };
 

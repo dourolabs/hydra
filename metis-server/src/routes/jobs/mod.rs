@@ -21,7 +21,6 @@ use serde_json::json;
 use tracing::{error, info};
 
 pub mod context;
-pub mod events;
 pub mod kill;
 pub mod logs;
 pub mod output;

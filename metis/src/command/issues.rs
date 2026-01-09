@@ -97,6 +97,7 @@ async fn create_issue(client: &dyn MetisClientInterface, description: String) ->
         artifact: Artifact::Issue {
             description: description.to_string(),
         },
+        job_id: None,
     };
 
     let response = client
@@ -208,7 +209,8 @@ mod tests {
                 UpsertArtifactRequest {
                     artifact: Artifact::Issue {
                         description: "New issue description".into(),
-                    }
+                    },
+                    job_id: None,
                 }
             )]
         );

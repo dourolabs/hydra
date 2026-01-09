@@ -70,10 +70,6 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
         )
         .route(
-            "/v1/jobs/:job_id/events/emitted",
-            post(routes::jobs::events::emit_artifacts),
-        )
-        .route(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
@@ -1265,6 +1261,7 @@ mod tests {
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
                 artifact: artifact.clone(),
+                job_id: None,
             })
             .send()
             .await?;
@@ -1290,6 +1287,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creating_artifact_with_job_id_emits_event() -> anyhow::Result<()> {
+        let state = test_state();
+        let default_image = default_image();
+        let job_id = "emit-artifacts".to_string();
+        let store = state.store.clone();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image,
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/artifacts", server.base_url()))
+            .json(&UpsertArtifactRequest {
+                artifact: Artifact::Patch {
+                    diff: "diff --git a/file b/file".to_string(),
+                    description: "artifact for emit".to_string(),
+                },
+                job_id: Some(job_id.clone()),
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let created: UpsertArtifactResponse = response.json().await?;
+
+        let emitted = {
+            let store_read = store.read().await;
+            store_read.latest_emitted_artifact_ids(&job_id).await?
+        };
+        assert_eq!(emitted, Some(vec![created.artifact_id]));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_artifacts_supports_filters() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
@@ -1308,7 +1355,10 @@ mod tests {
         for artifact in [patch.clone(), issue.clone(), filtered_patch.clone()] {
             let response = client
                 .post(format!("{}/v1/artifacts", server.base_url()))
-                .json(&UpsertArtifactRequest { artifact })
+                .json(&UpsertArtifactRequest {
+                    artifact,
+                    job_id: None,
+                })
                 .send()
                 .await?;
             assert!(response.status().is_success());
@@ -1350,6 +1400,7 @@ mod tests {
                     diff: "old diff".to_string(),
                     description: "old patch".to_string(),
                 },
+                job_id: None,
             })
             .send()
             .await?
@@ -1366,6 +1417,7 @@ mod tests {
                 artifact: Artifact::Issue {
                     description: "updated details".to_string(),
                 },
+                job_id: None,
             })
             .send()
             .await?
