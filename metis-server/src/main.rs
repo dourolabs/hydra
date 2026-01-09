@@ -66,8 +66,8 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::jobs::logs::get_job_logs),
         )
         .route(
-            "/v1/jobs/:job_id/output",
-            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
+            "/v1/jobs/:job_id/status",
+            get(routes::jobs::status::get_job_status).post(routes::jobs::status::set_job_status),
         )
         .route(
             "/v1/jobs/:job_id/context",
@@ -145,7 +145,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Edge, Status, Task},
+        store::{Edge, Status, Task, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -158,6 +158,7 @@ mod tests {
             UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
+        job_status::GetJobStatusResponse,
         jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
         task_status::Event,
     };
@@ -856,11 +857,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
+    async fn set_job_status_rejects_empty_job_id() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/ /output", server.base_url()))
+            .post(format!("{}/v1/jobs/ /status", server.base_url()))
+            .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
@@ -871,11 +873,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_output_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+    async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/missing/output", server.base_url()))
+            .post(format!("{}/v1/jobs/missing/status", server.base_url()))
+            .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
@@ -886,7 +889,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_output_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
+    async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
@@ -923,24 +926,115 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
+            .post(format!("{}/v1/jobs/spawn-job/status", server.base_url()))
+            .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "job_id": "spawn-job" }));
+        assert_eq!(body, json!({ "job_id": "spawn-job", "status": "complete" }));
 
         let store_read = store.read().await;
         let status = store_read.get_status(&"spawn-job".to_string()).await?;
         assert_eq!(status, Status::Complete);
         let result = store_read.get_result(&"spawn-job".to_string());
         assert!(matches!(result, Some(Ok(()))));
-        let emitted = store_read
-            .latest_emitted_artifact_ids(&"spawn-job".to_string())
-            .await?;
-        assert_eq!(emitted, Some(vec![artifact_id]));
+        let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
+        assert_eq!(status_log.emitted_artifacts(), Some(vec![artifact_id]));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
+        let state = test_state();
+        {
+            let mut store_write = state.store.write().await;
+            store_write
+                .add_task_with_id(
+                    "failing-job".to_string(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image(),
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write
+                .mark_task_running(&"failing-job".to_string(), Utc::now())
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state.clone()).await?;
+        let client = test_client();
+
+        let response = client
+            .post(format!("{}/v1/jobs/failing-job/status", server.base_url()))
+            .json(&json!({ "status": "failed", "reason": "boom" }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "job_id": "failing-job", "status": "failed" }));
+
+        let store_read = state.store.read().await;
+        let status = store_read.get_status(&"failing-job".to_string()).await?;
+        assert_eq!(status, Status::Failed);
+        let result = store_read.get_result(&"failing-job".to_string());
+        assert!(matches!(
+            result,
+            Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
+        let state = test_state();
+        let job_id = "with-status".to_string();
+        {
+            let mut store_write = state.store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image(),
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+            store_write
+                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .await?;
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+        let client = test_client();
+
+        let response = client
+            .get(format!("{}/v1/jobs/with-status/status", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: GetJobStatusResponse = response.json().await?;
+        assert_eq!(body.job_id, job_id);
+        assert_eq!(body.status_log.current_status(), Status::Complete);
+        assert!(matches!(
+            body.status_log.events.last(),
+            Some(Event::Completed { .. })
+        ));
         Ok(())
     }
 

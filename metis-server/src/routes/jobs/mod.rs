@@ -22,7 +22,7 @@ use tracing::{error, info};
 pub mod context;
 pub mod kill;
 pub mod logs;
-pub mod output;
+pub mod status;
 
 pub async fn create_job(
     State(state): State<AppState>,
@@ -304,9 +304,8 @@ async fn job_summary_with_time(
 
 async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
     let status_log = store.get_status_log(job_id).await.ok()?;
-    match status_log.result()? {
-        Err(err) => return format_error_note(&err),
-        Ok(()) => {}
+    if let Err(err) = status_log.result()? {
+        return format_error_note(&err);
     }
 
     let artifact_ids = status_log.emitted_artifacts()?;
