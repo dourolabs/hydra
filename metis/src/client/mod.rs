@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::{JobOutputResponse, SetJobOutputResponse},
+    job_outputs::SetJobOutputResponse,
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,
@@ -35,6 +35,7 @@ type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self) -> Result<ListJobsResponse>;
+    #[allow(dead_code)]
     async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
     async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
@@ -45,6 +46,7 @@ pub trait MetisClientInterface: Send + Sync {
         &self,
         request: &UpsertArtifactRequest,
     ) -> Result<UpsertArtifactResponse>;
+    #[allow(dead_code)]
     async fn update_artifact(
         &self,
         artifact_id: &MetisId,

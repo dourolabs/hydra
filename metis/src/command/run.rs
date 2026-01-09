@@ -6,7 +6,7 @@ pub async fn run(script_input: String) -> Result<()> {
     // Determine if input is a file path or a script string
     let script = if Path::new(&script_input).exists() {
         std::fs::read_to_string(&script_input)
-            .with_context(|| format!("failed to read script file '{}'", script_input))?
+            .with_context(|| format!("failed to read script file '{script_input}'"))?
     } else {
         script_input
     };
@@ -14,7 +14,7 @@ pub async fn run(script_input: String) -> Result<()> {
     // Run the script
     let _ = eval_with_closure_unwrapping(&script, Vec::new(), &HashMap::new())
         .await
-        .map_err(|err| anyhow::anyhow!("failed to execute Rhai script: {}", err))?;
+        .map_err(|err| anyhow::anyhow!("failed to execute Rhai script: {err}"))?;
 
     Ok(())
 }

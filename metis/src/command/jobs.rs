@@ -37,7 +37,7 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
         let status_display = format_status(&job.status_log.current_status());
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(&job.id, &status_display, &runtime);
+        let cells = job_row_cells(&job.id, status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
         let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status());
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
@@ -108,9 +108,9 @@ struct JobRowCells {
 
 fn job_row_cells(id: &str, status: &str, runtime: &str) -> JobRowCells {
     JobRowCells {
-        id: format!("{id:<name_width$}", name_width = NAME_WIDTH),
-        status: format!("{status:<status_width$}", status_width = STATUS_WIDTH),
-        runtime: format!("{runtime:<runtime_width$}", runtime_width = RUNTIME_WIDTH),
+        id: format!("{id:<NAME_WIDTH$}"),
+        status: format!("{status:<STATUS_WIDTH$}"),
+        runtime: format!("{runtime:<RUNTIME_WIDTH$}"),
     }
 }
 

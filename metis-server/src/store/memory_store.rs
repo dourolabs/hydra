@@ -6,7 +6,6 @@ use uuid::Uuid;
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
-use metis_common::jobs::Bundle;
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.

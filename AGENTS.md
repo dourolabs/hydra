@@ -17,6 +17,12 @@ Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings
 ## Testing Guidelines
 Run `cargo test --workspace` before opening a pull request. Keep tests near their code (routes under `metis-server/src/routes`, shared helpers in `metis-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
 
+## Final Task Checklist
+Before finishing any task, you **must** run and fix all issues from these commands:
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+
 ## Commit & Pull Request Guidelines
 Please use proper capitalization and sentences. Keep pull request descriptions short and to the point: provide motivation / context for the change, explain what changed, and explain how it was tested.
 Please explicitly call out anything that may be confusing or design questions where you made an explicit

@@ -36,6 +36,20 @@ pub async fn set_job_output(
     Ok(Json(SetJobOutputResponse { job_id }))
 }
 
+pub async fn get_job_output(
+    State(state): State<AppState>,
+    JobIdPath(job_id): JobIdPath,
+) -> Result<Json<JobOutputResponse>, ApiError> {
+    info!(job_id = %job_id, "get_job_output invoked");
+
+    let output = {
+        let store = state.store.read().await;
+        resolve_latest_output(&job_id, store.as_ref()).await?
+    };
+
+    Ok(Json(JobOutputResponse { job_id, output }))
+}
+
 async fn resolve_latest_output(
     job_id: &MetisId,
     store: &dyn crate::store::Store,

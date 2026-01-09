@@ -28,6 +28,7 @@ pub(crate) fn truncate_lines(
 }
 
 /// Formats a duration without spaces (e.g. `5m04s`) for compact column output.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn format_compact_duration(duration: ChronoDuration) -> String {
     let total_seconds = duration.num_seconds();
     if total_seconds <= 0 {

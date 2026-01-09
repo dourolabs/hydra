@@ -286,7 +286,7 @@ fn load_program(program_arg: &str) -> Result<String> {
 
     let program_source = if Path::new(trimmed).exists() {
         fs::read_to_string(trimmed)
-            .with_context(|| format!("failed to read program file '{}'", trimmed))?
+            .with_context(|| format!("failed to read program file '{trimmed}'"))?
     } else if trimmed == constants::DEFAULT_PROGRAM_PATH {
         constants::DEFAULT_PROGRAM_SOURCE.to_string()
     } else {
@@ -381,10 +381,7 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
                 let value = trimmed[pos + 1..].trim().to_string();
 
                 if key.is_empty() {
-                    bail!(
-                        "Invalid variable format '{}': variable name cannot be empty",
-                        trimmed
-                    );
+                    bail!("Invalid variable format '{trimmed}': variable name cannot be empty");
                 }
 
                 // Basic validation: key should be a valid identifier
@@ -394,23 +391,19 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
                     .map(|c| c.is_alphabetic() || c == '_')
                     .unwrap_or(false)
                 {
-                    bail!(
-                        "Invalid variable name '{}': must start with a letter or underscore",
-                        key
-                    );
+                    bail!("Invalid variable name '{key}': must start with a letter or underscore");
                 }
 
                 if !key.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     bail!(
-                        "Invalid variable name '{}': must contain only alphanumeric characters and underscores",
-                        key
+                        "Invalid variable name '{key}': must contain only alphanumeric characters and underscores"
                     );
                 }
 
                 vars.insert(key, value);
             }
             _ => {
-                bail!("Invalid variable format '{}': expected KEY=VALUE", trimmed);
+                bail!("Invalid variable format '{trimmed}': expected KEY=VALUE");
             }
         }
     }
@@ -832,8 +825,8 @@ mod tests {
         assert_eq!(result.get("FOO"), Some(&"bar qux".to_string()));
 
         // Test invalid formats
-        assert!(parse_cli_variables(&vec!["invalid".to_string()]).is_err());
-        assert!(parse_cli_variables(&vec!["=value".to_string()]).is_err());
-        assert!(parse_cli_variables(&vec!["123KEY=value".to_string()]).is_err());
+        assert!(parse_cli_variables(&["invalid".to_string()]).is_err());
+        assert!(parse_cli_variables(&["=value".to_string()]).is_err());
+        assert!(parse_cli_variables(&["123KEY=value".to_string()]).is_err());
     }
 }

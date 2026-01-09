@@ -439,7 +439,7 @@ fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, process::Command};
+    use std::process::Command;
 
     // Test helpers for create_patch_file tests
     fn init_git_repo(repo_path: &Path) -> Result<String> {
@@ -481,12 +481,12 @@ mod tests {
         content: &str,
     ) -> Result<()> {
         std::fs::write(repo_path.join(filename), content)
-            .with_context(|| format!("failed to write initial file {}", filename))?;
+            .with_context(|| format!("failed to write initial file {filename}"))?;
 
         Command::new("git")
             .args(["-C", repo_str, "add", filename])
             .status()
-            .with_context(|| format!("failed to add initial file {}", filename))?
+            .with_context(|| format!("failed to add initial file {filename}"))?
             .success()
             .then_some(())
             .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
