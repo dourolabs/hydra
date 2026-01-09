@@ -327,9 +327,12 @@ fn create_patch_file(dest: &Path) -> Result<()> {
 /// Create a unified diff from the repository at `dest`, staging all changes (including
 /// untracked files) except for `.metis/**`, and returning the diff as a string.
 pub fn create_patch_from_repo(dest: &Path) -> Result<String> {
-    let temp_index =
-        NamedTempFile::new().context("failed to create temporary git index for patch creation")?;
-    create_patch_with_index(dest, Some(temp_index.path()))
+    let temp_dir = tempfile::tempdir()
+        .context("failed to create temporary directory for git index during patch creation")?;
+    let temp_index_path = temp_dir.path().join("index");
+
+    let patch = create_patch_with_index(dest, Some(temp_index_path.as_path()))?;
+    Ok(patch)
 }
 
 fn create_patch_with_index(dest: &Path, index_file: Option<&Path>) -> Result<String> {

@@ -21,6 +21,7 @@ use tempfile::NamedTempFile;
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const RESET: &str = "\x1b[0m";
+const DEFAULT_PATCH_DESCRIPTION: &str = "Patch created from repository changes";
 
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -40,7 +41,11 @@ pub enum PatchesCommand {
     },
 
     /// Create a patch artifact from the current git repository.
-    Create,
+    Create {
+        /// Description for the patch artifact.
+        #[arg(long = "description", value_name = "DESCRIPTION")]
+        description: Option<String>,
+    },
 
     /// Apply a patch artifact to the current git repository.
     Apply {
@@ -53,7 +58,7 @@ pub enum PatchesCommand {
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
-        PatchesCommand::Create => create_patch(client).await,
+        PatchesCommand::Create { description } => create_patch(client, description).await,
         PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
     }
 }
@@ -106,18 +111,23 @@ async fn list_patches(
     Ok(())
 }
 
-async fn create_patch(client: &dyn MetisClientInterface) -> Result<()> {
+async fn create_patch(
+    client: &dyn MetisClientInterface,
+    description: Option<String>,
+) -> Result<()> {
     let repo_root = git_repository_root()?;
     let patch = create_patch_from_repo(&repo_root)?;
     if patch.trim().is_empty() {
         bail!("No changes detected. Make edits before creating a patch artifact.");
     }
 
+    let description = description.unwrap_or_else(|| DEFAULT_PATCH_DESCRIPTION.to_string());
+
     let response = client
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
-                diff: patch.clone(),
-                description: "Patch created via metis patches create".to_string(),
+                diff: patch,
+                description,
             },
             job_id: None,
         })
@@ -167,9 +177,18 @@ fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a st
     }
 }
 
+fn extract_patch_description<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
+    match &record.artifact {
+        Artifact::Patch { description, .. } => Ok(description),
+        _ => bail!("artifact '{id}' is not a patch"),
+    }
+}
+
 fn print_patch_artifact(record: &ArtifactRecord) -> Result<()> {
     let diff = extract_patch_diff(record, &record.id)?;
-    println!("Patch {}:\n", record.id);
+    let description = extract_patch_description(record, &record.id)?;
+    println!("Patch {}: {}", record.id, description);
+    println!();
     pretty_print_patch(diff);
     println!();
     Ok(())
@@ -366,7 +385,7 @@ mod tests {
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "patch-1".to_string(),
         });
-        create_patch(&client).await?;
+        create_patch(&client, None).await?;
 
         env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
@@ -374,10 +393,14 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
 
         let (_, request) = &requests[0];
-        let generated_patch = match &request.artifact {
-            Artifact::Patch { diff, .. } => diff,
+        let (generated_patch, generated_description) = match &request.artifact {
+            Artifact::Patch { diff, description } => (diff, description),
             other => panic!("expected patch artifact, got {other:?}"),
         };
+        assert_eq!(
+            generated_description, DEFAULT_PATCH_DESCRIPTION,
+            "expected default description to be applied"
+        );
 
         let add_status = Command::new("git")
             .args([

@@ -424,7 +424,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        jobs::{Bundle, BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
+        jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
         task_status::{Event, Status, TaskStatusLog},
     };
     use std::fs;
