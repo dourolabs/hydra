@@ -288,6 +288,8 @@ fn load_program(program_arg: &str) -> Result<String> {
             .with_context(|| format!("failed to read program file '{}'", trimmed))?
     } else if trimmed == constants::DEFAULT_PROGRAM_PATH {
         constants::DEFAULT_PROGRAM_SOURCE.to_string()
+    } else if looks_like_file_path(trimmed) {
+        bail!("--program value '{trimmed}' looks like a file path and no file was found")
     } else {
         program_arg.to_string()
     };
@@ -308,6 +310,10 @@ fn validate_program_syntax(program: &str) -> Result<()> {
         .compile(program)
         .map(|_| ())
         .map_err(|err| anyhow!("invalid Rhai program: {err}"))
+}
+
+fn looks_like_file_path(value: &str) -> bool {
+    value.contains('/') || value.contains('\\')
 }
 
 fn looks_like_git_url(repo: &str) -> bool {
@@ -782,6 +788,12 @@ mod tests {
     fn default_program_constant_loads_file_contents() {
         let program = load_program(constants::DEFAULT_PROGRAM_PATH).unwrap();
         assert_eq!(program, constants::DEFAULT_PROGRAM_SOURCE);
+    }
+
+    #[test]
+    fn load_program_rejects_path_like_without_file() {
+        let err = load_program("scripts/foo.yaml").unwrap_err();
+        assert!(err.to_string().contains("file path"), "unexpected error: {err}");
     }
 
     #[tokio::test]
