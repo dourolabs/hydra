@@ -1,44 +1,44 @@
 use crate::{
     AppState,
-    routes::jobs::{ApiError, JobIdPath},
+    routes::jobs::{ApiError, JobIdPath, payload_from_artifact},
 };
 use axum::{Json, extract::State};
 use chrono::Utc;
+use metis_common::MetisId;
 use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse};
+use tracing::warn;
 use tracing::{error, info};
 
 pub async fn set_job_output(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-    Json(payload): Json<JobOutputPayload>,
+    Json(_payload): Json<JobOutputPayload>,
 ) -> Result<Json<JobOutputResponse>, ApiError> {
     info!(job_id = %job_id, "set_job_output invoked");
 
-    // Mark the task as complete with the CodexOutput value
-    {
+    let output = {
         let mut store = state.store.write().await;
 
-        // Verify task exists
         store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        // Mark task as complete with the JobOutputPayload
+        let output = resolve_latest_output(&job_id, &**store).await?;
+
         store
-            .mark_task_complete(&job_id, Ok(payload.clone()), Utc::now())
+            .mark_task_complete(&job_id, Ok(()), Utc::now())
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to mark task complete with output");
                 ApiError::internal(anyhow::anyhow!("Failed to mark task complete: {err}"))
             })?;
-    }
+
+        output
+    };
 
     info!(job_id = %job_id, "job output stored successfully");
-    Ok(Json(JobOutputResponse {
-        job_id,
-        output: payload,
-    }))
+    Ok(Json(JobOutputResponse { job_id, output }))
 }
 
 pub async fn get_job_output(
@@ -57,7 +57,7 @@ pub async fn get_job_output(
 
     // Get the result from the task
     let output = match store.get_result(&job_id) {
-        Some(Ok(output)) => output,
+        Some(Ok(())) => resolve_latest_output(&job_id, &**store).await?,
         Some(Err(e)) => {
             error!(error = ?e, job_id = %job_id, "task completed with error");
             return Err(ApiError::internal(anyhow::anyhow!(
@@ -74,4 +74,38 @@ pub async fn get_job_output(
 
     info!(job_id = %job_id, "job output found");
     Ok(Json(JobOutputResponse { job_id, output }))
+}
+
+async fn resolve_latest_output(
+    job_id: &MetisId,
+    store: &dyn crate::store::Store,
+) -> Result<JobOutputPayload, ApiError> {
+    let artifact_ids = store
+        .latest_emitted_artifact_ids(job_id)
+        .await
+        .map_err(|err| {
+            error!(error = %err, job_id = %job_id, "failed to fetch emitted artifacts");
+            ApiError::internal(anyhow::anyhow!("Failed to fetch emitted artifacts: {err}"))
+        })?
+        .ok_or_else(|| {
+            warn!(job_id = %job_id, "job has not emitted any artifacts yet");
+            ApiError::bad_request(format!("Job '{job_id}' has not emitted any artifacts yet."))
+        })?;
+
+    for artifact_id in artifact_ids {
+        let artifact = store.get_artifact(&artifact_id).await.map_err(|err| {
+            error!(error = %err, artifact_id = %artifact_id, job_id = %job_id, "failed to load artifact");
+            ApiError::internal(anyhow::anyhow!(
+                "Failed to load artifact {artifact_id}: {err}"
+            ))
+        })?;
+
+        if let Some(output) = payload_from_artifact(&artifact) {
+            return Ok(output);
+        }
+    }
+
+    Err(ApiError::internal(anyhow::anyhow!(
+        "No usable patch artifacts found for job {job_id}"
+    )))
 }

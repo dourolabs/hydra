@@ -12,14 +12,16 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
+    artifacts::Artifact,
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     job_outputs::JobOutputPayload,
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+    jobs::{Bundle, CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
 use serde_json::json;
 use tracing::{error, info};
 
 pub mod context;
+pub mod events;
 pub mod kill;
 pub mod logs;
 pub mod output;
@@ -303,8 +305,19 @@ async fn job_summary_with_time(
 }
 
 async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
-    if let Some(result) = store.get_result(job_id) {
-        return note_from_result(&result);
+    match store.get_result(job_id) {
+        Some(Err(err)) => return format_error_note(&err),
+        Some(Ok(())) => {}
+        None => return None,
+    }
+
+    let artifact_ids = store.latest_emitted_artifact_ids(job_id).await.ok()??;
+    for artifact_id in artifact_ids {
+        if let Ok(artifact) = store.get_artifact(&artifact_id).await {
+            if let Some(note) = note_from_artifact(&artifact) {
+                return Some(note);
+            }
+        }
     }
 
     None
@@ -327,9 +340,25 @@ fn format_error_note(error: &TaskError) -> Option<String> {
     }
 }
 
-pub(crate) fn note_from_result(result: &Result<JobOutputPayload, TaskError>) -> Option<String> {
-    match result {
-        Ok(output) => sanitize_note(&output.last_message),
-        Err(err) => format_error_note(err),
+pub(crate) fn payload_from_artifact(artifact: &Artifact) -> Option<JobOutputPayload> {
+    match artifact {
+        Artifact::Patch { diff, description } => Some(JobOutputPayload {
+            last_message: description.clone(),
+            patch: diff.clone(),
+            bundle: Bundle::None,
+        }),
+        Artifact::Issue { description } => Some(JobOutputPayload {
+            last_message: description.clone(),
+            patch: String::new(),
+            bundle: Bundle::None,
+        }),
+    }
+}
+
+fn note_from_artifact(artifact: &Artifact) -> Option<String> {
+    match artifact {
+        Artifact::Patch { description, .. } | Artifact::Issue { description } => {
+            sanitize_note(description)
+        }
     }
 }

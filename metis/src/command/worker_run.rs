@@ -11,6 +11,7 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use metis_common::artifacts::{Artifact, UpsertArtifactRequest};
 use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
@@ -364,6 +365,17 @@ async fn submit_job_output(
         patch,
         bundle,
     };
+    let artifact = client
+        .create_artifact(&UpsertArtifactRequest {
+            artifact: Artifact::Patch {
+                diff: payload.patch.clone(),
+                description: payload.last_message.clone(),
+            },
+        })
+        .await?;
+    client
+        .emit_artifacts(job, &[artifact.artifact_id.clone()])
+        .await?;
     println!("Setting output for job '{job}' via metis-server…");
     let response = client.set_job_output(job, &payload).await?;
     println!(

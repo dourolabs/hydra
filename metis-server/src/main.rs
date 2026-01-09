@@ -70,6 +70,10 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
         )
         .route(
+            "/v1/jobs/:job_id/events/emitted",
+            post(routes::jobs::events::emit_artifacts),
+        )
+        .route(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
@@ -916,6 +920,15 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
+            let artifact_id = store_write
+                .add_artifact(Artifact::Patch {
+                    diff: "diff".to_string(),
+                    description: "done".to_string(),
+                })
+                .await?;
+            store_write
+                .emit_task_artifacts(&job_id, vec![artifact_id], Utc::now())
+                .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
 
@@ -979,11 +992,6 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
-        let payload = JobOutputPayload {
-            last_message: "all good".to_string(),
-            patch: "diff".to_string(),
-            bundle: Bundle::None,
-        };
         {
             let mut store_write = store.write().await;
             let job_id = "with-output".to_string();
@@ -1002,8 +1010,17 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
+            let artifact_id = store_write
+                .add_artifact(Artifact::Patch {
+                    diff: "diff".to_string(),
+                    description: "all good".to_string(),
+                })
+                .await?;
             store_write
-                .mark_task_complete(&job_id, Ok(payload.clone()), Utc::now())
+                .emit_task_artifacts(&job_id, vec![artifact_id], Utc::now())
+                .await?;
+            store_write
+                .mark_task_complete(&job_id, Ok(()), Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1109,11 +1126,6 @@ mod tests {
         };
         {
             let mut store_write = store.write().await;
-            let parent_output = JobOutputPayload {
-                last_message: "done".to_string(),
-                patch: "patch-content".to_string(),
-                bundle: Bundle::None,
-            };
             store_write
                 .add_task_with_id(
                     "parent-job".to_string(),
@@ -1131,12 +1143,21 @@ mod tests {
             store_write
                 .mark_task_running(&"parent-job".to_string(), Utc::now())
                 .await?;
+            let parent_artifact_id = store_write
+                .add_artifact(Artifact::Patch {
+                    diff: "patch-content".to_string(),
+                    description: "done".to_string(),
+                })
+                .await?;
             store_write
-                .mark_task_complete(
+                .emit_task_artifacts(
                     &"parent-job".to_string(),
-                    Ok(parent_output.clone()),
+                    vec![parent_artifact_id],
                     Utc::now(),
                 )
+                .await?;
+            store_write
+                .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())
                 .await?;
             store_write
                 .add_task_with_id(
@@ -1231,6 +1252,7 @@ mod tests {
         let client = test_client();
         let artifact = Artifact::Patch {
             diff: "diff --git a/file b/file".to_string(),
+            description: "initial patch".to_string(),
         };
 
         let response = client
@@ -1267,12 +1289,14 @@ mod tests {
         let client = test_client();
         let patch = Artifact::Patch {
             diff: "refactor logging".to_string(),
+            description: "refactor logging".to_string(),
         };
         let issue = Artifact::Issue {
             description: "login fails for guests".to_string(),
         };
         let filtered_patch = Artifact::Patch {
             diff: "add login retry handling".to_string(),
+            description: "login retry patch".to_string(),
         };
 
         for artifact in [patch.clone(), issue.clone(), filtered_patch.clone()] {
@@ -1318,6 +1342,7 @@ mod tests {
             .json(&UpsertArtifactRequest {
                 artifact: Artifact::Patch {
                     diff: "old diff".to_string(),
+                    description: "old patch".to_string(),
                 },
             })
             .send()
