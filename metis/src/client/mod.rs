@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::{JobOutputPayload, JobOutputResponse},
+    job_outputs::{JobOutputResponse, SetJobOutputResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,
@@ -16,7 +16,7 @@ use metis_common::{
     MetisId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::pin::Pin;
 
 use crate::config::AppConfig;
@@ -31,11 +31,6 @@ pub struct MetisClient {
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 
-#[derive(Debug, Serialize)]
-struct EmitEventRequest {
-    artifact_ids: Vec<MetisId>,
-}
-
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
@@ -43,12 +38,8 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
     async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
-    async fn set_job_output(
-        &self,
-        job_id: &MetisId,
-        payload: &JobOutputPayload,
-    ) -> Result<JobOutputResponse>;
-    async fn emit_artifacts(&self, job_id: &MetisId, artifact_ids: &[MetisId]) -> Result<()>;
+    async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse>;
+
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
     async fn create_artifact(
         &self,
@@ -248,11 +239,7 @@ impl MetisClient {
     }
 
     /// Call `POST /v1/jobs/:job_id/output` to set/update the recorded agent output.
-    pub async fn set_job_output(
-        &self,
-        job_id: &MetisId,
-        payload: &JobOutputPayload,
-    ) -> Result<JobOutputResponse> {
+    pub async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -263,7 +250,6 @@ impl MetisClient {
         let response = self
             .http
             .post(url)
-            .json(payload)
             .send()
             .await
             .context("failed to submit set job output request")?
@@ -271,41 +257,9 @@ impl MetisClient {
             .context("metis-server returned an error while setting job output")?;
 
         response
-            .json::<JobOutputResponse>()
+            .json::<SetJobOutputResponse>()
             .await
             .context("failed to decode set job output response")
-    }
-
-    /// Call `POST /v1/jobs/:job_id/events/emitted` to record emitted artifacts for a running job.
-    pub async fn emit_artifacts(&self, job_id: &MetisId, artifact_ids: &[MetisId]) -> Result<()> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
-        if artifact_ids.is_empty() {
-            return Err(anyhow!("artifact_ids must not be empty"));
-        }
-
-        let request = EmitEventRequest {
-            artifact_ids: artifact_ids
-                .iter()
-                .map(|id| id.trim().to_string())
-                .collect(),
-        };
-
-        let path = format!("/v1/jobs/{job_id}/events/emitted");
-        let url = self.endpoint(&path)?;
-        self.http
-            .post(url)
-            .json(&request)
-            .send()
-            .await
-            .context("failed to submit emit artifacts request")?
-            .error_for_status()
-            .context("metis-server returned an error while emitting artifacts")?;
-
-        Ok(())
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
@@ -548,16 +502,8 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
-    async fn set_job_output(
-        &self,
-        job_id: &MetisId,
-        payload: &JobOutputPayload,
-    ) -> Result<JobOutputResponse> {
-        MetisClient::set_job_output(self, job_id, payload).await
-    }
-
-    async fn emit_artifacts(&self, job_id: &MetisId, artifact_ids: &[MetisId]) -> Result<()> {
-        MetisClient::emit_artifacts(self, job_id, artifact_ids).await
+    async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse> {
+        MetisClient::set_job_output(self, job_id).await
     }
 
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {

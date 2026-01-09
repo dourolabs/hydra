@@ -5,6 +5,7 @@ pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
+    use crate::MetisId;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +40,8 @@ pub mod artifacts {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub job_id: Option<MetisId>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,5 +357,10 @@ pub mod job_outputs {
     pub struct JobOutputResponse {
         pub job_id: MetisId,
         pub output: JobOutputPayload,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SetJobOutputResponse {
+        pub job_id: MetisId,
     }
 }

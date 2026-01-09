@@ -117,7 +117,9 @@ async fn create_patch(client: &dyn MetisClientInterface) -> Result<()> {
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
                 diff: patch.clone(),
+                description: "Patch created via metis patches create".to_string(),
             },
+            job_id: None,
         })
         .await
         .context("failed to create patch artifact")?;
@@ -160,7 +162,7 @@ fn ensure_patch(record: &ArtifactRecord, id: &str) -> Result<()> {
 
 fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
     match &record.artifact {
-        Artifact::Patch { diff } => Ok(diff),
+        Artifact::Patch { diff, .. } => Ok(diff),
         _ => bail!("artifact '{id}' is not a patch"),
     }
 }
@@ -373,7 +375,7 @@ mod tests {
 
         let (_, request) = &requests[0];
         let generated_patch = match &request.artifact {
-            Artifact::Patch { diff } => diff,
+            Artifact::Patch { diff, .. } => diff,
             other => panic!("expected patch artifact, got {other:?}"),
         };
 
