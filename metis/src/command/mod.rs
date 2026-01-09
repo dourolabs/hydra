@@ -1,3 +1,4 @@
+pub mod issues;
 pub mod jobs;
 pub mod kill;
 pub mod logs;

@@ -36,7 +36,7 @@ pub mod artifacts {
         pub artifact: Artifact,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
     }

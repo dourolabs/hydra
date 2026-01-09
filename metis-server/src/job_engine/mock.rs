@@ -83,7 +83,7 @@ impl JobEngine for MockJobEngine {
     ) -> Result<String, JobEngineError> {
         let exists = {
             let jobs = self.jobs.lock().unwrap();
-            jobs.iter().any(|job| job.id == job_id)
+            jobs.iter().any(|job| job.id == *job_id)
         };
 
         if !exists {
@@ -92,7 +92,7 @@ impl JobEngine for MockJobEngine {
 
         let logs = {
             let logs = self.logs.lock().unwrap();
-            logs.get(&job_id).cloned().unwrap_or_default()
+            logs.get(job_id).cloned().unwrap_or_default()
         };
 
         let tail_count = tail_lines.unwrap_or(logs.len() as i64).max(0) as usize;
@@ -107,7 +107,7 @@ impl JobEngine for MockJobEngine {
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let exists = {
             let jobs = self.jobs.lock().unwrap();
-            jobs.iter().any(|job| job.id == job_id)
+            jobs.iter().any(|job| job.id == *job_id)
         };
 
         if !exists {

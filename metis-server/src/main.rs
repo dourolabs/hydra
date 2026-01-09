@@ -747,7 +747,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job-1" }));
+        assert_eq!(
+            body,
+            json!({ "error": "Multiple jobs found for metis-id 'job-1'" })
+        );
         Ok(())
     }
 
@@ -762,7 +765,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "missing" }));
+        assert_eq!(body, json!({ "error": "Job 'missing' not found" }));
         Ok(())
     }
 
@@ -823,7 +826,7 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "unknown" }));
+        assert_eq!(body, json!({ "error": "Job 'unknown' not found" }));
         Ok(())
     }
 
@@ -847,7 +850,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "dupe" }));
+        assert_eq!(
+            body,
+            json!({ "error": "Multiple jobs found for metis-id 'dupe'" })
+        );
         Ok(())
     }
 
