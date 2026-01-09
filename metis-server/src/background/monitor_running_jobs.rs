@@ -96,7 +96,7 @@ pub async fn monitor_running_jobs(state: AppState) {
                             warn!(metis_id = %metis_id, "Job completed in job engine without submitting results.");
                             // If job has been completed for at least 1 minute, mark as failed due to timeout for missing result
                             let mut store = state.store.write().await;
-                            let completion_time = job.completion_time.unwrap_or_else(|| Utc::now());
+                            let completion_time = job.completion_time.unwrap_or_else(Utc::now);
                             let now = Utc::now();
                             let duration_since_completion =
                                 now.signed_duration_since(completion_time);
@@ -125,7 +125,7 @@ pub async fn monitor_running_jobs(state: AppState) {
                         JobStatus::Failed => {
                             // Update status in store
                             let mut store = state.store.write().await;
-                            let end_time = job.completion_time.unwrap_or_else(|| Utc::now());
+                            let end_time = job.completion_time.unwrap_or_else(Utc::now);
                             let failure_reason = job.failure_message.unwrap_or_else(|| {
                                 "Job failed for an undetermined reason".to_string()
                             });

@@ -68,36 +68,36 @@ pub async fn eval_with_closure_unwrapping(
 
     let ast = engine
         .compile(script)
-        .map_err(|err| anyhow!("failed to compile Rhai script: {}", err))?;
+        .map_err(|err| anyhow!("failed to compile Rhai script: {err}"))?;
 
     let mut scope = rhai::Scope::new();
     scope.push("params", params_array);
     scope.push("env", env_map);
     let mut result = engine
         .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
-        .map_err(|err| anyhow!("failed to evaluate Rhai script: {}", err))?;
+        .map_err(|err| anyhow!("failed to evaluate Rhai script: {err}"))?;
 
     // Recursively evaluate async operations by executing their continuations
     loop {
         if let Some((op, fn_ptr)) = result.clone().try_cast::<(AsyncOp, rhai::FnPtr)>() {
-            println!("Async op: {}", op);
+            println!("Async op: {op}");
             let op_result = evaluate_async_op(&op, env).await?;
             match fn_ptr.call(&engine, &ast, (op_result,)) {
                 Ok(new_result) => {
-                    println!("Result: {:?}", &new_result);
+                    println!("Result: {new_result:?}");
                     // Successfully called with async op output, continue recursion
                     result = new_result;
                     continue;
                 }
                 Err(err) => {
-                    println!("Error: {:?}", &err);
+                    println!("Error: {err:?}");
                     // Failed to call - either requires arguments or is not callable
                     // Break the loop and return the continuation as-is
                     break;
                 }
             }
         } else {
-            println!("Not an async op tuple -- done!. Result {:?}", result);
+            println!("Not an async op tuple -- done!. Result {result:?}");
             // Not an async operation tuple, return the result
             break;
         }

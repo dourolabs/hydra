@@ -67,7 +67,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         )
         .route(
             "/v1/jobs/:job_id/output",
-            post(routes::jobs::output::set_job_output),
+            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
         )
         .route(
             "/v1/jobs/:job_id/context",

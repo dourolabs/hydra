@@ -1,7 +1,7 @@
-/// Constants for file paths and directory names used throughout the metis CLI.
-///
-/// These constants centralize path-related strings to ensure consistency
-/// and make it easier to maintain and update paths across the codebase.
+//! Constants for file paths and directory names used throughout the metis CLI.
+//!
+//! These constants centralize path-related strings to ensure consistency
+//! and make it easier to maintain and update paths across the codebase.
 
 /// The main metis directory name (`.metis`) used to store metis-specific files
 /// in the working directory. This directory contains subdirectories like
