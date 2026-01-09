@@ -41,41 +41,6 @@ pub async fn set_job_output(
     Ok(Json(JobOutputResponse { job_id, output }))
 }
 
-pub async fn get_job_output(
-    State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
-) -> Result<Json<JobOutputResponse>, ApiError> {
-    info!(job_id = %job_id, "get_job_output invoked");
-
-    let store = state.store.read().await;
-
-    // Verify task exists
-    store.get_task(&job_id).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to get task");
-        ApiError::not_found(format!("Job '{job_id}' not found"))
-    })?;
-
-    // Get the result from the task
-    let output = match store.get_result(&job_id) {
-        Some(Ok(())) => resolve_latest_output(&job_id, &**store).await?,
-        Some(Err(e)) => {
-            error!(error = ?e, job_id = %job_id, "task completed with error");
-            return Err(ApiError::internal(anyhow::anyhow!(
-                "Task completed with error: {e:?}"
-            )));
-        }
-        None => {
-            error!(job_id = %job_id, "job output not available");
-            return Err(ApiError::bad_request(format!(
-                "Job '{job_id}' has not completed yet."
-            )));
-        }
-    };
-
-    info!(job_id = %job_id, "job output found");
-    Ok(Json(JobOutputResponse { job_id, output }))
-}
-
 async fn resolve_latest_output(
     job_id: &MetisId,
     store: &dyn crate::store::Store,

@@ -67,7 +67,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         )
         .route(
             "/v1/jobs/:job_id/output",
-            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
+            post(routes::jobs::output::set_job_output),
         )
         .route(
             "/v1/jobs/:job_id/events/emitted",
@@ -166,6 +166,7 @@ mod tests {
         jobs::{
             Bundle, CreateJobResponse, JobSummary, ListJobsResponse, ParentContext, WorkerContext,
         },
+        task_status::Event,
     };
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
@@ -964,43 +965,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/ /output", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_output_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/missing/output", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-        let body: serde_json::Value = response.json().await?;
-        assert!(body["error"].as_str().unwrap_or("").contains("not found"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_output_returns_stored_output() -> anyhow::Result<()> {
+    async fn job_output_can_be_retrieved_via_events_and_artifacts() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
+        let job_id = "with-output".to_string();
+        let artifact_id;
         {
             let mut store_write = store.write().await;
-            let job_id = "with-output".to_string();
             store_write
                 .add_task_with_id(
                     job_id.clone(),
@@ -1016,14 +988,14 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
-            let artifact_id = store_write
+            artifact_id = store_write
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id], Utc::now())
+                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
                 .await?;
             store_write
                 .mark_task_complete(&job_id, Ok(()), Utc::now())
@@ -1033,61 +1005,37 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/with-output/output", server.base_url()))
+            .get(format!("{}/v1/jobs/with-output", server.base_url()))
             .send()
             .await?;
 
         assert!(response.status().is_success());
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(
-            body,
-            json!({
-                "job_id": "with-output",
-                "output": { "last_message": "all good", "patch": "diff", "bundle": {"type": "none"}}
+        let summary: JobSummary = response.json().await?;
+        let emitted_ids = summary
+            .status_log
+            .events
+            .iter()
+            .find_map(|event| match event {
+                Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
+                _ => None,
             })
-        );
-        Ok(())
-    }
+            .unwrap();
+        assert_eq!(emitted_ids, vec![artifact_id.clone()]);
 
-    #[tokio::test]
-    async fn get_job_output_errors_when_result_is_missing() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = default_image();
-        let store = state.store.clone();
-        {
-            let mut store_write = store.write().await;
-            let job_id = "no-output".to_string();
-            store_write
-                .add_task_with_id(
-                    job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
-                    Utc::now(),
-                )
-                .await?;
-        }
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/no-output/output", server.base_url()))
+        let artifact_response = client
+            .get(format!("{}/v1/artifacts/{artifact_id}", server.base_url()))
             .send()
             .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert!(
-            body["error"]
-                .as_str()
-                .unwrap_or("")
-                .contains("has not completed")
-        );
+        assert!(artifact_response.status().is_success());
+        let artifact: ArtifactRecord = artifact_response.json().await?;
+        assert_eq!(artifact.id, artifact_id);
+        match artifact.artifact {
+            Artifact::Patch { diff, description } => {
+                assert_eq!(diff, "diff");
+                assert_eq!(description, "all good");
+            }
+            other => panic!("expected patch artifact, got {other:?}"),
+        };
         Ok(())
     }
 
