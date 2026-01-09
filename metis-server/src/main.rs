@@ -936,10 +936,16 @@ mod tests {
         assert_eq!(status, Status::Complete);
         let result = store_read.get_result(&"spawn-job".to_string());
         assert!(matches!(result, Some(Ok(()))));
-        let emitted = store_read
-            .latest_emitted_artifact_ids(&"spawn-job".to_string())
-            .await?;
-        assert_eq!(emitted, Some(vec![artifact_id]));
+        let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
+        let emitted = status_log
+            .events
+            .iter()
+            .find_map(|event| match event {
+                Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert_eq!(emitted, vec![artifact_id]);
 
         Ok(())
     }
