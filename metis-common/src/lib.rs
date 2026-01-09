@@ -166,7 +166,7 @@ pub mod task_status {
             })
         }
 
-        pub fn latest_emitted_artifact_ids(&self) -> Option<Vec<MetisId>> {
+        pub fn emitted_artifacts(&self) -> Option<Vec<MetisId>> {
             self.events.iter().rev().find_map(|event| match event {
                 Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
                 _ => None,

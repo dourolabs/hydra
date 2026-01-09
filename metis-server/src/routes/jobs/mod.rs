@@ -303,13 +303,13 @@ async fn job_summary_with_time(
 }
 
 async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
-    match store.get_result(job_id) {
-        Some(Err(err)) => return format_error_note(&err),
-        Some(Ok(())) => {}
-        None => return None,
+    let status_log = store.get_status_log(job_id).await.ok()?;
+    match status_log.result()? {
+        Err(err) => return format_error_note(&err),
+        Ok(()) => {}
     }
 
-    let artifact_ids = store.latest_emitted_artifact_ids(job_id).await.ok()??;
+    let artifact_ids = status_log.emitted_artifacts()?;
     for artifact_id in artifact_ids {
         if let Ok(artifact) = store.get_artifact(&artifact_id).await {
             if let Some(note) = note_from_artifact(&artifact) {

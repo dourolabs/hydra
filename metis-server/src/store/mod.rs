@@ -252,12 +252,6 @@ pub trait Store: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
-    /// Returns the latest emitted artifact ids for a task, if any.
-    async fn latest_emitted_artifact_ids(
-        &self,
-        id: &MetisId,
-    ) -> Result<Option<Vec<MetisId>>, StoreError>;
-
     /// Marks a task as running.
     ///
     /// Valid transitions:
