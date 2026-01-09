@@ -378,22 +378,6 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn latest_emitted_artifact_ids(
-        &self,
-        id: &MetisId,
-    ) -> Result<Option<Vec<MetisId>>, StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let status_log = self
-            .status_logs
-            .get(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        Ok(status_log.latest_emitted_artifact_ids())
-    }
-
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,

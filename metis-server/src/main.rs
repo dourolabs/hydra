@@ -67,7 +67,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         )
         .route(
             "/v1/jobs/:job_id/output",
-            post(routes::jobs::output::set_job_output),
+            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
         )
         .route(
             "/v1/jobs/:job_id/context",
@@ -1250,7 +1250,10 @@ mod tests {
 
         let emitted = {
             let store_read = store.read().await;
-            store_read.latest_emitted_artifact_ids(&job_id).await?
+            store_read
+                .get_status_log(&job_id)
+                .await?
+                .emitted_artifacts()
         };
         assert_eq!(emitted, Some(vec![created.artifact_id]));
         Ok(())
