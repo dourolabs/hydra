@@ -1,4 +1,9 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -10,6 +15,12 @@ use metis_common::{
 };
 
 use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo};
+use tempfile::NamedTempFile;
+
+/// ANSI color codes
+const GREEN: &str = "\x1b[32m";
+const RED: &str = "\x1b[31m";
+const RESET: &str = "\x1b[0m";
 
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -22,16 +33,32 @@ pub enum PatchesCommand {
         /// Query string to filter patch artifacts.
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
+
+        /// Pretty-print the matching patch diffs with color coding.
+        #[arg(long = "pretty")]
+        pretty: bool,
     },
 
     /// Create a patch artifact from the current git repository.
     Create,
+
+    /// Apply a patch artifact to the current git repository.
+    Apply {
+        /// Patch artifact id to apply.
+        #[arg(value_name = "PATCH_ID")]
+        id: MetisId,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
-        PatchesCommand::List { id, query } => list_patches(client, id, query).await,
+        PatchesCommand::List {
+            id,
+            query,
+            pretty,
+        } => list_patches(client, id, query, pretty).await,
         PatchesCommand::Create => create_patch(client).await,
+        PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
     }
 }
 
@@ -39,6 +66,7 @@ async fn list_patches(
     client: &dyn MetisClientInterface,
     id: Option<MetisId>,
     query: Option<String>,
+    pretty: bool,
 ) -> Result<()> {
     if let Some(id) = id {
         if query.is_some() {
@@ -50,7 +78,11 @@ async fn list_patches(
             .await
             .with_context(|| format!("failed to fetch patch artifact '{id}'"))?;
         ensure_patch(&artifact, &id)?;
-        println!("{}", serde_json::to_string(&artifact)?);
+        if pretty {
+            print_patch_artifact(&artifact)?;
+        } else {
+            println!("{}", serde_json::to_string(&artifact)?);
+        }
         return Ok(());
     }
 
@@ -68,7 +100,11 @@ async fn list_patches(
     }
 
     for artifact in response.artifacts {
-        println!("{}", serde_json::to_string(&artifact)?);
+        if pretty {
+            print_patch_artifact(&artifact)?;
+        } else {
+            println!("{}", serde_json::to_string(&artifact)?);
+        }
     }
 
     Ok(())
@@ -126,6 +162,103 @@ fn ensure_patch(record: &ArtifactRecord, id: &str) -> Result<()> {
     }
 }
 
+fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
+    match &record.artifact {
+        Artifact::Patch { diff } => Ok(diff),
+        _ => bail!("artifact '{id}' is not a patch"),
+    }
+}
+
+fn print_patch_artifact(record: &ArtifactRecord) -> Result<()> {
+    let diff = extract_patch_diff(record, &record.id)?;
+    println!("Patch {}:\n", record.id);
+    pretty_print_patch(diff);
+    println!();
+    Ok(())
+}
+
+/// Pretty-print a patch with color coding (green for additions, red for deletions).
+fn pretty_print_patch(patch: &str) {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+
+    for line in patch.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            writeln!(handle, "{GREEN}{line}{RESET}").unwrap();
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            writeln!(handle, "{RED}{line}{RESET}").unwrap();
+        } else {
+            writeln!(handle, "{line}").unwrap();
+        }
+    }
+}
+
+async fn apply_patch_artifact(client: &dyn MetisClientInterface, id: MetisId) -> Result<()> {
+    let artifact = client
+        .get_artifact(&id)
+        .await
+        .with_context(|| format!("failed to fetch patch artifact '{id}'"))?;
+    let diff = extract_patch_diff(&artifact, &id)?;
+    let repo_root = git_repository_root()?;
+
+    apply_patch_to_repo(diff, &repo_root)?;
+    Ok(())
+}
+
+fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
+    if patch.trim().is_empty() {
+        bail!("Patch is empty. Nothing to apply.");
+    }
+
+    println!("Applying patch to current git repository...\n");
+    pretty_print_patch(patch);
+
+    let patch_file =
+        NamedTempFile::new().context("Failed to create temporary file for patch")?;
+    fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
+
+    let output = Command::new("git")
+        .arg("apply")
+        .args(["--3way", "--index"])
+        .arg(patch_file.path())
+        .current_dir(git_root)
+        .output()
+        .context("Failed to execute git apply with 3-way merge")?;
+
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("git apply stderr: {stderr}");
+    }
+
+    if !output.stdout.is_empty() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("git apply stdout: {stdout}");
+    }
+
+    if output.status.success() {
+        println!("Patch applied successfully.");
+        return Ok(());
+    }
+
+    let conflicted_files = Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .current_dir(git_root)
+        .output()
+        .context("Failed to check for merge conflicts after applying patch")?;
+    let conflicts = String::from_utf8_lossy(&conflicted_files.stdout);
+
+    if !conflicts.trim().is_empty() {
+        bail!("Merge conflicts detected while applying patch; resolve these files and continue:\n{conflicts}");
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    bail!(
+        "Failed to apply patch. Exit code: {}. Error: {}",
+        output.status.code().unwrap_or(-1),
+        stderr
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +270,7 @@ mod tests {
         let client = MockMetisClient::default();
         client.push_list_artifacts_response(ListArtifactsResponse { artifacts: vec![] });
 
-        list_patches(&client, None, Some("login".to_string())).await?;
+        list_patches(&client, None, Some("login".to_string()), false).await?;
 
         let queries = client.recorded_list_artifacts_queries();
         assert_eq!(queries.len(), 1);
@@ -156,7 +289,7 @@ mod tests {
             },
         });
 
-        let err = list_patches(&client, Some("artifact-1".to_string()), None)
+        let err = list_patches(&client, Some("artifact-1".to_string()), None, false)
             .await
             .unwrap_err();
 

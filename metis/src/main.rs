@@ -124,20 +124,11 @@ enum Commands {
         #[arg(value_name = "JOB_ID")]
         job: String,
     },
-    /// Retrieve and display the patch for a completed job.
-    Patch {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
-        job: String,
-
-        /// Apply the patch to the current git repository using `git apply`.
-        #[arg(short = 'a', long = "apply")]
-        apply: bool,
-    },
     /// Manage patch artifacts.
     Patches {
         #[command(subcommand)]
         command: command::patches::PatchesCommand,
+    },
     /// List or create issue artifacts.
     Issues {
         #[command(subcommand)]
@@ -209,7 +200,6 @@ async fn main() -> Result<()> {
         Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
-        Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
         Commands::Patches { command } => command::patches::run(&client, command).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
