@@ -10,13 +10,13 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
+title=$(cat .metis/output/pr_title.txt)
+
 echo "committing"
-git commit -m 'task ${metis_id}'
+git commit -m "$title"
 echo "pushing"
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 git push origin $branch_name
-
-title=$(cat .metis/output/pr_title.txt)
 
 echo "making PR"
 gh pr create \
