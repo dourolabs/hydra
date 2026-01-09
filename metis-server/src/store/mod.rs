@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 mod memory_store;
 
-pub use metis_common::task_status::{Status, TaskStatusLog};
+pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 
 /// Represents a dependency edge between tasks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,13 +26,6 @@ pub enum Task {
         image: String,
         env_vars: HashMap<String, String>,
     },
-}
-
-/// Error type for task execution failures.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskError {
-    /// An error occurred during job engine operations.
-    JobEngineError { reason: String },
 }
 
 /// Error type for store operations.
@@ -86,6 +79,12 @@ pub trait Store: Send + Sync {
     /// Ok(()) if successful, or an error if the artifact doesn't exist
     async fn update_artifact(&mut self, id: &MetisId, artifact: Artifact)
     -> Result<(), StoreError>;
+
+    /// Lists all artifacts in the store with their corresponding IDs.
+    ///
+    /// # Returns
+    /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
+    async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
     /// Adds a task to the store with its parent dependencies.
     ///

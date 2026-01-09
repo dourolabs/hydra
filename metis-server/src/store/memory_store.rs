@@ -22,8 +22,6 @@ pub struct MemoryStore {
     parents: HashMap<MetisId, Vec<Edge>>,
     /// Maps task IDs to their child task IDs (dependents)
     children: HashMap<MetisId, Vec<MetisId>>,
-    /// Maps task IDs to their execution results
-    results: HashMap<MetisId, Result<JobOutputPayload, TaskError>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -36,7 +34,6 @@ impl MemoryStore {
             artifacts: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
-            results: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
@@ -90,6 +87,14 @@ impl Store for MemoryStore {
 
         self.artifacts.insert(id.clone(), artifact);
         Ok(())
+    }
+
+    async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError> {
+        Ok(self
+            .artifacts
+            .iter()
+            .map(|(id, artifact)| (id.clone(), artifact.clone()))
+            .collect())
     }
 
     async fn add_task(
@@ -354,7 +359,7 @@ impl Store for MemoryStore {
     }
 
     fn get_result(&self, id: &MetisId) -> Option<Result<JobOutputPayload, TaskError>> {
-        self.results.get(id).cloned()
+        self.status_logs.get(id).and_then(TaskStatusLog::result)
     }
 
     async fn mark_task_running(
@@ -393,33 +398,27 @@ impl Store for MemoryStore {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
-        // Verify current status is Running
-        let status = match result {
-            Ok(_) => Status::Complete,
-            Err(_) => Status::Failed,
+        let status_log = self
+            .status_logs
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        if !matches!(status_log.current_status(), Status::Running) {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        let event = match result {
+            Ok(output) => Event::Completed {
+                at: end_time,
+                output,
+            },
+            Err(error) => Event::Failed {
+                at: end_time,
+                error,
+            },
         };
 
-        // Store the result
-        self.results.insert(id.clone(), result.clone());
-
-        {
-            let status_log = self
-                .status_logs
-                .get_mut(id)
-                .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-            if !matches!(status_log.current_status(), Status::Running) {
-                return Err(StoreError::InvalidStatusTransition);
-            }
-
-            let event = match status {
-                Status::Complete => Event::Completed { at: end_time },
-                Status::Failed => Event::Failed { at: end_time },
-                _ => unreachable!("mark_task_complete only sets complete or failed"),
-            };
-
-            status_log.events.push(event);
-        }
+        status_log.events.push(event);
 
         // Check all children (dependents) and update their status if needed
         let child_ids = self.children.get(id).cloned().unwrap_or_default();
