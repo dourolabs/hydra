@@ -16,7 +16,6 @@ use metis_common::{
     jobs::{Bundle, WorkerContext},
 };
 use tar::Archive;
-use tempfile::NamedTempFile;
 
 use crate::client::MetisClientInterface;
 use crate::constants;

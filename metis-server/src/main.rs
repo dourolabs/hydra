@@ -67,7 +67,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         )
         .route(
             "/v1/jobs/:job_id/output",
-            get(routes::jobs::output::get_job_output).post(routes::jobs::output::set_job_output),
+            post(routes::jobs::output::set_job_output),
         )
         .route(
             "/v1/jobs/:job_id/context",
@@ -890,6 +890,7 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
+        let artifact_id;
         {
             let mut store_write = store.write().await;
             let job_id = "spawn-job".to_string();
@@ -908,14 +909,14 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
-            let artifact_id = store_write
+            artifact_id = store_write
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
                     description: "done".to_string(),
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id], Utc::now())
+                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -930,19 +931,15 @@ mod tests {
         let body: serde_json::Value = response.json().await?;
         assert_eq!(body, json!({ "job_id": "spawn-job" }));
 
-        let output_response: serde_json::Value = client
-            .get(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
-            .send()
-            .await?
-            .json()
+        let store_read = store.read().await;
+        let status = store_read.get_status(&"spawn-job".to_string()).await?;
+        assert_eq!(status, Status::Complete);
+        let result = store_read.get_result(&"spawn-job".to_string());
+        assert!(matches!(result, Some(Ok(()))));
+        let emitted = store_read
+            .latest_emitted_artifact_ids(&"spawn-job".to_string())
             .await?;
-        assert_eq!(
-            output_response,
-            json!({
-                "job_id": "spawn-job",
-                "output": { "last_message": "done", "patch": "diff", "bundle": { "type": "none" } }
-            })
-        );
+        assert_eq!(emitted, Some(vec![artifact_id]));
 
         Ok(())
     }
