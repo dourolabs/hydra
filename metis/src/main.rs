@@ -134,6 +134,11 @@ enum Commands {
         #[arg(short = 'a', long = "apply")]
         apply: bool,
     },
+    /// Manage patch artifacts.
+    Patches {
+        #[command(subcommand)]
+        command: command::patches::PatchesCommand,
+    },
     /// Retrieve a job's context and extract/copy it to a directory, then submit the job output.
     WorkerRun {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
@@ -201,6 +206,7 @@ async fn main() -> Result<()> {
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
+        Commands::Patches { command } => command::patches::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
         Commands::Run { script } => command::run::run(script).await?,
