@@ -355,4 +355,9 @@ pub mod job_outputs {
         pub job_id: MetisId,
         pub output: JobOutputPayload,
     }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SetJobOutputResponse {
+        pub job_id: MetisId,
+    }
 }
