@@ -262,8 +262,12 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
-    use metis_common::artifacts::{Artifact, ArtifactRecord, ListArtifactsResponse};
+    use anyhow::anyhow;
+    use crate::{client::MockMetisClient, constants};
+    use metis_common::artifacts::{
+        Artifact, ArtifactRecord, ListArtifactsResponse, UpsertArtifactResponse,
+    };
+    use std::{env, fs, process::Command};
 
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
@@ -297,5 +301,131 @@ mod tests {
             err.to_string().contains("is not a patch"),
             "expected patch type error, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
+        let repo_path = tempdir.path();
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .context("failed to init git repo for test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.name", "Test User"])
+            .status()
+            .context("failed to set git user.name")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "config", "user.email", "test@example.com"])
+            .status()
+            .context("failed to set git user.email")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+
+        fs::write(repo_path.join("README.md"), "initial content\n")
+            .context("failed to write initial README.md")?;
+        Command::new("git")
+            .args(["-C", repo_str, "add", "README.md"])
+            .status()
+            .context("failed to add README.md to repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "initial commit"])
+            .status()
+            .context("failed to create initial commit")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        fs::write(repo_path.join("README.md"), "updated content\n")
+            .context("failed to update README.md")?;
+        fs::write(repo_path.join("notes.txt"), "new note content\n")
+            .context("failed to write notes.txt")?;
+        let metis_internal = repo_path
+            .join(constants::METIS_DIR)
+            .join("should_be_ignored.txt");
+        if let Some(parent) = metis_internal.parent() {
+            fs::create_dir_all(parent).context("failed to create .metis directory")?;
+        }
+        fs::write(&metis_internal, "ignore me").context("failed to write .metis file")?;
+
+        let original_dir = env::current_dir().context("failed to capture current dir")?;
+        env::set_current_dir(repo_path).context("failed to change to repo dir")?;
+
+        let client = MockMetisClient::default();
+        client.push_upsert_artifact_response(UpsertArtifactResponse {
+            artifact_id: "patch-1".to_string(),
+        });
+        create_patch(&client).await?;
+
+        env::set_current_dir(original_dir).context("failed to restore current dir")?;
+
+        let requests = client.recorded_artifact_upserts();
+        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+
+        let (_, request) = &requests[0];
+        let generated_patch = match &request.artifact {
+            Artifact::Patch { diff } => diff,
+            other => panic!("expected patch artifact, got {other:?}"),
+        };
+
+        let add_status = Command::new("git")
+            .args([
+                "add",
+                "-A",
+                "--",
+                ".",
+                &format!(":!{}/**", constants::METIS_DIR),
+            ])
+            .current_dir(repo_path)
+            .status()
+            .context("failed to stage changes for expected diff")?;
+        assert!(
+            add_status.success(),
+            "git add for expected diff returned non-zero exit code"
+        );
+
+        let expected_output = Command::new("git")
+            .args([
+                "diff",
+                "--cached",
+                "--",
+                ".",
+                &format!(":!{}/**", constants::METIS_DIR),
+            ])
+            .current_dir(repo_path)
+            .output()
+            .context("failed to capture expected diff")?;
+        assert!(
+            expected_output.status.success() || expected_output.status.code() == Some(1),
+            "git diff failed with status {:?}",
+            expected_output.status.code()
+        );
+        let expected_patch = String::from_utf8_lossy(&expected_output.stdout).to_string();
+
+        assert_eq!(
+            *generated_patch, expected_patch,
+            "generated patch does not match repository changes"
+        );
+        assert!(
+            !generated_patch.contains(constants::METIS_DIR),
+            "patch should not include files under {}",
+            constants::METIS_DIR
+        );
+
+        Ok(())
     }
 }
