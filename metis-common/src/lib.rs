@@ -12,6 +12,7 @@ pub mod artifacts {
     }
 }
 pub mod task_status {
+    use crate::job_outputs::JobOutputPayload;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,12 @@ pub mod task_status {
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
+    pub enum TaskError {
+        JobEngineError { reason: String },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
     pub enum Event {
         Created {
             at: DateTime<Utc>,
@@ -35,16 +42,18 @@ pub mod task_status {
         Started {
             at: DateTime<Utc>,
         },
+        Completed {
+            at: DateTime<Utc>,
+            output: JobOutputPayload,
+        },
+        Failed {
+            at: DateTime<Utc>,
+            error: TaskError,
+        },
         Emitted {
             at: DateTime<Utc>,
             /// MetisIds for any artifacts produced by the task at this moment.
             artifact_ids: Vec<String>,
-        },
-        Completed {
-            at: DateTime<Utc>,
-        },
-        Failed {
-            at: DateTime<Utc>,
         },
     }
 
@@ -94,7 +103,15 @@ pub mod task_status {
 
         pub fn end_time(&self) -> Option<DateTime<Utc>> {
             self.events.iter().rev().find_map(|event| match event {
-                Event::Completed { at } | Event::Failed { at } => Some(*at),
+                Event::Completed { at, .. } | Event::Failed { at, .. } => Some(*at),
+                _ => None,
+            })
+        }
+
+        pub fn result(&self) -> Option<Result<JobOutputPayload, TaskError>> {
+            self.events.iter().rev().find_map(|event| match event {
+                Event::Completed { output, .. } => Some(Ok(output.clone())),
+                Event::Failed { error, .. } => Some(Err(error.clone())),
                 _ => None,
             })
         }
