@@ -135,10 +135,6 @@ impl MetisClientInterface for MockMetisClient {
         Ok(Box::pin(stream))
     }
 
-    async fn get_job_output(&self, _job_id: &MetisId) -> Result<JobOutputResponse> {
-        Err(anyhow!("get_job_output not implemented in MockMetisClient"))
-    }
-
     async fn set_job_output(&self, _job_id: &MetisId) -> Result<SetJobOutputResponse> {
         Err(anyhow!("set_job_output not implemented in MockMetisClient"))
     }

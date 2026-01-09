@@ -38,7 +38,6 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
     async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
-    async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse>;
     async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse>;
 
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
@@ -237,30 +236,6 @@ impl MetisClient {
             let body = response.text().await?;
             Ok(Self::stream_text_logs(body))
         }
-    }
-
-    /// Call `GET /v1/jobs/:job_id/output` to retrieve the recorded agent output.
-    pub async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
-        let path = format!("/v1/jobs/{job_id}/output");
-        let url = self.endpoint(&path)?;
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .context("failed to request job output")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching job output")?;
-
-        response
-            .json::<JobOutputResponse>()
-            .await
-            .context("failed to decode job output response")
     }
 
     /// Call `POST /v1/jobs/:job_id/output` to set/update the recorded agent output.
@@ -525,10 +500,6 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
         MetisClient::get_job_logs(self, job_id, query).await
-    }
-
-    async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse> {
-        MetisClient::get_job_output(self, job_id).await
     }
 
     async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse> {
