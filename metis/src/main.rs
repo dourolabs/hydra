@@ -134,6 +134,11 @@ enum Commands {
         #[arg(short = 'a', long = "apply")]
         apply: bool,
     },
+    /// List or create issue artifacts.
+    Issues {
+        #[command(subcommand)]
+        command: command::issues::IssueCommands,
+    },
     /// Retrieve a job's context and extract/copy it to a directory, then submit the job output.
     WorkerRun {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
@@ -201,6 +206,7 @@ async fn main() -> Result<()> {
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
+        Commands::Issues { command } => command::issues::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
         Commands::Run { script } => command::run::run(script).await?,
