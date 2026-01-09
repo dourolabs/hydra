@@ -1,7 +1,7 @@
 use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::jobs::Bundle;
+use metis_common::{artifacts::Artifact, jobs::Bundle};
 use std::collections::HashMap;
 
 mod memory_store;
@@ -40,6 +40,8 @@ pub enum TaskError {
 pub enum StoreError {
     #[error("Task not found: {0}")]
     TaskNotFound(MetisId),
+    #[error("Artifact not found: {0}")]
+    ArtifactNotFound(MetisId),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(String),
     #[error("Internal error: {0}")]
@@ -56,6 +58,35 @@ pub enum StoreError {
 /// - The graph must remain acyclic
 #[async_trait]
 pub trait Store: Send + Sync {
+    /// Adds a new artifact to the store and assigns it a MetisId.
+    ///
+    /// # Arguments
+    /// * `artifact` - The artifact to store
+    ///
+    /// # Returns
+    /// The generated MetisId for the artifact
+    async fn add_artifact(&mut self, artifact: Artifact) -> Result<MetisId, StoreError>;
+
+    /// Retrieves an artifact by its MetisId.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId to look up
+    ///
+    /// # Returns
+    /// The artifact if found, or an error if not found
+    async fn get_artifact(&self, id: &MetisId) -> Result<Artifact, StoreError>;
+
+    /// Updates an existing artifact in the store.
+    ///
+    /// # Arguments
+    /// * `id` - The MetisId of the artifact to update
+    /// * `artifact` - The new artifact value
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error if the artifact doesn't exist
+    async fn update_artifact(&mut self, id: &MetisId, artifact: Artifact)
+    -> Result<(), StoreError>;
+
     /// Adds a task to the store with its parent dependencies.
     ///
     /// The parent tasks must complete before this task can start.

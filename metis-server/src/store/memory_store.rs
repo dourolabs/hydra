@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::job_engine::MetisId;
+use metis_common::artifacts::Artifact;
 use metis_common::job_outputs::JobOutputPayload;
 use metis_common::task_status::Event;
 
@@ -15,6 +16,8 @@ use metis_common::task_status::Event;
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
     tasks: HashMap<MetisId, Task>,
+    /// Maps artifact IDs to their Artifact data
+    artifacts: HashMap<MetisId, Artifact>,
     /// Maps task IDs to their parent task edges (dependencies)
     parents: HashMap<MetisId, Vec<Edge>>,
     /// Maps task IDs to their child task IDs (dependents)
@@ -30,6 +33,7 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
+            artifacts: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
             results: HashMap::new(),
@@ -62,6 +66,32 @@ impl Default for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
+    async fn add_artifact(&mut self, artifact: Artifact) -> Result<MetisId, StoreError> {
+        let id = Uuid::new_v4().hyphenated().to_string();
+        self.artifacts.insert(id.clone(), artifact);
+        Ok(id)
+    }
+
+    async fn get_artifact(&self, id: &MetisId) -> Result<Artifact, StoreError> {
+        self.artifacts
+            .get(id)
+            .cloned()
+            .ok_or_else(|| StoreError::ArtifactNotFound(id.clone()))
+    }
+
+    async fn update_artifact(
+        &mut self,
+        id: &MetisId,
+        artifact: Artifact,
+    ) -> Result<(), StoreError> {
+        if !self.artifacts.contains_key(id) {
+            return Err(StoreError::ArtifactNotFound(id.clone()));
+        }
+
+        self.artifacts.insert(id.clone(), artifact);
+        Ok(())
+    }
+
     async fn add_task(
         &mut self,
         task: Task,
@@ -420,7 +450,7 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use metis_common::jobs::Bundle;
+    use metis_common::{artifacts::Artifact, jobs::Bundle};
     use std::collections::HashSet;
 
     fn spawn_task() -> Task {
@@ -442,11 +472,59 @@ mod tests {
         }
     }
 
+    fn sample_artifact() -> Artifact {
+        Artifact::Patch {
+            diff: "diff --git a/file b/file".to_string(),
+        }
+    }
+
     fn edge(id: &str) -> Edge {
         Edge {
             id: id.to_string(),
             name: None,
         }
+    }
+
+    #[tokio::test]
+    async fn add_and_get_artifact_assigns_id() {
+        let mut store = MemoryStore::new();
+
+        let artifact = sample_artifact();
+        let id = store.add_artifact(artifact.clone()).await.unwrap();
+
+        assert_eq!(store.get_artifact(&id).await.unwrap(), artifact);
+    }
+
+    #[tokio::test]
+    async fn update_artifact_overwrites_existing_value() {
+        let mut store = MemoryStore::new();
+
+        let id = store.add_artifact(sample_artifact()).await.unwrap();
+        let updated = Artifact::Issue {
+            description: "issue details".to_string(),
+        };
+
+        store.update_artifact(&id, updated.clone()).await.unwrap();
+
+        assert_eq!(store.get_artifact(&id).await.unwrap(), updated);
+    }
+
+    #[tokio::test]
+    async fn update_missing_artifact_returns_error() {
+        let mut store = MemoryStore::new();
+        let missing = "missing".to_string();
+
+        let err = store
+            .update_artifact(
+                &missing,
+                Artifact::Patch {
+                    diff: "noop".to_string(),
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, StoreError::ArtifactNotFound(id) if id == missing));
     }
 
     #[tokio::test]
