@@ -92,6 +92,14 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError> {
+        Ok(self
+            .artifacts
+            .iter()
+            .map(|(id, artifact)| (id.clone(), artifact.clone()))
+            .collect())
+    }
+
     async fn add_task(
         &mut self,
         task: Task,

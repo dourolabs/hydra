@@ -47,6 +47,14 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
 
     let app = Router::new()
         .route("/health", get(health_check))
+        .route(
+            "/v1/artifacts",
+            get(routes::artifacts::list_artifacts).post(routes::artifacts::create_artifact),
+        )
+        .route(
+            "/v1/artifacts/:artifact_id",
+            get(routes::artifacts::get_artifact).put(routes::artifacts::update_artifact),
+        )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route(
             "/v1/jobs/:job_id",
@@ -145,6 +153,10 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
+        artifacts::{
+            Artifact, ArtifactKind, ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery,
+            UpsertArtifactRequest, UpsertArtifactResponse,
+        },
         constants::ENV_GH_TOKEN,
         job_outputs::JobOutputPayload,
         jobs::{
@@ -1209,6 +1221,144 @@ mod tests {
         assert_eq!(
             body.variables,
             HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn artifacts_can_be_created_and_retrieved() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let artifact = Artifact::Patch {
+            diff: "diff --git a/file b/file".to_string(),
+        };
+
+        let response = client
+            .post(format!("{}/v1/artifacts", server.base_url()))
+            .json(&UpsertArtifactRequest {
+                artifact: artifact.clone(),
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let created: UpsertArtifactResponse = response.json().await?;
+        assert!(!created.artifact_id.is_empty());
+
+        let fetched: ArtifactRecord = client
+            .get(format!(
+                "{}/v1/artifacts/{}",
+                server.base_url(),
+                created.artifact_id
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(fetched.id, created.artifact_id);
+        assert_eq!(fetched.artifact, artifact);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_artifacts_supports_filters() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let patch = Artifact::Patch {
+            diff: "refactor logging".to_string(),
+        };
+        let issue = Artifact::Issue {
+            description: "login fails for guests".to_string(),
+        };
+        let filtered_patch = Artifact::Patch {
+            diff: "add login retry handling".to_string(),
+        };
+
+        for artifact in [patch.clone(), issue.clone(), filtered_patch.clone()] {
+            let response = client
+                .post(format!("{}/v1/artifacts", server.base_url()))
+                .json(&UpsertArtifactRequest { artifact })
+                .send()
+                .await?;
+            assert!(response.status().is_success());
+        }
+
+        let all: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .send()
+            .await?
+            .json()
+            .await?;
+        assert_eq!(all.artifacts.len(), 3);
+
+        let filtered: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .query(&SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Patch),
+                q: Some("login".to_string()),
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(filtered.artifacts.len(), 1);
+        assert_eq!(filtered.artifacts[0].artifact, filtered_patch);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_artifact_replaces_existing_value() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+
+        let created: UpsertArtifactResponse = client
+            .post(format!("{}/v1/artifacts", server.base_url()))
+            .json(&UpsertArtifactRequest {
+                artifact: Artifact::Patch {
+                    diff: "old diff".to_string(),
+                },
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let updated: UpsertArtifactResponse = client
+            .put(format!(
+                "{}/v1/artifacts/{}",
+                server.base_url(),
+                created.artifact_id
+            ))
+            .json(&UpsertArtifactRequest {
+                artifact: Artifact::Issue {
+                    description: "updated details".to_string(),
+                },
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(updated.artifact_id, created.artifact_id);
+
+        let fetched: ArtifactRecord = client
+            .get(format!(
+                "{}/v1/artifacts/{}",
+                server.base_url(),
+                created.artifact_id
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(
+            fetched.artifact,
+            Artifact::Issue {
+                description: "updated details".to_string()
+            }
         );
         Ok(())
     }

@@ -10,6 +10,51 @@ pub mod artifacts {
         Patch { diff: String },
         Issue { description: String },
     }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum ArtifactKind {
+        Patch,
+        Issue,
+    }
+
+    impl From<&Artifact> for ArtifactKind {
+        fn from(artifact: &Artifact) -> Self {
+            match artifact {
+                Artifact::Patch { .. } => ArtifactKind::Patch,
+                Artifact::Issue { .. } => ArtifactKind::Issue,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ArtifactRecord {
+        pub id: String,
+        pub artifact: Artifact,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct UpsertArtifactRequest {
+        pub artifact: Artifact,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct UpsertArtifactResponse {
+        pub artifact_id: String,
+    }
+
+    #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct SearchArtifactsQuery {
+        #[serde(default, rename = "type")]
+        pub artifact_type: Option<ArtifactKind>,
+        #[serde(default)]
+        pub q: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ListArtifactsResponse {
+        pub artifacts: Vec<ArtifactRecord>,
+    }
 }
 pub mod task_status {
     use chrono::{DateTime, Utc};

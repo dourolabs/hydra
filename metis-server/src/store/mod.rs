@@ -87,6 +87,12 @@ pub trait Store: Send + Sync {
     async fn update_artifact(&mut self, id: &MetisId, artifact: Artifact)
     -> Result<(), StoreError>;
 
+    /// Lists all artifacts in the store with their corresponding IDs.
+    ///
+    /// # Returns
+    /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
+    async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
+
     /// Adds a task to the store with its parent dependencies.
     ///
     /// The parent tasks must complete before this task can start.
