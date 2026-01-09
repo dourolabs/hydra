@@ -5,26 +5,23 @@ use crate::{
 use axum::{Json, extract::State};
 use chrono::Utc;
 use metis_common::MetisId;
-use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse};
+use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse, SetJobOutputResponse};
 use tracing::warn;
 use tracing::{error, info};
 
 pub async fn set_job_output(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-    Json(_payload): Json<JobOutputPayload>,
-) -> Result<Json<JobOutputResponse>, ApiError> {
+) -> Result<Json<SetJobOutputResponse>, ApiError> {
     info!(job_id = %job_id, "set_job_output invoked");
 
-    let output = {
+    {
         let mut store = state.store.write().await;
 
         store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
-
-        let output = resolve_latest_output(&job_id, &**store).await?;
 
         store
             .mark_task_complete(&job_id, Ok(()), Utc::now())
@@ -33,47 +30,10 @@ pub async fn set_job_output(
                 error!(error = %err, job_id = %job_id, "failed to mark task complete with output");
                 ApiError::internal(anyhow::anyhow!("Failed to mark task complete: {err}"))
             })?;
-
-        output
-    };
+    }
 
     info!(job_id = %job_id, "job output stored successfully");
-    Ok(Json(JobOutputResponse { job_id, output }))
-}
-
-pub async fn get_job_output(
-    State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
-) -> Result<Json<JobOutputResponse>, ApiError> {
-    info!(job_id = %job_id, "get_job_output invoked");
-
-    let store = state.store.read().await;
-
-    // Verify task exists
-    store.get_task(&job_id).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to get task");
-        ApiError::not_found(format!("Job '{job_id}' not found"))
-    })?;
-
-    // Get the result from the task
-    let output = match store.get_result(&job_id) {
-        Some(Ok(())) => resolve_latest_output(&job_id, &**store).await?,
-        Some(Err(e)) => {
-            error!(error = ?e, job_id = %job_id, "task completed with error");
-            return Err(ApiError::internal(anyhow::anyhow!(
-                "Task completed with error: {e:?}"
-            )));
-        }
-        None => {
-            error!(job_id = %job_id, "job output not available");
-            return Err(ApiError::bad_request(format!(
-                "Job '{job_id}' has not completed yet."
-            )));
-        }
-    };
-
-    info!(job_id = %job_id, "job output found");
-    Ok(Json(JobOutputResponse { job_id, output }))
+    Ok(Json(SetJobOutputResponse { job_id }))
 }
 
 async fn resolve_latest_output(

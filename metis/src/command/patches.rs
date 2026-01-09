@@ -129,6 +129,7 @@ async fn create_patch(
                 diff: patch,
                 description,
             },
+            job_id: None,
         })
         .await
         .context("failed to create patch artifact")?;

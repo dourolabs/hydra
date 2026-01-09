@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::{JobOutputPayload, JobOutputResponse},
+    job_outputs::{JobOutputResponse, SetJobOutputResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,
@@ -30,7 +30,6 @@ pub struct MockMetisClient {
     pub artifact_upsert_requests: Mutex<Vec<(Option<MetisId>, UpsertArtifactRequest)>>,
     pub artifact_get_requests: Mutex<Vec<MetisId>>,
     pub list_artifacts_queries: Mutex<Vec<SearchArtifactsQuery>>,
-    pub emit_artifact_requests: Mutex<Vec<(MetisId, Vec<MetisId>)>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
 }
 
@@ -95,10 +94,6 @@ impl MockMetisClient {
     pub fn recorded_list_artifacts_queries(&self) -> Vec<SearchArtifactsQuery> {
         self.list_artifacts_queries.lock().unwrap().clone()
     }
-
-    pub fn recorded_emit_artifact_requests(&self) -> Vec<(MetisId, Vec<MetisId>)> {
-        self.emit_artifact_requests.lock().unwrap().clone()
-    }
 }
 
 #[async_trait]
@@ -140,24 +135,8 @@ impl MetisClientInterface for MockMetisClient {
         Ok(Box::pin(stream))
     }
 
-    async fn get_job_output(&self, _job_id: &MetisId) -> Result<JobOutputResponse> {
-        Err(anyhow!("get_job_output not implemented in MockMetisClient"))
-    }
-
-    async fn set_job_output(
-        &self,
-        _job_id: &MetisId,
-        _payload: &JobOutputPayload,
-    ) -> Result<JobOutputResponse> {
+    async fn set_job_output(&self, _job_id: &MetisId) -> Result<SetJobOutputResponse> {
         Err(anyhow!("set_job_output not implemented in MockMetisClient"))
-    }
-
-    async fn emit_artifacts(&self, job_id: &MetisId, artifact_ids: &[MetisId]) -> Result<()> {
-        self.emit_artifact_requests
-            .lock()
-            .unwrap()
-            .push((job_id.clone(), artifact_ids.to_vec()));
-        Ok(())
     }
 
     async fn get_job_context(&self, _job_id: &MetisId) -> Result<WorkerContext> {
