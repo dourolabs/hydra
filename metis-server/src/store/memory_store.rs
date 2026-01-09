@@ -6,7 +6,6 @@ use uuid::Uuid;
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
-use metis_common::job_outputs::JobOutputPayload;
 use metis_common::jobs::Bundle;
 use metis_common::task_status::Event;
 
@@ -53,17 +52,6 @@ impl MemoryStore {
                 })
                 .unwrap_or(false)
         })
-    }
-}
-
-fn job_output_from_artifact(artifact: &Artifact) -> Option<JobOutputPayload> {
-    match artifact {
-        Artifact::Patch { diff, description } => Some(JobOutputPayload {
-            last_message: description.clone(),
-            patch: diff.clone(),
-            bundle: Bundle::None,
-        }),
-        Artifact::Issue { .. } => None,
     }
 }
 
@@ -269,60 +257,6 @@ impl Store for MemoryStore {
         }
 
         Ok(self.parents.get(id).cloned().unwrap_or_default())
-    }
-
-    async fn get_args(&self, id: &MetisId) -> Result<Vec<JobOutputPayload>, StoreError> {
-        // Verify task exists
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        // Get all parent IDs
-        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
-
-        // Collect results from all parents
-        let mut payloads = Vec::new();
-        for parent_edge in &parent_edges {
-            let status_log = self
-                .status_logs
-                .get(&parent_edge.id)
-                .ok_or_else(|| StoreError::TaskNotFound(parent_edge.id.clone()))?;
-
-            match status_log.result() {
-                Some(Err(e)) => {
-                    return Err(StoreError::Internal(format!(
-                        "Parent task {} has error result: {e:?}",
-                        parent_edge.id
-                    )));
-                }
-                None => {
-                    return Err(StoreError::Internal(format!(
-                        "Parent task {} has no result yet",
-                        parent_edge.id
-                    )));
-                }
-                Some(Ok(())) => {}
-            }
-
-            let artifact_ids = status_log.latest_emitted_artifact_ids().unwrap_or_default();
-            let payload = artifact_ids
-                .iter()
-                .find_map(|artifact_id| {
-                    self.artifacts
-                        .get(artifact_id)
-                        .and_then(job_output_from_artifact)
-                })
-                .ok_or_else(|| {
-                    StoreError::Internal(format!(
-                        "Parent task {} has no emitted patch artifact",
-                        parent_edge.id
-                    ))
-                })?;
-
-            payloads.push(payload);
-        }
-
-        Ok(payloads)
     }
 
     async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {

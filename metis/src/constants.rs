@@ -5,16 +5,12 @@
 
 /// The main metis directory name (`.metis`) used to store metis-specific files
 /// in the working directory. This directory contains subdirectories like
-/// `output` and `parents`.
+/// `output`.
 pub const METIS_DIR: &str = ".metis";
 
 /// The output subdirectory name (`output`) under `.metis` where job outputs
 /// are stored, including files like `output.txt` and `changes.patch`.
 pub const OUTPUT_DIR: &str = "output";
-
-/// The parents subdirectory name (`parents`) under `.metis` where parent
-/// job contexts are stored.
-pub const PARENTS_DIR: &str = "parents";
 
 /// The output text file name (`output.txt`) stored in the output directory,
 /// containing the last message output from a job execution.
