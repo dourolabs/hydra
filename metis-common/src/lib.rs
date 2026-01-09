@@ -167,10 +167,22 @@ pub mod task_status {
         }
 
         pub fn emitted_artifacts(&self) -> Option<Vec<MetisId>> {
-            self.events.iter().rev().find_map(|event| match event {
-                Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
-                _ => None,
-            })
+            let mut artifact_ids = Vec::new();
+
+            for event in &self.events {
+                if let Event::Emitted {
+                    artifact_ids: ids, ..
+                } = event
+                {
+                    artifact_ids.extend(ids.clone());
+                }
+            }
+
+            if artifact_ids.is_empty() {
+                None
+            } else {
+                Some(artifact_ids)
+            }
         }
     }
 
@@ -190,6 +202,38 @@ pub mod task_status {
             });
 
             assert_eq!(log.current_status(), Status::Running);
+        }
+
+        #[test]
+        fn emitted_artifacts_returns_none_when_missing() {
+            let now = Utc::now();
+            let log = TaskStatusLog::new(Status::Pending, now);
+
+            assert_eq!(log.emitted_artifacts(), None);
+        }
+
+        #[test]
+        fn emitted_artifacts_collects_all_in_order() {
+            let now = Utc::now();
+            let mut log = TaskStatusLog::new(Status::Pending, now);
+            log.events.push(Event::Started { at: now });
+            log.events.push(Event::Emitted {
+                at: now,
+                artifact_ids: vec!["artifact-1".into()],
+            });
+            log.events.push(Event::Emitted {
+                at: now,
+                artifact_ids: vec!["artifact-2".into(), "artifact-3".into()],
+            });
+
+            assert_eq!(
+                log.emitted_artifacts(),
+                Some(vec![
+                    "artifact-1".into(),
+                    "artifact-2".into(),
+                    "artifact-3".into()
+                ])
+            );
         }
     }
 }
