@@ -7,6 +7,7 @@ use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
 use metis_common::job_outputs::JobOutputPayload;
+use metis_common::jobs::Bundle;
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
@@ -52,6 +53,17 @@ impl MemoryStore {
                 })
                 .unwrap_or(false)
         })
+    }
+}
+
+fn job_output_from_artifact(artifact: &Artifact) -> Option<JobOutputPayload> {
+    match artifact {
+        Artifact::Patch { diff, description } => Some(JobOutputPayload {
+            last_message: description.clone(),
+            patch: diff.clone(),
+            bundle: Bundle::None,
+        }),
+        Artifact::Issue { .. } => None,
     }
 }
 
@@ -271,8 +283,12 @@ impl Store for MemoryStore {
         // Collect results from all parents
         let mut payloads = Vec::new();
         for parent_edge in &parent_edges {
-            match self.get_result(&parent_edge.id) {
-                Some(Ok(payload)) => payloads.push(payload),
+            let status_log = self
+                .status_logs
+                .get(&parent_edge.id)
+                .ok_or_else(|| StoreError::TaskNotFound(parent_edge.id.clone()))?;
+
+            match status_log.result() {
                 Some(Err(e)) => {
                     return Err(StoreError::Internal(format!(
                         "Parent task {} has error result: {e:?}",
@@ -285,7 +301,25 @@ impl Store for MemoryStore {
                         parent_edge.id
                     )));
                 }
+                Some(Ok(())) => {}
             }
+
+            let artifact_ids = status_log.latest_emitted_artifact_ids().unwrap_or_default();
+            let payload = artifact_ids
+                .iter()
+                .find_map(|artifact_id| {
+                    self.artifacts
+                        .get(artifact_id)
+                        .and_then(job_output_from_artifact)
+                })
+                .ok_or_else(|| {
+                    StoreError::Internal(format!(
+                        "Parent task {} has no emitted patch artifact",
+                        parent_edge.id
+                    ))
+                })?;
+
+            payloads.push(payload);
         }
 
         Ok(payloads)
@@ -358,7 +392,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    fn get_result(&self, id: &MetisId) -> Option<Result<JobOutputPayload, TaskError>> {
+    fn get_result(&self, id: &MetisId) -> Option<Result<(), TaskError>> {
         self.status_logs.get(id).and_then(TaskStatusLog::result)
     }
 
@@ -387,10 +421,50 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn emit_task_artifacts(
+        &mut self,
+        id: &MetisId,
+        artifact_ids: Vec<MetisId>,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        let status_log = self
+            .status_logs
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        if !matches!(status_log.current_status(), Status::Running) {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        status_log.events.push(Event::Emitted { at, artifact_ids });
+
+        Ok(())
+    }
+
+    async fn latest_emitted_artifact_ids(
+        &self,
+        id: &MetisId,
+    ) -> Result<Option<Vec<MetisId>>, StoreError> {
+        if !self.tasks.contains_key(id) {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        let status_log = self
+            .status_logs
+            .get(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        Ok(status_log.latest_emitted_artifact_ids())
+    }
+
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        result: Result<JobOutputPayload, TaskError>,
+        result: Result<(), TaskError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Verify task exists
@@ -408,10 +482,7 @@ impl Store for MemoryStore {
         }
 
         let event = match result {
-            Ok(output) => Event::Completed {
-                at: end_time,
-                output,
-            },
+            Ok(()) => Event::Completed { at: end_time },
             Err(error) => Event::Failed {
                 at: end_time,
                 error,
@@ -462,18 +533,10 @@ mod tests {
         }
     }
 
-    // Helper function for tests to create a dummy payload
-    fn dummy_payload() -> JobOutputPayload {
-        JobOutputPayload {
-            last_message: String::new(),
-            patch: String::new(),
-            bundle: Bundle::None,
-        }
-    }
-
     fn sample_artifact() -> Artifact {
         Artifact::Patch {
             diff: "diff --git a/file b/file".to_string(),
+            description: "sample patch".to_string(),
         }
     }
 
@@ -518,6 +581,7 @@ mod tests {
                 &missing,
                 Artifact::Patch {
                     diff: "noop".to_string(),
+                    description: "noop patch".to_string(),
                 },
             )
             .await
@@ -684,7 +748,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -725,7 +789,7 @@ mod tests {
 
         // Then mark as complete
         store
-            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -776,7 +840,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), Utc::now())
             .await
             .unwrap();
 
@@ -807,7 +871,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), Utc::now())
             .await
             .unwrap();
 
@@ -851,7 +915,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root1_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root1_id, Ok(()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
@@ -862,7 +926,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root2_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root2_id, Ok(()), Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -896,7 +960,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = store
-            .mark_task_complete(&root_id, Ok(dummy_payload()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));

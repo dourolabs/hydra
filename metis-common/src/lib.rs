@@ -10,7 +10,7 @@ pub mod artifacts {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(tag = "type", content = "value", rename_all = "snake_case")]
     pub enum Artifact {
-        Patch { diff: String },
+        Patch { diff: String, description: String },
         Issue { description: String },
     }
 
@@ -61,7 +61,6 @@ pub mod artifacts {
 }
 pub mod task_status {
     use crate::MetisId;
-    use crate::job_outputs::JobOutputPayload;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -98,7 +97,6 @@ pub mod task_status {
         },
         Completed {
             at: DateTime<Utc>,
-            output: JobOutputPayload,
         },
         Failed {
             at: DateTime<Utc>,
@@ -157,10 +155,17 @@ pub mod task_status {
             })
         }
 
-        pub fn result(&self) -> Option<Result<JobOutputPayload, TaskError>> {
+        pub fn result(&self) -> Option<Result<(), TaskError>> {
             self.events.iter().rev().find_map(|event| match event {
-                Event::Completed { output, .. } => Some(Ok(output.clone())),
+                Event::Completed { .. } => Some(Ok(())),
                 Event::Failed { error, .. } => Some(Err(error.clone())),
+                _ => None,
+            })
+        }
+
+        pub fn latest_emitted_artifact_ids(&self) -> Option<Vec<MetisId>> {
+            self.events.iter().rev().find_map(|event| match event {
+                Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
                 _ => None,
             })
         }

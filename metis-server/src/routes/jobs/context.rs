@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    routes::jobs::{ApiError, JobIdPath},
+    routes::jobs::{ApiError, JobIdPath, payload_from_artifact},
     store::Task,
 };
 use anyhow::anyhow;
@@ -32,14 +32,24 @@ pub async fn get_job_context(
 
     let mut parents: HashMap<MetisId, ParentContext> = HashMap::new();
     for parent_edge in parent_edges {
-        if let Some(Ok(payload)) = store.get_result(&parent_edge.id) {
-            parents.insert(
-                parent_edge.id.clone(),
-                ParentContext {
-                    name: parent_edge.name.clone(),
-                    output: payload,
-                },
-            );
+        if matches!(store.get_result(&parent_edge.id), Some(Ok(()))) {
+            if let Ok(Some(artifact_ids)) = store.latest_emitted_artifact_ids(&parent_edge.id).await
+            {
+                for artifact_id in artifact_ids {
+                    if let Ok(artifact) = store.get_artifact(&artifact_id).await {
+                        if let Some(output) = payload_from_artifact(&artifact) {
+                            parents.insert(
+                                parent_edge.id.clone(),
+                                ParentContext {
+                                    name: parent_edge.name.clone(),
+                                    output,
+                                },
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 

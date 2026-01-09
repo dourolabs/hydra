@@ -258,13 +258,24 @@ pub trait Store: Send + Sync {
     /// * `id` - The MetisId to look up
     ///
     /// # Returns
-    /// Some(Ok(JobOutputPayload)) if the task completed successfully with a result,
+    /// Some(Ok(())) if the task completed successfully,
     /// Some(Err(TaskError)) if the task completed with an error,
     /// None if the task doesn't exist or has no result yet
-    fn get_result(
+    fn get_result(&self, id: &MetisId) -> Option<Result<(), TaskError>>;
+
+    /// Records an emitted event for a running task.
+    async fn emit_task_artifacts(
+        &mut self,
+        id: &MetisId,
+        artifact_ids: Vec<MetisId>,
+        at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    /// Returns the latest emitted artifact ids for a task, if any.
+    async fn latest_emitted_artifact_ids(
         &self,
         id: &MetisId,
-    ) -> Option<Result<metis_common::job_outputs::JobOutputPayload, TaskError>>;
+    ) -> Result<Option<Vec<MetisId>>, StoreError>;
 
     /// Marks a task as running.
     ///
@@ -311,7 +322,7 @@ pub trait Store: Send + Sync {
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
-        result: Result<metis_common::job_outputs::JobOutputPayload, TaskError>,
+        result: Result<(), TaskError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }
