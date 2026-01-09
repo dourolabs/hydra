@@ -23,8 +23,6 @@ pub async fn set_job_output(
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        resolve_latest_output(&job_id, &**store).await?;
-
         store
             .mark_task_complete(&job_id, Ok(()), Utc::now())
             .await
