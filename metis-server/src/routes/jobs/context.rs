@@ -5,7 +5,10 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
-use metis_common::jobs::{ParentContext, WorkerContext};
+use metis_common::{
+    MetisId,
+    jobs::{ParentContext, WorkerContext},
+};
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -27,7 +30,7 @@ pub async fn get_job_context(
         ApiError::internal(anyhow!("Failed to get parent tasks: {err}"))
     })?;
 
-    let mut parents: HashMap<String, ParentContext> = HashMap::new();
+    let mut parents: HashMap<MetisId, ParentContext> = HashMap::new();
     for parent_edge in parent_edges {
         if let Some(Ok(payload)) = store.get_result(&parent_edge.id) {
             parents.insert(

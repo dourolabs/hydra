@@ -14,13 +14,15 @@ pub async fn kill_job(
         .kill_job(&job_id)
         .await
         .map_err(|err| match err {
-            JobEngineError::NotFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "job not found");
-                ApiError::not_found(msg)
+            JobEngineError::NotFound(metis_id) => {
+                let message = format!("Job '{metis_id}' not found");
+                error!(job_id = %job_id, error = %message, "job not found");
+                ApiError::not_found(message)
             }
-            JobEngineError::MultipleFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "multiple jobs found");
-                ApiError::conflict(msg)
+            JobEngineError::MultipleFound(metis_id) => {
+                let message = format!("Multiple jobs found for metis-id '{metis_id}'");
+                error!(job_id = %job_id, error = %message, "multiple jobs found");
+                ApiError::conflict(message)
             }
             JobEngineError::Kubernetes(kube_err) => {
                 error!(job_id = %job_id, error = ?kube_err, "kubernetes error while killing job");

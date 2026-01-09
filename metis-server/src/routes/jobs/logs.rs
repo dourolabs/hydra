@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_engine::{JobEngineError, JobStatus},
+    job_engine::{JobEngineError, JobStatus, MetisId},
     routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{
@@ -34,13 +34,15 @@ pub async fn get_job_logs(
         .find_job_by_metis_id(&job_id)
         .await
         .map_err(|err| match err {
-            JobEngineError::NotFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "job not found");
-                ApiError::not_found(msg)
+            JobEngineError::NotFound(metis_id) => {
+                let message = format!("Job '{metis_id}' not found");
+                error!(job_id = %job_id, error = %message, "job not found");
+                ApiError::not_found(message)
             }
-            JobEngineError::MultipleFound(msg) => {
-                error!(job_id = %job_id, error = %msg, "multiple jobs found");
-                ApiError::bad_request(msg)
+            JobEngineError::MultipleFound(metis_id) => {
+                let message = format!("Multiple jobs found for metis-id '{metis_id}'");
+                error!(job_id = %job_id, error = %message, "multiple jobs found");
+                ApiError::bad_request(message)
             }
             err => {
                 error!(job_id = %job_id, error = ?err, "failed to find job");
@@ -56,19 +58,19 @@ pub async fn get_job_logs(
             follow = follow,
             "streaming job logs via SSE"
         );
-        stream_logs_sse(state.job_engine.as_ref(), job_id.as_str(), follow).await
+        stream_logs_sse(state.job_engine.as_ref(), &job_id, follow).await
     } else {
         info!(
             job_id = %job_id,
             "fetching job logs once"
         );
-        fetch_logs(state.job_engine.as_ref(), job_id.as_str(), query.tail_lines).await
+        fetch_logs(state.job_engine.as_ref(), &job_id, query.tail_lines).await
     }
 }
 
 async fn fetch_logs(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &str,
+    job_id: &MetisId,
     tail_lines: Option<i64>,
 ) -> Result<Response, ApiError> {
     let logs = job_engine
@@ -77,7 +79,9 @@ async fn fetch_logs(
         .map_err(|err| {
             error!(job_id = %job_id, error = ?err, "failed to fetch logs");
             match err {
-                JobEngineError::NotFound(msg) => ApiError::not_found(msg),
+                JobEngineError::NotFound(metis_id) => {
+                    ApiError::not_found(format!("Job '{metis_id}' not found"))
+                }
                 err => ApiError::internal(err),
             }
         })?;
@@ -94,13 +98,15 @@ async fn fetch_logs(
 
 async fn stream_logs_sse(
     job_engine: &dyn crate::job_engine::JobEngine,
-    job_id: &str,
+    job_id: &MetisId,
     follow: bool,
 ) -> Result<Response, ApiError> {
     let mut receiver = job_engine.get_logs_stream(job_id, follow).map_err(|err| {
         error!(job_id = %job_id, error = ?err, "failed to create log stream");
         match err {
-            JobEngineError::NotFound(msg) => ApiError::not_found(msg),
+            JobEngineError::NotFound(metis_id) => {
+                ApiError::not_found(format!("Job '{metis_id}' not found"))
+            }
             err => ApiError::internal(err),
         }
     })?;

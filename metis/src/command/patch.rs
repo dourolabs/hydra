@@ -1,5 +1,6 @@
 use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
+use metis_common::MetisId;
 use std::{fs, io::Write, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 
@@ -28,11 +29,10 @@ fn pretty_print_patch(patch: &str) {
 }
 
 pub async fn run(client: &dyn MetisClientInterface, job: String, apply: bool) -> Result<()> {
-    let job_id = job.trim();
+    let job_id: MetisId = job.trim().to_string();
     if job_id.is_empty() {
         bail!("Job ID must not be empty.");
     }
-    let job_id = job_id.to_string();
 
     println!("Fetching patch for '{job_id}' via metis-server…");
 

@@ -1,5 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 
+/// Identifier used for jobs, tasks, and artifacts within Metis.
+pub type MetisId = String;
+
 pub mod constants;
 pub mod artifacts {
     use serde::{Deserialize, Serialize};
@@ -57,6 +60,7 @@ pub mod artifacts {
     }
 }
 pub mod task_status {
+    use crate::MetisId;
     use crate::job_outputs::JobOutputPayload;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
@@ -87,6 +91,11 @@ pub mod task_status {
         Started {
             at: DateTime<Utc>,
         },
+        Emitted {
+            at: DateTime<Utc>,
+            /// MetisIds for any artifacts produced by the task at this moment.
+            artifact_ids: Vec<MetisId>,
+        },
         Completed {
             at: DateTime<Utc>,
             output: JobOutputPayload,
@@ -94,11 +103,6 @@ pub mod task_status {
         Failed {
             at: DateTime<Utc>,
             error: TaskError,
-        },
-        Emitted {
-            at: DateTime<Utc>,
-            /// MetisIds for any artifacts produced by the task at this moment.
-            artifact_ids: Vec<String>,
         },
     }
 
@@ -183,6 +187,7 @@ pub mod task_status {
 }
 
 pub mod jobs {
+    use crate::MetisId;
     use crate::job_outputs::JobOutputPayload;
     use crate::task_status::TaskStatusLog;
     use serde::{Deserialize, Serialize};
@@ -205,7 +210,7 @@ pub mod jobs {
         #[serde(default)]
         pub context: BundleSpec,
         #[serde(default)]
-        pub parent_ids: Vec<String>,
+        pub parent_ids: Vec<MetisId>,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         pub variables: HashMap<String, String>,
     }
@@ -280,7 +285,7 @@ pub mod jobs {
     pub struct WorkerContext {
         pub request_context: Bundle,
         #[serde(default)]
-        pub parents: HashMap<String, ParentContext>,
+        pub parents: HashMap<MetisId, ParentContext>,
         pub program: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
@@ -290,7 +295,7 @@ pub mod jobs {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct CreateJobResponse {
-        pub job_id: String,
+        pub job_id: MetisId,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -300,7 +305,7 @@ pub mod jobs {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct JobSummary {
-        pub id: String,
+        pub id: MetisId,
         #[serde(default)]
         pub notes: Option<String>,
         pub program: String,
@@ -311,7 +316,7 @@ pub mod jobs {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct KillJobResponse {
-        pub job_id: String,
+        pub job_id: MetisId,
         pub status: String,
     }
 }
@@ -329,6 +334,7 @@ pub mod logs {
 }
 
 pub mod job_outputs {
+    use crate::MetisId;
     use crate::jobs::Bundle;
     use serde::{Deserialize, Serialize};
 
@@ -341,7 +347,7 @@ pub mod job_outputs {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JobOutputResponse {
-        pub job_id: String,
+        pub job_id: MetisId,
         pub output: JobOutputPayload,
     }
 }

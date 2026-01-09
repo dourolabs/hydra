@@ -9,6 +9,7 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
+    MetisId,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -18,7 +19,7 @@ pub struct MockMetisClient {
     pub create_job_responses: Mutex<VecDeque<CreateJobResponse>>,
     pub list_jobs_responses: Mutex<VecDeque<ListJobsResponse>>,
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
-    pub log_requests: Mutex<Vec<String>>,
+    pub log_requests: Mutex<Vec<MetisId>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
 }
 
@@ -47,7 +48,7 @@ impl MockMetisClient {
         self.recorded_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_log_requests(&self) -> Vec<String> {
+    pub fn recorded_log_requests(&self) -> Vec<MetisId> {
         self.log_requests.lock().unwrap().clone()
     }
 }
@@ -71,15 +72,15 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
     }
 
-    async fn get_job(&self, _job_id: &str) -> Result<JobSummary> {
+    async fn get_job(&self, _job_id: &MetisId) -> Result<JobSummary> {
         Err(anyhow!("get_job not implemented in MockMetisClient"))
     }
 
-    async fn kill_job(&self, _job_id: &str) -> Result<KillJobResponse> {
+    async fn kill_job(&self, _job_id: &MetisId) -> Result<KillJobResponse> {
         Err(anyhow!("kill_job not implemented in MockMetisClient"))
     }
 
-    async fn get_job_logs(&self, job_id: &str, _query: &LogsQuery) -> Result<LogStream> {
+    async fn get_job_logs(&self, job_id: &MetisId, _query: &LogsQuery) -> Result<LogStream> {
         self.log_requests.lock().unwrap().push(job_id.to_string());
         let lines = self
             .log_responses
@@ -91,19 +92,19 @@ impl MetisClientInterface for MockMetisClient {
         Ok(Box::pin(stream))
     }
 
-    async fn get_job_output(&self, _job_id: &str) -> Result<JobOutputResponse> {
+    async fn get_job_output(&self, _job_id: &MetisId) -> Result<JobOutputResponse> {
         Err(anyhow!("get_job_output not implemented in MockMetisClient"))
     }
 
     async fn set_job_output(
         &self,
-        _job_id: &str,
+        _job_id: &MetisId,
         _payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse> {
         Err(anyhow!("set_job_output not implemented in MockMetisClient"))
     }
 
-    async fn get_job_context(&self, _job_id: &str) -> Result<WorkerContext> {
+    async fn get_job_context(&self, _job_id: &MetisId) -> Result<WorkerContext> {
         Err(anyhow!(
             "get_job_context not implemented in MockMetisClient"
         ))

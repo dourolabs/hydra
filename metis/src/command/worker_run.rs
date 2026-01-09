@@ -11,6 +11,7 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
     job_outputs::JobOutputPayload,
@@ -22,7 +23,12 @@ use crate::client::MetisClientInterface;
 use crate::constants;
 use crate::exec::eval_with_closure_unwrapping;
 
-pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf) -> Result<()> {
+    let job_id = job.trim().to_string();
+    if job_id.is_empty() {
+        bail!("job ID must not be empty");
+    }
+
     let WorkerContext {
         request_context,
         parents,
@@ -30,7 +36,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         program,
         params,
         ..
-    } = client.get_job_context(&job).await?;
+    } = client.get_job_context(&job_id).await?;
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).map(String::as_str);
@@ -59,7 +65,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: String, dest: PathBuf) 
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
     // Submit job output (merge of worker-submit functionality)
-    submit_job_output(client, &job, &dest).await?;
+    submit_job_output(client, &job_id, &dest).await?;
 
     Ok(())
 }
@@ -80,7 +86,7 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
 }
 
 fn write_parent_outputs(
-    parents: &std::collections::HashMap<String, ParentContext>,
+    parents: &std::collections::HashMap<MetisId, ParentContext>,
     dest: &Path,
     github_token: Option<&str>,
 ) -> Result<()> {
@@ -325,11 +331,10 @@ fn create_output_directory(dest: &Path) -> Result<()> {
 
 async fn submit_job_output(
     client: &dyn MetisClientInterface,
-    job: &str,
+    job: &MetisId,
     dest: &Path,
 ) -> Result<()> {
-    let job_id = job.trim();
-    if job_id.is_empty() {
+    if job.is_empty() {
         bail!("Job ID must not be empty.");
     }
 
@@ -359,8 +364,8 @@ async fn submit_job_output(
         patch,
         bundle,
     };
-    println!("Setting output for job '{job_id}' via metis-server…");
-    let response = client.set_job_output(job_id, &payload).await?;
+    println!("Setting output for job '{job}' via metis-server…");
+    let response = client.set_job_output(job, &payload).await?;
     println!(
         "Output set for job '{}'. Stored last message length: {}, patch length: {}",
         response.job_id,

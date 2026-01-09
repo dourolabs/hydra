@@ -9,6 +9,7 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
+    MetisId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
 use serde::Deserialize;
@@ -30,16 +31,16 @@ type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self) -> Result<ListJobsResponse>;
-    async fn get_job(&self, job_id: &str) -> Result<JobSummary>;
-    async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse>;
-    async fn get_job_logs(&self, job_id: &str, query: &LogsQuery) -> Result<LogStream>;
-    async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse>;
+    async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
+    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
+    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
+    async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse>;
     async fn set_job_output(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse>;
-    async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext>;
+    async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
 }
 
 impl MetisClient {
@@ -142,7 +143,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &str) -> Result<JobSummary> {
+    pub async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -166,7 +167,7 @@ impl MetisClient {
     }
 
     /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
-    pub async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse> {
+    pub async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -193,7 +194,7 @@ impl MetisClient {
     ///
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
-    pub async fn get_job_logs(&self, job_id: &str, query: &LogsQuery) -> Result<LogStream> {
+    pub async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -227,7 +228,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/output` to retrieve the recorded agent output.
-    pub async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse> {
+    pub async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -253,7 +254,7 @@ impl MetisClient {
     /// Call `POST /v1/jobs/:job_id/output` to set/update the recorded agent output.
     pub async fn set_job_output(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse> {
         let job_id = job_id.trim();
@@ -280,7 +281,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
-    pub async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext> {
+    pub async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
@@ -410,31 +411,31 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_jobs(self).await
     }
 
-    async fn get_job(&self, job_id: &str) -> Result<JobSummary> {
+    async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary> {
         MetisClient::get_job(self, job_id).await
     }
 
-    async fn kill_job(&self, job_id: &str) -> Result<KillJobResponse> {
+    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
         MetisClient::kill_job(self, job_id).await
     }
 
-    async fn get_job_logs(&self, job_id: &str, query: &LogsQuery) -> Result<LogStream> {
+    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
-    async fn get_job_output(&self, job_id: &str) -> Result<JobOutputResponse> {
+    async fn get_job_output(&self, job_id: &MetisId) -> Result<JobOutputResponse> {
         MetisClient::get_job_output(self, job_id).await
     }
 
     async fn set_job_output(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         payload: &JobOutputPayload,
     ) -> Result<JobOutputResponse> {
         MetisClient::set_job_output(self, job_id, payload).await
     }
 
-    async fn get_job_context(&self, job_id: &str) -> Result<WorkerContext> {
+    async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {
         MetisClient::get_job_context(self, job_id).await
     }
 }
