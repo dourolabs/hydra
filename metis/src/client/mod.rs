@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::{JobOutputResponse, SetJobOutputResponse},
+    job_outputs::SetJobOutputResponse,
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,

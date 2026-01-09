@@ -196,17 +196,9 @@ pub mod task_status {
 
 pub mod jobs {
     use crate::MetisId;
-    use crate::job_outputs::JobOutputPayload;
     use crate::task_status::TaskStatusLog;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct ParentContext {
-        #[serde(default)]
-        pub name: Option<String>,
-        pub output: JobOutputPayload,
-    }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CreateJobRequest {
@@ -292,8 +284,6 @@ pub mod jobs {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct WorkerContext {
         pub request_context: Bundle,
-        #[serde(default)]
-        pub parents: HashMap<MetisId, ParentContext>,
         pub program: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
@@ -343,21 +333,7 @@ pub mod logs {
 
 pub mod job_outputs {
     use crate::MetisId;
-    use crate::jobs::Bundle;
     use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct JobOutputPayload {
-        pub last_message: String,
-        pub patch: String,
-        pub bundle: Bundle,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct JobOutputResponse {
-        pub job_id: MetisId,
-        pub output: JobOutputPayload,
-    }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SetJobOutputResponse {

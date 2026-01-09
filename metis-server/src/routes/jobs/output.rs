@@ -1,12 +1,10 @@
 use crate::{
     AppState,
-    routes::jobs::{ApiError, JobIdPath, payload_from_artifact},
+    routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{Json, extract::State};
 use chrono::Utc;
-use metis_common::MetisId;
-use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse, SetJobOutputResponse};
-use tracing::warn;
+use metis_common::job_outputs::SetJobOutputResponse;
 use tracing::{error, info};
 
 pub async fn set_job_output(
@@ -34,38 +32,4 @@ pub async fn set_job_output(
 
     info!(job_id = %job_id, "job output stored successfully");
     Ok(Json(SetJobOutputResponse { job_id }))
-}
-
-async fn resolve_latest_output(
-    job_id: &MetisId,
-    store: &dyn crate::store::Store,
-) -> Result<JobOutputPayload, ApiError> {
-    let artifact_ids = store
-        .latest_emitted_artifact_ids(job_id)
-        .await
-        .map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to fetch emitted artifacts");
-            ApiError::internal(anyhow::anyhow!("Failed to fetch emitted artifacts: {err}"))
-        })?
-        .ok_or_else(|| {
-            warn!(job_id = %job_id, "job has not emitted any artifacts yet");
-            ApiError::bad_request(format!("Job '{job_id}' has not emitted any artifacts yet."))
-        })?;
-
-    for artifact_id in artifact_ids {
-        let artifact = store.get_artifact(&artifact_id).await.map_err(|err| {
-            error!(error = %err, artifact_id = %artifact_id, job_id = %job_id, "failed to load artifact");
-            ApiError::internal(anyhow::anyhow!(
-                "Failed to load artifact {artifact_id}: {err}"
-            ))
-        })?;
-
-        if let Some(output) = payload_from_artifact(&artifact) {
-            return Ok(output);
-        }
-    }
-
-    Err(ApiError::internal(anyhow::anyhow!(
-        "No usable patch artifacts found for job {job_id}"
-    )))
 }

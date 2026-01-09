@@ -14,8 +14,7 @@ use metis_common::{
     MetisId,
     artifacts::Artifact,
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
-    job_outputs::JobOutputPayload,
-    jobs::{Bundle, CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
 use serde_json::json;
 use tracing::{error, info};
@@ -336,21 +335,6 @@ fn format_error_note(error: &TaskError) -> Option<String> {
         TaskError::JobEngineError { reason } => {
             sanitize_note(reason).map(|msg| format!("error: {msg}"))
         }
-    }
-}
-
-pub(crate) fn payload_from_artifact(artifact: &Artifact) -> Option<JobOutputPayload> {
-    match artifact {
-        Artifact::Patch { diff, description } => Some(JobOutputPayload {
-            last_message: description.clone(),
-            patch: diff.clone(),
-            bundle: Bundle::None,
-        }),
-        Artifact::Issue { description } => Some(JobOutputPayload {
-            last_message: description.clone(),
-            patch: String::new(),
-            bundle: Bundle::None,
-        }),
     }
 }
 
