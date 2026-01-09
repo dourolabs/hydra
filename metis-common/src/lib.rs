@@ -1,6 +1,16 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod constants;
+pub mod artifacts {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value", rename_all = "snake_case")]
+    pub enum Artifact {
+        Patch { diff: String },
+        Issue { description: String },
+    }
+}
 pub mod task_status {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
