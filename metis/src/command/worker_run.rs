@@ -378,12 +378,12 @@ async fn submit_job_output(
         .emit_artifacts(job, &[artifact.artifact_id.clone()])
         .await?;
     println!("Setting output for job '{job}' via metis-server…");
-    let response = client.set_job_output(job, &payload).await?;
+    let response = client.set_job_output(job).await?;
     println!(
         "Output set for job '{}'. Stored last message length: {}, patch length: {}",
         response.job_id,
-        response.output.last_message.len(),
-        response.output.patch.len()
+        payload.last_message.len(),
+        payload.patch.len()
     );
     Ok(())
 }
