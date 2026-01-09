@@ -937,8 +937,9 @@ mod tests {
         let result = store_read.get_result(&"spawn-job".to_string());
         assert!(matches!(result, Some(Ok(()))));
         let emitted = store_read
-            .latest_emitted_artifact_ids(&"spawn-job".to_string())
-            .await?;
+            .get_status_log(&"spawn-job".to_string())
+            .await?
+            .emitted_artifacts();
         assert_eq!(emitted, Some(vec![artifact_id]));
 
         Ok(())
