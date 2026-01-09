@@ -861,14 +861,8 @@ mod tests {
     async fn set_job_output_rejects_empty_job_id() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
-        let payload = JobOutputPayload {
-            last_message: "msg".to_string(),
-            patch: "diff".to_string(),
-            bundle: Bundle::None,
-        };
         let response = client
             .post(format!("{}/v1/jobs/ /output", server.base_url()))
-            .json(&payload)
             .send()
             .await?;
 
@@ -882,14 +876,8 @@ mod tests {
     async fn set_job_output_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
-        let payload = JobOutputPayload {
-            last_message: "msg".to_string(),
-            patch: "diff".to_string(),
-            bundle: Bundle::None,
-        };
         let response = client
             .post(format!("{}/v1/jobs/missing/output", server.base_url()))
-            .json(&payload)
             .send()
             .await?;
 
@@ -935,21 +923,23 @@ mod tests {
         let server = spawn_test_server_with_state(state).await?;
 
         let client = test_client();
-        let payload = JobOutputPayload {
-            last_message: "done".to_string(),
-            patch: "diff".to_string(),
-            bundle: Bundle::None,
-        };
         let response = client
             .post(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
-            .json(&payload)
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
+        assert_eq!(body, json!({ "job_id": "spawn-job" }));
+
+        let output_response: serde_json::Value = client
+            .get(format!("{}/v1/jobs/spawn-job/output", server.base_url()))
+            .send()
+            .await?
+            .json()
+            .await?;
         assert_eq!(
-            body,
+            output_response,
             json!({
                 "job_id": "spawn-job",
                 "output": { "last_message": "done", "patch": "diff", "bundle": { "type": "none" } }

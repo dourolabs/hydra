@@ -5,26 +5,23 @@ use crate::{
 use axum::{Json, extract::State};
 use chrono::Utc;
 use metis_common::MetisId;
-use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse};
+use metis_common::job_outputs::{JobOutputPayload, JobOutputResponse, SetJobOutputResponse};
 use tracing::warn;
 use tracing::{error, info};
 
 pub async fn set_job_output(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-    Json(_payload): Json<JobOutputPayload>,
-) -> Result<Json<JobOutputResponse>, ApiError> {
+) -> Result<Json<SetJobOutputResponse>, ApiError> {
     info!(job_id = %job_id, "set_job_output invoked");
 
-    let output = {
+    {
         let mut store = state.store.write().await;
 
         store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task for output");
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
-
-        let output = resolve_latest_output(&job_id, &**store).await?;
 
         store
             .mark_task_complete(&job_id, Ok(()), Utc::now())
@@ -33,12 +30,10 @@ pub async fn set_job_output(
                 error!(error = %err, job_id = %job_id, "failed to mark task complete with output");
                 ApiError::internal(anyhow::anyhow!("Failed to mark task complete: {err}"))
             })?;
-
-        output
-    };
+    }
 
     info!(job_id = %job_id, "job output stored successfully");
-    Ok(Json(JobOutputResponse { job_id, output }))
+    Ok(Json(SetJobOutputResponse { job_id }))
 }
 
 pub async fn get_job_output(
