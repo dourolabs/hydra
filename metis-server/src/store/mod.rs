@@ -1,6 +1,6 @@
-use crate::job_engine::MetisId;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use metis_common::MetisId;
 use metis_common::{artifacts::Artifact, jobs::Bundle};
 use std::collections::HashMap;
 

@@ -28,13 +28,13 @@ pub struct KubernetesJobEngine {
 }
 
 impl KubernetesJobEngine {
-    fn build_metadata_labels(job_uuid: &str) -> BTreeMap<String, String> {
+    fn build_metadata_labels(job_uuid: &MetisId) -> BTreeMap<String, String> {
         let mut metadata_labels = BTreeMap::new();
         metadata_labels.insert("metis-id".to_string(), job_uuid.to_string());
         metadata_labels
     }
 
-    fn build_env_vars(&self, job_uuid: &str) -> Option<Vec<EnvVar>> {
+    fn build_env_vars(&self, job_uuid: &MetisId) -> Option<Vec<EnvVar>> {
         let mut vars = vec![
             EnvVar {
                 name: ENV_OPENAI_API_KEY.to_string(),
@@ -72,7 +72,7 @@ impl KubernetesJobEngine {
         JobStatus::Running
     }
 
-    fn job_metis_id(job: &Job) -> Option<String> {
+    fn job_metis_id(job: &Job) -> Option<MetisId> {
         job.metadata
             .labels
             .as_ref()
@@ -157,7 +157,10 @@ impl KubernetesJobEngine {
         })
     }
 
-    async fn find_kubernetes_job_by_metis_id(&self, job_id: &str) -> Result<Job, JobEngineError> {
+    async fn find_kubernetes_job_by_metis_id(
+        &self,
+        job_id: &MetisId,
+    ) -> Result<Job, JobEngineError> {
         find_kubernetes_job_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
@@ -169,7 +172,7 @@ impl KubernetesJobEngine {
 async fn find_kubernetes_job_by_metis_id_impl(
     client: &Client,
     namespace: &str,
-    job_id: &str,
+    job_id: &MetisId,
 ) -> Result<Job, JobEngineError> {
     let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
     let selector = format!("metis-id={job_id}");
@@ -181,16 +184,12 @@ async fn find_kubernetes_job_by_metis_id_impl(
         .items;
 
     match items.len() {
-        0 => Err(JobEngineError::NotFound(format!(
-            "No job found with Metis ID '{job_id}'."
-        ))),
+        0 => Err(JobEngineError::NotFound(job_id.clone())),
         1 => Ok(items
             .into_iter()
             .next()
             .expect("validated single job response")),
-        _ => Err(JobEngineError::MultipleFound(format!(
-            "Multiple jobs found with Metis ID '{job_id}'."
-        ))),
+        _ => Err(JobEngineError::MultipleFound(job_id.clone())),
     }
 }
 
@@ -287,10 +286,7 @@ impl JobEngine for KubernetesJobEngine {
                     code = err.code,
                     "job already exists"
                 );
-                Err(JobEngineError::AlreadyExists(format!(
-                    "Job '{}' already exists in namespace '{}'",
-                    job_name, self.namespace
-                )))
+                Err(JobEngineError::AlreadyExists(metis_id.clone()))
             }
             Err(err) => {
                 error!(job_name = %job_name, error = ?err, "failed to create job in Kubernetes");
@@ -339,7 +335,7 @@ impl JobEngine for KubernetesJobEngine {
 
     async fn get_logs(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
@@ -380,14 +376,14 @@ impl JobEngine for KubernetesJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let (tx, rx) = mpsc::unbounded();
 
         let namespace = self.namespace.clone();
         let client = self.client.clone();
-        let job_id = job_id.to_string();
+        let job_id = job_id.clone();
         let sender = tx;
 
         tokio::spawn(async move {
@@ -458,9 +454,7 @@ impl JobEngine for KubernetesJobEngine {
     }
 
     async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
-        let job = self
-            .find_kubernetes_job_by_metis_id(metis_id.as_str())
-            .await?;
+        let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
         let job_name = job.metadata.name.ok_or_else(|| {
             JobEngineError::Internal(format!("Job '{metis_id}' is missing a Kubernetes name."))
         })?;
@@ -479,10 +473,7 @@ impl JobEngine for KubernetesJobEngine {
                 Ok(())
             }
             Err(kube::Error::Api(err)) if err.code == 404 => {
-                Err(JobEngineError::NotFound(format!(
-                    "Job '{metis_id}' not found in namespace '{}'",
-                    self.namespace
-                )))
+                Err(JobEngineError::NotFound(metis_id.clone()))
             }
             Err(err) => {
                 error!(

@@ -4,9 +4,7 @@ use chrono::{DateTime, Utc};
 mod kubernetes_job_engine;
 
 pub use kubernetes_job_engine::KubernetesJobEngine;
-
-// TODO: make this a uuid
-pub type MetisId = String;
+pub use metis_common::MetisId;
 
 #[cfg(test)]
 mod mock;
@@ -58,11 +56,11 @@ pub struct MetisJob {
 #[derive(Debug, thiserror::Error)]
 pub enum JobEngineError {
     #[error("Job not found: {0}")]
-    NotFound(String),
+    NotFound(MetisId),
     #[error("Multiple jobs found: {0}")]
-    MultipleFound(String),
+    MultipleFound(MetisId),
     #[error("Job already exists: {0}")]
-    AlreadyExists(String),
+    AlreadyExists(MetisId),
     #[error("Kubernetes API error: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("IO error: {0}")]
@@ -114,7 +112,7 @@ pub trait JobEngine: Send + Sync {
     /// The complete logs as a string, or an error if retrieval fails
     async fn get_logs(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError>;
 
@@ -132,7 +130,7 @@ pub trait JobEngine: Send + Sync {
     /// when the stream ends or encounters an error.
     fn get_logs_stream(
         &self,
-        job_id: &str,
+        job_id: &MetisId,
         follow: bool,
     ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobEngineError>;
 

@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{
+    MetisId,
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     job_outputs::JobOutputPayload,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
@@ -30,7 +31,7 @@ pub async fn create_job(
     info!("create_job invoked");
     let fallback_image = state.config.metis.worker_image.clone();
 
-    let parent_ids: Vec<String> = payload
+    let parent_ids: Vec<MetisId> = payload
         .parent_ids
         .into_iter()
         .map(|id| id.trim().to_string())
@@ -48,7 +49,7 @@ pub async fn create_job(
         .collect();
 
     // Generate a unique ID for the job
-    let job_id = uuid::Uuid::new_v4().hyphenated().to_string();
+    let job_id: MetisId = uuid::Uuid::new_v4().hyphenated().to_string();
 
     let ResolvedBundle {
         bundle: context,
@@ -252,7 +253,7 @@ impl IntoResponse for ApiError {
 }
 
 #[derive(Debug, Clone)]
-pub struct JobIdPath(pub String);
+pub struct JobIdPath(pub MetisId);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for JobIdPath
@@ -262,7 +263,7 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(job_id) = Path::<String>::from_request_parts(parts, state)
+        let Path(job_id) = Path::<MetisId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
@@ -276,23 +277,22 @@ where
 }
 
 async fn job_summary_with_time(
-    job_id: &str,
+    job_id: &MetisId,
     store: &dyn Store,
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
-    let job_id = job_id.to_string();
-    let status_log = store.get_status_log(&job_id).await?;
-    let (program, params) = match store.get_task(&job_id).await? {
+    let status_log = store.get_status_log(job_id).await?;
+    let (program, params) = match store.get_task(job_id).await? {
         Task::Spawn {
             program, params, ..
         } => (program, params),
     };
-    let notes = job_notes_from_store(&job_id, store).await;
+    let notes = job_notes_from_store(job_id, store).await;
 
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
     Ok((
         JobSummary {
-            id: job_id,
+            id: job_id.clone(),
             notes,
             program,
             params,
@@ -302,9 +302,8 @@ async fn job_summary_with_time(
     ))
 }
 
-async fn job_notes_from_store(job_id: &str, store: &dyn Store) -> Option<String> {
-    let job_id_string = job_id.to_string();
-    if let Some(result) = store.get_result(&job_id_string) {
+async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
+    if let Some(result) = store.get_result(job_id) {
         return note_from_result(&result);
     }
 

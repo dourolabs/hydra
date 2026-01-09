@@ -30,7 +30,7 @@ impl MockJobEngine {
         });
     }
 
-    pub async fn set_logs(&self, metis_id: &str, chunks: Vec<String>) {
+    pub async fn set_logs(&self, metis_id: &MetisId, chunks: Vec<String>) {
         let mut logs = self.logs.lock().unwrap();
         logs.insert(metis_id.to_string(), chunks);
     }
@@ -78,17 +78,16 @@ impl JobEngine for MockJobEngine {
 
     async fn get_logs(
         &self,
-        _job_id: &str,
-        _tail_lines: Option<i64>,
+        job_id: &MetisId,
+        tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
-        let job_id = _job_id.to_string();
         let exists = {
             let jobs = self.jobs.lock().unwrap();
             jobs.iter().any(|job| job.id == job_id)
         };
 
         if !exists {
-            return Err(JobEngineError::NotFound(job_id));
+            return Err(JobEngineError::NotFound(job_id.clone()));
         }
 
         let logs = {
@@ -96,28 +95,28 @@ impl JobEngine for MockJobEngine {
             logs.get(&job_id).cloned().unwrap_or_default()
         };
 
-        let tail_count = _tail_lines.unwrap_or(logs.len() as i64).max(0) as usize;
+        let tail_count = tail_lines.unwrap_or(logs.len() as i64).max(0) as usize;
         let start = logs.len().saturating_sub(tail_count);
         Ok(logs[start..].join("\n"))
     }
 
     fn get_logs_stream(
         &self,
-        _job_id: &str,
+        job_id: &MetisId,
         _follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
-        let job_id = _job_id.to_string();
         let exists = {
             let jobs = self.jobs.lock().unwrap();
             jobs.iter().any(|job| job.id == job_id)
         };
 
         if !exists {
-            return Err(JobEngineError::NotFound(job_id));
+            return Err(JobEngineError::NotFound(job_id.clone()));
         }
 
         let logs = self.logs.clone();
         let (tx, rx) = mpsc::unbounded();
+        let job_id = job_id.clone();
 
         tokio::spawn(async move {
             let chunks = {

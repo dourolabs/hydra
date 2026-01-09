@@ -7,6 +7,7 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest},
     logs::LogsQuery,
     task_status::Status,
+    MetisId,
 };
 use rhai::Engine as RhaiEngine;
 use std::{
@@ -50,7 +51,7 @@ pub async fn run(
 
     let program = load_program(&program)?;
 
-    let parent_ids: Vec<String> = after.into_iter().map(|id| id.trim().to_string()).collect();
+    let parent_ids: Vec<MetisId> = after.into_iter().map(|id| id.trim().to_string()).collect();
     if parent_ids.iter().any(|id| id.is_empty()) {
         bail!("--after values must not be empty");
     }
@@ -93,7 +94,7 @@ pub async fn run(
 
 pub(crate) async fn stream_job_logs_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &str,
+    job_id: &MetisId,
     watch: bool,
 ) -> Result<()> {
     let query = LogsQuery {
@@ -120,11 +121,11 @@ pub(crate) async fn stream_job_logs_via_server(
 
 async fn wait_for_job_completion_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &str,
+    job_id: &MetisId,
 ) -> Result<()> {
     loop {
         let response = client.list_jobs().await?;
-        if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
+        if let Some(job) = response.jobs.iter().find(|job| job.id == job_id.as_str()) {
             match job.status_log.current_status() {
                 Status::Complete => {
                     println!("Job '{job_id}' completed successfully.");

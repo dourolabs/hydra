@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
-use crate::job_engine::MetisId;
+use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
 use metis_common::job_outputs::JobOutputPayload;
 use metis_common::task_status::Event;
