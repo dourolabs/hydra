@@ -77,6 +77,48 @@ The setup for a task is as follows:
 - automatic improvement of AGENTS.md and task specifications
 - imagePullPolicy: IfNotPresent is dangerous with the latest tag. this only works due to the current local development setup where the image is pushed into kind.
 
+-- 
+Tool use 
+
+Scenarios we want to support
+- prompt -> codex -> submit github PR -> feedback goes back to agent -> iterate until successful
+- prompt -> codex -> sequence of github PRs with iteration, per ^ 
+- prompt -> codex run in a loop -- maybe implemented as "do some work, 
+
+
+Changes to make:
+- store additionally holds a collection of Artifacts. Artifacts are an enum with variants:
+  - Patch
+  - Issue
+  - Review
+- Decouple logic for creating artifacts from the task graph.
+  - issue creation is independent of making a task to address it
+  - patch creation is independent of making a task to review it
+- Artifacts can be mutated (possibly append only??)
+- Multiple tasks can reference the same artifact
+- Tasks have an assignee -- (maybe this should be a specific user??)
+- 
+
+Flows we want to support
+User has a change they want to make.
+- create issue + spawn associated task
+- task spawns agent to make a patch. Agent uses tool to submit results.
+  - submitting results: creates patch + spawns review task + enqueues new task associated with same issue after the review task
+  - submitting results also appends an update to the issue itself
+- review task runs
+  - uses tool to fetch patch + issue
+  - can leave feedback + approve/reject decision
+  - uses tool to submit result -- this creates a Review artifact
+- next code generation task spawns
+  - uses tool to fetch review
+  - addresses feedback if necessary
+  - requests re-review if not approved, else requests merge
+- 
+
+
+
+
+
 
 -- 
 Garbage below here
