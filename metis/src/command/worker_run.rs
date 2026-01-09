@@ -18,6 +18,7 @@ use metis_common::{
     jobs::{Bundle, ParentContext, WorkerContext},
 };
 use tar::{Archive, Builder};
+use tempfile::NamedTempFile;
 
 use crate::client::MetisClientInterface;
 use crate::constants;
@@ -429,9 +430,31 @@ fn create_patch_file(dest: &Path) -> Result<()> {
             .with_context(|| format!("failed to create output directory at {parent:?}"))?;
     }
 
+    let patch = create_patch_from_repo(dest)?;
+
+    fs::write(&patch_file, patch.as_bytes())
+        .with_context(|| format!("failed to write patch file to {patch_file:?}"))?;
+
+    Ok(())
+}
+
+/// Create a unified diff from the repository at `dest`, staging all changes (including
+/// untracked files) except for `.metis/**`, and returning the diff as a string.
+pub fn create_patch_from_repo(dest: &Path) -> Result<String> {
+    let temp_index =
+        NamedTempFile::new().context("failed to create temporary git index for patch creation")?;
+    create_patch_with_index(dest, Some(temp_index.path()))
+}
+
+fn create_patch_with_index(dest: &Path, index_file: Option<&Path>) -> Result<String> {
+    stage_changes(dest, index_file)?;
+    capture_cached_diff(dest, index_file)
+}
+
+fn stage_changes(dest: &Path, index_file: Option<&Path>) -> Result<()> {
     // Stage all changes excluding METIS_DIR directory
     // Note that we don't care if this fails, as it fails if there are no changes.
-    Command::new("git")
+    git_command(dest, index_file)
         .args([
             "add",
             "-A",
@@ -439,13 +462,16 @@ fn create_patch_file(dest: &Path) -> Result<()> {
             ".",
             &format!(":!{}/**", constants::METIS_DIR),
         ])
-        .current_dir(dest)
         .status()
         .context("failed to spawn git add")?;
 
-    // Create patch file from staged changes
+    Ok(())
+}
+
+fn capture_cached_diff(dest: &Path, index_file: Option<&Path>) -> Result<String> {
+    // Create patch from staged changes
     // Note: git diff returns exit code 1 when there are no changes (normal case)
-    let output = Command::new("git")
+    let output = git_command(dest, index_file)
         .args([
             "diff",
             "--cached",
@@ -460,10 +486,16 @@ fn create_patch_file(dest: &Path) -> Result<()> {
         return Err(anyhow!("git diff failed with status {}", output.status));
     }
 
-    fs::write(&patch_file, &output.stdout)
-        .with_context(|| format!("failed to write patch file to {patch_file:?}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
 
-    Ok(())
+fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(dest);
+    if let Some(index) = index_file {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    command
 }
 
 #[cfg(test)]

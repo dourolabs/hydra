@@ -134,6 +134,10 @@ enum Commands {
         #[arg(short = 'a', long = "apply")]
         apply: bool,
     },
+    /// Manage patch artifacts.
+    Patches {
+        #[command(subcommand)]
+        command: command::patches::PatchesCommand,
     /// List or create issue artifacts.
     Issues {
         #[command(subcommand)]
@@ -206,6 +210,7 @@ async fn main() -> Result<()> {
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patch { job, apply } => command::patch::run(&client, job, apply).await?,
+        Commands::Patches { command } => command::patches::run(&client, command).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
