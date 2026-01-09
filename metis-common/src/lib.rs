@@ -26,13 +26,60 @@ pub mod task_status {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Event {
+        Created { at: DateTime<Utc>, status: Status },
+        Started { at: DateTime<Utc> },
+        Completed { at: DateTime<Utc> },
+        Failed { at: DateTime<Utc> },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct TaskStatusLog {
-        pub creation_time: DateTime<Utc>,
         #[serde(default)]
-        pub start_time: Option<DateTime<Utc>>,
-        #[serde(default)]
-        pub end_time: Option<DateTime<Utc>>,
-        pub current_status: Status,
+        pub events: Vec<Event>,
+    }
+
+    impl TaskStatusLog {
+        pub fn new(initial_status: Status, at: DateTime<Utc>) -> Self {
+            Self {
+                events: vec![Event::Created {
+                    at,
+                    status: initial_status,
+                }],
+            }
+        }
+
+        pub fn current_status(&self) -> Status {
+            match self.events.last() {
+                Some(Event::Created { status, .. }) => *status,
+                Some(Event::Started { .. }) => Status::Running,
+                Some(Event::Completed { .. }) => Status::Complete,
+                Some(Event::Failed { .. }) => Status::Failed,
+                None => Status::Pending,
+            }
+        }
+
+        pub fn creation_time(&self) -> Option<DateTime<Utc>> {
+            self.events.iter().find_map(|event| match event {
+                Event::Created { at, .. } => Some(*at),
+                _ => None,
+            })
+        }
+
+        pub fn start_time(&self) -> Option<DateTime<Utc>> {
+            self.events.iter().find_map(|event| match event {
+                Event::Started { at } => Some(*at),
+                _ => None,
+            })
+        }
+
+        pub fn end_time(&self) -> Option<DateTime<Utc>> {
+            self.events.iter().rev().find_map(|event| match event {
+                Event::Completed { at } | Event::Failed { at } => Some(*at),
+                _ => None,
+            })
+        }
     }
 }
 

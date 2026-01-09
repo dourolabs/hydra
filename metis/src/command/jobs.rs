@@ -34,12 +34,12 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     println!("{}", "-".repeat(plain_header.len()));
 
     for job in jobs {
-        let status_display = format_status(&job.status_log.current_status);
+        let status_display = format_status(&job.status_log.current_status());
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
         let cells = job_row_cells(&job.id, &status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
-        let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status);
+        let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status());
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
             .into_iter()
             .enumerate()
@@ -180,8 +180,8 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
 }
 
 pub(crate) fn format_runtime(status_log: &TaskStatusLog, now: DateTime<Utc>) -> Option<String> {
-    let start = status_log.start_time.or(Some(status_log.creation_time))?;
-    let end = status_log.end_time.unwrap_or(now);
+    let start = status_log.start_time().or(status_log.creation_time())?;
+    let end = status_log.end_time().unwrap_or(now);
     let duration = if end < start {
         ChronoDuration::zero()
     } else {
@@ -224,12 +224,7 @@ mod tests {
             notes: None,
             program: "0".to_string(),
             params: vec![],
-            status_log: TaskStatusLog {
-                creation_time: Utc::now(),
-                start_time: None,
-                end_time: None,
-                current_status: Status::Pending,
-            },
+            status_log: TaskStatusLog::new(Status::Pending, Utc::now()),
         }
     }
 

@@ -288,7 +288,7 @@ async fn job_summary_with_time(
     };
     let notes = job_notes_from_store(&job_id, store).await;
 
-    let reference_time = status_log.start_time.or(Some(status_log.creation_time));
+    let reference_time = status_log.start_time().or(status_log.creation_time());
 
     Ok((
         JobSummary {

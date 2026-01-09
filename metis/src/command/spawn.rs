@@ -125,7 +125,7 @@ async fn wait_for_job_completion_via_server(
     loop {
         let response = client.list_jobs().await?;
         if let Some(job) = response.jobs.iter().find(|job| job.id == job_id) {
-            match job.status_log.current_status {
+            match job.status_log.current_status() {
                 Status::Complete => {
                     println!("Job '{job_id}' completed successfully.");
                     return Ok(());
@@ -424,7 +424,7 @@ mod tests {
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
-        task_status::{Status, TaskStatusLog},
+        task_status::{Event, Status, TaskStatusLog},
     };
     use std::fs;
     use tempfile::tempdir;
@@ -446,10 +446,13 @@ mod tests {
                 program: "0".to_string(),
                 params: vec![],
                 status_log: TaskStatusLog {
-                    creation_time: start_time,
-                    start_time: Some(start_time),
-                    end_time: None,
-                    current_status: Status::Running,
+                    events: vec![
+                        Event::Created {
+                            at: start_time,
+                            status: Status::Pending,
+                        },
+                        Event::Started { at: start_time },
+                    ],
                 },
             }],
         });
@@ -460,10 +463,16 @@ mod tests {
                 program: "0".to_string(),
                 params: vec![],
                 status_log: TaskStatusLog {
-                    creation_time: start_time,
-                    start_time: Some(start_time),
-                    end_time: Some(start_time + ChronoDuration::seconds(1)),
-                    current_status: Status::Complete,
+                    events: vec![
+                        Event::Created {
+                            at: start_time,
+                            status: Status::Pending,
+                        },
+                        Event::Started { at: start_time },
+                        Event::Completed {
+                            at: start_time + ChronoDuration::seconds(1),
+                        },
+                    ],
                 },
             }],
         });

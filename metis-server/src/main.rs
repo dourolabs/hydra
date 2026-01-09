@@ -621,9 +621,9 @@ mod tests {
         assert!(response.status().is_success());
         let summary: JobSummary = response.json().await?;
         assert_eq!(summary.id, job_id);
-        assert_eq!(summary.status_log.current_status, Status::Running);
+        assert_eq!(summary.status_log.current_status(), Status::Running);
         assert_eq!(
-            summary.status_log.start_time,
+            summary.status_log.start_time(),
             Some(now - Duration::seconds(10))
         );
         Ok(())

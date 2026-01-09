@@ -6,6 +6,7 @@ use uuid::Uuid;
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::job_engine::MetisId;
 use metis_common::job_outputs::JobOutputPayload;
+use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -43,7 +44,10 @@ impl MemoryStore {
             self.status_logs
                 .get(&edge.id)
                 .map(|status_log| {
-                    matches!(status_log.current_status, Status::Complete | Status::Failed)
+                    matches!(
+                        status_log.current_status(),
+                        Status::Complete | Status::Failed
+                    )
                 })
                 .unwrap_or(false)
         })
@@ -86,7 +90,10 @@ impl Store for MemoryStore {
                 self.status_logs
                     .get(&parent_edge.id)
                     .map(|status_log| {
-                        matches!(status_log.current_status, Status::Complete | Status::Failed)
+                        matches!(
+                            status_log.current_status(),
+                            Status::Complete | Status::Failed
+                        )
                     })
                     .unwrap_or(false)
             });
@@ -107,12 +114,7 @@ impl Store for MemoryStore {
         // Initialize status log
         self.status_logs.insert(
             id.clone(),
-            TaskStatusLog {
-                creation_time,
-                start_time: None,
-                end_time: None,
-                current_status: initial_status,
-            },
+            TaskStatusLog::new(initial_status, creation_time),
         );
 
         // Update children of each parent
@@ -159,7 +161,10 @@ impl Store for MemoryStore {
                 self.status_logs
                     .get(&parent_edge.id)
                     .map(|status_log| {
-                        matches!(status_log.current_status, Status::Complete | Status::Failed)
+                        matches!(
+                            status_log.current_status(),
+                            Status::Complete | Status::Failed
+                        )
                     })
                     .unwrap_or(false)
             });
@@ -180,12 +185,7 @@ impl Store for MemoryStore {
         // Initialize status log
         self.status_logs.insert(
             metis_id.clone(),
-            TaskStatusLog {
-                creation_time,
-                start_time: None,
-                end_time: None,
-                current_status: initial_status,
-            },
+            TaskStatusLog::new(initial_status, creation_time),
         );
 
         // Update children of each parent
@@ -304,7 +304,7 @@ impl Store for MemoryStore {
         Ok(self
             .status_logs
             .iter()
-            .filter(|(_, status_log)| status_log.current_status == status)
+            .filter(|(_, status_log)| status_log.current_status() == status)
             .map(|(id, _)| id.clone())
             .collect())
     }
@@ -312,7 +312,7 @@ impl Store for MemoryStore {
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError> {
         self.status_logs
             .get(id)
-            .map(|status_log| status_log.current_status)
+            .map(|status_log| status_log.current_status())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -343,13 +343,11 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(status_log.current_status, Status::Pending) {
+        if !matches!(status_log.current_status(), Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        // Update status log
-        status_log.current_status = Status::Running;
-        status_log.start_time = Some(start_time);
+        status_log.events.push(Event::Started { at: start_time });
 
         Ok(())
     }
@@ -380,13 +378,17 @@ impl Store for MemoryStore {
                 .get_mut(id)
                 .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-            if !matches!(status_log.current_status, Status::Running) {
+            if !matches!(status_log.current_status(), Status::Running) {
                 return Err(StoreError::InvalidStatusTransition);
             }
 
-            // Update status log
-            status_log.current_status = status;
-            status_log.end_time = Some(end_time);
+            let event = match status {
+                Status::Complete => Event::Completed { at: end_time },
+                Status::Failed => Event::Failed { at: end_time },
+                _ => unreachable!("mark_task_complete only sets complete or failed"),
+            };
+
+            status_log.events.push(event);
         }
 
         // Check all children (dependents) and update their status if needed
@@ -396,13 +398,16 @@ impl Store for MemoryStore {
             let should_unblock = matches!(
                 self.status_logs
                     .get(&child_id)
-                    .map(|status_log| status_log.current_status),
+                    .map(|status_log| status_log.current_status()),
                 Some(Status::Blocked)
             ) && self.all_parents_complete(&child_id);
 
             if should_unblock {
                 if let Some(child_log) = self.status_logs.get_mut(&child_id) {
-                    child_log.current_status = Status::Pending;
+                    child_log.events.push(Event::Created {
+                        at: end_time,
+                        status: Status::Pending,
+                    });
                 }
             }
         }
