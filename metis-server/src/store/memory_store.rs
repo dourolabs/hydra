@@ -270,76 +270,11 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(metis_id) {
-            return Err(StoreError::TaskNotFound(metis_id.clone()));
-        }
-
-        let parents = self.parents.get(metis_id).cloned().unwrap_or_default();
-        let session_artifact = Self::session_from_task(&task, &parents);
-
-        // Overwrite the existing task without modifying edge structure
-        self.tasks.insert(metis_id.clone(), task);
-        if let Some(session_artifact) = session_artifact {
-            self.artifacts.insert(metis_id.clone(), session_artifact);
-        }
-        Ok(())
-    }
-
     async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError> {
         self.tasks
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
-    async fn get_parents(&self, id: &MetisId) -> Result<Vec<Edge>, StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        Ok(self.parents.get(id).cloned().unwrap_or_default())
-    }
-
-    async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        Ok(self.children.get(id).cloned().unwrap_or_default())
-    }
-
-    async fn remove_task(&mut self, id: &MetisId) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        // Get parent and child IDs before removal
-        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
-        let child_ids = self.children.get(id).cloned().unwrap_or_default();
-
-        // Remove the task
-        self.tasks.remove(id);
-        self.parents.remove(id);
-        self.children.remove(id);
-        self.status_logs.remove(id);
-        self.artifacts.remove(id);
-
-        // Remove this task from its parents' children lists
-        for parent_edge in &parent_edges {
-            if let Some(children) = self.children.get_mut(&parent_edge.id) {
-                children.retain(|child_id| child_id != id);
-            }
-        }
-
-        // Remove this task from its children's parent lists
-        for child_id in &child_ids {
-            if let Some(parents) = self.parents.get_mut(child_id) {
-                parents.retain(|edge| edge.id != *id);
-            }
-        }
-
-        Ok(())
     }
 
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
@@ -367,10 +302,6 @@ impl Store for MemoryStore {
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
-    fn get_result(&self, id: &MetisId) -> Option<Result<(), TaskError>> {
-        self.status_logs.get(id).and_then(TaskStatusLog::result)
     }
 
     async fn mark_task_running(
@@ -574,14 +505,6 @@ mod tests {
 
         assert_eq!(store.get_task(&root_id).await.unwrap(), root_task);
         assert_eq!(store.get_task(&child_id).await.unwrap(), child_task);
-        assert_eq!(
-            store.get_parents(&child_id).await.unwrap(),
-            vec![edge(&root_id)]
-        );
-        assert_eq!(
-            store.get_children(&root_id).await.unwrap(),
-            vec![child_id.clone()]
-        );
 
         // Check initial statuses
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
@@ -650,66 +573,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_task_updates_session_artifact() {
-        let mut store = MemoryStore::new();
-        let task_id = store
-            .add_task(spawn_task(), vec![], Utc::now())
-            .await
-            .unwrap();
-
-        let updated_task = Task::Spawn {
-            program: "updated".to_string(),
-            params: vec!["--flag".to_string()],
-            context: Bundle::None,
-            image: "custom:latest".to_string(),
-            env_vars: HashMap::from([("TOKEN".to_string(), "secret".to_string())]),
-        };
-
-        store
-            .update_task(&task_id, updated_task.clone())
-            .await
-            .unwrap();
-
-        match store.get_artifact(&task_id).await.unwrap() {
-            Artifact::Session {
-                program,
-                params,
-                context,
-                image,
-                env_vars,
-                ..
-            } => {
-                assert_eq!(program, "updated");
-                assert_eq!(params, vec!["--flag".to_string()]);
-                assert_eq!(context, Bundle::None);
-                assert_eq!(image, "custom:latest".to_string());
-                assert_eq!(
-                    env_vars,
-                    HashMap::from([("TOKEN".to_string(), "secret".to_string())])
-                );
-            }
-            other => panic!("expected session artifact, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn remove_task_deletes_session_artifact() {
-        let mut store = MemoryStore::new();
-        let task_id = store
-            .add_task(spawn_task(), vec![], Utc::now())
-            .await
-            .unwrap();
-
-        store.remove_task(&task_id).await.unwrap();
-
-        let err = store.get_artifact(&task_id).await.unwrap_err();
-        assert!(matches!(
-            err,
-            StoreError::ArtifactNotFound(id) if id == task_id
-        ));
-    }
-
-    #[tokio::test]
     async fn add_task_with_missing_parent_fails() {
         let mut store = MemoryStore::new();
         let missing_parent = "missing".to_string();
@@ -722,50 +585,6 @@ mod tests {
         assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
 
         assert!(store.list_tasks().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn remove_task_updates_relationships() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-        let child_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-        let grandchild_task = Task::Spawn {
-            program: "0".to_string(),
-            params: vec![],
-            context: Bundle::None,
-            image: "metis-worker:latest".to_string(),
-            env_vars: HashMap::new(),
-        };
-        let grandchild_id = store
-            .add_task(grandchild_task, vec![edge(&child_id)], Utc::now())
-            .await
-            .unwrap();
-
-        store.remove_task(&child_id).await.unwrap();
-
-        assert!(matches!(
-            store.get_task(&child_id).await,
-            Err(StoreError::TaskNotFound(id)) if id == child_id
-        ));
-        assert!(store.get_children(&root_id).await.unwrap().is_empty());
-        assert!(store.get_parents(&grandchild_id).await.unwrap().is_empty());
-
-        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
-        assert_eq!(tasks, HashSet::from([root_id, grandchild_id]));
-    }
-
-    #[tokio::test]
-    async fn removing_unknown_task_returns_error() {
-        let mut store = MemoryStore::new();
-        let missing = "does-not-exist".to_string();
-
-        let err = store.remove_task(&missing).await.unwrap_err();
-        assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing));
     }
 
     #[tokio::test]
@@ -792,35 +611,6 @@ mod tests {
         // Root is pending, child should be blocked
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-    }
-
-    #[tokio::test]
-    async fn get_parents_returns_edge_names() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        let child_id = store
-            .add_task(
-                spawn_task(),
-                vec![Edge {
-                    id: root_id.clone(),
-                    name: Some("root".to_string()),
-                }],
-                Utc::now(),
-            )
-            .await
-            .unwrap();
-
-        let parents = store.get_parents(&child_id).await.unwrap();
-        assert_eq!(
-            parents,
-            vec![Edge {
-                id: root_id,
-                name: Some("root".to_string())
-            }]
-        );
     }
 
     #[tokio::test]

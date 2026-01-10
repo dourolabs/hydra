@@ -142,20 +142,6 @@ pub trait Store: Send + Sync {
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
-    /// Updates an existing task in the store.
-    ///
-    /// This function overwrites the task data for the given vertex without
-    /// modifying the edge structure of the graph (parent and child relationships
-    /// remain unchanged).
-    ///
-    /// # Arguments
-    /// * `metis_id` - The MetisId of the task to update
-    /// * `task` - The new Task to store for this vertex
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if the task doesn't exist
-    async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError>;
-
     /// Gets a task by its MetisId.
     ///
     /// # Arguments
@@ -164,37 +150,6 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The task if found, or an error if not found
     async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError>;
-
-    /// Gets all parent tasks (dependencies) of a given task.
-    ///
-    /// Parents are tasks that must complete before the given task can start.
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task
-    ///
-    /// # Returns
-    /// A vector of dependency edges for the parent tasks, or an error if the task doesn't exist
-    async fn get_parents(&self, id: &MetisId) -> Result<Vec<Edge>, StoreError>;
-
-    /// Gets all child tasks (dependents) of a given task.
-    ///
-    /// Children are tasks that must wait for the given task to complete before they can start.
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task
-    ///
-    /// # Returns
-    /// A vector of MetisIds representing the child tasks, or an error if the task doesn't exist
-    async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
-
-    /// Removes a task and all its associated edges from the store.
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to remove
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if the task doesn't exist
-    async fn remove_task(&mut self, id: &MetisId) -> Result<(), StoreError>;
 
     /// Lists all task IDs in the store.
     ///
@@ -232,17 +187,6 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError>;
-
-    /// Gets the result of a task by its MetisId.
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId to look up
-    ///
-    /// # Returns
-    /// Some(Ok(())) if the task completed successfully,
-    /// Some(Err(TaskError)) if the task completed with an error,
-    /// None if the task doesn't exist or has no result yet
-    fn get_result(&self, id: &MetisId) -> Option<Result<(), TaskError>>;
 
     /// Records an emitted event for a running task.
     async fn emit_task_artifacts(
