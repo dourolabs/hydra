@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::Artifact;
+use metis_common::artifacts::{Artifact, IssueDependency, IssueDependencyType};
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
@@ -51,6 +51,31 @@ impl MemoryStore {
                 })
                 .unwrap_or(false)
         })
+    }
+
+    fn session_from_task(task: &Task, parent_edges: &[Edge]) -> Option<Artifact> {
+        match task {
+            Task::Spawn {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+            } => Some(Artifact::Session {
+                program: program.clone(),
+                params: params.clone(),
+                context: context.clone(),
+                image: image.clone(),
+                env_vars: env_vars.clone(),
+                dependencies: parent_edges
+                    .iter()
+                    .map(|edge| IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: edge.id.clone(),
+                    })
+                    .collect(),
+            }),
+        }
     }
 }
 
@@ -138,6 +163,8 @@ impl Store for MemoryStore {
             }
         };
 
+        let session_artifact = Self::session_from_task(&task, &parent_edges);
+
         // Add the task
         self.tasks.insert(id.clone(), task);
 
@@ -150,6 +177,10 @@ impl Store for MemoryStore {
             id.clone(),
             TaskStatusLog::new(initial_status, creation_time),
         );
+
+        if let Some(session_artifact) = session_artifact {
+            self.artifacts.insert(id.clone(), session_artifact);
+        }
 
         // Update children of each parent
         for parent_edge in &parent_edges {
@@ -209,6 +240,8 @@ impl Store for MemoryStore {
             }
         };
 
+        let session_artifact = Self::session_from_task(&task, &parent_edges);
+
         // Add the task with the specified ID
         self.tasks.insert(metis_id.clone(), task);
 
@@ -221,6 +254,10 @@ impl Store for MemoryStore {
             metis_id.clone(),
             TaskStatusLog::new(initial_status, creation_time),
         );
+
+        if let Some(session_artifact) = session_artifact {
+            self.artifacts.insert(metis_id.clone(), session_artifact);
+        }
 
         // Update children of each parent
         for parent_edge in &parent_edges {
@@ -238,8 +275,14 @@ impl Store for MemoryStore {
             return Err(StoreError::TaskNotFound(metis_id.clone()));
         }
 
+        let parents = self.parents.get(metis_id).cloned().unwrap_or_default();
+        let session_artifact = Self::session_from_task(&task, &parents);
+
         // Overwrite the existing task without modifying edge structure
         self.tasks.insert(metis_id.clone(), task);
+        if let Some(session_artifact) = session_artifact {
+            self.artifacts.insert(metis_id.clone(), session_artifact);
+        }
         Ok(())
     }
 
@@ -280,6 +323,7 @@ impl Store for MemoryStore {
         self.parents.remove(id);
         self.children.remove(id);
         self.status_logs.remove(id);
+        self.artifacts.remove(id);
 
         // Remove this task from its parents' children lists
         for parent_edge in &parent_edges {
@@ -438,10 +482,10 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
-        artifacts::{Artifact, IssueStatus, IssueType},
+        artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
         jobs::Bundle,
     };
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     fn spawn_task() -> Task {
         Task::Spawn {
@@ -545,6 +589,124 @@ mod tests {
 
         let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
         assert_eq!(tasks, HashSet::from([root_id, child_id]));
+    }
+
+    #[tokio::test]
+    async fn add_task_creates_session_artifact_with_dependencies() {
+        let mut store = MemoryStore::new();
+
+        let parent_id = store
+            .add_task(spawn_task(), vec![], Utc::now())
+            .await
+            .unwrap();
+
+        let context = Bundle::GitRepository {
+            url: "https://example.com/repo.git".to_string(),
+            rev: "main".to_string(),
+        };
+        let env_vars = HashMap::from([("DEBUG".to_string(), "true".to_string())]);
+        let child_task = Task::Spawn {
+            program: "1".to_string(),
+            params: vec!["--flag".to_string()],
+            context: context.clone(),
+            image: "metis-worker:latest".to_string(),
+            env_vars: env_vars.clone(),
+        };
+        let edge = edge(&parent_id);
+        let child_id = store
+            .add_task(child_task.clone(), vec![edge], Utc::now())
+            .await
+            .unwrap();
+
+        match store.get_artifact(&child_id).await.unwrap() {
+            Artifact::Session {
+                program,
+                params,
+                context: stored_context,
+                image,
+                env_vars: stored_env,
+                dependencies,
+            } => {
+                assert_eq!(program, "1");
+                assert_eq!(params, vec!["--flag".to_string()]);
+                assert_eq!(stored_context, context);
+                assert_eq!(image, "metis-worker:latest".to_string());
+                assert_eq!(stored_env, env_vars);
+                assert_eq!(
+                    dependencies,
+                    vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: parent_id.clone()
+                    }]
+                );
+            }
+            other => panic!("expected session artifact, got {other:?}"),
+        }
+
+        match store.get_artifact(&parent_id).await.unwrap() {
+            Artifact::Session { dependencies, .. } => assert!(dependencies.is_empty()),
+            other => panic!("expected session artifact for parent, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_task_updates_session_artifact() {
+        let mut store = MemoryStore::new();
+        let task_id = store
+            .add_task(spawn_task(), vec![], Utc::now())
+            .await
+            .unwrap();
+
+        let updated_task = Task::Spawn {
+            program: "updated".to_string(),
+            params: vec!["--flag".to_string()],
+            context: Bundle::None,
+            image: "custom:latest".to_string(),
+            env_vars: HashMap::from([("TOKEN".to_string(), "secret".to_string())]),
+        };
+
+        store
+            .update_task(&task_id, updated_task.clone())
+            .await
+            .unwrap();
+
+        match store.get_artifact(&task_id).await.unwrap() {
+            Artifact::Session {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+                ..
+            } => {
+                assert_eq!(program, "updated");
+                assert_eq!(params, vec!["--flag".to_string()]);
+                assert_eq!(context, Bundle::None);
+                assert_eq!(image, "custom:latest".to_string());
+                assert_eq!(
+                    env_vars,
+                    HashMap::from([("TOKEN".to_string(), "secret".to_string())])
+                );
+            }
+            other => panic!("expected session artifact, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_task_deletes_session_artifact() {
+        let mut store = MemoryStore::new();
+        let task_id = store
+            .add_task(spawn_task(), vec![], Utc::now())
+            .await
+            .unwrap();
+
+        store.remove_task(&task_id).await.unwrap();
+
+        let err = store.get_artifact(&task_id).await.unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::ArtifactNotFound(id) if id == task_id
+        ));
     }
 
     #[tokio::test]
