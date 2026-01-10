@@ -1,19 +1,13 @@
-use crate::{
-    AppState,
-    routes::jobs::ApiError,
-    store::{Status, StoreError},
-};
+use crate::{AppState, routes::jobs::ApiError, store::StoreError};
 use anyhow::anyhow;
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
-    IssueType, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
-    UpsertArtifactResponse,
+    Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
+    SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -131,68 +125,18 @@ async fn upsert_artifact_internal(
     artifact_id: Option<String>,
     payload: UpsertArtifactRequest,
 ) -> Result<Json<UpsertArtifactResponse>, ApiError> {
-    let UpsertArtifactRequest { artifact, job_id } = payload;
+    let UpsertArtifactRequest { artifact } = payload;
 
     let mut store = state.store.write().await;
     let artifact_id = match artifact_id {
-        Some(id) => {
-            if job_id.is_some() {
-                return Err(ApiError::bad_request(
-                    "job_id may only be provided when creating an artifact",
-                ));
-            }
-            match store.update_artifact(&id, artifact).await {
-                Ok(()) => id,
-                Err(err) => return Err(map_store_error(err, Some(&id))),
-            }
-        }
-        None => {
-            let job_id = job_id
-                .as_ref()
-                .map(|value| value.trim())
-                .map(|value| value.to_string());
-
-            if let Some(ref job_id) = job_id {
-                if job_id.is_empty() {
-                    return Err(ApiError::bad_request("job_id must not be empty"));
-                }
-
-                let status = store.get_status(job_id).await.map_err(|err| match err {
-                    StoreError::TaskNotFound(id) => {
-                        error!(job_id = %id, "job not found when creating artifact");
-                        ApiError::not_found(format!("job '{id}' not found"))
-                    }
-                    other => {
-                        error!(job_id = %job_id, error = %other, "failed to validate job status");
-                        ApiError::internal(anyhow!(
-                            "failed to validate job status for '{job_id}': {other}"
-                        ))
-                    }
-                })?;
-
-                if status != Status::Running {
-                    return Err(ApiError::bad_request(
-                        "job_id must reference a running job to record emitted artifacts",
-                    ));
-                }
-            }
-
-            let artifact = add_created_by_dependency(artifact, job_id.as_deref());
-
-            let id = store
-                .add_artifact(artifact)
-                .await
-                .map_err(|err| map_store_error(err, None))?;
-
-            if let Some(job_id) = job_id {
-                store
-                    .emit_task_artifacts(&job_id, vec![id.clone()], Utc::now())
-                    .await
-                    .map_err(|err| map_emit_error(err, &job_id))?;
-            }
-
-            id
-        }
+        Some(id) => match store.update_artifact(&id, artifact).await {
+            Ok(()) => id,
+            Err(err) => return Err(map_store_error(err, Some(&id))),
+        },
+        None => store
+            .add_artifact(artifact)
+            .await
+            .map_err(|err| map_store_error(err, None))?,
     };
 
     info!(artifact_id = %artifact_id, "artifact stored successfully");
@@ -291,38 +235,6 @@ fn artifact_matches(
     true
 }
 
-fn add_created_by_dependency(artifact: Artifact, task_id: Option<&str>) -> Artifact {
-    match (artifact, task_id) {
-        (
-            Artifact::Patch {
-                diff,
-                description,
-                mut dependencies,
-            },
-            Some(task_id),
-        ) => {
-            let has_created_by = dependencies.iter().any(|dependency| {
-                dependency.dependency_type == IssueDependencyType::CreatedBy
-                    && dependency.issue_id == task_id
-            });
-
-            if !has_created_by {
-                dependencies.push(IssueDependency {
-                    dependency_type: IssueDependencyType::CreatedBy,
-                    issue_id: task_id.to_string(),
-                });
-            }
-
-            Artifact::Patch {
-                diff,
-                description,
-                dependencies,
-            }
-        }
-        (artifact, _) => artifact,
-    }
-}
-
 fn issue_type_matches(search_term: &str, issue_type: &IssueType) -> bool {
     issue_type.as_str() == search_term
 }
@@ -344,23 +256,6 @@ fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {
                 "artifact store operation failed"
             );
             ApiError::internal(anyhow!("artifact store error: {other}"))
-        }
-    }
-}
-
-fn map_emit_error(err: StoreError, job_id: &str) -> ApiError {
-    match err {
-        StoreError::TaskNotFound(id) => {
-            error!(job_id = %id, "job not found when emitting artifacts");
-            ApiError::not_found(format!("job '{id}' not found"))
-        }
-        StoreError::InvalidStatusTransition => {
-            error!(job_id = %job_id, "job not running when emitting artifacts");
-            ApiError::bad_request("job must be running to record emitted artifacts")
-        }
-        other => {
-            error!(job_id = %job_id, error = %other, "failed to emit artifacts");
-            ApiError::internal(anyhow!("failed to emit artifacts for '{job_id}': {other}"))
         }
     }
 }

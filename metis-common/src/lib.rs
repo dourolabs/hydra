@@ -196,8 +196,6 @@ pub mod artifacts {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub job_id: Option<MetisId>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
