@@ -7,7 +7,10 @@ use crate::{
     store::MemoryStore,
 };
 use reqwest::Client;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
 pub(crate) struct TestServer {
@@ -73,11 +76,14 @@ pub(crate) async fn spawn_test_server_with_state(state: AppState) -> anyhow::Res
 async fn wait_for_server_ready(base_url: &str) -> anyhow::Result<()> {
     let client = Client::new();
     let health_url = format!("{base_url}/health");
-    for _ in 0..10 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut delay = Duration::from_millis(25);
+    while Instant::now() < deadline {
         if client.get(&health_url).send().await.is_ok() {
             return Ok(());
         }
-        sleep(Duration::from_millis(20)).await;
+        sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_millis(200));
     }
 
     Err(anyhow::anyhow!(
