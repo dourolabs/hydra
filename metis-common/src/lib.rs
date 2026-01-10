@@ -5,7 +5,7 @@ pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::{MetisId, jobs::Bundle, task_status::TaskStatusLog};
+    use crate::{MetisId, jobs::Bundle};
     use serde::{Deserialize, Serialize};
     use std::{collections::HashMap, fmt, str::FromStr};
 
@@ -165,8 +165,6 @@ pub mod artifacts {
             #[serde(default, skip_serializing_if = "HashMap::is_empty")]
             env_vars: HashMap<String, String>,
             #[serde(default)]
-            log: TaskStatusLog,
-            #[serde(default)]
             dependencies: Vec<IssueDependency>,
         },
     }
@@ -198,8 +196,6 @@ pub mod artifacts {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub job_id: Option<MetisId>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

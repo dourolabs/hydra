@@ -140,12 +140,14 @@ async fn create_patch(
 
     let response = client
         .create_artifact(&UpsertArtifactRequest {
-            artifact: Artifact::Patch {
-                diff: patch,
-                description,
-                dependencies: vec![],
-            },
-            job_id,
+            artifact: crate::client::attach_created_by_dependency(
+                Artifact::Patch {
+                    diff: patch,
+                    description,
+                    dependencies: vec![],
+                },
+                job_id.as_ref(),
+            ),
         })
         .await
         .context("failed to create patch artifact")?;
@@ -297,8 +299,8 @@ mod tests {
     use crate::{client::MockMetisClient, constants};
     use anyhow::anyhow;
     use metis_common::artifacts::{
-        Artifact, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-        UpsertArtifactResponse,
+        Artifact, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+        ListArtifactsResponse, UpsertArtifactResponse,
     };
     use std::{env, fs, path::PathBuf, process::Command};
 
@@ -529,25 +531,27 @@ mod tests {
             artifact_id: "patch-2".to_string(),
         });
 
-        let job_id = Some("job-1234".to_string());
+        let job_id = "job-1234".to_string();
         let description = "patch with job id".to_string();
 
-        create_patch(&client, description.clone(), job_id.clone()).await?;
+        create_patch(&client, description.clone(), Some(job_id.clone())).await?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
 
         let (_, request) = &requests[0];
-        assert_eq!(
-            request.job_id, job_id,
-            "job id should be forwarded to the artifact request"
-        );
-
         match &request.artifact {
             Artifact::Patch {
                 description: recorded_description,
+                dependencies,
                 ..
-            } => assert_eq!(recorded_description, &description),
+            } => {
+                assert_eq!(recorded_description, &description);
+                assert!(dependencies.contains(&IssueDependency {
+                    dependency_type: IssueDependencyType::CreatedBy,
+                    issue_id: job_id,
+                }));
+            }
             other => panic!("expected patch artifact, got {other:?}"),
         }
 
@@ -573,17 +577,18 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
 
         let (_, request) = &requests[0];
-        assert_eq!(
-            request.job_id.as_deref(),
-            Some("job-from-env"),
-            "job id should default from the METIS_ID environment variable"
-        );
-
         match &request.artifact {
             Artifact::Patch {
                 description: recorded_description,
+                dependencies,
                 ..
-            } => assert_eq!(recorded_description, &description),
+            } => {
+                assert_eq!(recorded_description, &description);
+                assert!(dependencies.contains(&IssueDependency {
+                    dependency_type: IssueDependencyType::CreatedBy,
+                    issue_id: "job-from-env".to_string(),
+                }));
+            }
             other => panic!("expected patch artifact, got {other:?}"),
         }
 

@@ -283,12 +283,14 @@ async fn submit_job_status(
 
     client
         .create_artifact(&UpsertArtifactRequest {
-            artifact: Artifact::Patch {
-                diff: patch.clone(),
-                description: last_message.clone(),
-                dependencies: vec![],
-            },
-            job_id: Some(job.clone()),
+            artifact: crate::client::attach_created_by_dependency(
+                Artifact::Patch {
+                    diff: patch.clone(),
+                    description: last_message.clone(),
+                    dependencies: vec![],
+                },
+                Some(job),
+            ),
         })
         .await?;
     println!("Updating status for job '{job}' via metis-server…");

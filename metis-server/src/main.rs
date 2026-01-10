@@ -141,7 +141,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Status, TaskError, TaskStatusLog},
+        store::{Status, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -179,7 +179,6 @@ mod tests {
             context,
             image,
             env_vars,
-            log: TaskStatusLog::default(),
             dependencies: vec![],
         }
     }
@@ -260,7 +259,6 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
-                        log: TaskStatusLog::default(),
                         dependencies: vec![],
                     },
                     Utc::now(),
@@ -1204,11 +1202,7 @@ mod tests {
                         params: vec![],
                         context: context.clone(),
                         image: default_image.clone(),
-                        env_vars: HashMap::from([(
-                            "SECRET_VALUE".to_string(),
-                            "keep-me-safe".to_string(),
-                        )]),
-                        log: TaskStatusLog::default(),
+                        env_vars: HashMap::new(),
                         dependencies: vec![IssueDependency {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: "parent-job".to_string(),
@@ -1264,7 +1258,6 @@ mod tests {
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
                 artifact: artifact.clone(),
-                job_id: None,
             })
             .send()
             .await?;
@@ -1290,34 +1283,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creating_artifact_with_job_id_emits_event() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = default_image();
-        let job_id = "emit-artifacts".to_string();
-        let store = state.store.clone();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_artifact_with_id(
-                    job_id.clone(),
-                    session_artifact("0", vec![], Bundle::None, default_image, HashMap::new()),
-                    Utc::now(),
-                )
-                .await?;
-            store_write.mark_task_running(&job_id, Utc::now()).await?;
-        }
-
-        let server = spawn_test_server_with_state(state).await?;
+    async fn creating_patch_with_created_by_dependency_persists_it() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
         let client = test_client();
+        let job_id = "emit-artifacts".to_string();
+        let created_by = IssueDependency {
+            dependency_type: IssueDependencyType::CreatedBy,
+            issue_id: job_id.clone(),
+        };
+
         let response = client
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
                 artifact: Artifact::Patch {
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
-                    dependencies: vec![],
+                    dependencies: vec![created_by.clone()],
                 },
-                job_id: Some(job_id.clone()),
             })
             .send()
             .await?;
@@ -1325,15 +1307,6 @@ mod tests {
         assert!(response.status().is_success());
         let created: UpsertArtifactResponse = response.json().await?;
         let artifact_id = created.artifact_id;
-
-        let emitted = {
-            let store_read = store.read().await;
-            store_read
-                .get_status_log(&job_id)
-                .await?
-                .emitted_artifacts()
-        };
-        assert_eq!(emitted, Some(vec![artifact_id.clone()]));
 
         let artifact: ArtifactRecord = client
             .get(format!(
@@ -1346,13 +1319,7 @@ mod tests {
             .json()
             .await?;
         match artifact.artifact {
-            Artifact::Patch { dependencies, .. } => assert_eq!(
-                dependencies,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::CreatedBy,
-                    issue_id: job_id,
-                }]
-            ),
+            Artifact::Patch { dependencies, .. } => assert_eq!(dependencies, vec![created_by]),
             other => panic!("expected patch artifact, got {other:?}"),
         }
         Ok(())
@@ -1400,10 +1367,7 @@ mod tests {
         ] {
             let response = client
                 .post(format!("{}/v1/artifacts", server.base_url()))
-                .json(&UpsertArtifactRequest {
-                    artifact,
-                    job_id: None,
-                })
+                .json(&UpsertArtifactRequest { artifact })
                 .send()
                 .await?;
             assert!(response.status().is_success());
@@ -1480,7 +1444,6 @@ mod tests {
                     description: "old patch".to_string(),
                     dependencies: vec![],
                 },
-                job_id: None,
             })
             .send()
             .await?
@@ -1500,7 +1463,6 @@ mod tests {
                     status: IssueStatus::InProgress,
                     dependencies: vec![],
                 },
-                job_id: None,
             })
             .send()
             .await?

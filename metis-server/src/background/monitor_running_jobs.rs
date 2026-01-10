@@ -4,6 +4,7 @@ use crate::{
     store::{Status, TaskError},
 };
 use chrono::Utc;
+use metis_common::{MetisId, artifacts::ArtifactKind};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -33,8 +34,10 @@ pub async fn monitor_running_jobs(state: AppState) {
         if !job_engine_jobs.is_empty() {
             let store_task_ids = {
                 let store = state.store.read().await;
-                match store.list_tasks().await {
-                    Ok(ids) => Some(ids),
+                match store.list_artifacts_with_type(ArtifactKind::Session).await {
+                    Ok(artifacts) => {
+                        Some(artifacts.into_iter().map(|(id, _)| id).collect::<Vec<_>>())
+                    }
                     Err(err) => {
                         error!(error = %err, "failed to list tasks from store for job reconciliation");
                         None
@@ -70,10 +73,13 @@ pub async fn monitor_running_jobs(state: AppState) {
         }
 
         // Get running tasks
-        let running_ids = {
+        let running_ids: Vec<MetisId> = {
             let store = state.store.read().await;
-            match store.list_tasks_with_status(Status::Running).await {
-                Ok(ids) => ids,
+            match store
+                .list_artifacts_with_type_and_status(ArtifactKind::Session, Status::Running)
+                .await
+            {
+                Ok(ids) => ids.into_iter().map(|(id, _)| id).collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list running tasks");
                     continue;

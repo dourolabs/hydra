@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::MetisId;
-use metis_common::artifacts::Artifact;
+use metis_common::artifacts::{Artifact, ArtifactKind};
 
 mod memory_store;
 
@@ -22,7 +22,7 @@ pub enum StoreError {
     InvalidStatusTransition,
 }
 
-/// Trait for storing artifacts and tracking task status logs.
+/// Trait for storing artifacts and tracking status logs.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new artifact to the store and assigns it a MetisId.
@@ -60,10 +60,23 @@ pub trait Store: Send + Sync {
     /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
     async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
+    /// Lists artifacts of a specific type.
+    async fn list_artifacts_with_type(
+        &self,
+        artifact_type: ArtifactKind,
+    ) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
+
+    /// Lists artifacts of a specific type and status.
+    async fn list_artifacts_with_type_and_status(
+        &self,
+        artifact_type: ArtifactKind,
+        status: Status,
+    ) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
+
     /// Adds an artifact to the store with a specific ID.
     ///
-    /// If the artifact is a session, its status will be initialized to Pending
-    /// at the provided creation_time.
+    /// The artifact's status log will be initialized at the provided creation_time
+    /// (sessions start in Pending, other artifacts default to Complete).
     async fn add_artifact_with_id(
         &mut self,
         metis_id: MetisId,
@@ -71,22 +84,7 @@ pub trait Store: Send + Sync {
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
-    /// Lists all task IDs in the store.
-    ///
-    /// # Returns
-    /// A vector of all MetisIds in the store
-    async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError>;
-
-    /// Lists all task IDs with the specified status in the store.
-    ///
-    /// # Arguments
-    /// * `status` - The status to filter by
-    ///
-    /// # Returns
-    /// A vector of MetisIds for tasks with the specified status
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError>;
-
-    /// Gets the status of a task by its MetisId.
+    /// Gets the status of an artifact by its MetisId.
     ///
     /// # Arguments
     /// * `id` - The MetisId to look up
@@ -95,7 +93,7 @@ pub trait Store: Send + Sync {
     /// The status if found, or an error if not found
     async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError>;
 
-    /// Gets the status log for a task by its MetisId.
+    /// Gets the status log for an artifact by its MetisId.
     ///
     /// The status log contains timing information about the task's lifecycle,
     /// including when it was created, when it started running, when it completed,
