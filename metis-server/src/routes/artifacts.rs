@@ -246,6 +246,18 @@ fn artifact_matches(
                     || issue_type_matches(term, issue_type)
                     || issue_status_matches(term, status)
             }
+            Artifact::Session {
+                program,
+                image,
+                params,
+                ..
+            } => {
+                program.to_lowercase().contains(term)
+                    || image.to_lowercase().contains(term)
+                    || params
+                        .iter()
+                        .any(|param| param.to_lowercase().contains(term))
+            }
         };
     }
 

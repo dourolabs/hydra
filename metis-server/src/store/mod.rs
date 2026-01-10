@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::MetisId;
-use metis_common::{artifacts::Artifact, jobs::Bundle};
+use metis_common::{
+    MetisId,
+    artifacts::{Artifact, IssueDependency, IssueDependencyType},
+    jobs::Bundle,
+};
 use std::collections::HashMap;
 
 mod memory_store;
@@ -12,7 +15,25 @@ pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
     pub id: MetisId,
-    pub name: Option<String>,
+    pub dependency_type: IssueDependencyType,
+}
+
+impl From<&IssueDependency> for Edge {
+    fn from(dependency: &IssueDependency) -> Self {
+        Self {
+            id: dependency.issue_id.clone(),
+            dependency_type: dependency.dependency_type,
+        }
+    }
+}
+
+impl From<&Edge> for IssueDependency {
+    fn from(edge: &Edge) -> Self {
+        Self {
+            dependency_type: edge.dependency_type,
+            issue_id: edge.id.clone(),
+        }
+    }
 }
 
 /// Represents a task in the Metis system.
@@ -25,7 +46,42 @@ pub enum Task {
         context: Bundle,
         image: String,
         env_vars: HashMap<String, String>,
+        dependencies: Vec<IssueDependency>,
     },
+}
+
+impl Task {
+    pub fn dependencies(&self) -> &[IssueDependency] {
+        match self {
+            Task::Spawn { dependencies, .. } => dependencies,
+        }
+    }
+
+    pub fn dependencies_mut(&mut self) -> &mut Vec<IssueDependency> {
+        match self {
+            Task::Spawn { dependencies, .. } => dependencies,
+        }
+    }
+
+    pub fn to_session_artifact(&self) -> Artifact {
+        match self {
+            Task::Spawn {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+                dependencies,
+            } => Artifact::Session {
+                program: program.clone(),
+                params: params.clone(),
+                context: context.clone(),
+                image: image.clone(),
+                env_vars: env_vars.clone(),
+                dependencies: dependencies.clone(),
+            },
+        }
+    }
 }
 
 /// Error type for store operations.
@@ -86,30 +142,18 @@ pub trait Store: Send + Sync {
     /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
     async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
-    /// Adds a task to the store with its parent dependencies.
+    /// Adds a task to the store with its parent dependencies embedded in the task data.
     ///
     /// The parent tasks must complete before this task can start.
     /// This operation will fail if adding the dependencies would create a cycle
     /// or if any parent task doesn't exist.
     ///
     /// # Arguments
-    /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
-    ///
-    /// # Arguments
-    /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
+    /// * `task` - The task to add (including its dependencies)
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task(
         &mut self,
         task: Task,
-        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<MetisId, StoreError>;
 
@@ -120,25 +164,12 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `metis_id` - The MetisId to use for this task
-    /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
-    ///
-    /// # Arguments
-    /// * `metis_id` - The MetisId to use for this task
-    /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
+    /// * `task` - The task to add (including its dependencies)
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task_with_id(
         &mut self,
         metis_id: MetisId,
         task: Task,
-        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 

@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
-    artifacts::Artifact,
+    artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
@@ -44,7 +44,7 @@ pub async fn create_job(
         .iter()
         .map(|id| Edge {
             id: id.clone(),
-            name: None,
+            dependency_type: IssueDependencyType::BlockedOn,
         })
         .collect();
 
@@ -72,9 +72,16 @@ pub async fn create_job(
             context,
             image,
             env_vars,
+            dependencies: parent_edges
+                .iter()
+                .map(|edge| IssueDependency {
+                    dependency_type: edge.dependency_type,
+                    issue_id: edge.id.clone(),
+                })
+                .collect(),
         };
         store
-            .add_task_with_id(job_id.clone(), task, parent_edges.clone(), Utc::now())
+            .add_task_with_id(job_id.clone(), task, Utc::now())
             .await
             .map_err(|err| match err {
                 StoreError::InvalidDependency(msg) => {
@@ -342,5 +349,6 @@ fn note_from_artifact(artifact: &Artifact) -> Option<String> {
         Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
             sanitize_note(description)
         }
+        Artifact::Session { .. } => None,
     }
 }

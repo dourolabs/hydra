@@ -154,8 +154,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-            SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+            Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType,
+            IssueStatus, IssueType, ListArtifactsResponse, SearchArtifactsQuery,
+            UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
@@ -212,6 +213,7 @@ mod tests {
                 params,
                 image,
                 env_vars: _,
+                ..
             } => {
                 assert_eq!(program, "0");
                 assert!(params.is_empty());
@@ -246,8 +248,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -270,7 +272,7 @@ mod tests {
             parents,
             vec![Edge {
                 id: "parent-1".to_string(),
-                name: None
+                dependency_type: IssueDependencyType::BlockedOn
             }]
         );
         let status = store_read.get_status(&body.job_id).await?;
@@ -540,8 +542,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     now - Duration::seconds(30),
                 )
                 .await?;
@@ -554,8 +556,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     now - Duration::seconds(20),
                 )
                 .await?;
@@ -568,8 +570,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     now - Duration::seconds(10),
                 )
                 .await?;
@@ -613,8 +615,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     now - Duration::seconds(20),
                 )
                 .await?;
@@ -674,8 +676,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     now - Duration::seconds(30),
                 )
                 .await?;
@@ -906,8 +908,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -960,8 +962,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1008,8 +1010,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1056,8 +1058,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1163,8 +1165,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1196,11 +1198,11 @@ mod tests {
                         context: context.clone(),
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        dependencies: vec![IssueDependency {
+                            dependency_type: IssueDependencyType::BlockedOn,
+                            issue_id: "parent-job".to_string(),
+                        }],
                     },
-                    vec![Edge {
-                        id: "parent-job".to_string(),
-                        name: None,
-                    }],
                     Utc::now(),
                 )
                 .await?;
@@ -1239,8 +1241,8 @@ mod tests {
                             "SECRET_VALUE".to_string(),
                             "keep-me-safe".to_string(),
                         )]),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1317,8 +1319,8 @@ mod tests {
                         context: Bundle::None,
                         image: default_image,
                         env_vars: HashMap::new(),
+                        dependencies: Vec::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;

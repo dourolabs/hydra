@@ -5,9 +5,9 @@ pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::MetisId;
+    use crate::{MetisId, jobs::Bundle};
     use serde::{Deserialize, Serialize};
-    use std::{fmt, str::FromStr};
+    use std::{collections::HashMap, fmt, str::FromStr};
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "kebab-case")]
@@ -151,6 +151,18 @@ pub mod artifacts {
             #[serde(default)]
             dependencies: Vec<IssueDependency>,
         },
+        Session {
+            program: String,
+            #[serde(default, skip_serializing_if = "Vec::is_empty")]
+            params: Vec<String>,
+            #[serde(default)]
+            context: Bundle,
+            image: String,
+            #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+            env_vars: HashMap<String, String>,
+            #[serde(default)]
+            dependencies: Vec<IssueDependency>,
+        },
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +170,7 @@ pub mod artifacts {
     pub enum ArtifactKind {
         Patch,
         Issue,
+        Session,
     }
 
     impl From<&Artifact> for ArtifactKind {
@@ -165,6 +178,7 @@ pub mod artifacts {
             match artifact {
                 Artifact::Patch { .. } => ArtifactKind::Patch,
                 Artifact::Issue { .. } => ArtifactKind::Issue,
+                Artifact::Session { .. } => ArtifactKind::Session,
             }
         }
     }
@@ -465,6 +479,12 @@ pub mod jobs {
             /// Base64-encoded git bundle representing the repository HEAD.
             bundle_base64: String,
         },
+    }
+
+    impl Default for Bundle {
+        fn default() -> Self {
+            Self::None
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
