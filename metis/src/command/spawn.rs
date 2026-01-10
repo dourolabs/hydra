@@ -269,7 +269,13 @@ fn encode_context_directory(
         return encode_directory(path);
     }
 
-    if force_git_bundle || is_git_directory(path)? {
+    if force_git_bundle {
+        return Ok(BundleSpec::GitBundle {
+            bundle_base64: encode_git_bundle(path)?,
+        });
+    }
+
+    if is_git_directory(path)? && git_has_commits(path)? {
         return Ok(BundleSpec::GitBundle {
             bundle_base64: encode_git_bundle(path)?,
         });
@@ -361,6 +367,30 @@ fn encode_git_bundle(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read git bundle '{}'", bundle_path.display()))?;
 
     Ok(Base64Engine.encode(bundle_bytes))
+}
+
+fn git_has_commits(path: &Path) -> Result<bool> {
+    let status = Command::new("git")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .arg("-C")
+        .arg(path)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("HEAD")
+        .status();
+
+    match status {
+        Ok(status) if status.success() => Ok(true),
+        Ok(_) => Ok(false),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "failed to check if git repository '{}' has commits",
+                path.display()
+            )
+        }),
+    }
 }
 
 /// Parse CLI variable arguments in KEY=VALUE format.
@@ -682,6 +712,48 @@ mod tests {
             requests[0].image,
             Some("ghcr.io/example/metis:dev".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn spawn_falls_back_to_directory_when_git_repo_has_no_commits() {
+        let tmp_dir = tempdir().unwrap();
+        let status = Command::new("git")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .arg("init")
+            .arg(tmp_dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git init failed: {status:?}");
+
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-image-no-commits".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            Some("ghcr.io/example/metis:dev".into()),
+            Some(tmp_dir.path().to_path_buf()),
+            false,
+            false,
+            vec![],
+            vec![],
+            "0".into(),
+            vec!["custom image".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(
+            requests[0].context,
+            BundleSpec::TarGz { ref archive_base64 } if !archive_base64.is_empty()
+        ));
     }
 
     #[tokio::test]
