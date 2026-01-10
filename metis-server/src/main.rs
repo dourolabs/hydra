@@ -205,20 +205,21 @@ mod tests {
         assert!(!body.job_id.trim().is_empty());
 
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session {
                 context,
                 program,
                 params,
                 image,
-                env_vars: _,
+                ..
             } => {
                 assert_eq!(program, "0");
                 assert!(params.is_empty());
                 assert_eq!(context, Bundle::None);
                 assert_eq!(image, default_image);
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         let status = store_read.get_status(&body.job_id).await?;
@@ -310,9 +311,9 @@ mod tests {
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session {
                 context,
                 env_vars,
                 image,
@@ -328,6 +329,7 @@ mod tests {
                 assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
                 assert_eq!(image, "ghcr.io/example/repo:main");
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         Ok(())
@@ -352,11 +354,12 @@ mod tests {
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn { image, .. } => {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session { image, .. } => {
                 assert_eq!(image, "ghcr.io/example/custom:dev");
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         Ok(())
@@ -392,14 +395,15 @@ mod tests {
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session {
                 image, env_vars, ..
             } => {
                 assert_eq!(image, "ghcr.io/example/override:main");
                 assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         Ok(())
@@ -424,12 +428,13 @@ mod tests {
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn { env_vars, .. } => {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session { env_vars, .. } => {
                 assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
                 assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         Ok(())
@@ -465,9 +470,9 @@ mod tests {
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
-        let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
+        let artifact = store_read.get_artifact(&body.job_id).await?;
+        match artifact {
+            Artifact::Session {
                 env_vars, image, ..
             } => {
                 assert_eq!(
@@ -481,6 +486,7 @@ mod tests {
                 );
                 assert_eq!(image, "ghcr.io/example/repo:main");
             }
+            other => panic!("expected session artifact, got {other:?}"),
         }
 
         Ok(())
