@@ -93,6 +93,48 @@ pub mod artifacts {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum IssueDependencyType {
+        ChildOf,
+        BlockedOn,
+    }
+
+    impl IssueDependencyType {
+        pub fn as_str(&self) -> &'static str {
+            match self {
+                IssueDependencyType::ChildOf => "child-of",
+                IssueDependencyType::BlockedOn => "blocked-on",
+            }
+        }
+    }
+
+    impl fmt::Display for IssueDependencyType {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.as_str())
+        }
+    }
+
+    impl FromStr for IssueDependencyType {
+        type Err = String;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let value = s.trim().to_ascii_lowercase();
+            match value.as_str() {
+                "child-of" | "childof" | "child_of" => Ok(IssueDependencyType::ChildOf),
+                "blocked-on" | "blockedon" | "blocked_on" => Ok(IssueDependencyType::BlockedOn),
+                other => Err(format!("unsupported issue dependency type '{other}'")),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct IssueDependency {
+        #[serde(rename = "type")]
+        pub dependency_type: IssueDependencyType,
+        pub issue_id: MetisId,
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(tag = "type", content = "value", rename_all = "snake_case")]
     pub enum Artifact {
@@ -106,6 +148,8 @@ pub mod artifacts {
             description: String,
             #[serde(default)]
             status: IssueStatus,
+            #[serde(default)]
+            dependencies: Vec<IssueDependency>,
         },
     }
 

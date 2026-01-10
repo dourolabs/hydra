@@ -1365,16 +1365,19 @@ mod tests {
             issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
             status: IssueStatus::Open,
+            dependencies: vec![],
         };
         let feature_issue = Artifact::Issue {
             issue_type: IssueType::Feature,
             description: "add dark mode support".to_string(),
             status: IssueStatus::InProgress,
+            dependencies: vec![],
         };
         let closed_issue = Artifact::Issue {
             issue_type: IssueType::Task,
             description: "retire old endpoint".to_string(),
             status: IssueStatus::Closed,
+            dependencies: vec![],
         };
         let filtered_patch = Artifact::Patch {
             diff: "add login retry handling".to_string(),
@@ -1487,6 +1490,7 @@ mod tests {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
                     status: IssueStatus::InProgress,
+                    dependencies: vec![],
                 },
                 job_id: None,
             })
@@ -1513,7 +1517,8 @@ mod tests {
             Artifact::Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
-                status: IssueStatus::InProgress
+                status: IssueStatus::InProgress,
+                dependencies: vec![],
             }
         );
         Ok(())
