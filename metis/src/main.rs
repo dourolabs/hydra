@@ -129,6 +129,8 @@ enum Commands {
         #[command(subcommand)]
         command: command::patches::PatchesCommand,
     },
+    /// Launch a live dashboard for jobs, issues, and patches.
+    Dashboard,
     /// List or create issue artifacts.
     Issues {
         #[command(subcommand)]
@@ -201,6 +203,7 @@ async fn main() -> Result<()> {
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
         Commands::Patches { command } => command::patches::run(&client, command).await?,
+        Commands::Dashboard => command::dashboard::run(&client).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
