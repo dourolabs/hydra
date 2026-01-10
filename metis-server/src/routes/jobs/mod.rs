@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     state::ResolvedBundle,
-    store::{Store, StoreError, TaskError, TaskStatusLog},
+    store::{Store, StoreError, TaskError},
 };
 use axum::{
     Json, async_trait,
@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
-    artifacts::{Artifact, IssueDependency, IssueDependencyType},
+    artifacts::{Artifact, ArtifactKind, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
@@ -72,7 +72,6 @@ pub async fn create_job(
             context,
             image,
             env_vars,
-            log: TaskStatusLog::default(),
             dependencies: parent_dependencies,
         };
         store
@@ -132,10 +131,16 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     let store = store_read.as_ref();
 
     // Get all tasks with all statuses
-    let task_ids = store.list_tasks().await.map_err(|err| {
-        error!(error = %err, "failed to list tasks");
-        ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
-    })?;
+    let task_ids: Vec<_> = store
+        .list_artifacts_with_type(ArtifactKind::Session)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to list tasks");
+            ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
+        })?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
 
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();

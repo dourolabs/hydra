@@ -93,10 +93,17 @@ pub async fn list_artifacts(
         .filter(|value| !value.is_empty());
 
     let store_read = state.store.read().await;
-    let artifacts = store_read
-        .list_artifacts()
-        .await
-        .map_err(|err| map_store_error(err, None))?;
+    let artifacts = if let Some(kind) = query.artifact_type {
+        store_read
+            .list_artifacts_with_type(kind)
+            .await
+            .map_err(|err| map_store_error(err, None))?
+    } else {
+        store_read
+            .list_artifacts()
+            .await
+            .map_err(|err| map_store_error(err, None))?
+    };
 
     let filtered = artifacts
         .into_iter()

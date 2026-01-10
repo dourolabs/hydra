@@ -145,7 +145,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Status, TaskError, TaskStatusLog},
+        store::{Status, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -183,7 +183,6 @@ mod tests {
             context,
             image,
             env_vars,
-            log: TaskStatusLog::default(),
             dependencies: vec![],
         }
     }
@@ -264,7 +263,6 @@ mod tests {
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
-                        log: TaskStatusLog::default(),
                         dependencies: vec![],
                     },
                     Utc::now(),
@@ -1201,7 +1199,6 @@ mod tests {
                         context: context.clone(),
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
-                        log: TaskStatusLog::default(),
                         dependencies: vec![IssueDependency {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: "parent-job".to_string(),
