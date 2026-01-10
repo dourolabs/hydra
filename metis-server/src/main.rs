@@ -946,7 +946,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test] 
     async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         let state = test_state();
         {
