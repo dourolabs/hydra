@@ -3,7 +3,7 @@ use crate::{
     store::{Status, TaskError},
 };
 use chrono::Utc;
-use metis_common::artifacts::Artifact;
+use metis_common::artifacts::{Artifact, ArtifactKind};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -20,10 +20,13 @@ pub async fn process_pending_jobs(state: AppState) {
         sleep(Duration::from_secs(2)).await;
 
         // Get pending tasks
-        let pending_ids = {
+        let pending_sessions = {
             let store = state.store.read().await;
-            match store.list_tasks_with_status(Status::Pending).await {
-                Ok(ids) => ids,
+            match store
+                .list_artifacts_with_type_and_status(ArtifactKind::Session, Status::Pending)
+                .await
+            {
+                Ok(sessions) => sessions,
                 Err(err) => {
                     error!(error = %err, "failed to list pending tasks");
                     continue;
@@ -31,27 +34,20 @@ pub async fn process_pending_jobs(state: AppState) {
             }
         };
 
-        if pending_ids.is_empty() {
+        if pending_sessions.is_empty() {
             continue;
         }
 
-        info!(count = pending_ids.len(), "found pending tasks to process");
+        info!(
+            count = pending_sessions.len(),
+            "found pending tasks to process"
+        );
 
         // Process each pending task
-        for metis_id in pending_ids {
-            let image = {
-                let store = state.store.read().await;
-                match store.get_artifact(&metis_id).await {
-                    Ok(Artifact::Session { image, .. }) => image,
-                    Ok(_) => {
-                        warn!(metis_id = %metis_id, "artifact for pending task was not a session");
-                        continue;
-                    }
-                    Err(err) => {
-                        warn!(metis_id = %metis_id, error = %err, "failed to load artifact for spawning");
-                        continue;
-                    }
-                }
+        for (metis_id, artifact) in pending_sessions {
+            let Artifact::Session { image, .. } = artifact else {
+                warn!(metis_id = %metis_id, "artifact for pending task was not a session");
+                continue;
             };
 
             // Spawn the job
