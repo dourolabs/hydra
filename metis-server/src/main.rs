@@ -154,8 +154,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-            SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+            Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType,
+            IssueStatus, IssueType, ListArtifactsResponse, SearchArtifactsQuery,
+            UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
@@ -222,8 +223,6 @@ mod tests {
 
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Pending);
-        let parents = store_read.get_parents(&body.job_id).await?;
-        assert!(parents.is_empty());
         Ok(())
     }
 
@@ -265,16 +264,20 @@ mod tests {
         assert!(!body.job_id.trim().is_empty());
 
         let store_read = store.read().await;
-        let parents = store_read.get_parents(&body.job_id).await?;
-        assert_eq!(
-            parents,
-            vec![Edge {
-                id: "parent-1".to_string(),
-                name: None
-            }]
-        );
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Blocked);
+        match store_read.get_artifact(&body.job_id).await? {
+            Artifact::Session { dependencies, .. } => {
+                assert_eq!(
+                    dependencies,
+                    vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: "parent-1".to_string()
+                    }]
+                );
+            }
+            other => panic!("expected session artifact, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -936,11 +939,9 @@ mod tests {
         assert_eq!(body, json!({ "job_id": "spawn-job", "status": "complete" }));
 
         let store_read = store.read().await;
-        let status = store_read.get_status(&"spawn-job".to_string()).await?;
-        assert_eq!(status, Status::Complete);
-        let result = store_read.get_result(&"spawn-job".to_string());
-        assert!(matches!(result, Some(Ok(()))));
         let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
+        assert_eq!(status_log.current_status(), Status::Complete);
+        assert!(matches!(status_log.result(), Some(Ok(()))));
         assert_eq!(status_log.emitted_artifacts(), Some(vec![artifact_id]));
 
         Ok(())
@@ -983,11 +984,12 @@ mod tests {
         assert_eq!(body, json!({ "job_id": "failing-job", "status": "failed" }));
 
         let store_read = state.store.read().await;
-        let status = store_read.get_status(&"failing-job".to_string()).await?;
-        assert_eq!(status, Status::Failed);
-        let result = store_read.get_result(&"failing-job".to_string());
+        let status_log = store_read
+            .get_status_log(&"failing-job".to_string())
+            .await?;
+        assert_eq!(status_log.current_status(), Status::Failed);
         assert!(matches!(
-            result,
+            status_log.result(),
             Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
         ));
         Ok(())
