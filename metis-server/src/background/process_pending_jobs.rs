@@ -1,8 +1,9 @@
 use crate::{
     AppState,
-    store::{Status, Task, TaskError},
+    store::{Status, TaskError},
 };
 use chrono::Utc;
+use metis_common::artifacts::Artifact;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -40,10 +41,14 @@ pub async fn process_pending_jobs(state: AppState) {
         for metis_id in pending_ids {
             let image = {
                 let store = state.store.read().await;
-                match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn { image, .. }) => image,
+                match store.get_artifact(&metis_id).await {
+                    Ok(Artifact::Session { image, .. }) => image,
+                    Ok(_) => {
+                        warn!(metis_id = %metis_id, "artifact for pending task was not a session");
+                        continue;
+                    }
                     Err(err) => {
-                        warn!(metis_id = %metis_id, error = %err, "failed to load task for spawning");
+                        warn!(metis_id = %metis_id, error = %err, "failed to load artifact for spawning");
                         continue;
                     }
                 }

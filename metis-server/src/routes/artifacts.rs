@@ -246,6 +246,34 @@ fn artifact_matches(
                     || issue_type_matches(term, issue_type)
                     || issue_status_matches(term, status)
             }
+            Artifact::Session {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+                dependencies,
+            } => {
+                program.to_lowercase().contains(term)
+                    || params
+                        .iter()
+                        .any(|param| param.to_lowercase().contains(term))
+                    || image.to_lowercase().contains(term)
+                    || env_vars.iter().any(|(key, value)| {
+                        key.to_lowercase().contains(term) || value.to_lowercase().contains(term)
+                    })
+                    || dependencies
+                        .iter()
+                        .any(|dependency| dependency.issue_id.to_lowercase().contains(term))
+                    || match context {
+                        metis_common::jobs::Bundle::GitRepository { url, .. } => {
+                            url.to_lowercase().contains(term)
+                        }
+                        metis_common::jobs::Bundle::GitBundle { .. } => false,
+                        metis_common::jobs::Bundle::TarGz { .. } => false,
+                        metis_common::jobs::Bundle::None => false,
+                    }
+            }
         };
     }
 

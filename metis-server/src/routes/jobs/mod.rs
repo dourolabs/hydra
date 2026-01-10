@@ -281,10 +281,15 @@ async fn job_summary_with_time(
     store: &dyn Store,
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let status_log = store.get_status_log(job_id).await?;
-    let (program, params) = match store.get_task(job_id).await? {
-        Task::Spawn {
+    let (program, params) = match store.get_artifact(job_id).await? {
+        Artifact::Session {
             program, params, ..
         } => (program, params),
+        other => {
+            return Err(StoreError::Internal(format!(
+                "artifact for job '{job_id}' was not a session: {other:?}"
+            )));
+        }
     };
     let notes = job_notes_from_store(job_id, store).await;
 
@@ -342,5 +347,6 @@ fn note_from_artifact(artifact: &Artifact) -> Option<String> {
         Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
             sanitize_note(description)
         }
+        Artifact::Session { program, .. } => sanitize_note(program),
     }
 }
