@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     state::ResolvedBundle,
-    store::{Edge, Store, StoreError, Task, TaskError},
+    store::{Store, StoreError, TaskError, TaskStatusLog},
 };
 use axum::{
     Json, async_trait,
@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
-    artifacts::Artifact,
+    artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
@@ -40,11 +40,11 @@ pub async fn create_job(
         error!("create_job received an empty parent_id");
         return Err(ApiError::bad_request("parent_ids must not be empty"));
     }
-    let parent_edges: Vec<Edge> = parent_ids
+    let parent_dependencies: Vec<IssueDependency> = parent_ids
         .iter()
-        .map(|id| Edge {
-            id: id.clone(),
-            name: None,
+        .map(|id| IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: id.clone(),
         })
         .collect();
 
@@ -66,29 +66,21 @@ pub async fn create_job(
     // Store the task with context (status will be Pending)
     {
         let mut store = state.store.write().await;
-        let task = Task::Spawn {
+        let artifact = Artifact::Session {
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,
             image,
             env_vars,
+            log: TaskStatusLog::default(),
+            dependencies: parent_dependencies,
         };
         store
-            .add_task_with_id(job_id.clone(), task, parent_edges.clone(), Utc::now())
+            .add_artifact_with_id(job_id.clone(), artifact, Utc::now())
             .await
-            .map_err(|err| match err {
-                StoreError::InvalidDependency(msg) => {
-                    error!(
-                        error = %msg,
-                        job_id = %job_id,
-                        "failed to store task due to invalid parent dependency"
-                    );
-                    ApiError::bad_request(msg)
-                }
-                err => {
-                    error!(error = %err, job_id = %job_id, "failed to store task");
-                    ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
-                }
+            .map_err(|err| {
+                error!(error = %err, job_id = %job_id, "failed to store task");
+                ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
             })?;
     }
 

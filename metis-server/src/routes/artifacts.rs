@@ -253,6 +253,7 @@ fn artifact_matches(
                 image,
                 env_vars,
                 dependencies,
+                ..
             } => {
                 program.to_lowercase().contains(term)
                     || params

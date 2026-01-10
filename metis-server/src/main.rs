@@ -145,7 +145,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Edge, Status, Task, TaskError},
+        store::{Status, TaskError, TaskStatusLog},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -168,6 +168,24 @@ mod tests {
 
     fn default_image() -> String {
         crate::config::MetisSection::default().worker_image
+    }
+
+    fn session_artifact(
+        program: &str,
+        params: Vec<String>,
+        context: Bundle,
+        image: String,
+        env_vars: HashMap<String, String>,
+    ) -> Artifact {
+        Artifact::Session {
+            program: program.to_string(),
+            params,
+            context,
+            image,
+            env_vars,
+            log: TaskStatusLog::default(),
+            dependencies: vec![],
+        }
     }
 
     #[tokio::test]
@@ -238,16 +256,17 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     "parent-1".to_string(),
-                    Task::Spawn {
+                    Artifact::Session {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        log: TaskStatusLog::default(),
+                        dependencies: vec![],
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -266,7 +285,7 @@ mod tests {
 
         let store_read = store.read().await;
         let status = store_read.get_status(&body.job_id).await?;
-        assert_eq!(status, Status::Blocked);
+        assert_eq!(status, Status::Pending);
         match store_read.get_artifact(&body.job_id).await? {
             Artifact::Session { dependencies, .. } => {
                 assert_eq!(
@@ -541,44 +560,41 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     oldest_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     now - Duration::seconds(30),
                 )
                 .await?;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     middle_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     now - Duration::seconds(20),
                 )
                 .await?;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     newest_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     now - Duration::seconds(10),
                 )
                 .await?;
@@ -614,16 +630,15 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     now - Duration::seconds(20),
                 )
                 .await?;
@@ -675,16 +690,15 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     now - Duration::seconds(30),
                 )
                 .await?;
@@ -907,16 +921,15 @@ mod tests {
             let mut store_write = store.write().await;
             let job_id = "spawn-job".to_string();
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -959,16 +972,9 @@ mod tests {
         {
             let mut store_write = state.store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     "failing-job".to_string(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact("0", vec![], Bundle::None, default_image(), HashMap::new()),
                     Utc::now(),
                 )
                 .await?;
@@ -1008,16 +1014,9 @@ mod tests {
         {
             let mut store_write = state.store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact("0", vec![], Bundle::None, default_image(), HashMap::new()),
                     Utc::now(),
                 )
                 .await?;
@@ -1056,16 +1055,15 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -1163,16 +1161,15 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     "parent-job".to_string(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::new(),
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -1196,19 +1193,20 @@ mod tests {
                 .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())
                 .await?;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     "ctx-job".to_string(),
-                    Task::Spawn {
+                    Artifact::Session {
                         program: "0".to_string(),
                         params: vec![],
                         context: context.clone(),
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
+                        log: TaskStatusLog::default(),
+                        dependencies: vec![IssueDependency {
+                            dependency_type: IssueDependencyType::BlockedOn,
+                            issue_id: "parent-job".to_string(),
+                        }],
                     },
-                    vec![Edge {
-                        id: "parent-job".to_string(),
-                        name: None,
-                    }],
                     Utc::now(),
                 )
                 .await?;
@@ -1236,19 +1234,15 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     "env-job".to_string(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::from([(
-                            "SECRET_VALUE".to_string(),
-                            "keep-me-safe".to_string(),
-                        )]),
-                    },
-                    vec![],
+                    session_artifact(
+                        "0",
+                        vec![],
+                        Bundle::None,
+                        default_image.clone(),
+                        HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -1317,16 +1311,9 @@ mod tests {
         {
             let mut store_write = store.write().await;
             store_write
-                .add_task_with_id(
+                .add_artifact_with_id(
                     job_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image,
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
+                    session_artifact("0", vec![], Bundle::None, default_image, HashMap::new()),
                     Utc::now(),
                 )
                 .await?;
