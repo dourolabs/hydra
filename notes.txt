@@ -113,9 +113,18 @@ User has a change they want to make.
   - uses tool to fetch review
   - addresses feedback if necessary
   - requests re-review if not approved, else requests merge
-- 
+    - re-review is the same as submitting a new patch
+    - merge: create new merge task after this one, assign to merge queue?
+- merge task -- TODO
 
 
+
+prompts 
+./metis spawn --program scripts/patch_pr.rhai --repo dourolabs/metis "Please update the documentation of the metis CLI help command so that it clarifies that the config file is only required if METIS_SERVER_URL is not present. The config will be overridden by METIS_SERVER_URL if that is set in the environment"
+Requested Metis job 6412c00d-d54e-4794-ae0d-3c517e627285
+./metis spawn --program scripts/patch_pr.rhai --repo dourolabs/metis "Please update the jobs/:job_id/output method to be called jobs/:job_id/status. the POST method should allow setting the status of the job to complete or failed, and the GET method should return the TaskStatusLog (wrapped if necessary for the API). Jobs NO LONGER have outputs, so please ensure that any downstream references to this method are renamed to reflect the new functionality."
+Requested Metis job c463c264-6870-4fdb-ba28-040ffe461184
+ ./metis spawn --program scripts/patch_pr.rhai --repo dourolabs/metis "Please update metis patches create so that it takes a --job <METIS_ID> CLI argument. the value of this field should be set from the METIS_ID environment variable if that is present. When provided, this id should be passed as the job id to the server when creating the artifact, such that the generated patch is associated with this job via the Emitted Event."
 
 
 

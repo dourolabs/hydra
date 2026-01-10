@@ -23,7 +23,7 @@ use std::path::PathBuf;
     about = "Utility CLI for AI orchestrator prototypes"
 )]
 struct Cli {
-    /// Path to the CLI configuration file.
+    /// Path to the CLI configuration file. Only required when `METIS_SERVER_URL` is unset; the config is ignored if that env var is present.
     #[arg(long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
