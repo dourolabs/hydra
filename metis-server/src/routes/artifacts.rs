@@ -11,8 +11,8 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueType, ListArtifactsResponse, SearchArtifactsQuery,
-    UpsertArtifactRequest, UpsertArtifactResponse,
+    Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
+    SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -81,6 +81,7 @@ pub async fn list_artifacts(
     info!(
         artifact_type = ?query.artifact_type,
         issue_type = ?query.issue_type,
+        status = ?query.status,
         query = ?query.q,
         "list_artifacts invoked"
     );
@@ -103,6 +104,7 @@ pub async fn list_artifacts(
             artifact_matches(
                 &query.artifact_type,
                 query.issue_type,
+                query.status,
                 search_term.as_deref(),
                 id,
                 artifact,
@@ -191,6 +193,7 @@ async fn upsert_artifact_internal(
 fn artifact_matches(
     kind_filter: &Option<ArtifactKind>,
     issue_type_filter: Option<IssueType>,
+    status_filter: Option<IssueStatus>,
     search_term: Option<&str>,
     artifact_id: &str,
     artifact: &Artifact,
@@ -213,6 +216,16 @@ fn artifact_matches(
         }
     }
 
+    if let Some(status) = status_filter {
+        match artifact {
+            Artifact::Issue {
+                status: current, ..
+            } if current == &status => {}
+            Artifact::Issue { .. } => return false,
+            _ => return false,
+        }
+    }
+
     if let Some(term) = search_term {
         let lower_id = artifact_id.to_lowercase();
         if lower_id.contains(term) {
@@ -226,7 +239,12 @@ fn artifact_matches(
             Artifact::Issue {
                 description,
                 issue_type,
-            } => description.to_lowercase().contains(term) || issue_type_matches(term, issue_type),
+                status,
+            } => {
+                description.to_lowercase().contains(term)
+                    || issue_type_matches(term, issue_type)
+                    || issue_status_matches(term, status)
+            }
         };
     }
 
@@ -235,6 +253,10 @@ fn artifact_matches(
 
 fn issue_type_matches(search_term: &str, issue_type: &IssueType) -> bool {
     issue_type.as_str() == search_term
+}
+
+fn issue_status_matches(search_term: &str, status: &IssueStatus) -> bool {
+    status.as_str() == search_term
 }
 
 fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {

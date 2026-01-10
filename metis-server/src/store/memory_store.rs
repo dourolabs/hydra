@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
 use metis_common::task_status::Event;
-use metis_common::MetisId;
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -438,7 +438,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
-        artifacts::{Artifact, IssueType},
+        artifacts::{Artifact, IssueStatus, IssueType},
         jobs::Bundle,
     };
     use std::collections::HashSet;
@@ -485,6 +485,7 @@ mod tests {
         let updated = Artifact::Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            status: IssueStatus::Open,
         };
 
         store.update_artifact(&id, updated.clone()).await.unwrap();

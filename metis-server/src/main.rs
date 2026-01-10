@@ -154,7 +154,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, IssueType, ListArtifactsResponse,
+            Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
             SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
@@ -1364,10 +1364,17 @@ mod tests {
         let issue = Artifact::Issue {
             issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
+            status: IssueStatus::Open,
         };
         let feature_issue = Artifact::Issue {
             issue_type: IssueType::Feature,
             description: "add dark mode support".to_string(),
+            status: IssueStatus::InProgress,
+        };
+        let closed_issue = Artifact::Issue {
+            issue_type: IssueType::Task,
+            description: "retire old endpoint".to_string(),
+            status: IssueStatus::Closed,
         };
         let filtered_patch = Artifact::Patch {
             diff: "add login retry handling".to_string(),
@@ -1378,6 +1385,7 @@ mod tests {
             patch.clone(),
             issue.clone(),
             feature_issue.clone(),
+            closed_issue.clone(),
             filtered_patch.clone(),
         ] {
             let response = client
@@ -1397,13 +1405,14 @@ mod tests {
             .await?
             .json()
             .await?;
-        assert_eq!(all.artifacts.len(), 4);
+        assert_eq!(all.artifacts.len(), 5);
 
         let filtered: ListArtifactsResponse = client
             .get(format!("{}/v1/artifacts", server.base_url()))
             .query(&SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Patch),
                 issue_type: None,
+                status: None,
                 q: Some("login".to_string()),
             })
             .send()
@@ -1419,6 +1428,7 @@ mod tests {
             .query(&SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Issue),
                 issue_type: Some(IssueType::Bug),
+                status: None,
                 q: None,
             })
             .send()
@@ -1428,6 +1438,22 @@ mod tests {
 
         assert_eq!(filtered_issues.artifacts.len(), 1);
         assert_eq!(filtered_issues.artifacts[0].artifact, issue);
+
+        let filtered_by_status: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .query(&SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                issue_type: None,
+                status: Some(IssueStatus::Closed),
+                q: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(filtered_by_status.artifacts.len(), 1);
+        assert_eq!(filtered_by_status.artifacts[0].artifact, closed_issue);
         Ok(())
     }
 
@@ -1460,6 +1486,7 @@ mod tests {
                 artifact: Artifact::Issue {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
+                    status: IssueStatus::InProgress,
                 },
                 job_id: None,
             })
@@ -1485,7 +1512,8 @@ mod tests {
             fetched.artifact,
             Artifact::Issue {
                 issue_type: IssueType::Task,
-                description: "updated details".to_string()
+                description: "updated details".to_string(),
+                status: IssueStatus::InProgress
             }
         );
         Ok(())

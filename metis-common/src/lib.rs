@@ -9,6 +9,45 @@ pub mod artifacts {
     use serde::{Deserialize, Serialize};
     use std::{fmt, str::FromStr};
 
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum IssueStatus {
+        #[default]
+        Open,
+        InProgress,
+        Closed,
+    }
+
+    impl IssueStatus {
+        pub fn as_str(&self) -> &'static str {
+            match self {
+                IssueStatus::Open => "open",
+                IssueStatus::InProgress => "in-progress",
+                IssueStatus::Closed => "closed",
+            }
+        }
+    }
+
+    impl fmt::Display for IssueStatus {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.as_str())
+        }
+    }
+
+    impl FromStr for IssueStatus {
+        type Err = String;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let value = s.trim().to_ascii_lowercase();
+            match value.as_str() {
+                "open" => Ok(IssueStatus::Open),
+                "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
+                "closed" => Ok(IssueStatus::Closed),
+                other => Err(format!("unsupported issue status '{other}'")),
+            }
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum IssueType {
@@ -65,6 +104,8 @@ pub mod artifacts {
             #[serde(rename = "type")]
             issue_type: IssueType,
             description: String,
+            #[serde(default)]
+            status: IssueStatus,
         },
     }
 
@@ -108,6 +149,8 @@ pub mod artifacts {
         pub artifact_type: Option<ArtifactKind>,
         #[serde(default)]
         pub issue_type: Option<IssueType>,
+        #[serde(default)]
+        pub status: Option<IssueStatus>,
         #[serde(default)]
         pub q: Option<String>,
     }
