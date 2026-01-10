@@ -376,6 +376,7 @@ async fn fetch_artifacts(
         .list_artifacts(&SearchArtifactsQuery {
             artifact_type: Some(kind),
             issue_type: None,
+            status: None,
             q: None,
         })
         .await

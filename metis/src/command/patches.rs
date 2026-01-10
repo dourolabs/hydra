@@ -100,6 +100,7 @@ async fn list_patches(
         .list_artifacts(&SearchArtifactsQuery {
             artifact_type: Some(ArtifactKind::Patch),
             issue_type: None,
+            status: None,
             q: query,
         })
         .await
@@ -295,7 +296,8 @@ mod tests {
     use crate::{client::MockMetisClient, constants};
     use anyhow::anyhow;
     use metis_common::artifacts::{
-        Artifact, ArtifactRecord, IssueType, ListArtifactsResponse, UpsertArtifactResponse,
+        Artifact, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
+        UpsertArtifactResponse,
     };
     use std::{env, fs, path::PathBuf, process::Command};
 
@@ -427,6 +429,7 @@ mod tests {
             artifact: Artifact::Issue {
                 issue_type: IssueType::Task,
                 description: "not a patch".to_string(),
+                status: IssueStatus::Open,
             },
         });
 
