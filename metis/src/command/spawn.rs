@@ -654,6 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_allows_overriding_image() {
+        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
             job_id: "job-image".into(),
@@ -665,8 +666,8 @@ mod tests {
             None,
             None,
             Some("ghcr.io/example/metis:dev".into()),
-            None,
-            false,
+            Some(tmp_dir.path().to_path_buf()),
+            true,
             false,
             vec![],
             vec![],
@@ -682,6 +683,12 @@ mod tests {
             requests[0].image,
             Some("ghcr.io/example/metis:dev".to_string())
         );
+        assert!(matches!(
+            requests[0].context,
+            BundleSpec::TarGz {
+                ref archive_base64
+            } if !archive_base64.is_empty()
+        ));
     }
 
     #[tokio::test]
