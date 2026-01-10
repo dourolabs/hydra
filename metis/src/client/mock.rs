@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::SetJobOutputResponse,
+    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,
@@ -135,8 +135,16 @@ impl MetisClientInterface for MockMetisClient {
         Ok(Box::pin(stream))
     }
 
-    async fn set_job_output(&self, _job_id: &MetisId) -> Result<SetJobOutputResponse> {
-        Err(anyhow!("set_job_output not implemented in MockMetisClient"))
+    async fn set_job_status(
+        &self,
+        _job_id: &MetisId,
+        _status: &JobStatusUpdate,
+    ) -> Result<SetJobStatusResponse> {
+        Err(anyhow!("set_job_status not implemented in MockMetisClient"))
+    }
+
+    async fn get_job_status(&self, _job_id: &MetisId) -> Result<GetJobStatusResponse> {
+        Err(anyhow!("get_job_status not implemented in MockMetisClient"))
     }
 
     async fn get_job_context(&self, _job_id: &MetisId) -> Result<WorkerContext> {

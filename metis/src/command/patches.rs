@@ -1,16 +1,17 @@
 use std::{
-    fs,
+    env, fs,
     io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
 use anyhow::{bail, Context, Result};
-use clap::Subcommand;
+use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
     artifacts::{
         Artifact, ArtifactKind, ArtifactRecord, SearchArtifactsQuery, UpsertArtifactRequest,
     },
+    constants::ENV_METIS_ID,
     MetisId,
 };
 
@@ -44,6 +45,15 @@ pub enum PatchesCommand {
         /// Description for the patch artifact.
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
+
+        /// Associate the patch with a Metis job.
+        #[arg(
+            long = "job",
+            value_name = "METIS_ID",
+            env = "METIS_ID",
+            value_parser = NonEmptyStringValueParser::new()
+        )]
+        job: Option<MetisId>,
     },
 
     /// Apply a patch artifact to the current git repository.
@@ -57,7 +67,7 @@ pub enum PatchesCommand {
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
-        PatchesCommand::Create { description } => create_patch(client, description).await,
+        PatchesCommand::Create { description, job } => create_patch(client, description, job).await,
         PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
     }
 }
@@ -110,7 +120,16 @@ async fn list_patches(
     Ok(())
 }
 
-async fn create_patch(client: &dyn MetisClientInterface, description: String) -> Result<()> {
+async fn create_patch(
+    client: &dyn MetisClientInterface,
+    description: String,
+    job_id: Option<MetisId>,
+) -> Result<()> {
+    let job_id = job_id
+        .or_else(|| env::var(ENV_METIS_ID).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
     let repo_root = git_repository_root()?;
     let patch = create_patch_from_repo(&repo_root)?;
     if patch.trim().is_empty() {
@@ -123,7 +142,7 @@ async fn create_patch(client: &dyn MetisClientInterface, description: String) ->
                 diff: patch,
                 description,
             },
-            job_id: None,
+            job_id,
         })
         .await
         .context("failed to create patch artifact")?;
@@ -277,46 +296,11 @@ mod tests {
     use metis_common::artifacts::{
         Artifact, ArtifactRecord, ListArtifactsResponse, UpsertArtifactResponse,
     };
-    use std::{env, fs, process::Command};
+    use std::{env, fs, path::PathBuf, process::Command};
 
-    #[tokio::test]
-    async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
-        let client = MockMetisClient::default();
-        client.push_list_artifacts_response(ListArtifactsResponse { artifacts: vec![] });
-
-        list_patches(&client, None, Some("login".to_string()), false).await?;
-
-        let queries = client.recorded_list_artifacts_queries();
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].artifact_type, Some(ArtifactKind::Patch));
-        assert_eq!(queries[0].q.as_deref(), Some("login"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn list_patches_errors_when_id_is_not_patch() {
-        let client = MockMetisClient::default();
-        client.push_get_artifact_response(ArtifactRecord {
-            id: "artifact-1".to_string(),
-            artifact: Artifact::Issue {
-                description: "not a patch".to_string(),
-            },
-        });
-
-        let err = list_patches(&client, Some("artifact-1".to_string()), None, false)
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.to_string().contains("is not a patch"),
-            "expected patch type error, got {err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
+    fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
-        let repo_path = tempdir.path();
+        let repo_path = tempdir.path().to_path_buf();
         let repo_str = repo_path
             .to_str()
             .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
@@ -372,15 +356,84 @@ mod tests {
         }
         fs::write(&metis_internal, "ignore me").context("failed to write .metis file")?;
 
-        let original_dir = env::current_dir().context("failed to capture current dir")?;
-        env::set_current_dir(repo_path).context("failed to change to repo dir")?;
+        Ok((tempdir, repo_path))
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn capture_current_dir() -> Result<PathBuf> {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        env::set_current_dir(&manifest_dir).context("failed to ensure working directory exists")?;
+        Ok(manifest_dir)
+    }
+
+    #[tokio::test]
+    async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
+        let client = MockMetisClient::default();
+        client.push_list_artifacts_response(ListArtifactsResponse { artifacts: vec![] });
+
+        list_patches(&client, None, Some("login".to_string()), false).await?;
+
+        let queries = client.recorded_list_artifacts_queries();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].artifact_type, Some(ArtifactKind::Patch));
+        assert_eq!(queries[0].q.as_deref(), Some("login"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_patches_errors_when_id_is_not_patch() {
+        let client = MockMetisClient::default();
+        client.push_get_artifact_response(ArtifactRecord {
+            id: "artifact-1".to_string(),
+            artifact: Artifact::Issue {
+                description: "not a patch".to_string(),
+            },
+        });
+
+        let err = list_patches(&client, Some("artifact-1".to_string()), None, false)
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("is not a patch"),
+            "expected patch type error, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let original_dir = capture_current_dir()?;
+        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
 
         let client = MockMetisClient::default();
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "patch-1".to_string(),
         });
         let patch_description = "custom patch description".to_string();
-        create_patch(&client, patch_description.clone()).await?;
+        create_patch(&client, patch_description.clone(), None).await?;
 
         env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
@@ -405,7 +458,7 @@ mod tests {
                 ".",
                 &format!(":!{}/**", constants::METIS_DIR),
             ])
-            .current_dir(repo_path)
+            .current_dir(&repo_path)
             .status()
             .context("failed to stage changes for expected diff")?;
         assert!(
@@ -421,7 +474,7 @@ mod tests {
                 ".",
                 &format!(":!{}/**", constants::METIS_DIR),
             ])
-            .current_dir(repo_path)
+            .current_dir(&repo_path)
             .output()
             .context("failed to capture expected diff")?;
         assert!(
@@ -440,6 +493,83 @@ mod tests {
             "patch should not include files under {}",
             constants::METIS_DIR
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_uses_provided_job_id() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let original_dir = capture_current_dir()?;
+        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
+
+        let client = MockMetisClient::default();
+        client.push_upsert_artifact_response(UpsertArtifactResponse {
+            artifact_id: "patch-2".to_string(),
+        });
+
+        let job_id = Some("job-1234".to_string());
+        let description = "patch with job id".to_string();
+
+        create_patch(&client, description.clone(), job_id.clone()).await?;
+
+        env::set_current_dir(original_dir).context("failed to restore current dir")?;
+
+        let requests = client.recorded_artifact_upserts();
+        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+
+        let (_, request) = &requests[0];
+        assert_eq!(
+            request.job_id, job_id,
+            "job id should be forwarded to the artifact request"
+        );
+
+        match &request.artifact {
+            Artifact::Patch {
+                description: recorded_description,
+                ..
+            } => assert_eq!(recorded_description, &description),
+            other => panic!("expected patch artifact, got {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_reads_job_id_from_environment() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let original_dir = capture_current_dir()?;
+        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
+        let _guard = EnvVarGuard::set(ENV_METIS_ID, "job-from-env");
+
+        let client = MockMetisClient::default();
+        client.push_upsert_artifact_response(UpsertArtifactResponse {
+            artifact_id: "patch-3".to_string(),
+        });
+
+        let description = "patch with env job id".to_string();
+
+        create_patch(&client, description.clone(), None).await?;
+
+        env::set_current_dir(original_dir).context("failed to restore current dir")?;
+
+        let requests = client.recorded_artifact_upserts();
+        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+
+        let (_, request) = &requests[0];
+        assert_eq!(
+            request.job_id.as_deref(),
+            Some("job-from-env"),
+            "job id should default from the METIS_ID environment variable"
+        );
+
+        match &request.artifact {
+            Artifact::Patch {
+                description: recorded_description,
+                ..
+            } => assert_eq!(recorded_description, &description),
+            other => panic!("expected patch artifact, got {other:?}"),
+        }
 
         Ok(())
     }

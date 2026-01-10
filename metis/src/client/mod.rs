@@ -7,7 +7,7 @@ use metis_common::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_outputs::SetJobOutputResponse,
+    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
         CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
         WorkerContext,
@@ -39,7 +39,13 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
     async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
-    async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse>;
+    async fn set_job_status(
+        &self,
+        job_id: &MetisId,
+        status: &JobStatusUpdate,
+    ) -> Result<SetJobStatusResponse>;
+    #[allow(dead_code)]
+    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse>;
 
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
     async fn create_artifact(
@@ -240,28 +246,57 @@ impl MetisClient {
         }
     }
 
-    /// Call `POST /v1/jobs/:job_id/output` to set/update the recorded agent output.
-    pub async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse> {
+    /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
+    pub async fn set_job_status(
+        &self,
+        job_id: &MetisId,
+        status: &JobStatusUpdate,
+    ) -> Result<SetJobStatusResponse> {
         let job_id = job_id.trim();
         if job_id.is_empty() {
             return Err(anyhow!("job_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/output");
+        let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .http
             .post(url)
+            .json(status)
             .send()
             .await
-            .context("failed to submit set job output request")?
+            .context("failed to submit set job status request")?
             .error_for_status()
-            .context("metis-server returned an error while setting job output")?;
+            .context("metis-server returned an error while setting job status")?;
 
         response
-            .json::<SetJobOutputResponse>()
+            .json::<SetJobStatusResponse>()
             .await
-            .context("failed to decode set job output response")
+            .context("failed to decode set job status response")
+    }
+
+    /// Call `GET /v1/jobs/:job_id/status` to retrieve the status log for a job.
+    pub async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err(anyhow!("job_id must not be empty"));
+        }
+
+        let path = format!("/v1/jobs/{job_id}/status");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to request job status")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching job status")?;
+
+        response
+            .json::<GetJobStatusResponse>()
+            .await
+            .context("failed to decode job status response")
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
@@ -504,8 +539,16 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
-    async fn set_job_output(&self, job_id: &MetisId) -> Result<SetJobOutputResponse> {
-        MetisClient::set_job_output(self, job_id).await
+    async fn set_job_status(
+        &self,
+        job_id: &MetisId,
+        status: &JobStatusUpdate,
+    ) -> Result<SetJobStatusResponse> {
+        MetisClient::set_job_status(self, job_id, status).await
+    }
+
+    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
+        MetisClient::get_job_status(self, job_id).await
     }
 
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {
