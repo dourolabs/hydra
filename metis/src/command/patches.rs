@@ -382,10 +382,26 @@ mod tests {
         }
     }
 
-    fn capture_current_dir() -> Result<PathBuf> {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        env::set_current_dir(&manifest_dir).context("failed to ensure working directory exists")?;
-        Ok(manifest_dir)
+    struct WorkingDirGuard {
+        original_dir: PathBuf,
+    }
+
+    impl WorkingDirGuard {
+        fn change_to(path: &Path) -> Result<Self> {
+            let original_dir =
+                env::current_dir().context("failed to capture current working directory")?;
+            env::set_current_dir(path)
+                .with_context(|| format!("failed to change to {}", path.display()))?;
+            Ok(Self { original_dir })
+        }
+    }
+
+    impl Drop for WorkingDirGuard {
+        fn drop(&mut self) {
+            if let Err(error) = env::set_current_dir(&self.original_dir) {
+                eprintln!("failed to restore working directory: {error}");
+            }
+        }
     }
 
     #[tokio::test]
@@ -425,8 +441,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let original_dir = capture_current_dir()?;
-        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
+        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
         client.push_upsert_artifact_response(UpsertArtifactResponse {
@@ -434,8 +449,6 @@ mod tests {
         });
         let patch_description = "custom patch description".to_string();
         create_patch(&client, patch_description.clone(), None).await?;
-
-        env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
@@ -500,8 +513,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_uses_provided_job_id() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let original_dir = capture_current_dir()?;
-        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
+        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
         client.push_upsert_artifact_response(UpsertArtifactResponse {
@@ -512,8 +524,6 @@ mod tests {
         let description = "patch with job id".to_string();
 
         create_patch(&client, description.clone(), job_id.clone()).await?;
-
-        env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
@@ -538,8 +548,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_reads_job_id_from_environment() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let original_dir = capture_current_dir()?;
-        env::set_current_dir(&repo_path).context("failed to change to repo dir")?;
+        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
         let _guard = EnvVarGuard::set(ENV_METIS_ID, "job-from-env");
 
         let client = MockMetisClient::default();
@@ -550,8 +559,6 @@ mod tests {
         let description = "patch with env job id".to_string();
 
         create_patch(&client, description.clone(), None).await?;
-
-        env::set_current_dir(original_dir).context("failed to restore current dir")?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
