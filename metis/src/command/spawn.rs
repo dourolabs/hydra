@@ -269,10 +269,22 @@ fn encode_context_directory(
         return encode_directory(path);
     }
 
-    if force_git_bundle || is_git_directory(path)? {
+    if force_git_bundle {
         return Ok(BundleSpec::GitBundle {
             bundle_base64: encode_git_bundle(path)?,
         });
+    }
+
+    if is_git_directory(path)? {
+        match encode_git_bundle(path) {
+            Ok(bundle_base64) => return Ok(BundleSpec::GitBundle { bundle_base64 }),
+            Err(err) => {
+                eprintln!(
+                    "Warning: failed to create git bundle for '{}': {err}. Falling back to archiving the directory.",
+                    path.display()
+                );
+            }
+        }
     }
 
     encode_directory(path)
@@ -682,6 +694,48 @@ mod tests {
             requests[0].image,
             Some("ghcr.io/example/metis:dev".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn spawn_falls_back_to_directory_when_git_repo_has_no_commits() {
+        let tmp_dir = tempdir().unwrap();
+        let repo_path = tmp_dir.path();
+        let repo_str = repo_path.to_str().unwrap();
+
+        let status = Command::new("git")
+            .args(["init", repo_str])
+            .status()
+            .expect("failed to init git repo");
+        assert!(status.success(), "git init returned non-zero exit code");
+
+        let client = MockMetisClient::default();
+        client.push_create_job_response(CreateJobResponse {
+            job_id: "job-empty-repo".into(),
+        });
+
+        run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            Some(repo_path.to_path_buf()),
+            false,
+            false,
+            vec![],
+            vec![],
+            "0".into(),
+            vec!["empty repo prompt".into()],
+        )
+        .await
+        .unwrap();
+
+        let requests = client.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        match &requests[0].context {
+            BundleSpec::TarGz { .. } => {}
+            other => panic!("expected TarGz fallback for empty git repo, got {other:?}"),
+        }
     }
 
     #[tokio::test]
