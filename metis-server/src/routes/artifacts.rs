@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery,
+    Artifact, ArtifactKind, ArtifactRecord, IssueType, ListArtifactsResponse, SearchArtifactsQuery,
     UpsertArtifactRequest, UpsertArtifactResponse,
 };
 use tracing::{error, info};
@@ -80,6 +80,7 @@ pub async fn list_artifacts(
 ) -> Result<Json<ListArtifactsResponse>, ApiError> {
     info!(
         artifact_type = ?query.artifact_type,
+        issue_type = ?query.issue_type,
         query = ?query.q,
         "list_artifacts invoked"
     );
@@ -99,7 +100,13 @@ pub async fn list_artifacts(
     let filtered = artifacts
         .into_iter()
         .filter(|(id, artifact)| {
-            artifact_matches(&query.artifact_type, search_term.as_deref(), id, artifact)
+            artifact_matches(
+                &query.artifact_type,
+                query.issue_type,
+                search_term.as_deref(),
+                id,
+                artifact,
+            )
         })
         .map(|(id, artifact)| ArtifactRecord { id, artifact })
         .collect();
@@ -183,6 +190,7 @@ async fn upsert_artifact_internal(
 
 fn artifact_matches(
     kind_filter: &Option<ArtifactKind>,
+    issue_type_filter: Option<IssueType>,
     search_term: Option<&str>,
     artifact_id: &str,
     artifact: &Artifact,
@@ -191,6 +199,17 @@ fn artifact_matches(
         let artifact_kind = ArtifactKind::from(artifact);
         if &artifact_kind != kind {
             return false;
+        }
+    }
+
+    if let Some(issue_type) = issue_type_filter {
+        match artifact {
+            Artifact::Issue {
+                issue_type: current,
+                ..
+            } if current == &issue_type => {}
+            Artifact::Issue { .. } => return false,
+            _ => return false,
         }
     }
 
@@ -204,11 +223,18 @@ fn artifact_matches(
             Artifact::Patch { diff, description } => {
                 diff.to_lowercase().contains(term) || description.to_lowercase().contains(term)
             }
-            Artifact::Issue { description } => description.to_lowercase().contains(term),
+            Artifact::Issue {
+                description,
+                issue_type,
+            } => description.to_lowercase().contains(term) || issue_type_matches(term, issue_type),
         };
     }
 
     true
+}
+
+fn issue_type_matches(search_term: &str, issue_type: &IssueType) -> bool {
+    issue_type.as_str() == search_term
 }
 
 fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {

@@ -3,7 +3,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, SearchArtifactsQuery, UpsertArtifactRequest,
+        Artifact, ArtifactKind, ArtifactRecord, IssueType, SearchArtifactsQuery,
+        UpsertArtifactRequest,
     },
     MetisId,
 };
@@ -17,12 +18,20 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
         id: Option<MetisId>,
 
+        /// Filter by issue type.
+        #[arg(long, value_name = "ISSUE_TYPE")]
+        r#type: Option<IssueType>,
+
         /// Search by query string.
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
     },
     /// Create a new issue artifact.
     Create {
+        /// Issue type (defaults to task).
+        #[arg(long, value_name = "ISSUE_TYPE", default_value_t = IssueType::Task)]
+        r#type: IssueType,
+
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -31,19 +40,23 @@ pub enum IssueCommands {
 
 pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
     match command {
-        IssueCommands::List { id, query } => {
-            let artifacts = fetch_issues(client, id, query).await?;
+        IssueCommands::List { id, r#type, query } => {
+            let artifacts = fetch_issues(client, id, r#type, query).await?;
             let mut stdout = io::stdout().lock();
             print_artifacts_jsonl(&artifacts, &mut stdout)?;
             Ok(())
         }
-        IssueCommands::Create { description } => create_issue(client, description).await,
+        IssueCommands::Create {
+            r#type,
+            description,
+        } => create_issue(client, r#type, description).await,
     }
 }
 
 async fn fetch_issues(
     client: &dyn MetisClientInterface,
     id: Option<MetisId>,
+    issue_type: Option<IssueType>,
     query: Option<String>,
 ) -> Result<Vec<ArtifactRecord>> {
     if let Some(id) = id {
@@ -59,6 +72,9 @@ async fn fetch_issues(
             .with_context(|| format!("failed to fetch artifact '{issue_id}'"))?;
 
         ensure_issue(&artifact)?;
+        if let Some(expected_type) = issue_type {
+            ensure_issue_type(&artifact, expected_type)?;
+        }
         return Ok(vec![artifact]);
     }
 
@@ -74,6 +90,7 @@ async fn fetch_issues(
     let artifacts = client
         .list_artifacts(&SearchArtifactsQuery {
             artifact_type: Some(ArtifactKind::Issue),
+            issue_type,
             q: trimmed_query,
         })
         .await
@@ -82,12 +99,19 @@ async fn fetch_issues(
 
     for artifact in &artifacts {
         ensure_issue(artifact)?;
+        if let Some(expected_type) = issue_type {
+            ensure_issue_type(artifact, expected_type)?;
+        }
     }
 
     Ok(artifacts)
 }
 
-async fn create_issue(client: &dyn MetisClientInterface, description: String) -> Result<()> {
+async fn create_issue(
+    client: &dyn MetisClientInterface,
+    issue_type: IssueType,
+    description: String,
+) -> Result<()> {
     let description = description.trim();
     if description.is_empty() {
         bail!("Issue description must not be empty.");
@@ -95,6 +119,7 @@ async fn create_issue(client: &dyn MetisClientInterface, description: String) ->
 
     let request = UpsertArtifactRequest {
         artifact: Artifact::Issue {
+            issue_type,
             description: description.to_string(),
         },
         job_id: None,
@@ -112,6 +137,17 @@ async fn create_issue(client: &dyn MetisClientInterface, description: String) ->
 fn ensure_issue(record: &ArtifactRecord) -> Result<()> {
     match record.artifact {
         Artifact::Issue { .. } => Ok(()),
+        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
+    }
+}
+
+fn ensure_issue_type(record: &ArtifactRecord, expected: IssueType) -> Result<()> {
+    match record.artifact {
+        Artifact::Issue { issue_type, .. } if issue_type == expected => Ok(()),
+        Artifact::Issue { issue_type, .. } => Err(anyhow!(
+            "artifact '{}' has type '{issue_type}' (expected '{expected}')",
+            record.id
+        )),
         _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
     }
 }
@@ -141,19 +177,14 @@ mod tests {
                 ArtifactRecord {
                     id: "issue-1".into(),
                     artifact: Artifact::Issue {
+                        issue_type: IssueType::Bug,
                         description: "First issue".into(),
-                    },
-                },
-                ArtifactRecord {
-                    id: "issue-2".into(),
-                    artifact: Artifact::Issue {
-                        description: "Second issue".into(),
                     },
                 },
             ],
         });
 
-        let artifacts = fetch_issues(&client, None, Some("bug".into()))
+        let artifacts = fetch_issues(&client, None, Some(IssueType::Bug), Some("bug".into()))
             .await
             .unwrap();
 
@@ -161,6 +192,7 @@ mod tests {
             client.recorded_list_artifacts_queries(),
             vec![SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Issue),
+                issue_type: Some(IssueType::Bug),
                 q: Some("bug".into()),
             }]
         );
@@ -169,7 +201,7 @@ mod tests {
         print_artifacts_jsonl(&artifacts, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\"id\":\"issue-1\""));
-        assert!(output.contains("\"id\":\"issue-2\""));
+        assert!(!output.contains("\"id\":\"issue-2\""));
     }
 
     #[tokio::test]
@@ -178,13 +210,19 @@ mod tests {
         client.push_get_artifact_response(ArtifactRecord {
             id: "issue-123".into(),
             artifact: Artifact::Issue {
+                issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
             },
         });
 
-        let artifacts = fetch_issues(&client, Some("issue-123".into()), None)
-            .await
-            .unwrap();
+        let artifacts = fetch_issues(
+            &client,
+            Some("issue-123".into()),
+            Some(IssueType::Task),
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(client.recorded_get_artifact_requests(), vec!["issue-123"]);
         assert_eq!(artifacts.len(), 1);
@@ -198,9 +236,13 @@ mod tests {
             artifact_id: "issue-456".into(),
         });
 
-        create_issue(&client, "New issue description".into())
-            .await
-            .unwrap();
+        create_issue(
+            &client,
+            IssueType::MergeRequest,
+            "New issue description".into(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             client.recorded_artifact_upserts(),
@@ -208,6 +250,7 @@ mod tests {
                 None,
                 UpsertArtifactRequest {
                     artifact: Artifact::Issue {
+                        issue_type: IssueType::MergeRequest,
                         description: "New issue description".into(),
                     },
                     job_id: None,
@@ -219,6 +262,8 @@ mod tests {
     #[tokio::test]
     async fn create_issue_requires_description() {
         let client = MockMetisClient::default();
-        assert!(create_issue(&client, "   ".into()).await.is_err());
+        assert!(create_issue(&client, IssueType::Bug, "   ".into())
+            .await
+            .is_err());
     }
 }
