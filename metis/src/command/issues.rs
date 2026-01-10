@@ -3,12 +3,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, SearchArtifactsQuery,
-        UpsertArtifactRequest,
+        Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
+        IssueType, SearchArtifactsQuery, UpsertArtifactRequest,
     },
     MetisId,
 };
 use std::io::{self, Write};
+use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
@@ -40,6 +41,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
         status: IssueStatus,
 
+        /// Issue dependencies in the format dependency-type:ISSUE_ID (e.g. child-of:ISSUE-123).
+        #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
+        dependencies: Vec<IssueDependency>,
+
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -62,8 +67,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         IssueCommands::Create {
             r#type,
             status,
+            dependencies,
             description,
-        } => create_issue(client, r#type, status, description).await,
+        } => create_issue(client, r#type, status, dependencies, description).await,
     }
 }
 
@@ -133,6 +139,7 @@ async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
     status: IssueStatus,
+    dependencies: Vec<IssueDependency>,
     description: String,
 ) -> Result<()> {
     let description = description.trim();
@@ -145,6 +152,7 @@ async fn create_issue(
             issue_type,
             description: description.to_string(),
             status,
+            dependencies,
         },
         job_id: None,
     };
@@ -187,6 +195,24 @@ fn ensure_issue_status(record: &ArtifactRecord, expected: IssueStatus) -> Result
     }
 }
 
+fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
+    let (dependency_type, issue_id) = raw
+        .split_once(':')
+        .ok_or_else(|| "dependency must be in the format TYPE:ISSUE_ID".to_string())?;
+
+    let dependency_type =
+        IssueDependencyType::from_str(dependency_type).map_err(|err| err.to_string())?;
+    let issue_id = issue_id.trim();
+    if issue_id.is_empty() {
+        return Err("dependency issue id must not be empty".to_string());
+    }
+
+    Ok(IssueDependency {
+        dependency_type,
+        issue_id: issue_id.to_string(),
+    })
+}
+
 fn print_artifacts_jsonl(artifacts: &[ArtifactRecord], writer: &mut impl Write) -> Result<()> {
     for artifact in artifacts {
         serde_json::to_writer(&mut *writer, artifact)?;
@@ -214,6 +240,7 @@ mod tests {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
                     status: IssueStatus::Open,
+                    dependencies: vec![],
                 },
             }],
         });
@@ -254,6 +281,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
                 status: IssueStatus::InProgress,
+                dependencies: vec![],
             },
         });
 
@@ -279,10 +307,16 @@ mod tests {
             artifact_id: "issue-456".into(),
         });
 
+        let dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: "issue-1".into(),
+        }];
+
         create_issue(
             &client,
             IssueType::MergeRequest,
             IssueStatus::Closed,
+            dependencies.clone(),
             "New issue description".into(),
         )
         .await
@@ -297,6 +331,7 @@ mod tests {
                         issue_type: IssueType::MergeRequest,
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
+                        dependencies,
                     },
                     job_id: None,
                 }
@@ -307,10 +342,21 @@ mod tests {
     #[tokio::test]
     async fn create_issue_requires_description() {
         let client = MockMetisClient::default();
-        assert!(
-            create_issue(&client, IssueType::Bug, IssueStatus::Open, "   ".into())
-                .await
-                .is_err()
-        );
+        assert!(create_issue(
+            &client,
+            IssueType::Bug,
+            IssueStatus::Open,
+            vec![],
+            "   ".into()
+        )
+        .await
+        .is_err());
+    }
+
+    #[test]
+    fn parse_issue_dependency_parses_type_and_id() {
+        let dependency = parse_issue_dependency("child-of:ISSUE-42").unwrap();
+        assert_eq!(dependency.dependency_type, IssueDependencyType::ChildOf);
+        assert_eq!(dependency.issue_id, "ISSUE-42");
     }
 }

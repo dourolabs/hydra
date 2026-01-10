@@ -240,6 +240,7 @@ fn artifact_matches(
                 description,
                 issue_type,
                 status,
+                ..
             } => {
                 description.to_lowercase().contains(term)
                     || issue_type_matches(term, issue_type)
