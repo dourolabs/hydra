@@ -10,6 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
 use metis_common::artifacts::{Artifact, UpsertArtifactRequest};
+use metis_common::job_status::JobStatusUpdate;
 use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
@@ -60,8 +61,8 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
         .await
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
-    // Submit job output (merge of worker-submit functionality)
-    submit_job_output(client, &job_id, &dest).await?;
+    // Submit job status (merge of worker-submit functionality)
+    submit_job_status(client, &job_id, &dest).await?;
 
     Ok(())
 }
@@ -253,7 +254,7 @@ fn create_output_directory(dest: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn submit_job_output(
+async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &MetisId,
     dest: &Path,
@@ -285,10 +286,12 @@ async fn submit_job_output(
             job_id: Some(job.clone()),
         })
         .await?;
-    println!("Setting output for job '{job}' via metis-server…");
-    let response = client.set_job_output(job).await?;
+    println!("Updating status for job '{job}' via metis-server…");
+    let response = client
+        .set_job_status(job, &JobStatusUpdate::Complete)
+        .await?;
     println!(
-        "Output set for job '{}'. Stored last message length: {}, patch length: {}",
+        "Status updated for job '{}'. Stored last message length: {}, patch length: {}",
         response.job_id,
         last_message.len(),
         patch.len()

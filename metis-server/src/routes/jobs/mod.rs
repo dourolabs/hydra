@@ -22,7 +22,7 @@ use tracing::{error, info};
 pub mod context;
 pub mod kill;
 pub mod logs;
-pub mod output;
+pub mod status;
 
 pub async fn create_job(
     State(state): State<AppState>,
