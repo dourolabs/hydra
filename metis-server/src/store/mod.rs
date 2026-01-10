@@ -1,32 +1,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::MetisId;
-use metis_common::{artifacts::Artifact, jobs::Bundle};
-use std::collections::HashMap;
+use metis_common::artifacts::Artifact;
 
 mod memory_store;
 
 pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
-
-/// Represents a dependency edge between tasks.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Edge {
-    pub id: MetisId,
-    pub name: Option<String>,
-}
-
-/// Represents a task in the Metis system.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Task {
-    /// A spawn task that creates a new job.
-    Spawn {
-        program: String,
-        params: Vec<String>,
-        context: Bundle,
-        image: String,
-        env_vars: HashMap<String, String>,
-    },
-}
 
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
@@ -43,12 +22,7 @@ pub enum StoreError {
     InvalidStatusTransition,
 }
 
-/// Trait for storing and managing a directed acyclic graph (DAG) of tasks.
-///
-/// The Store holds a DAG where:
-/// - Vertices are tasks identified by MetisId
-/// - Edges represent blocking dependencies (source must complete before destination can start)
-/// - The graph must remain acyclic
+/// Trait for storing artifacts and tracking task status logs.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new artifact to the store and assigns it a MetisId.
@@ -86,70 +60,16 @@ pub trait Store: Send + Sync {
     /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
     async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
-    /// Adds a task to the store with its parent dependencies.
+    /// Adds an artifact to the store with a specific ID.
     ///
-    /// The parent tasks must complete before this task can start.
-    /// This operation will fail if adding the dependencies would create a cycle
-    /// or if any parent task doesn't exist.
-    ///
-    /// # Arguments
-    /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
-    ///
-    /// # Arguments
-    /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
-    /// * `creation_time` - The timestamp when the task is being created
-    async fn add_task(
-        &mut self,
-        task: Task,
-        parent_edges: Vec<Edge>,
-        creation_time: DateTime<Utc>,
-    ) -> Result<MetisId, StoreError>;
-
-    /// Adds a task to the store with a specific ID and parent dependencies.
-    ///
-    /// This is similar to `add_task`, but allows specifying the MetisId directly.
-    /// Useful when the ID comes from an external source (e.g., Kubernetes job ID).
-    ///
-    /// # Arguments
-    /// * `metis_id` - The MetisId to use for this task
-    /// * `task` - The task to add
-    /// * `parent_ids` - A vector of MetisIds representing parent tasks that must complete first
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
-    ///
-    /// # Arguments
-    /// * `metis_id` - The MetisId to use for this task
-    /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
-    /// * `creation_time` - The timestamp when the task is being created
-    async fn add_task_with_id(
+    /// If the artifact is a session, its status will be initialized to Pending
+    /// at the provided creation_time.
+    async fn add_artifact_with_id(
         &mut self,
         metis_id: MetisId,
-        task: Task,
-        parent_edges: Vec<Edge>,
+        artifact: Artifact,
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
-
-    /// Gets a task by its MetisId.
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId to look up
-    ///
-    /// # Returns
-    /// The task if found, or an error if not found
-    async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError>;
 
     /// Lists all task IDs in the store.
     ///
@@ -223,10 +143,6 @@ pub trait Store: Send + Sync {
     /// Valid transitions:
     /// - From Running to Complete (if result is Ok)
     /// - From Running to Failed (if result is Err)
-    ///
-    /// This function will also update the status of dependent tasks:
-    /// - All children (dependents) are checked
-    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
     ///
     /// # Arguments
     /// * `id` - The MetisId of the task to update

@@ -3,24 +3,18 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use super::{Status, Store, StoreError, TaskError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::{Artifact, IssueDependency, IssueDependencyType};
+use metis_common::artifacts::Artifact;
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
 ///
-/// This store maintains a DAG of tasks using HashMaps for fast lookups.
+/// This store maintains session artifacts and their status logs.
 /// It is not thread-safe and should only be used in single-threaded contexts.
 pub struct MemoryStore {
-    /// Maps task IDs to their Task data
-    tasks: HashMap<MetisId, Task>,
     /// Maps artifact IDs to their Artifact data
     artifacts: HashMap<MetisId, Artifact>,
-    /// Maps task IDs to their parent task edges (dependencies)
-    parents: HashMap<MetisId, Vec<Edge>>,
-    /// Maps task IDs to their child task IDs (dependents)
-    children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<MetisId, TaskStatusLog>,
 }
@@ -29,58 +23,48 @@ impl MemoryStore {
     /// Creates a new empty MemoryStore.
     pub fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
             artifacts: HashMap::new(),
-            parents: HashMap::new(),
-            children: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
 
-    /// Checks if all parents of a task are complete (Complete or Failed).
-    fn all_parents_complete(&self, id: &MetisId) -> bool {
-        let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
-        parent_edges.iter().all(|edge| {
-            self.status_logs
-                .get(&edge.id)
-                .map(|status_log| {
-                    matches!(
-                        status_log.current_status(),
-                        Status::Complete | Status::Failed
-                    )
-                })
-                .unwrap_or(false)
-        })
-    }
-
-    fn session_from_task(
-        task: &Task,
-        parent_edges: &[Edge],
-        status_log: &TaskStatusLog,
-    ) -> Option<Artifact> {
-        match task {
-            Task::Spawn {
+    fn insert_artifact(
+        &mut self,
+        id: MetisId,
+        artifact: Artifact,
+        creation_time: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        match artifact {
+            Artifact::Session {
                 program,
                 params,
                 context,
                 image,
                 env_vars,
-            } => Some(Artifact::Session {
-                program: program.clone(),
-                params: params.clone(),
-                context: context.clone(),
-                image: image.clone(),
-                env_vars: env_vars.clone(),
-                log: status_log.clone(),
-                dependencies: parent_edges
-                    .iter()
-                    .map(|edge| IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: edge.id.clone(),
-                    })
-                    .collect(),
-            }),
+                dependencies,
+                ..
+            } => {
+                let status_log = TaskStatusLog::new(Status::Pending, creation_time);
+                self.status_logs.insert(id.clone(), status_log.clone());
+                self.artifacts.insert(
+                    id,
+                    Artifact::Session {
+                        program,
+                        params,
+                        context,
+                        image,
+                        env_vars,
+                        log: status_log,
+                        dependencies,
+                    },
+                );
+            }
+            other => {
+                self.artifacts.insert(id, other);
+            }
         }
+
+        Ok(())
     }
 
     fn sync_session_log(&mut self, id: &MetisId) {
@@ -104,8 +88,23 @@ impl Default for MemoryStore {
 impl Store for MemoryStore {
     async fn add_artifact(&mut self, artifact: Artifact) -> Result<MetisId, StoreError> {
         let id = Uuid::new_v4().hyphenated().to_string();
-        self.artifacts.insert(id.clone(), artifact);
+        self.insert_artifact(id.clone(), artifact, Utc::now())?;
         Ok(id)
+    }
+
+    async fn add_artifact_with_id(
+        &mut self,
+        metis_id: MetisId,
+        artifact: Artifact,
+        creation_time: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        if self.artifacts.contains_key(&metis_id) {
+            return Err(StoreError::Internal(format!(
+                "Artifact already exists: {metis_id}"
+            )));
+        }
+
+        self.insert_artifact(metis_id, artifact, creation_time)
     }
 
     async fn get_artifact(&self, id: &MetisId) -> Result<Artifact, StoreError> {
@@ -124,7 +123,41 @@ impl Store for MemoryStore {
             return Err(StoreError::ArtifactNotFound(id.clone()));
         }
 
-        self.artifacts.insert(id.clone(), artifact);
+        match artifact {
+            Artifact::Session {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+                dependencies,
+                ..
+            } => {
+                let status_log = self
+                    .status_logs
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| TaskStatusLog::new(Status::Pending, Utc::now()));
+                self.status_logs.insert(id.clone(), status_log.clone());
+                self.artifacts.insert(
+                    id.clone(),
+                    Artifact::Session {
+                        program,
+                        params,
+                        context,
+                        image,
+                        env_vars,
+                        log: status_log,
+                        dependencies,
+                    },
+                );
+            }
+            other => {
+                self.status_logs.remove(id);
+                self.artifacts.insert(id.clone(), other);
+            }
+        }
+
         Ok(())
     }
 
@@ -136,161 +169,8 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn add_task(
-        &mut self,
-        task: Task,
-        parent_edges: Vec<Edge>,
-        creation_time: DateTime<Utc>,
-    ) -> Result<MetisId, StoreError> {
-        // Generate a unique ID for the new task
-        let id = Uuid::new_v4().hyphenated().to_string();
-
-        // Verify all parent tasks exist
-        for parent_edge in &parent_edges {
-            if !self.tasks.contains_key(&parent_edge.id) {
-                return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {}",
-                    parent_edge.id
-                )));
-            }
-        }
-
-        // Determine initial status: blocked if any parent is not complete, otherwise pending
-        let initial_status = if parent_edges.is_empty() {
-            Status::Pending
-        } else {
-            // Check if all parents are complete (Complete or Failed)
-            let all_complete = parent_edges.iter().all(|parent_edge| {
-                self.status_logs
-                    .get(&parent_edge.id)
-                    .map(|status_log| {
-                        matches!(
-                            status_log.current_status(),
-                            Status::Complete | Status::Failed
-                        )
-                    })
-                    .unwrap_or(false)
-            });
-            if all_complete {
-                Status::Pending
-            } else {
-                Status::Blocked
-            }
-        };
-
-        let status_log = TaskStatusLog::new(initial_status, creation_time);
-        let session_artifact = Self::session_from_task(&task, &parent_edges, &status_log);
-
-        // Add the task
-        self.tasks.insert(id.clone(), task);
-
-        // Initialize empty vectors if needed
-        self.parents.insert(id.clone(), parent_edges.clone());
-        self.children.insert(id.clone(), Vec::new());
-
-        // Initialize status log
-        self.status_logs.insert(id.clone(), status_log.clone());
-
-        if let Some(session_artifact) = session_artifact {
-            self.artifacts.insert(id.clone(), session_artifact);
-        }
-
-        // Update children of each parent
-        for parent_edge in &parent_edges {
-            self.children
-                .get_mut(&parent_edge.id)
-                .expect("Parent should exist")
-                .push(id.clone());
-        }
-
-        Ok(id)
-    }
-
-    async fn add_task_with_id(
-        &mut self,
-        metis_id: MetisId,
-        task: Task,
-        parent_edges: Vec<Edge>,
-        creation_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        // Check if task already exists
-        if self.tasks.contains_key(&metis_id) {
-            return Err(StoreError::Internal(format!(
-                "Task already exists: {metis_id}"
-            )));
-        }
-
-        // Verify all parent tasks exist
-        for parent_edge in &parent_edges {
-            if !self.tasks.contains_key(&parent_edge.id) {
-                return Err(StoreError::InvalidDependency(format!(
-                    "Parent task not found: {}",
-                    parent_edge.id
-                )));
-            }
-        }
-
-        // Determine initial status: blocked if any parent is not complete, otherwise pending
-        let initial_status = if parent_edges.is_empty() {
-            Status::Pending
-        } else {
-            // Check if all parents are complete (Complete or Failed)
-            let all_complete = parent_edges.iter().all(|parent_edge| {
-                self.status_logs
-                    .get(&parent_edge.id)
-                    .map(|status_log| {
-                        matches!(
-                            status_log.current_status(),
-                            Status::Complete | Status::Failed
-                        )
-                    })
-                    .unwrap_or(false)
-            });
-            if all_complete {
-                Status::Pending
-            } else {
-                Status::Blocked
-            }
-        };
-
-        let status_log = TaskStatusLog::new(initial_status, creation_time);
-        let session_artifact = Self::session_from_task(&task, &parent_edges, &status_log);
-
-        // Add the task with the specified ID
-        self.tasks.insert(metis_id.clone(), task);
-
-        // Initialize empty vectors if needed
-        self.parents.insert(metis_id.clone(), parent_edges.clone());
-        self.children.insert(metis_id.clone(), Vec::new());
-
-        // Initialize status log
-        self.status_logs
-            .insert(metis_id.clone(), status_log.clone());
-
-        if let Some(session_artifact) = session_artifact {
-            self.artifacts.insert(metis_id.clone(), session_artifact);
-        }
-
-        // Update children of each parent
-        for parent_edge in &parent_edges {
-            self.children
-                .get_mut(&parent_edge.id)
-                .expect("Parent should exist")
-                .push(metis_id.clone());
-        }
-
-        Ok(())
-    }
-
-    async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError> {
-        self.tasks
-            .get(id)
-            .cloned()
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
     async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
-        Ok(self.tasks.keys().cloned().collect())
+        Ok(self.status_logs.keys().cloned().collect())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError> {
@@ -321,12 +201,6 @@ impl Store for MemoryStore {
         id: &MetisId,
         start_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        // Verify task exists
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        // Verify current status is Pending
         let status_log = self
             .status_logs
             .get_mut(id)
@@ -337,7 +211,6 @@ impl Store for MemoryStore {
         }
 
         status_log.events.push(Event::Started { at: start_time });
-
         self.sync_session_log(id);
 
         Ok(())
@@ -349,10 +222,6 @@ impl Store for MemoryStore {
         artifact_ids: Vec<MetisId>,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
         let status_log = self
             .status_logs
             .get_mut(id)
@@ -363,7 +232,6 @@ impl Store for MemoryStore {
         }
 
         status_log.events.push(Event::Emitted { at, artifact_ids });
-
         self.sync_session_log(id);
 
         Ok(())
@@ -375,11 +243,6 @@ impl Store for MemoryStore {
         result: Result<(), TaskError>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        // Verify task exists
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
         let status_log = self
             .status_logs
             .get_mut(id)
@@ -400,28 +263,6 @@ impl Store for MemoryStore {
         status_log.events.push(event);
         self.sync_session_log(id);
 
-        // Check all children (dependents) and update their status if needed
-        let child_ids = self.children.get(id).cloned().unwrap_or_default();
-        for child_id in child_ids {
-            // If child is blocked, check if all its parents are now complete
-            let should_unblock = matches!(
-                self.status_logs
-                    .get(&child_id)
-                    .map(|status_log| status_log.current_status()),
-                Some(Status::Blocked)
-            ) && self.all_parents_complete(&child_id);
-
-            if should_unblock {
-                if let Some(child_log) = self.status_logs.get_mut(&child_id) {
-                    child_log.events.push(Event::Created {
-                        at: end_time,
-                        status: Status::Pending,
-                    });
-                }
-                self.sync_session_log(&child_id);
-            }
-        }
-
         Ok(())
     }
 }
@@ -429,20 +270,22 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::Duration;
     use metis_common::{
         artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
         jobs::Bundle,
     };
     use std::collections::{HashMap, HashSet};
 
-    fn spawn_task() -> Task {
-        Task::Spawn {
+    fn session_artifact_with_dependencies(dependencies: Vec<IssueDependency>) -> Artifact {
+        Artifact::Session {
             program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
             image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
+            log: TaskStatusLog::default(),
+            dependencies,
         }
     }
 
@@ -450,13 +293,6 @@ mod tests {
         Artifact::Patch {
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
-        }
-    }
-
-    fn edge(id: &str) -> Edge {
-        Edge {
-            id: id.to_string(),
-            name: None,
         }
     }
 
@@ -485,6 +321,7 @@ mod tests {
         store.update_artifact(&id, updated.clone()).await.unwrap();
 
         assert_eq!(store.get_artifact(&id).await.unwrap(), updated);
+        assert!(!store.status_logs.contains_key(&id));
     }
 
     #[tokio::test]
@@ -507,423 +344,159 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_and_retrieve_tasks_with_dependencies() {
+    async fn add_artifact_with_id_sets_pending_status_and_dependencies() {
         let mut store = MemoryStore::new();
+        let dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: "parent-1".to_string(),
+        }];
+        let creation_time = Utc::now() - Duration::seconds(30);
 
-        let root_task = spawn_task();
-        let root_id = store
-            .add_task(root_task.clone(), vec![], Utc::now())
-            .await
-            .unwrap();
-        let child_task = spawn_task();
-        let child_id = store
-            .add_task(child_task.clone(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-
-        assert_eq!(store.get_task(&root_id).await.unwrap(), root_task);
-        assert_eq!(store.get_task(&child_id).await.unwrap(), child_task);
-
-        // Check initial statuses
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-
-        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
-        assert_eq!(tasks, HashSet::from([root_id, child_id]));
-    }
-
-    #[tokio::test]
-    async fn add_task_creates_session_artifact_with_dependencies() {
-        let mut store = MemoryStore::new();
-
-        let parent_id = store
-            .add_task(spawn_task(), vec![], Utc::now())
+        store
+            .add_artifact_with_id(
+                "job-1".to_string(),
+                session_artifact_with_dependencies(dependencies.clone()),
+                creation_time,
+            )
             .await
             .unwrap();
 
-        let context = Bundle::GitRepository {
-            url: "https://example.com/repo.git".to_string(),
-            rev: "main".to_string(),
-        };
-        let env_vars = HashMap::from([("DEBUG".to_string(), "true".to_string())]);
-        let child_task = Task::Spawn {
-            program: "1".to_string(),
-            params: vec!["--flag".to_string()],
-            context: context.clone(),
-            image: "metis-worker:latest".to_string(),
-            env_vars: env_vars.clone(),
-        };
-        let edge = edge(&parent_id);
-        let child_id = store
-            .add_task(child_task.clone(), vec![edge], Utc::now())
-            .await
-            .unwrap();
-        let child_status_log = store.get_status_log(&child_id).await.unwrap();
+        let status_log = store.get_status_log(&"job-1".to_string()).await.unwrap();
+        assert_eq!(status_log.current_status(), Status::Pending);
+        assert_eq!(status_log.creation_time(), Some(creation_time));
 
-        match store.get_artifact(&child_id).await.unwrap() {
+        match store.get_artifact(&"job-1".to_string()).await.unwrap() {
             Artifact::Session {
-                program,
-                params,
-                context: stored_context,
-                image,
-                env_vars: stored_env,
-                dependencies,
                 log,
+                dependencies: stored_deps,
+                ..
             } => {
-                assert_eq!(program, "1");
-                assert_eq!(params, vec!["--flag".to_string()]);
-                assert_eq!(stored_context, context);
-                assert_eq!(image, "metis-worker:latest".to_string());
-                assert_eq!(stored_env, env_vars);
-                assert_eq!(log, child_status_log);
-                assert_eq!(
-                    dependencies,
-                    vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: parent_id.clone()
-                    }]
-                );
+                assert_eq!(log, status_log);
+                assert_eq!(stored_deps, dependencies);
             }
             other => panic!("expected session artifact, got {other:?}"),
-        }
-
-        match store.get_artifact(&parent_id).await.unwrap() {
-            Artifact::Session { dependencies, .. } => assert!(dependencies.is_empty()),
-            other => panic!("expected session artifact for parent, got {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn session_artifact_log_tracks_task_status_changes() {
         let mut store = MemoryStore::new();
-
-        let task_id = store
-            .add_task(spawn_task(), vec![], Utc::now())
+        let job_id = "job-xyz".to_string();
+        store
+            .add_artifact_with_id(
+                job_id.clone(),
+                session_artifact_with_dependencies(vec![]),
+                Utc::now(),
+            )
             .await
             .unwrap();
 
-        let initial_log = store.get_status_log(&task_id).await.unwrap();
-        match store.get_artifact(&task_id).await.unwrap() {
-            Artifact::Session { log, .. } => {
-                assert_eq!(log, initial_log);
-                assert_eq!(log.current_status(), Status::Pending);
-            }
-            other => panic!("expected session artifact, got {other:?}"),
-        }
-
         let start_time = Utc::now();
-        store.mark_task_running(&task_id, start_time).await.unwrap();
+        store.mark_task_running(&job_id, start_time).await.unwrap();
 
-        let running_log = store.get_status_log(&task_id).await.unwrap();
-        match store.get_artifact(&task_id).await.unwrap() {
-            Artifact::Session { log, .. } => {
-                assert_eq!(log, running_log);
-                assert_eq!(log.current_status(), Status::Running);
-            }
-            other => panic!("expected session artifact, got {other:?}"),
-        }
+        let running_log = store.get_status_log(&job_id).await.unwrap();
+        assert_eq!(running_log.current_status(), Status::Running);
+        assert_eq!(running_log.start_time(), Some(start_time));
 
         let end_time = Utc::now();
         store
-            .mark_task_complete(&task_id, Ok(()), end_time)
+            .mark_task_complete(&job_id, Ok(()), end_time)
             .await
             .unwrap();
 
-        let completed_log = store.get_status_log(&task_id).await.unwrap();
-        match store.get_artifact(&task_id).await.unwrap() {
-            Artifact::Session { log, .. } => {
-                assert_eq!(log, completed_log);
-                assert_eq!(log.current_status(), Status::Complete);
-            }
+        let completed_log = store.get_status_log(&job_id).await.unwrap();
+        assert_eq!(completed_log.current_status(), Status::Complete);
+        assert_eq!(completed_log.end_time(), Some(end_time));
+
+        match store.get_artifact(&job_id).await.unwrap() {
+            Artifact::Session { log, .. } => assert_eq!(log, completed_log),
             other => panic!("expected session artifact, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn add_task_with_missing_parent_fails() {
-        let mut store = MemoryStore::new();
-        let missing_parent = "missing".to_string();
-
-        let task = spawn_task();
-        let err = store
-            .add_task(task, vec![edge(&missing_parent)], Utc::now())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
-
-        assert!(store.list_tasks().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn task_without_parents_starts_as_pending() {
+    async fn list_tasks_with_status_filters_correctly() {
         let mut store = MemoryStore::new();
 
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-    }
-
-    #[tokio::test]
-    async fn task_with_incomplete_parent_starts_as_blocked() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-        let child_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-
-        // Root is pending, child should be blocked
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-    }
-
-    #[tokio::test]
-    async fn task_with_complete_parents_starts_as_pending() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        // Complete the root task (first mark as running, then complete)
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
-
-        // Add a child - it should start as pending since parent is complete
-        let child_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
-    }
-
-    #[tokio::test]
-    async fn mark_task_running_transitions_from_pending() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
-    }
-
-    #[tokio::test]
-    async fn mark_task_complete_transitions_from_running() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-
-        // First mark as running
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
-
-        // Then mark as complete
-        store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
-    }
-
-    #[tokio::test]
-    async fn mark_task_failed_transitions_from_running() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-
-        // First mark as running
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
-
-        // Then mark as failed
-        store
-            .mark_task_complete(
-                &root_id,
-                Err(TaskError::JobEngineError {
-                    reason: "test failure".to_string(),
-                }),
+            .add_artifact_with_id(
+                "job-1".to_string(),
+                session_artifact_with_dependencies(vec![]),
                 Utc::now(),
             )
             .await
             .unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Failed);
-    }
-
-    #[tokio::test]
-    async fn mark_task_complete_unblocks_dependents() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-        let child_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-
-        // Initially, child is blocked
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-
-        // Complete the root task (first mark as running, then complete)
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .add_artifact_with_id(
+                "job-2".to_string(),
+                session_artifact_with_dependencies(vec![]),
+                Utc::now(),
+            )
             .await
             .unwrap();
-
-        // Child should now be pending
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
-    }
-
-    #[tokio::test]
-    async fn mark_task_complete_with_multiple_dependents() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-        let child1_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-        let child2_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-
-        // All children should be blocked
-        assert_eq!(store.get_status(&child1_id).await.unwrap(), Status::Blocked);
-        assert_eq!(store.get_status(&child2_id).await.unwrap(), Status::Blocked);
-
-        // Complete the root task (first mark as running, then complete)
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_running(&"job-2".to_string(), Utc::now())
             .await
             .unwrap();
 
-        // Both children should now be pending
-        assert_eq!(store.get_status(&child1_id).await.unwrap(), Status::Pending);
-        assert_eq!(store.get_status(&child2_id).await.unwrap(), Status::Pending);
+        let pending: HashSet<_> = store
+            .list_tasks_with_status(Status::Pending)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+        let running: HashSet<_> = store
+            .list_tasks_with_status(Status::Running)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+
+        assert_eq!(pending, HashSet::from(["job-1".to_string()]));
+        assert_eq!(running, HashSet::from(["job-2".to_string()]));
     }
 
     #[tokio::test]
-    async fn mark_task_complete_with_multiple_parents() {
+    async fn emit_task_artifacts_requires_running_state() {
         let mut store = MemoryStore::new();
-
-        let root1_task = spawn_task();
-        let root1_id = store
-            .add_task(root1_task, vec![], Utc::now())
-            .await
-            .unwrap();
-
-        let root2_task = spawn_task();
-        let root2_id = store
-            .add_task(root2_task, vec![], Utc::now())
-            .await
-            .unwrap();
-
-        // Child depends on both parents
-        let child_id = store
-            .add_task(
-                spawn_task(),
-                vec![edge(&root1_id), edge(&root2_id)],
+        let job_id = "job-emit".to_string();
+        store
+            .add_artifact_with_id(
+                job_id.clone(),
+                session_artifact_with_dependencies(vec![]),
                 Utc::now(),
             )
             .await
             .unwrap();
 
-        // Child should be blocked since both parents are pending
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-
-        // Complete first parent - child should still be blocked
-        store
-            .mark_task_running(&root1_id, Utc::now())
-            .await
-            .unwrap();
-        store
-            .mark_task_complete(&root1_id, Ok(()), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
-
-        // Complete second parent - child should now be pending
-        store
-            .mark_task_running(&root2_id, Utc::now())
-            .await
-            .unwrap();
-        store
-            .mark_task_complete(&root2_id, Ok(()), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
-    }
-
-    #[tokio::test]
-    async fn mark_task_running_from_blocked_fails() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-        let child_id = store
-            .add_task(spawn_task(), vec![edge(&root_id)], Utc::now())
-            .await
-            .unwrap();
-
-        // Child is blocked, trying to mark it as running should fail
         let err = store
-            .mark_task_running(&child_id, Utc::now())
+            .emit_task_artifacts(&job_id, vec!["artifact-1".into()], Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
+
+        store.mark_task_running(&job_id, Utc::now()).await.unwrap();
+        store
+            .emit_task_artifacts(&job_id, vec!["artifact-1".into()], Utc::now())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn mark_task_complete_from_pending_fails() {
         let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        // Trying to mark as complete from pending should fail
-        let err = store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::InvalidStatusTransition));
-    }
-
-    #[tokio::test]
-    async fn mark_task_failed_from_pending_fails() {
-        let mut store = MemoryStore::new();
-
-        let root_task = spawn_task();
-        let root_id = store.add_task(root_task, vec![], Utc::now()).await.unwrap();
-
-        // Trying to mark as failed from pending should fail
-        let err = store
-            .mark_task_complete(
-                &root_id,
-                Err(TaskError::JobEngineError {
-                    reason: "test".to_string(),
-                }),
+        let job_id = "job-pending".to_string();
+        store
+            .add_artifact_with_id(
+                job_id.clone(),
+                session_artifact_with_dependencies(vec![]),
                 Utc::now(),
             )
+            .await
+            .unwrap();
+
+        let err = store
+            .mark_task_complete(&job_id, Ok(()), Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
