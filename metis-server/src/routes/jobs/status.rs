@@ -5,6 +5,7 @@ use crate::{
 use anyhow::anyhow;
 use axum::{Json, extract::State};
 use chrono::Utc;
+use metis_common::artifacts::Artifact;
 use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
 use tracing::{error, info};
 
@@ -18,10 +19,21 @@ pub async fn set_job_status(
     {
         let mut store = state.store.write().await;
 
-        store.get_task(&job_id).await.map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to get task for status update");
-            ApiError::not_found(format!("Job '{job_id}' not found in store"))
-        })?;
+        match store.get_artifact(&job_id).await {
+            Ok(Artifact::Session { .. }) => {}
+            Ok(other) => {
+                error!(job_id = %job_id, artifact = ?other, "artifact for job status update was not a session");
+                return Err(ApiError::not_found(format!(
+                    "Job '{job_id}' not found in store"
+                )));
+            }
+            Err(err) => {
+                error!(error = %err, job_id = %job_id, "failed to get artifact for status update");
+                return Err(ApiError::not_found(format!(
+                    "Job '{job_id}' not found in store"
+                )));
+            }
+        };
 
         let result = status.to_result();
 
@@ -48,10 +60,17 @@ pub async fn get_job_status(
     info!(job_id = %job_id, "get_job_status invoked");
 
     let store = state.store.read().await;
-    store.get_task(&job_id).await.map_err(|err| {
-        error!(error = %err, job_id = %job_id, "failed to load task for job status");
-        ApiError::not_found(format!("Job '{job_id}' not found"))
-    })?;
+    match store.get_artifact(&job_id).await {
+        Ok(Artifact::Session { .. }) => {}
+        Ok(other) => {
+            error!(job_id = %job_id, artifact = ?other, "artifact for job status was not a session");
+            return Err(ApiError::not_found(format!("Job '{job_id}' not found")));
+        }
+        Err(err) => {
+            error!(error = %err, job_id = %job_id, "failed to load artifact for job status");
+            return Err(ApiError::not_found(format!("Job '{job_id}' not found")));
+        }
+    };
 
     let status_log = store.get_status_log(&job_id).await.map_err(|err| {
         error!(
