@@ -53,7 +53,11 @@ impl MemoryStore {
         })
     }
 
-    fn session_from_task(task: &Task, parent_edges: &[Edge]) -> Option<Artifact> {
+    fn session_from_task(
+        task: &Task,
+        parent_edges: &[Edge],
+        status_log: &TaskStatusLog,
+    ) -> Option<Artifact> {
         match task {
             Task::Spawn {
                 program,
@@ -67,6 +71,7 @@ impl MemoryStore {
                 context: context.clone(),
                 image: image.clone(),
                 env_vars: env_vars.clone(),
+                log: status_log.clone(),
                 dependencies: parent_edges
                     .iter()
                     .map(|edge| IssueDependency {
@@ -75,6 +80,16 @@ impl MemoryStore {
                     })
                     .collect(),
             }),
+        }
+    }
+
+    fn sync_session_log(&mut self, id: &MetisId) {
+        let Some(status_log) = self.status_logs.get(id).cloned() else {
+            return;
+        };
+
+        if let Some(Artifact::Session { log, .. }) = self.artifacts.get_mut(id) {
+            *log = status_log;
         }
     }
 }
@@ -163,7 +178,8 @@ impl Store for MemoryStore {
             }
         };
 
-        let session_artifact = Self::session_from_task(&task, &parent_edges);
+        let status_log = TaskStatusLog::new(initial_status, creation_time);
+        let session_artifact = Self::session_from_task(&task, &parent_edges, &status_log);
 
         // Add the task
         self.tasks.insert(id.clone(), task);
@@ -173,10 +189,7 @@ impl Store for MemoryStore {
         self.children.insert(id.clone(), Vec::new());
 
         // Initialize status log
-        self.status_logs.insert(
-            id.clone(),
-            TaskStatusLog::new(initial_status, creation_time),
-        );
+        self.status_logs.insert(id.clone(), status_log.clone());
 
         if let Some(session_artifact) = session_artifact {
             self.artifacts.insert(id.clone(), session_artifact);
@@ -240,7 +253,8 @@ impl Store for MemoryStore {
             }
         };
 
-        let session_artifact = Self::session_from_task(&task, &parent_edges);
+        let status_log = TaskStatusLog::new(initial_status, creation_time);
+        let session_artifact = Self::session_from_task(&task, &parent_edges, &status_log);
 
         // Add the task with the specified ID
         self.tasks.insert(metis_id.clone(), task);
@@ -250,10 +264,8 @@ impl Store for MemoryStore {
         self.children.insert(metis_id.clone(), Vec::new());
 
         // Initialize status log
-        self.status_logs.insert(
-            metis_id.clone(),
-            TaskStatusLog::new(initial_status, creation_time),
-        );
+        self.status_logs
+            .insert(metis_id.clone(), status_log.clone());
 
         if let Some(session_artifact) = session_artifact {
             self.artifacts.insert(metis_id.clone(), session_artifact);
@@ -326,6 +338,8 @@ impl Store for MemoryStore {
 
         status_log.events.push(Event::Started { at: start_time });
 
+        self.sync_session_log(id);
+
         Ok(())
     }
 
@@ -349,6 +363,8 @@ impl Store for MemoryStore {
         }
 
         status_log.events.push(Event::Emitted { at, artifact_ids });
+
+        self.sync_session_log(id);
 
         Ok(())
     }
@@ -382,6 +398,7 @@ impl Store for MemoryStore {
         };
 
         status_log.events.push(event);
+        self.sync_session_log(id);
 
         // Check all children (dependents) and update their status if needed
         let child_ids = self.children.get(id).cloned().unwrap_or_default();
@@ -401,6 +418,7 @@ impl Store for MemoryStore {
                         status: Status::Pending,
                     });
                 }
+                self.sync_session_log(&child_id);
             }
         }
 
@@ -540,6 +558,7 @@ mod tests {
             .add_task(child_task.clone(), vec![edge], Utc::now())
             .await
             .unwrap();
+        let child_status_log = store.get_status_log(&child_id).await.unwrap();
 
         match store.get_artifact(&child_id).await.unwrap() {
             Artifact::Session {
@@ -549,12 +568,14 @@ mod tests {
                 image,
                 env_vars: stored_env,
                 dependencies,
+                log,
             } => {
                 assert_eq!(program, "1");
                 assert_eq!(params, vec!["--flag".to_string()]);
                 assert_eq!(stored_context, context);
                 assert_eq!(image, "metis-worker:latest".to_string());
                 assert_eq!(stored_env, env_vars);
+                assert_eq!(log, child_status_log);
                 assert_eq!(
                     dependencies,
                     vec![IssueDependency {
@@ -569,6 +590,52 @@ mod tests {
         match store.get_artifact(&parent_id).await.unwrap() {
             Artifact::Session { dependencies, .. } => assert!(dependencies.is_empty()),
             other => panic!("expected session artifact for parent, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_artifact_log_tracks_task_status_changes() {
+        let mut store = MemoryStore::new();
+
+        let task_id = store
+            .add_task(spawn_task(), vec![], Utc::now())
+            .await
+            .unwrap();
+
+        let initial_log = store.get_status_log(&task_id).await.unwrap();
+        match store.get_artifact(&task_id).await.unwrap() {
+            Artifact::Session { log, .. } => {
+                assert_eq!(log, initial_log);
+                assert_eq!(log.current_status(), Status::Pending);
+            }
+            other => panic!("expected session artifact, got {other:?}"),
+        }
+
+        let start_time = Utc::now();
+        store.mark_task_running(&task_id, start_time).await.unwrap();
+
+        let running_log = store.get_status_log(&task_id).await.unwrap();
+        match store.get_artifact(&task_id).await.unwrap() {
+            Artifact::Session { log, .. } => {
+                assert_eq!(log, running_log);
+                assert_eq!(log.current_status(), Status::Running);
+            }
+            other => panic!("expected session artifact, got {other:?}"),
+        }
+
+        let end_time = Utc::now();
+        store
+            .mark_task_complete(&task_id, Ok(()), end_time)
+            .await
+            .unwrap();
+
+        let completed_log = store.get_status_log(&task_id).await.unwrap();
+        match store.get_artifact(&task_id).await.unwrap() {
+            Artifact::Session { log, .. } => {
+                assert_eq!(log, completed_log);
+                assert_eq!(log.current_status(), Status::Complete);
+            }
+            other => panic!("expected session artifact, got {other:?}"),
         }
     }
 
