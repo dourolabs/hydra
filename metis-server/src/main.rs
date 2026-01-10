@@ -925,6 +925,7 @@ mod tests {
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
                     description: "done".to_string(),
+                    dependencies: vec![],
                 })
                 .await?;
             store_write
@@ -1074,6 +1075,7 @@ mod tests {
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
+                    dependencies: vec![],
                 })
                 .await?;
             store_write
@@ -1112,9 +1114,14 @@ mod tests {
         let artifact: ArtifactRecord = artifact_response.json().await?;
         assert_eq!(artifact.id, artifact_id);
         match artifact.artifact {
-            Artifact::Patch { diff, description } => {
+            Artifact::Patch {
+                diff,
+                description,
+                dependencies,
+            } => {
                 assert_eq!(diff, "diff");
                 assert_eq!(description, "all good");
+                assert!(dependencies.is_empty());
             }
             other => panic!("expected patch artifact, got {other:?}"),
         };
@@ -1183,6 +1190,7 @@ mod tests {
                 .add_artifact(Artifact::Patch {
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
+                    dependencies: vec![],
                 })
                 .await?;
             store_write
@@ -1277,6 +1285,7 @@ mod tests {
         let artifact = Artifact::Patch {
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
+            dependencies: vec![],
         };
 
         let response = client
@@ -1341,6 +1350,7 @@ mod tests {
                 artifact: Artifact::Patch {
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
+                    dependencies: vec![],
                 },
                 job_id: Some(job_id.clone()),
             })
@@ -1349,6 +1359,7 @@ mod tests {
 
         assert!(response.status().is_success());
         let created: UpsertArtifactResponse = response.json().await?;
+        let artifact_id = created.artifact_id;
 
         let emitted = {
             let store_read = store.read().await;
@@ -1357,7 +1368,28 @@ mod tests {
                 .await?
                 .emitted_artifacts()
         };
-        assert_eq!(emitted, Some(vec![created.artifact_id]));
+        assert_eq!(emitted, Some(vec![artifact_id.clone()]));
+
+        let artifact: ArtifactRecord = client
+            .get(format!(
+                "{}/v1/artifacts/{}",
+                server.base_url(),
+                artifact_id
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+        match artifact.artifact {
+            Artifact::Patch { dependencies, .. } => assert_eq!(
+                dependencies,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::CreatedBy,
+                    issue_id: job_id,
+                }]
+            ),
+            other => panic!("expected patch artifact, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -1368,6 +1400,7 @@ mod tests {
         let patch = Artifact::Patch {
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
+            dependencies: vec![],
         };
         let issue = Artifact::Issue {
             issue_type: IssueType::Bug,
@@ -1390,6 +1423,7 @@ mod tests {
         let filtered_patch = Artifact::Patch {
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
+            dependencies: vec![],
         };
 
         for artifact in [
@@ -1479,6 +1513,7 @@ mod tests {
                 artifact: Artifact::Patch {
                     diff: "old diff".to_string(),
                     description: "old patch".to_string(),
+                    dependencies: vec![],
                 },
                 job_id: None,
             })
