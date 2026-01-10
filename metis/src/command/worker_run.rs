@@ -282,6 +282,7 @@ async fn submit_job_status(
             artifact: Artifact::Patch {
                 diff: patch.clone(),
                 description: last_message.clone(),
+                dependencies: vec![],
             },
             job_id: Some(job.clone()),
         })

@@ -11,8 +11,9 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-    SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
+    IssueType, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
+    UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -169,6 +170,8 @@ async fn upsert_artifact_internal(
                 }
             }
 
+            let artifact = add_created_by_dependency(artifact, job_id.as_deref());
+
             let id = store
                 .add_artifact(artifact)
                 .await
@@ -233,9 +236,9 @@ fn artifact_matches(
         }
 
         return match artifact {
-            Artifact::Patch { diff, description } => {
-                diff.to_lowercase().contains(term) || description.to_lowercase().contains(term)
-            }
+            Artifact::Patch {
+                diff, description, ..
+            } => diff.to_lowercase().contains(term) || description.to_lowercase().contains(term),
             Artifact::Issue {
                 description,
                 issue_type,
@@ -279,6 +282,38 @@ fn artifact_matches(
     }
 
     true
+}
+
+fn add_created_by_dependency(artifact: Artifact, task_id: Option<&str>) -> Artifact {
+    match (artifact, task_id) {
+        (
+            Artifact::Patch {
+                diff,
+                description,
+                mut dependencies,
+            },
+            Some(task_id),
+        ) => {
+            let has_created_by = dependencies.iter().any(|dependency| {
+                dependency.dependency_type == IssueDependencyType::CreatedBy
+                    && dependency.issue_id == task_id
+            });
+
+            if !has_created_by {
+                dependencies.push(IssueDependency {
+                    dependency_type: IssueDependencyType::CreatedBy,
+                    issue_id: task_id.to_string(),
+                });
+            }
+
+            Artifact::Patch {
+                diff,
+                description,
+                dependencies,
+            }
+        }
+        (artifact, _) => artifact,
+    }
 }
 
 fn issue_type_matches(search_term: &str, issue_type: &IssueType) -> bool {

@@ -143,6 +143,7 @@ async fn create_patch(
             artifact: Artifact::Patch {
                 diff: patch,
                 description,
+                dependencies: vec![],
             },
             job_id,
         })
@@ -461,7 +462,9 @@ mod tests {
 
         let (_, request) = &requests[0];
         let (generated_patch, generated_description) = match &request.artifact {
-            Artifact::Patch { diff, description } => (diff, description),
+            Artifact::Patch {
+                diff, description, ..
+            } => (diff, description),
             other => panic!("expected patch artifact, got {other:?}"),
         };
         assert_eq!(

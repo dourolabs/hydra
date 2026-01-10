@@ -98,6 +98,7 @@ pub mod artifacts {
     pub enum IssueDependencyType {
         ChildOf,
         BlockedOn,
+        CreatedBy,
     }
 
     impl IssueDependencyType {
@@ -105,6 +106,7 @@ pub mod artifacts {
             match self {
                 IssueDependencyType::ChildOf => "child-of",
                 IssueDependencyType::BlockedOn => "blocked-on",
+                IssueDependencyType::CreatedBy => "created-by",
             }
         }
     }
@@ -123,6 +125,7 @@ pub mod artifacts {
             match value.as_str() {
                 "child-of" | "childof" | "child_of" => Ok(IssueDependencyType::ChildOf),
                 "blocked-on" | "blockedon" | "blocked_on" => Ok(IssueDependencyType::BlockedOn),
+                "created-by" | "createdby" | "created_by" => Ok(IssueDependencyType::CreatedBy),
                 other => Err(format!("unsupported issue dependency type '{other}'")),
             }
         }
@@ -141,6 +144,8 @@ pub mod artifacts {
         Patch {
             diff: String,
             description: String,
+            #[serde(default)]
+            dependencies: Vec<IssueDependency>,
         },
         Issue {
             #[serde(rename = "type")]

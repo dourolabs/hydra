@@ -293,6 +293,7 @@ mod tests {
         Artifact::Patch {
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
+            dependencies: vec![],
         }
     }
 
@@ -335,6 +336,7 @@ mod tests {
                 Artifact::Patch {
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
+                    dependencies: vec![],
                 },
             )
             .await
