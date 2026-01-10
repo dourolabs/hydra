@@ -159,6 +159,14 @@ fn build_context(
 
     let repo_context = build_repo_context(repo, rev)?;
 
+    if repo_context.is_none()
+        && context_dir.is_none()
+        && !force_encode_directory
+        && !force_encode_git_bundle
+    {
+        return Ok(BundleSpec::None);
+    }
+
     let mut resolved_context_dir = if repo_context.is_some() {
         None
     } else {
@@ -678,6 +686,7 @@ mod tests {
 
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].context, BundleSpec::None);
         assert_eq!(
             requests[0].image,
             Some("ghcr.io/example/metis:dev".to_string())
