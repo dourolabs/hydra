@@ -437,7 +437,10 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use metis_common::{artifacts::Artifact, jobs::Bundle};
+    use metis_common::{
+        artifacts::{Artifact, IssueStatus, IssueType},
+        jobs::Bundle,
+    };
     use std::collections::HashSet;
 
     fn spawn_task() -> Task {
@@ -480,7 +483,10 @@ mod tests {
 
         let id = store.add_artifact(sample_artifact()).await.unwrap();
         let updated = Artifact::Issue {
+            issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            status: IssueStatus::Open,
+            dependencies: vec![],
         };
 
         store.update_artifact(&id, updated.clone()).await.unwrap();

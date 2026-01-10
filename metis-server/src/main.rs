@@ -154,8 +154,8 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery,
-            UpsertArtifactRequest, UpsertArtifactResponse,
+            Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
+            SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
@@ -1362,14 +1362,35 @@ mod tests {
             description: "refactor logging".to_string(),
         };
         let issue = Artifact::Issue {
+            issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
+            status: IssueStatus::Open,
+            dependencies: vec![],
+        };
+        let feature_issue = Artifact::Issue {
+            issue_type: IssueType::Feature,
+            description: "add dark mode support".to_string(),
+            status: IssueStatus::InProgress,
+            dependencies: vec![],
+        };
+        let closed_issue = Artifact::Issue {
+            issue_type: IssueType::Task,
+            description: "retire old endpoint".to_string(),
+            status: IssueStatus::Closed,
+            dependencies: vec![],
         };
         let filtered_patch = Artifact::Patch {
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
         };
 
-        for artifact in [patch.clone(), issue.clone(), filtered_patch.clone()] {
+        for artifact in [
+            patch.clone(),
+            issue.clone(),
+            feature_issue.clone(),
+            closed_issue.clone(),
+            filtered_patch.clone(),
+        ] {
             let response = client
                 .post(format!("{}/v1/artifacts", server.base_url()))
                 .json(&UpsertArtifactRequest {
@@ -1387,12 +1408,14 @@ mod tests {
             .await?
             .json()
             .await?;
-        assert_eq!(all.artifacts.len(), 3);
+        assert_eq!(all.artifacts.len(), 5);
 
         let filtered: ListArtifactsResponse = client
             .get(format!("{}/v1/artifacts", server.base_url()))
             .query(&SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Patch),
+                issue_type: None,
+                status: None,
                 q: Some("login".to_string()),
             })
             .send()
@@ -1402,6 +1425,38 @@ mod tests {
 
         assert_eq!(filtered.artifacts.len(), 1);
         assert_eq!(filtered.artifacts[0].artifact, filtered_patch);
+
+        let filtered_issues: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .query(&SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                issue_type: Some(IssueType::Bug),
+                status: None,
+                q: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(filtered_issues.artifacts.len(), 1);
+        assert_eq!(filtered_issues.artifacts[0].artifact, issue);
+
+        let filtered_by_status: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .query(&SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                issue_type: None,
+                status: Some(IssueStatus::Closed),
+                q: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(filtered_by_status.artifacts.len(), 1);
+        assert_eq!(filtered_by_status.artifacts[0].artifact, closed_issue);
         Ok(())
     }
 
@@ -1432,7 +1487,10 @@ mod tests {
             ))
             .json(&UpsertArtifactRequest {
                 artifact: Artifact::Issue {
+                    issue_type: IssueType::Task,
                     description: "updated details".to_string(),
+                    status: IssueStatus::InProgress,
+                    dependencies: vec![],
                 },
                 job_id: None,
             })
@@ -1457,7 +1515,10 @@ mod tests {
         assert_eq!(
             fetched.artifact,
             Artifact::Issue {
-                description: "updated details".to_string()
+                issue_type: IssueType::Task,
+                description: "updated details".to_string(),
+                status: IssueStatus::InProgress,
+                dependencies: vec![],
             }
         );
         Ok(())

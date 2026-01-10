@@ -375,6 +375,8 @@ async fn fetch_artifacts(
     let response = client
         .list_artifacts(&SearchArtifactsQuery {
             artifact_type: Some(kind),
+            issue_type: None,
+            status: None,
             q: None,
         })
         .await
@@ -395,7 +397,7 @@ fn artifact_to_display(
     expected_kind: ArtifactKind,
 ) -> Option<ArtifactDisplay> {
     match (record.artifact, expected_kind) {
-        (Artifact::Issue { description }, ArtifactKind::Issue) => Some(ArtifactDisplay {
+        (Artifact::Issue { description, .. }, ArtifactKind::Issue) => Some(ArtifactDisplay {
             id: record.id,
             summary: description,
         }),
