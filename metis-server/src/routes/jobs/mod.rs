@@ -342,5 +342,6 @@ fn note_from_artifact(artifact: &Artifact) -> Option<String> {
         Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
             sanitize_note(description)
         }
+        Artifact::Session { program, .. } => sanitize_note(program),
     }
 }
