@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
-use metis_common::MetisId;
 use metis_common::artifacts::Artifact;
 use metis_common::task_status::Event;
+use metis_common::MetisId;
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -437,7 +437,10 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use metis_common::{artifacts::Artifact, jobs::Bundle};
+    use metis_common::{
+        artifacts::{Artifact, IssueType},
+        jobs::Bundle,
+    };
     use std::collections::HashSet;
 
     fn spawn_task() -> Task {
@@ -480,6 +483,7 @@ mod tests {
 
         let id = store.add_artifact(sample_artifact()).await.unwrap();
         let updated = Artifact::Issue {
+            issue_type: IssueType::Task,
             description: "issue details".to_string(),
         };
 
