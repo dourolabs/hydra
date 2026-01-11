@@ -39,7 +39,7 @@ You have access to several tools that enable you to do your job.
 
 Please use the "metis issues" command to access the issue tracker -- either to get more information about your issue, or to create new follow-up issues that will be addressed later by yourself or other members of your team.
 
-If you need to create a pull request, please use the "metis patches create --description 'description of change'" to create the PR from your current changes.
+If you need to create a pull request, please use the "metis patches create --github" to create the PR from your current changes.
 This command will return an id for the patch.
 Then, please file a new issue of type merge-request where the text points to the id of the created patch.
 
@@ -62,14 +62,7 @@ In this case, if feasible, please also create a PR with a test that isolates the
 **Task**
 Follow the instructions in the task and submit a PR.
 
-**Merge Request**
-
-
-
-**Your issue id is:** ${issue_id}
-
-Finally, generate a pull request title and description for this change. The title should go in .metis/output/pr_title.txt 
-and the body should go in .metis/output/pr_body.txt .`;
+**Your issue id is:** ${issue_id}`;
 
 shell(`git checkout -b "${branch_name}"`, |setup_output| {
     codex(full_prompt, |codex_output| cleanup(metis_id))
