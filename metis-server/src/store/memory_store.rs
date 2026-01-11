@@ -188,26 +188,6 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn emit_task_artifacts(
-        &mut self,
-        id: &MetisId,
-        artifact_ids: Vec<MetisId>,
-        at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let status_log = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(status_log.current_status(), Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        status_log.events.push(Event::Emitted { at, artifact_ids });
-
-        Ok(())
-    }
-
     async fn mark_task_complete(
         &mut self,
         id: &MetisId,
@@ -439,32 +419,6 @@ mod tests {
 
         assert_eq!(pending, HashSet::from(["job-1".to_string()]));
         assert_eq!(running, HashSet::from(["job-2".to_string()]));
-    }
-
-    #[tokio::test]
-    async fn emit_task_artifacts_requires_running_state() {
-        let mut store = MemoryStore::new();
-        let job_id = "job-emit".to_string();
-        store
-            .add_artifact_with_id(
-                job_id.clone(),
-                session_artifact_with_dependencies(vec![]),
-                Utc::now(),
-            )
-            .await
-            .unwrap();
-
-        let err = store
-            .emit_task_artifacts(&job_id, vec!["artifact-1".into()], Utc::now())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, StoreError::InvalidStatusTransition));
-
-        store.mark_task_running(&job_id, Utc::now()).await.unwrap();
-        store
-            .emit_task_artifacts(&job_id, vec!["artifact-1".into()], Utc::now())
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
