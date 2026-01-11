@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Status, Store, StoreError, TaskError, TaskStatusLog};
+use super::{Status, Store, StoreError, TaskStatusLog};
 use metis_common::MetisId;
 use metis_common::artifacts::{Artifact, ArtifactKind};
 use metis_common::task_status::Event;
@@ -169,67 +169,33 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn mark_task_running(
-        &mut self,
-        id: &MetisId,
-        start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let status_log = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(status_log.current_status(), Status::Pending) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        status_log.events.push(Event::Started { at: start_time });
-
-        Ok(())
-    }
-
     async fn emit_task_artifacts(
         &mut self,
         id: &MetisId,
         artifact_ids: Vec<MetisId>,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let status_log = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(status_log.current_status(), Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        status_log.events.push(Event::Emitted { at, artifact_ids });
-
-        Ok(())
+        self.append_status_event(id, Event::Emitted { at, artifact_ids })
+            .await
     }
 
-    async fn mark_task_complete(
-        &mut self,
-        id: &MetisId,
-        result: Result<(), TaskError>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
+    async fn append_status_event(&mut self, id: &MetisId, event: Event) -> Result<(), StoreError> {
         let status_log = self
             .status_logs
             .get_mut(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(status_log.current_status(), Status::Running) {
+        let current_status = status_log.current_status();
+        let is_valid_transition = matches!(
+            (&event, current_status),
+            (Event::Started { .. }, Status::Pending)
+                | (Event::Completed { .. } | Event::Failed { .. }, Status::Running)
+                | (Event::Emitted { .. }, Status::Running)
+        );
+
+        if !is_valid_transition {
             return Err(StoreError::InvalidStatusTransition);
         }
-
-        let event = match result {
-            Ok(()) => Event::Completed { at: end_time },
-            Err(error) => Event::Failed {
-                at: end_time,
-                error,
-            },
-        };
 
         status_log.events.push(event);
 
@@ -375,7 +341,10 @@ mod tests {
             .unwrap();
 
         let start_time = Utc::now();
-        store.mark_task_running(&job_id, start_time).await.unwrap();
+        store
+            .append_status_event(&job_id, Event::Started { at: start_time })
+            .await
+            .unwrap();
 
         let running_log = store.get_status_log(&job_id).await.unwrap();
         assert_eq!(running_log.current_status(), Status::Running);
@@ -383,7 +352,7 @@ mod tests {
 
         let end_time = Utc::now();
         store
-            .mark_task_complete(&job_id, Ok(()), end_time)
+            .append_status_event(&job_id, Event::Completed { at: end_time })
             .await
             .unwrap();
 
@@ -418,7 +387,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_running(&"job-2".to_string(), Utc::now())
+            .append_status_event(&"job-2".to_string(), Event::Started { at: Utc::now() })
             .await
             .unwrap();
 
@@ -460,7 +429,10 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
 
-        store.mark_task_running(&job_id, Utc::now()).await.unwrap();
+        store
+            .append_status_event(&job_id, Event::Started { at: Utc::now() })
+            .await
+            .unwrap();
         store
             .emit_task_artifacts(&job_id, vec!["artifact-1".into()], Utc::now())
             .await
@@ -468,7 +440,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mark_task_complete_from_pending_fails() {
+    async fn append_status_event_from_pending_to_complete_fails() {
         let mut store = MemoryStore::new();
         let job_id = "job-pending".to_string();
         store
@@ -481,7 +453,7 @@ mod tests {
             .unwrap();
 
         let err = store
-            .mark_task_complete(&job_id, Ok(()), Utc::now())
+            .append_status_event(&job_id, Event::Completed { at: Utc::now() })
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));

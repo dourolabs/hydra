@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     job_engine::JobStatus,
-    store::{Status, TaskError},
+    store::{Event, Status, TaskError},
 };
 use chrono::Utc;
 use metis_common::{MetisId, artifacts::ArtifactKind};
@@ -109,16 +109,13 @@ pub async fn monitor_running_jobs(state: AppState) {
                             // Check for a 1 minute (60s) timeout since completion
                             if duration_since_completion.num_seconds() >= 60 {
                                 let failure_reason = "Job completed without submitting results (timeout after 1 minute)".to_string();
-                                match store
-                                    .mark_task_complete(
-                                        &metis_id,
-                                        Err(TaskError::JobEngineError {
-                                            reason: failure_reason,
-                                        }),
-                                        completion_time,
-                                    )
-                                    .await
-                                {
+                                let failure_event = Event::Failed {
+                                    at: completion_time,
+                                    error: TaskError::JobEngineError {
+                                        reason: failure_reason,
+                                    },
+                                };
+                                match store.append_status_event(&metis_id, failure_event).await {
                                     Ok(()) => {
                                         warn!(metis_id = %metis_id, "task marked failed due to missing results after job completion timeout");
                                     }
@@ -135,16 +132,13 @@ pub async fn monitor_running_jobs(state: AppState) {
                             let failure_reason = job.failure_message.unwrap_or_else(|| {
                                 "Job failed for an undetermined reason".to_string()
                             });
-                            match store
-                                .mark_task_complete(
-                                    &metis_id,
-                                    Err(TaskError::JobEngineError {
-                                        reason: failure_reason,
-                                    }),
-                                    end_time,
-                                )
-                                .await
-                            {
+                            let failure_event = Event::Failed {
+                                at: end_time,
+                                error: TaskError::JobEngineError {
+                                    reason: failure_reason,
+                                },
+                            };
+                            match store.append_status_event(&metis_id, failure_event).await {
                                 Ok(()) => {
                                     info!(metis_id = %metis_id, "updated task status to Failed from job engine");
                                 }
@@ -165,15 +159,14 @@ pub async fn monitor_running_jobs(state: AppState) {
                     warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
                     let mut store = state.store.write().await;
                     let failure_reason = "Job not found in job engine".to_string();
-                    if let Err(update_err) = store
-                        .mark_task_complete(
-                            &metis_id,
-                            Err(TaskError::JobEngineError {
-                                reason: failure_reason,
-                            }),
-                            Utc::now(),
-                        )
-                        .await
+                    let failure_event = Event::Failed {
+                        at: Utc::now(),
+                        error: TaskError::JobEngineError {
+                            reason: failure_reason,
+                        },
+                    };
+                    if let Err(update_err) =
+                        store.append_status_event(&metis_id, failure_event).await
                     {
                         error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
                     }

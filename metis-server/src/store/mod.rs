@@ -5,7 +5,7 @@ use metis_common::artifacts::{Artifact, ArtifactKind};
 
 mod memory_store;
 
-pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
+pub use metis_common::task_status::{Event, Status, TaskError, TaskStatusLog};
 
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
@@ -18,7 +18,7 @@ pub enum StoreError {
     InvalidDependency(String),
     #[error("Internal error: {0}")]
     Internal(String),
-    #[error("Invalid status transition: task is not in Pending state")]
+    #[error("Invalid status transition")]
     InvalidStatusTransition,
 }
 
@@ -114,50 +114,11 @@ pub trait Store: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
-    /// Marks a task as running.
+    /// Appends a status event to the task's status log.
     ///
-    /// Valid transitions:
-    /// - From Pending to Running
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Pending state
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    /// * `start_time` - The timestamp when the task started running
-    async fn mark_task_running(
-        &mut self,
-        id: &MetisId,
-        start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
-    /// Marks a task as complete.
-    ///
-    /// Valid transitions:
-    /// - From Running to Complete (if result is Ok)
-    /// - From Running to Failed (if result is Err)
-    ///
-    /// # Arguments
-    /// * `id` - The MetisId of the task to update
-    /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
-    ///              If Err, the task is marked as Failed with the error as the failure reason.
-    /// * `end_time` - The timestamp when the task completed or failed
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Running state
-    async fn mark_task_complete(
-        &mut self,
-        id: &MetisId,
-        result: Result<(), TaskError>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
+    /// Callers are responsible for constructing the appropriate event for the desired
+    /// state transition. Invalid transitions will return `StoreError::InvalidStatusTransition`.
+    async fn append_status_event(&mut self, id: &MetisId, event: Event) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;

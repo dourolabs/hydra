@@ -5,8 +5,8 @@ use crate::{
 use anyhow::anyhow;
 use axum::{Json, extract::State};
 use chrono::Utc;
-use metis_common::artifacts::Artifact;
 use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
+use metis_common::{artifacts::Artifact, task_status::Event};
 use tracing::{error, info};
 
 pub async fn set_job_status(
@@ -37,8 +37,16 @@ pub async fn set_job_status(
 
         let result = status.to_result();
 
+        let event = match result {
+            Ok(()) => Event::Completed { at: Utc::now() },
+            Err(error) => Event::Failed {
+                at: Utc::now(),
+                error,
+            },
+        };
+
         store
-            .mark_task_complete(&job_id, result, Utc::now())
+            .append_status_event(&job_id, event)
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to update task status");

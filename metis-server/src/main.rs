@@ -719,7 +719,9 @@ mod tests {
                     Utc::now(),
                 )
                 .await?;
-            store_write.mark_task_running(&job_id, Utc::now()).await?;
+            store_write
+                .append_status_event(&job_id, Event::Started { at: Utc::now() })
+                .await?;
             artifact_id = store_write
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
@@ -766,7 +768,10 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_running(&"failing-job".to_string(), Utc::now())
+                .append_status_event(
+                    &"failing-job".to_string(),
+                    Event::Started { at: Utc::now() },
+                )
                 .await?;
         }
         let server = spawn_test_server_with_state(state.clone()).await?;
@@ -807,9 +812,11 @@ mod tests {
                     Utc::now(),
                 )
                 .await?;
-            store_write.mark_task_running(&job_id, Utc::now()).await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .append_status_event(&job_id, Event::Started { at: Utc::now() })
+                .await?;
+            store_write
+                .append_status_event(&job_id, Event::Completed { at: Utc::now() })
                 .await?;
         }
 
@@ -854,7 +861,9 @@ mod tests {
                     Utc::now(),
                 )
                 .await?;
-            store_write.mark_task_running(&job_id, Utc::now()).await?;
+            store_write
+                .append_status_event(&job_id, Event::Started { at: Utc::now() })
+                .await?;
             artifact_id = store_write
                 .add_artifact(Artifact::Patch {
                     diff: "diff".to_string(),
@@ -866,7 +875,7 @@ mod tests {
                 .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
                 .await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .append_status_event(&job_id, Event::Completed { at: Utc::now() })
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -967,7 +976,7 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_running(&"parent-job".to_string(), Utc::now())
+                .append_status_event(&"parent-job".to_string(), Event::Started { at: Utc::now() })
                 .await?;
             let parent_artifact_id = store_write
                 .add_artifact(Artifact::Patch {
@@ -984,7 +993,10 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())
+                .append_status_event(
+                    &"parent-job".to_string(),
+                    Event::Completed { at: Utc::now() },
+                )
                 .await?;
             store_write
                 .add_artifact_with_id(
