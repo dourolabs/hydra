@@ -1,4 +1,8 @@
-use crate::{AppState, state::ResolvedBundle, store::TaskStatusLog};
+use crate::{
+    AppState,
+    state::ResolvedBundle,
+    store::{Store, StoreError, TaskError, TaskStatusLog},
+};
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, State},
@@ -8,14 +12,13 @@ use axum::{
 use chrono::Utc;
 use metis_common::{
     MetisId,
-    artifacts::{Artifact, IssueDependency, IssueDependencyType},
+    artifacts::{Artifact, ArtifactKind, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse},
 };
 use serde_json::json;
 use tracing::{error, info};
 
-pub mod context;
 pub mod kill;
 pub mod logs;
 pub mod status;
@@ -68,7 +71,6 @@ pub async fn create_job(
             context,
             image,
             env_vars,
-            log: TaskStatusLog::default(),
             dependencies: parent_dependencies,
         };
         store
