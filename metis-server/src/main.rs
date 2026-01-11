@@ -62,8 +62,9 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::jobs::logs::get_job_logs),
         )
         .route(
-            "/v1/jobs/:job_id/status",
-            get(routes::jobs::status::get_job_status).post(routes::jobs::status::set_job_status),
+            "/v1/artifacts/:artifact_id/status",
+            get(routes::jobs::status::get_artifact_status)
+                .post(routes::jobs::status::set_artifact_status),
         )
         .with_state(state);
 
@@ -666,27 +667,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_status_rejects_empty_job_id() -> anyhow::Result<()> {
+    async fn set_artifact_status_rejects_empty_id() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/ /status", server.base_url()))
+            .post(format!("{}/v1/artifacts/ /status", server.base_url()))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(body, json!({ "error": "artifact_id must not be empty" }));
         Ok(())
     }
 
     #[tokio::test]
-    async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()> {
+    async fn set_artifact_status_returns_not_found_for_missing_artifact() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/missing/status", server.base_url()))
+            .post(format!("{}/v1/artifacts/missing/status", server.base_url()))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
@@ -698,7 +699,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
+    async fn set_artifact_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
@@ -724,14 +725,20 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/spawn-job/status", server.base_url()))
+            .post(format!(
+                "{}/v1/artifacts/spawn-job/status",
+                server.base_url()
+            ))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "job_id": "spawn-job", "status": "complete" }));
+        assert_eq!(
+            body,
+            json!({ "artifact_id": "spawn-job", "status": "complete" })
+        );
 
         let store_read = store.read().await;
         let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
@@ -742,7 +749,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
+    async fn set_artifact_status_can_mark_failed() -> anyhow::Result<()> {
         let state = test_state();
         {
             let mut store_write = state.store.write().await;
@@ -761,14 +768,20 @@ mod tests {
         let client = test_client();
 
         let response = client
-            .post(format!("{}/v1/jobs/failing-job/status", server.base_url()))
+            .post(format!(
+                "{}/v1/artifacts/failing-job/status",
+                server.base_url()
+            ))
             .json(&json!({ "status": "failed", "reason": "boom" }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "job_id": "failing-job", "status": "failed" }));
+        assert_eq!(
+            body,
+            json!({ "artifact_id": "failing-job", "status": "failed" })
+        );
 
         let store_read = state.store.read().await;
         let status_log = store_read
@@ -783,7 +796,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
+    async fn get_artifact_status_returns_status_log() -> anyhow::Result<()> {
         let state = test_state();
         let job_id = "with-status".to_string();
         {
@@ -805,18 +818,83 @@ mod tests {
         let client = test_client();
 
         let response = client
-            .get(format!("{}/v1/jobs/with-status/status", server.base_url()))
+            .get(format!(
+                "{}/v1/artifacts/with-status/status",
+                server.base_url()
+            ))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: GetJobStatusResponse = response.json().await?;
-        assert_eq!(body.job_id, job_id);
+        assert_eq!(body.artifact_id, job_id);
         assert_eq!(body.status_log.current_status(), Status::Complete);
         assert!(matches!(
             body.status_log.events.last(),
             Some(Event::Completed { .. })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn artifact_status_route_supports_all_artifact_types() -> anyhow::Result<()> {
+        let state = test_state();
+        let store = state.store.clone();
+        let session_id = "status-session".to_string();
+        let patch_id;
+        let issue_id;
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_artifact_with_id(
+                    session_id.clone(),
+                    session_artifact("0", vec![], Bundle::None, default_image(), HashMap::new()),
+                    Utc::now(),
+                )
+                .await?;
+            store_write
+                .mark_task_running(&session_id, Utc::now())
+                .await?;
+
+            patch_id = store_write
+                .add_artifact(Artifact::Patch {
+                    diff: "diff".to_string(),
+                    description: "patch desc".to_string(),
+                    dependencies: vec![],
+                })
+                .await?;
+            issue_id = store_write
+                .add_artifact(Artifact::Issue {
+                    issue_type: IssueType::Task,
+                    description: "issue desc".to_string(),
+                    status: IssueStatus::Open,
+                    dependencies: vec![],
+                })
+                .await?;
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+        let client = test_client();
+
+        for (artifact_id, expected_status) in [
+            (session_id.as_str(), Status::Running),
+            (patch_id.as_str(), Status::Complete),
+            (issue_id.as_str(), Status::Complete),
+        ] {
+            let response = client
+                .get(format!(
+                    "{}/v1/artifacts/{artifact_id}/status",
+                    server.base_url()
+                ))
+                .send()
+                .await?;
+
+            assert!(response.status().is_success());
+            let status: GetJobStatusResponse = response.json().await?;
+            assert_eq!(status.artifact_id, artifact_id);
+            assert_eq!(status.status_log.current_status(), expected_status);
+        }
+
         Ok(())
     }
 

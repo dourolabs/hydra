@@ -299,11 +299,11 @@ async fn submit_job_status(
         .await?;
     println!("Updating status for job '{job}' via metis-server…");
     let response = client
-        .set_job_status(job, &JobStatusUpdate::Complete)
+        .set_artifact_status(job, &JobStatusUpdate::Complete)
         .await?;
     println!(
         "Status updated for job '{}'. Stored last message length: {}, patch length: {}",
-        response.job_id,
+        response.artifact_id,
         last_message.len(),
         patch.len()
     );

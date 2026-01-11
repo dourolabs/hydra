@@ -487,13 +487,13 @@ pub mod job_status {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SetJobStatusResponse {
-        pub job_id: MetisId,
+        pub artifact_id: MetisId,
         pub status: Status,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct GetJobStatusResponse {
-        pub job_id: MetisId,
+        pub artifact_id: MetisId,
         pub status_log: TaskStatusLog,
     }
 }
