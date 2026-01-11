@@ -4,8 +4,8 @@ use base64::engine::general_purpose::STANDARD as Base64Engine;
 use base64::Engine as Base64EngineTrait;
 use futures::StreamExt;
 use metis_common::{
-    jobs::{BundleSpec, CreateJobRequest},
     logs::LogsQuery,
+    sessions::{BundleSpec, CreateSessionRequest},
     task_status::Status,
     MetisId,
 };
@@ -70,7 +70,7 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest {
+    let request = CreateSessionRequest {
         program,
         params,
         image,
@@ -78,23 +78,23 @@ pub async fn run(
         parent_ids,
         variables,
     };
-    let response = client.create_job(&request).await?;
-    let job_id = response.job_id;
+    let response = client.create_session(&request).await?;
+    let session_id = response.session_id;
 
-    println!("Requested Metis job {job_id}");
+    println!("Requested Metis session {session_id}");
 
     if wait {
-        println!("Streaming logs for job '{job_id}' via metis-server…");
-        stream_job_logs_via_server(client, &job_id, true).await?;
-        wait_for_job_completion_via_server(client, &job_id).await?;
+        println!("Streaming logs for session '{session_id}' via metis-server…");
+        stream_session_logs_via_server(client, &session_id, true).await?;
+        wait_for_session_completion_via_server(client, &session_id).await?;
     }
 
     Ok(())
 }
 
-pub(crate) async fn stream_job_logs_via_server(
+pub(crate) async fn stream_session_logs_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &MetisId,
+    session_id: &MetisId,
     watch: bool,
 ) -> Result<()> {
     let query = LogsQuery {
@@ -103,9 +103,9 @@ pub(crate) async fn stream_job_logs_via_server(
     };
 
     let mut log_stream = client
-        .get_job_logs(job_id, &query)
+        .get_session_logs(session_id, &query)
         .await
-        .with_context(|| format!("failed to stream logs for job '{job_id}'"))?;
+        .with_context(|| format!("failed to stream logs for session '{session_id}'"))?;
 
     while let Some(line) = log_stream.next().await {
         let line = line?;
@@ -119,24 +119,28 @@ pub(crate) async fn stream_job_logs_via_server(
     Ok(())
 }
 
-async fn wait_for_job_completion_via_server(
+async fn wait_for_session_completion_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &MetisId,
+    session_id: &MetisId,
 ) -> Result<()> {
     loop {
-        let response = client.list_jobs().await?;
-        if let Some(job) = response.jobs.iter().find(|job| job.id == job_id.as_str()) {
-            match job.status_log.current_status() {
+        let response = client.list_sessions().await?;
+        if let Some(session) = response
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id.as_str())
+        {
+            match session.status_log.current_status() {
                 Status::Complete => {
-                    println!("Job '{job_id}' completed successfully.");
+                    println!("Session '{session_id}' completed successfully.");
                     return Ok(());
                 }
                 Status::Failed => {
-                    let reason = job
+                    let reason = session
                         .notes
                         .as_deref()
-                        .unwrap_or("job failed without an error message");
-                    bail!("Job '{job_id}' failed: {reason}");
+                        .unwrap_or("session failed without an error message");
+                    bail!("Session '{session_id}' failed: {reason}");
                 }
                 _ => {}
             }
@@ -417,7 +421,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
+        sessions::{BundleSpec, CreateSessionResponse, ListSessionsResponse, SessionSummary},
         task_status::{Event, Status, TaskStatusLog},
     };
     use std::fs;
@@ -428,13 +432,13 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
 
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-123".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-123".into(),
         });
         client.push_log_lines(["first log line\n", "second log line\n"]);
         let start_time = Utc::now();
-        client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobSummary {
+        client.push_list_sessions_response(ListSessionsResponse {
+            sessions: vec![SessionSummary {
                 id: "job-123".into(),
                 notes: None,
                 program: "0".to_string(),
@@ -450,8 +454,8 @@ mod tests {
                 },
             }],
         });
-        client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobSummary {
+        client.push_list_sessions_response(ListSessionsResponse {
+            sessions: vec![SessionSummary {
                 id: "job-123".into(),
                 notes: None,
                 program: "0".to_string(),
@@ -506,16 +510,16 @@ mod tests {
             request.context,
             BundleSpec::TarGz { ref archive_base64 } if !archive_base64.is_empty()
         ));
-        assert!(client.create_job_responses.lock().unwrap().is_empty());
-        assert!(client.list_jobs_responses.lock().unwrap().is_empty());
+        assert!(client.create_session_responses.lock().unwrap().is_empty());
+        assert!(client.list_sessions_responses.lock().unwrap().is_empty());
         assert!(client.log_responses.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn spawn_accepts_service_repository_context() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-service".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-service".into(),
         });
 
         run(
@@ -550,8 +554,8 @@ mod tests {
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_service_repositories() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-service-default-rev".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-service-default-rev".into(),
         });
 
         run(
@@ -585,8 +589,8 @@ mod tests {
     #[tokio::test]
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-git".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-git".into(),
         });
 
         run(
@@ -620,8 +624,8 @@ mod tests {
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_git_urls() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-git-default-rev".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-git-default-rev".into(),
         });
 
         run(
@@ -656,8 +660,8 @@ mod tests {
     async fn spawn_allows_overriding_image() {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-image".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-image".into(),
         });
 
         run(
@@ -695,8 +699,8 @@ mod tests {
     async fn spawn_forwards_cli_variables_into_job_request() {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-with-vars".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-with-vars".into(),
         });
 
         run(
@@ -727,8 +731,8 @@ mod tests {
     async fn spawn_accepts_inline_program_and_validates() {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-inline-program".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-inline-program".into(),
         });
 
         run(
@@ -761,8 +765,8 @@ mod tests {
         fs::write(&program_path, "let answer = 42;").unwrap();
 
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: "job-file-program".into(),
+        client.push_create_session_response(CreateSessionResponse {
+            session_id: "job-file-program".into(),
         });
 
         run(

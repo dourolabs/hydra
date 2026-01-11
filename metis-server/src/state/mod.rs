@@ -1,6 +1,6 @@
 use crate::config::{ServiceSection, non_empty};
-use crate::routes::jobs::ApiError;
-use metis_common::jobs::{Bundle, BundleSpec};
+use crate::routes::ApiError;
+use metis_common::sessions::{Bundle, BundleSpec};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

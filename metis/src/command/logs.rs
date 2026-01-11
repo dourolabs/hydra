@@ -1,4 +1,4 @@
-use crate::{client::MetisClientInterface, command::spawn::stream_job_logs_via_server};
+use crate::{client::MetisClientInterface, command::spawn::stream_session_logs_via_server};
 use anyhow::{bail, Result};
 
 pub async fn run(client: &dyn MetisClientInterface, id: String, watch: bool) -> Result<()> {
@@ -9,9 +9,9 @@ pub async fn run(client: &dyn MetisClientInterface, id: String, watch: bool) -> 
     let id = id.to_string();
 
     let action = if watch { "Streaming" } else { "Fetching" };
-    println!("{action} logs for job '{id}' via metis-server…");
+    println!("{action} logs for session '{id}' via metis-server…");
 
-    stream_job_logs_via_server(client, &id, watch).await
+    stream_session_logs_via_server(client, &id, watch).await
 }
 
 #[cfg(test)]
@@ -20,13 +20,16 @@ mod tests {
     use crate::client::MockMetisClient;
 
     #[tokio::test]
-    async fn logs_streams_job_logs() {
+    async fn logs_streams_session_logs() {
         let client = MockMetisClient::default();
-        client.push_log_lines(["job logs\n"]);
+        client.push_log_lines(["session logs\n"]);
 
-        run(&client, "job-xyz".into(), false).await.unwrap();
+        run(&client, "session-xyz".into(), false).await.unwrap();
 
-        assert_eq!(client.recorded_log_requests(), vec!["job-xyz".to_string()]);
+        assert_eq!(
+            client.recorded_log_requests(),
+            vec!["session-xyz".to_string()]
+        );
     }
 
     #[tokio::test]

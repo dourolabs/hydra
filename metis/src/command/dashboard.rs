@@ -15,7 +15,7 @@ use crossterm::{
 use futures::StreamExt;
 use metis_common::{
     artifacts::{Artifact, ArtifactKind, ArtifactRecord, SearchArtifactsQuery},
-    jobs::JobSummary,
+    sessions::SessionSummary,
     task_status::{Status, TaskError, TaskStatusLog},
 };
 use ratatui::{
@@ -340,9 +340,9 @@ async fn refresh_jobs(
     client: &dyn MetisClientInterface,
     state: &mut DashboardState,
 ) -> Result<bool> {
-    let response = client.list_jobs().await?;
+    let response = client.list_sessions().await?;
     let now = Utc::now();
-    let jobs = categorize_jobs(response.jobs, now);
+    let jobs = categorize_jobs(response.sessions, now);
 
     if state.jobs == jobs {
         return Ok(false);
@@ -409,7 +409,7 @@ fn artifact_to_display(
     }
 }
 
-fn categorize_jobs(jobs: Vec<JobSummary>, now: DateTime<Utc>) -> JobSections {
+fn categorize_jobs(jobs: Vec<SessionSummary>, now: DateTime<Utc>) -> JobSections {
     let mut running = Vec::new();
     let mut finished = Vec::new();
 
@@ -434,7 +434,7 @@ fn categorize_jobs(jobs: Vec<JobSummary>, now: DateTime<Utc>) -> JobSections {
     JobSections { running, finished }
 }
 
-fn summarize_job(job: JobSummary, now: DateTime<Utc>) -> JobDisplay {
+fn summarize_job(job: SessionSummary, now: DateTime<Utc>) -> JobDisplay {
     let status = job.status_log.current_status();
     let runtime = jobs::format_runtime(&job.status_log, now);
     let last_change = last_activity(&job.status_log);
@@ -465,7 +465,7 @@ fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Orderin
     }
 }
 
-fn note_or_error(job: &JobSummary) -> String {
+fn note_or_error(job: &SessionSummary) -> String {
     if let Some(Err(error)) = job.status_log.result() {
         return format_task_error(&error);
     }
@@ -518,7 +518,7 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use metis_common::task_status::Event;
 
-    fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobSummary {
+    fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> SessionSummary {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
         let mut log = TaskStatusLog::new(Status::Pending, now);
         match status {
@@ -539,7 +539,7 @@ mod tests {
             Status::Blocked | Status::Pending => {}
         }
 
-        JobSummary {
+        SessionSummary {
             id: id.to_string(),
             notes: None,
             program: "0".into(),
