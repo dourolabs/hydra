@@ -73,8 +73,8 @@ impl Spawner for AgentQueue {
                     continue;
                 }
 
-                // Skip issues that are already closed.
-                if status == IssueStatus::Closed {
+                // Only spawn tasks for open issues.
+                if status != IssueStatus::Open {
                     continue;
                 }
 
@@ -164,6 +164,19 @@ mod tests {
                     issue_type: metis_common::artifacts::IssueType::Task,
                     description: "Ignore closed".to_string(),
                     status: IssueStatus::Closed,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![],
+                })
+                .await?;
+        }
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_artifact(Artifact::Issue {
+                    issue_type: metis_common::artifacts::IssueType::Task,
+                    description: "Ignore in-progress".to_string(),
+                    status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
                 })
