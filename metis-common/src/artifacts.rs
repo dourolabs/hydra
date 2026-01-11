@@ -142,6 +142,8 @@ pub enum Artifact {
         #[serde(default)]
         status: IssueStatus,
         #[serde(default)]
+        assignee: Option<String>,
+        #[serde(default)]
         dependencies: Vec<IssueDependency>,
     },
 }

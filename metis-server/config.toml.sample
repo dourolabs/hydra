@@ -17,6 +17,27 @@ default_branch = "main"
 default_image = "metis-worker:latest"
 github_token = ""
 
+[background]
+# Agent queues automatically enqueue work for assigned issues.
+# Add additional [[background.agent_queues]] tables to run multiple queues.
+[[background.agent_queues]]
+name = "agent-a"
+# Prompt provided to the agent; passed as the first parameter to the default program.
+prompt = "You are agent-a working on assigned issues."
+# Optional: override the worker image for this queue (falls back to metis.worker_image)
+image = "metis-worker:latest"
+
+# Optional environment variables that will be injected into the job alongside
+# METIS_ISSUE_ID and METIS_AGENT_NAME.
+[background.agent_queues.env_vars]
+#EXAMPLE_TOKEN = "secret"
+
+# Optional context bundle (defaults to none)
+#[background.agent_queues.context]
+#type = "git_repository"
+#url = "https://github.com/example/repo.git"
+#rev = "main"
+
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
 # its mounted ServiceAccount credentials.
