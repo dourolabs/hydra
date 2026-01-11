@@ -132,8 +132,10 @@ pub struct IssueDependency {
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum Artifact {
     Patch {
-        diff: String,
+        #[serde(default)]
+        title: String,
         description: String,
+        diff: String,
     },
     Issue {
         #[serde(rename = "type")]
@@ -142,8 +144,6 @@ pub enum Artifact {
         #[serde(default)]
         status: IssueStatus,
         #[serde(skip_serializing_if = "Option::is_none", default)]
-        assignee: Option<String>,
-        #[serde(default)]
         assignee: Option<String>,
         #[serde(default)]
         dependencies: Vec<IssueDependency>,

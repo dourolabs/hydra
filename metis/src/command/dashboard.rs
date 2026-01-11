@@ -401,10 +401,22 @@ fn artifact_to_display(
             id: record.id,
             summary: description,
         }),
-        (Artifact::Patch { description, .. }, ArtifactKind::Patch) => Some(ArtifactDisplay {
-            id: record.id,
-            summary: description,
-        }),
+        (
+            Artifact::Patch {
+                title, description, ..
+            },
+            ArtifactKind::Patch,
+        ) => {
+            let summary = if title.trim().is_empty() {
+                description
+            } else {
+                title
+            };
+            Some(ArtifactDisplay {
+                id: record.id,
+                summary,
+            })
+        }
         _ => None,
     }
 }

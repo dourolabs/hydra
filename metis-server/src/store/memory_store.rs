@@ -455,6 +455,7 @@ mod tests {
 
     fn sample_artifact() -> Artifact {
         Artifact::Patch {
+            title: "sample patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
         }
@@ -504,6 +505,7 @@ mod tests {
             .update_artifact(
                 &missing,
                 Artifact::Patch {
+                    title: "noop patch".to_string(),
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
                 },

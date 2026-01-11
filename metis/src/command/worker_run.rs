@@ -277,9 +277,11 @@ async fn submit_job_status(
     let patch = fs::read_to_string(&patch_file)
         .with_context(|| format!("failed to read patch output at '{}'", patch_file.display()))?;
 
+    let patch_title = derive_patch_title(&last_message, job);
     client
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
+                title: patch_title,
                 diff: patch.clone(),
                 description: last_message.clone(),
             },
@@ -304,6 +306,15 @@ fn resolve_output_paths(dest: &Path) -> (PathBuf, PathBuf) {
     let last_message_file = output_dir.join(constants::OUTPUT_TXT_FILE);
     let patch_file = output_dir.join(constants::CHANGES_PATCH_FILE);
     (last_message_file, patch_file)
+}
+
+fn derive_patch_title(last_message: &str, job: &MetisId) -> String {
+    last_message
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .unwrap_or_else(|| format!("Patch for job {job}"))
 }
 
 fn create_patch_file(dest: &Path) -> Result<()> {
