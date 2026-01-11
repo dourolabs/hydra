@@ -1,85 +1,119 @@
 use crate::{
     AppState,
-    routes::jobs::{ApiError, JobIdPath},
+    routes::{artifacts::ArtifactIdPath, jobs::ApiError},
+    store::StoreError,
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
 use chrono::Utc;
-use metis_common::artifacts::Artifact;
 use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
 use tracing::{error, info};
 
-pub async fn set_job_status(
+pub async fn set_artifact_status(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    ArtifactIdPath(artifact_id): ArtifactIdPath,
     Json(status): Json<JobStatusUpdate>,
 ) -> Result<Json<SetJobStatusResponse>, ApiError> {
-    info!(job_id = %job_id, status = ?status, "set_job_status invoked");
+    info!(
+        artifact_id = %artifact_id,
+        status = ?status,
+        "set_artifact_status invoked"
+    );
 
     {
         let mut store = state.store.write().await;
 
-        match store.get_artifact(&job_id).await {
-            Ok(Artifact::Session { .. }) => {}
-            Ok(other) => {
-                error!(job_id = %job_id, artifact = ?other, "artifact for job status update was not a session");
-                return Err(ApiError::not_found(format!(
-                    "Job '{job_id}' not found in store"
-                )));
-            }
-            Err(err) => {
-                error!(error = %err, job_id = %job_id, "failed to get artifact for status update");
-                return Err(ApiError::not_found(format!(
-                    "Job '{job_id}' not found in store"
-                )));
-            }
+        if let Err(err) = store.get_artifact(&artifact_id).await {
+            error!(
+                error = %err,
+                artifact_id = %artifact_id,
+                "failed to get artifact for status update"
+            );
+            return Err(ApiError::not_found(format!(
+                "Artifact '{artifact_id}' not found in store"
+            )));
         };
 
         let result = status.to_result();
 
         store
-            .mark_task_complete(&job_id, result, Utc::now())
+            .mark_task_complete(&artifact_id, result, Utc::now())
             .await
-            .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to update task status");
-                ApiError::internal(anyhow!("Failed to update task status: {err}"))
+            .map_err(|err| match err {
+                StoreError::TaskNotFound(_) | StoreError::ArtifactNotFound(_) => {
+                    error!(
+                        error = %err,
+                        artifact_id = %artifact_id,
+                        "artifact missing while updating status"
+                    );
+                    ApiError::not_found(format!("Artifact '{artifact_id}' not found in store"))
+                }
+                StoreError::InvalidStatusTransition => {
+                    error!(
+                        error = %err,
+                        artifact_id = %artifact_id,
+                        "invalid status transition for artifact"
+                    );
+                    ApiError::bad_request("artifact status cannot transition from current state")
+                }
+                other => {
+                    error!(
+                        error = %other,
+                        artifact_id = %artifact_id,
+                        "failed to update task status"
+                    );
+                    ApiError::internal(anyhow!("Failed to update task status: {other}"))
+                }
             })?;
     }
 
-    info!(job_id = %job_id, "job status stored successfully");
+    info!(
+        artifact_id = %artifact_id,
+        "artifact status stored successfully"
+    );
     Ok(Json(SetJobStatusResponse {
-        job_id,
+        artifact_id,
         status: status.as_status(),
     }))
 }
 
-pub async fn get_job_status(
+pub async fn get_artifact_status(
     State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
+    ArtifactIdPath(artifact_id): ArtifactIdPath,
 ) -> Result<Json<GetJobStatusResponse>, ApiError> {
-    info!(job_id = %job_id, "get_job_status invoked");
+    info!(artifact_id = %artifact_id, "get_artifact_status invoked");
 
     let store = state.store.read().await;
-    match store.get_artifact(&job_id).await {
-        Ok(Artifact::Session { .. }) => {}
-        Ok(other) => {
-            error!(job_id = %job_id, artifact = ?other, "artifact for job status was not a session");
-            return Err(ApiError::not_found(format!("Job '{job_id}' not found")));
-        }
-        Err(err) => {
-            error!(error = %err, job_id = %job_id, "failed to load artifact for job status");
-            return Err(ApiError::not_found(format!("Job '{job_id}' not found")));
-        }
-    };
-
-    let status_log = store.get_status_log(&job_id).await.map_err(|err| {
+    if let Err(err) = store.get_artifact(&artifact_id).await {
         error!(
             error = %err,
-            job_id = %job_id,
-            "failed to load status log for job status"
+            artifact_id = %artifact_id,
+            "failed to load artifact for status"
         );
-        ApiError::internal(anyhow!("Failed to load status log: {err}"))
-    })?;
+        return Err(ApiError::not_found(format!(
+            "Artifact '{artifact_id}' not found"
+        )));
+    };
 
-    Ok(Json(GetJobStatusResponse { job_id, status_log }))
+    let status_log = store
+        .get_status_log(&artifact_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::TaskNotFound(_) | StoreError::ArtifactNotFound(_) => {
+                ApiError::not_found(format!("Artifact '{artifact_id}' not found"))
+            }
+            other => {
+                error!(
+                    error = %other,
+                    artifact_id = %artifact_id,
+                    "failed to load status log for artifact"
+                );
+                ApiError::internal(anyhow!("Failed to load status log: {other}"))
+            }
+        })?;
+
+    Ok(Json(GetJobStatusResponse {
+        artifact_id,
+        status_log,
+    }))
 }

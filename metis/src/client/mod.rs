@@ -36,13 +36,13 @@ pub trait MetisClientInterface: Send + Sync {
     async fn list_jobs(&self) -> Result<ListJobsResponse>;
     async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
-    async fn set_job_status(
+    async fn set_artifact_status(
         &self,
-        job_id: &MetisId,
+        artifact_id: &MetisId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse>;
     #[allow(dead_code)]
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse>;
+    async fn get_artifact_status(&self, artifact_id: &MetisId) -> Result<GetJobStatusResponse>;
     async fn create_artifact(
         &self,
         request: &UpsertArtifactRequest,
@@ -181,7 +181,7 @@ impl MetisClient {
             return Ok(None);
         };
 
-        let status_log = match self.get_job_status(&id).await {
+        let status_log = match self.get_artifact_status(&id).await {
             Ok(response) => response.status_log,
             Err(_) => TaskStatusLog::default(),
         };
@@ -279,18 +279,18 @@ impl MetisClient {
         }
     }
 
-    /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
-    pub async fn set_job_status(
+    /// Call `POST /v1/artifacts/:artifact_id/status` to update the recorded agent status.
+    pub async fn set_artifact_status(
         &self,
-        job_id: &MetisId,
+        artifact_id: &MetisId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/status");
+        let path = format!("/v1/artifacts/{artifact_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .http
@@ -298,38 +298,38 @@ impl MetisClient {
             .json(status)
             .send()
             .await
-            .context("failed to submit set job status request")?
+            .context("failed to submit set artifact status request")?
             .error_for_status()
-            .context("metis-server returned an error while setting job status")?;
+            .context("metis-server returned an error while setting artifact status")?;
 
         response
             .json::<SetJobStatusResponse>()
             .await
-            .context("failed to decode set job status response")
+            .context("failed to decode set artifact status response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/status` to retrieve the status log for a job.
-    pub async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+    /// Call `GET /v1/artifacts/:artifact_id/status` to retrieve the status log for an artifact.
+    pub async fn get_artifact_status(&self, artifact_id: &MetisId) -> Result<GetJobStatusResponse> {
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/status");
+        let path = format!("/v1/artifacts/{artifact_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .http
             .get(url)
             .send()
             .await
-            .context("failed to request job status")?
+            .context("failed to request artifact status")?
             .error_for_status()
-            .context("metis-server returned an error while fetching job status")?;
+            .context("metis-server returned an error while fetching artifact status")?;
 
         response
             .json::<GetJobStatusResponse>()
             .await
-            .context("failed to decode job status response")
+            .context("failed to decode artifact status response")
     }
 
     /// Call `POST /v1/artifacts` to create a new artifact.
@@ -572,16 +572,16 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
-    async fn set_job_status(
+    async fn set_artifact_status(
         &self,
-        job_id: &MetisId,
+        artifact_id: &MetisId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
-        MetisClient::set_job_status(self, job_id, status).await
+        MetisClient::set_artifact_status(self, artifact_id, status).await
     }
 
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        MetisClient::get_job_status(self, job_id).await
+    async fn get_artifact_status(&self, artifact_id: &MetisId) -> Result<GetJobStatusResponse> {
+        MetisClient::get_artifact_status(self, artifact_id).await
     }
 
     async fn create_artifact(

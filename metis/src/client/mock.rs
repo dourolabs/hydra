@@ -128,16 +128,20 @@ impl MetisClientInterface for MockMetisClient {
         Ok(Box::pin(stream))
     }
 
-    async fn set_job_status(
+    async fn set_artifact_status(
         &self,
-        _job_id: &MetisId,
+        _artifact_id: &MetisId,
         _status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
-        Err(anyhow!("set_job_status not implemented in MockMetisClient"))
+        Err(anyhow!(
+            "set_artifact_status not implemented in MockMetisClient"
+        ))
     }
 
-    async fn get_job_status(&self, _job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        Err(anyhow!("get_job_status not implemented in MockMetisClient"))
+    async fn get_artifact_status(&self, _artifact_id: &MetisId) -> Result<GetJobStatusResponse> {
+        Err(anyhow!(
+            "get_artifact_status not implemented in MockMetisClient"
+        ))
     }
 
     async fn create_artifact(
