@@ -16,7 +16,7 @@ use crate::state::ServiceState;
 use crate::store::{MemoryStore, Store};
 use axum::{
     Json, Router,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
 use serde_json::json;
@@ -55,11 +55,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             "/v1/artifacts/:artifact_id",
             get(routes::artifacts::get_artifact).put(routes::artifacts::update_artifact),
         )
-        .route("/v1/jobs/", get(routes::jobs::list_jobs))
-        .route(
-            "/v1/jobs/:job_id",
-            get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
-        )
+        .route("/v1/jobs/:job_id", delete(routes::jobs::kill::kill_job))
         .route("/v1/jobs", post(routes::jobs::create_job))
         .route(
             "/v1/jobs/:job_id/logs",
@@ -151,7 +147,7 @@ mod tests {
             test_state_with_engine,
         },
     };
-    use chrono::{Duration, Utc};
+    use chrono::Utc;
     use metis_common::{
         artifacts::{
             Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType,
@@ -160,7 +156,7 @@ mod tests {
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
-        jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
+        jobs::{Bundle, CreateJobResponse, WorkerContext},
         task_status::Event,
     };
     use serde_json::json;
@@ -531,210 +527,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/", server.base_url()))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let body: ListJobsResponse = response.json().await?;
-        assert!(body.jobs.is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
-        let engine = Arc::new(MockJobEngine::new());
-        let state = test_state_with_engine(engine);
-        let default_image = default_image();
-        let store = state.store.clone();
-        let server = spawn_test_server_with_state(state).await?;
-
-        let oldest_id = "oldest".to_string();
-        let middle_id = "middle".to_string();
-        let newest_id = "newest".to_string();
-        let now = Utc::now();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_artifact_with_id(
-                    oldest_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    now - Duration::seconds(30),
-                )
-                .await?;
-            store_write
-                .add_artifact_with_id(
-                    middle_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    now - Duration::seconds(20),
-                )
-                .await?;
-            store_write
-                .add_artifact_with_id(
-                    newest_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    now - Duration::seconds(10),
-                )
-                .await?;
-            store_write
-                .mark_task_running(&middle_id, now - Duration::seconds(15))
-                .await?;
-            store_write
-                .mark_task_running(&newest_id, now - Duration::seconds(5))
-                .await?;
-        }
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/", server.base_url()))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let body: ListJobsResponse = response.json().await?;
-        let ids: Vec<String> = body.jobs.into_iter().map(|job| job.id).collect();
-        assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = default_image();
-        let store = state.store.clone();
-        let server = spawn_test_server_with_state(state).await?;
-        let job_id = "job-123".to_string();
-        let now = Utc::now();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_artifact_with_id(
-                    job_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    now - Duration::seconds(20),
-                )
-                .await?;
-            store_write
-                .mark_task_running(&job_id, now - Duration::seconds(10))
-                .await?;
-        }
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
-        assert_eq!(summary.id, job_id);
-        assert_eq!(summary.status_log.current_status(), Status::Running);
-        assert_eq!(
-            summary.status_log.start_time(),
-            Some(now - Duration::seconds(10))
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/%20", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_trims_job_id_path() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = default_image();
-        let store = state.store.clone();
-        let server = spawn_test_server_with_state(state).await?;
-        let job_id = "trim-job".to_string();
-        let now = Utc::now();
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_artifact_with_id(
-                    job_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    now - Duration::seconds(30),
-                )
-                .await?;
-            store_write
-                .mark_task_running(&job_id, now - Duration::seconds(10))
-                .await?;
-        }
-
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/%20{}%20", server.base_url(), job_id))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
-        assert_eq!(summary.id, job_id);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
-        let server = spawn_test_server().await?;
-        let client = test_client();
-        let response = client
-            .get(format!("{}/v1/jobs/missing", server.base_url()))
-            .send()
-            .await?;
-
-        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-        let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job 'missing' not found" }));
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn get_job_logs_rejects_empty_job_id() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
@@ -1087,13 +879,13 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/with-output", server.base_url()))
+            .get(format!("{}/v1/jobs/{}/status", server.base_url(), job_id))
             .send()
             .await?;
 
         assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
-        let emitted_ids = summary
+        let status: GetJobStatusResponse = response.json().await?;
+        let emitted_ids = status
             .status_log
             .events
             .iter()

@@ -1,20 +1,16 @@
-use crate::{
-    AppState,
-    state::ResolvedBundle,
-    store::{Store, StoreError, TaskError, TaskStatusLog},
-};
+use crate::{AppState, state::ResolvedBundle, store::TaskStatusLog};
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, State},
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use metis_common::{
     MetisId,
     artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+    jobs::{CreateJobRequest, CreateJobResponse},
 };
 use serde_json::json;
 use tracing::{error, info};
@@ -123,83 +119,6 @@ fn resolve_image(
     Ok(trimmed.to_string())
 }
 
-pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
-    info!("list_jobs invoked");
-    let config = state.config;
-    let namespace = config.metis.namespace.clone();
-
-    let store_read = state.store.read().await;
-    let store = store_read.as_ref();
-
-    // Get all tasks with all statuses
-    let task_ids = store.list_tasks().await.map_err(|err| {
-        error!(error = %err, "failed to list tasks");
-        ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
-    })?;
-
-    // Collect all summaries with their reference times for sorting
-    let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();
-    for task_id in task_ids {
-        match job_summary_with_time(&task_id, store).await {
-            Ok(summary) => summaries_with_times.push(summary),
-            Err(err) => {
-                error!(
-                    job_id = %task_id,
-                    error = %err,
-                    "failed to build summary while listing jobs"
-                );
-                continue;
-            }
-        }
-    }
-
-    // Sort by reference time, most recent first
-    summaries_with_times.sort_by(|a, b| {
-        let time_a = a.1;
-        let time_b = b.1;
-        time_b.cmp(&time_a)
-    });
-
-    let summaries: Vec<JobSummary> = summaries_with_times
-        .into_iter()
-        .map(|(summary, _)| summary)
-        .collect();
-
-    info!(
-        namespace = %namespace,
-        job_count = summaries.len(),
-        "list_jobs completed successfully"
-    );
-
-    Ok(Json(ListJobsResponse { jobs: summaries }))
-}
-
-pub async fn get_job(
-    State(state): State<AppState>,
-    JobIdPath(job_id): JobIdPath,
-) -> Result<Json<JobSummary>, ApiError> {
-    info!(job_id = %job_id, "get_job invoked");
-
-    let store_read = state.store.read().await;
-    let store = store_read.as_ref();
-
-    let (summary, _) = job_summary_with_time(&job_id, store)
-        .await
-        .map_err(|err| match err {
-            StoreError::TaskNotFound(_) => {
-                error!(job_id = %job_id, "job not found");
-                ApiError::not_found(format!("job '{job_id}' not found"))
-            }
-            err => {
-                error!(job_id = %job_id, error = %err, "failed to load job summary");
-                ApiError::internal(anyhow::anyhow!("Failed to load job '{job_id}': {err}"))
-            }
-        })?;
-
-    info!(job_id = %summary.id, "get_job completed successfully");
-    Ok(Json(summary))
-}
-
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -265,80 +184,5 @@ where
         }
 
         Ok(Self(trimmed.to_string()))
-    }
-}
-
-async fn job_summary_with_time(
-    job_id: &MetisId,
-    store: &dyn Store,
-) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
-    let status_log = store.get_status_log(job_id).await?;
-    let (program, params) = match store.get_artifact(job_id).await? {
-        Artifact::Session {
-            program, params, ..
-        } => (program, params),
-        other => {
-            return Err(StoreError::Internal(format!(
-                "artifact for job '{job_id}' was not a session: {other:?}"
-            )));
-        }
-    };
-    let notes = job_notes_from_store(job_id, store).await;
-
-    let reference_time = status_log.start_time().or(status_log.creation_time());
-
-    Ok((
-        JobSummary {
-            id: job_id.clone(),
-            notes,
-            program,
-            params,
-            status_log,
-        },
-        reference_time,
-    ))
-}
-
-async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
-    let status_log = store.get_status_log(job_id).await.ok()?;
-    if let Err(err) = status_log.result()? {
-        return format_error_note(&err);
-    }
-
-    let artifact_ids = status_log.emitted_artifacts()?;
-    for artifact_id in artifact_ids {
-        if let Ok(artifact) = store.get_artifact(&artifact_id).await {
-            if let Some(note) = note_from_artifact(&artifact) {
-                return Some(note);
-            }
-        }
-    }
-
-    None
-}
-
-pub(crate) fn sanitize_note(note: &str) -> Option<String> {
-    let collapsed = note.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        None
-    } else {
-        Some(collapsed)
-    }
-}
-
-fn format_error_note(error: &TaskError) -> Option<String> {
-    match error {
-        TaskError::JobEngineError { reason } => {
-            sanitize_note(reason).map(|msg| format!("error: {msg}"))
-        }
-    }
-}
-
-fn note_from_artifact(artifact: &Artifact) -> Option<String> {
-    match artifact {
-        Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
-            sanitize_note(description)
-        }
-        Artifact::Session { program, .. } => sanitize_note(program),
     }
 }
