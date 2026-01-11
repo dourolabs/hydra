@@ -201,7 +201,7 @@ mod tests {
     use chrono::Duration;
     use metis_common::{
         artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
-        jobs::Bundle,
+        sessions::Bundle,
     };
     use std::collections::{HashMap, HashSet};
 

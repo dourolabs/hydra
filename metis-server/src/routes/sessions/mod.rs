@@ -1,29 +1,26 @@
-use crate::{AppState, state::ResolvedBundle};
+use crate::{AppState, routes::ApiError, state::ResolvedBundle};
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, State},
-    http::{StatusCode, request::Parts},
-    response::{IntoResponse, Response},
+    http::request::Parts,
 };
 use chrono::Utc;
 use metis_common::{
     MetisId,
     artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
-    jobs::{CreateJobRequest, CreateJobResponse},
+    sessions::{CreateSessionRequest, CreateSessionResponse},
 };
-use serde_json::json;
 use tracing::{error, info};
 
 pub mod kill;
 pub mod logs;
-pub mod status;
 
-pub async fn create_job(
+pub async fn create_session(
     State(state): State<AppState>,
-    Json(payload): Json<CreateJobRequest>,
-) -> Result<Json<CreateJobResponse>, ApiError> {
-    info!("create_job invoked");
+    Json(payload): Json<CreateSessionRequest>,
+) -> Result<Json<CreateSessionResponse>, ApiError> {
+    info!("create_session invoked");
     let fallback_image = state.config.metis.worker_image.clone();
 
     let parent_ids: Vec<MetisId> = payload
@@ -32,7 +29,7 @@ pub async fn create_job(
         .map(|id| id.trim().to_string())
         .collect();
     if parent_ids.iter().any(|id| id.is_empty()) {
-        error!("create_job received an empty parent_id");
+        error!("create_session received an empty parent_id");
         return Err(ApiError::bad_request("parent_ids must not be empty"));
     }
     let parent_dependencies: Vec<IssueDependency> = parent_ids
@@ -43,8 +40,8 @@ pub async fn create_job(
         })
         .collect();
 
-    // Generate a unique ID for the job
-    let job_id: MetisId = uuid::Uuid::new_v4().hyphenated().to_string();
+    // Generate a unique ID for the session
+    let session_id: MetisId = uuid::Uuid::new_v4().hyphenated().to_string();
 
     let ResolvedBundle {
         bundle: context,
@@ -55,7 +52,7 @@ pub async fn create_job(
     if let Some(token) = github_token {
         env_vars.entry(ENV_GH_TOKEN.to_string()).or_insert(token);
     }
-    env_vars.insert(ENV_METIS_ID.to_string(), job_id.clone());
+    env_vars.insert(ENV_METIS_ID.to_string(), session_id.clone());
     let image = resolve_image(payload.image, default_image, &fallback_image)?;
 
     // Store the task with context (status will be Pending)
@@ -70,21 +67,21 @@ pub async fn create_job(
             dependencies: parent_dependencies,
         };
         store
-            .add_artifact_with_id(job_id.clone(), artifact, Utc::now())
+            .add_artifact_with_id(session_id.clone(), artifact, Utc::now())
             .await
             .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to store task");
+                error!(error = %err, session_id = %session_id, "failed to store task");
                 ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
             })?;
     }
 
     info!(
-        job_id = %job_id,
+        session_id = %session_id,
         parent_count = parent_ids.len(),
         "task stored, will be started by background thread"
     );
 
-    Ok(Json(CreateJobResponse { job_id }))
+    Ok(Json(CreateSessionResponse { session_id }))
 }
 
 fn resolve_image(
@@ -117,68 +114,24 @@ fn resolve_image(
     Ok(trimmed.to_string())
 }
 
-#[derive(Debug)]
-pub struct ApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl ApiError {
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: message.into(),
-        }
-    }
-
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::CONFLICT,
-            message: message.into(),
-        }
-    }
-
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            message: message.into(),
-        }
-    }
-
-    pub fn internal(error: impl Into<anyhow::Error>) -> Self {
-        let err = error.into();
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: err.to_string(),
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let body = Json(json!({ "error": self.message }));
-        (self.status, body).into_response()
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct JobIdPath(pub MetisId);
+pub struct SessionIdPath(pub MetisId);
 
 #[async_trait]
-impl<S> FromRequestParts<S> for JobIdPath
+impl<S> FromRequestParts<S> for SessionIdPath
 where
     S: Send + Sync,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(job_id) = Path::<MetisId>::from_request_parts(parts, state)
+        let Path(session_id) = Path::<MetisId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        let trimmed = job_id.trim();
+        let trimmed = session_id.trim();
         if trimmed.is_empty() {
-            return Err(ApiError::bad_request("job_id must not be empty"));
+            return Err(ApiError::bad_request("session_id must not be empty"));
         }
 
         Ok(Self(trimmed.to_string()))

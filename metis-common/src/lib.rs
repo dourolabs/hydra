@@ -1,11 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 
-/// Identifier used for jobs, tasks, and artifacts within Metis.
+/// Identifier used for sessions, tasks, and artifacts within Metis.
 pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::{MetisId, jobs::Bundle};
+    use crate::{MetisId, sessions::Bundle};
     use serde::{Deserialize, Serialize};
     use std::{collections::HashMap, fmt, str::FromStr};
 
@@ -326,14 +326,14 @@ pub mod task_status {
     }
 }
 
-pub mod jobs {
+pub mod sessions {
     use crate::MetisId;
     use crate::task_status::TaskStatusLog;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct CreateJobRequest {
+    pub struct CreateSessionRequest {
         pub program: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
@@ -357,7 +357,7 @@ pub mod jobs {
             archive_base64: String,
         },
         GitRepository {
-            /// Remote Git repository URL that should be cloned for the job context.
+            /// Remote Git repository URL that should be cloned for the session context.
             url: String,
             /// Specific git revision (branch, tag, or commit) to checkout after cloning.
             rev: String,
@@ -414,17 +414,17 @@ pub mod jobs {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct CreateJobResponse {
-        pub job_id: MetisId,
+    pub struct CreateSessionResponse {
+        pub session_id: MetisId,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct ListJobsResponse {
-        pub jobs: Vec<JobSummary>,
+    pub struct ListSessionsResponse {
+        pub sessions: Vec<SessionSummary>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct JobSummary {
+    pub struct SessionSummary {
         pub id: MetisId,
         #[serde(default)]
         pub notes: Option<String>,
@@ -435,8 +435,8 @@ pub mod jobs {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct KillJobResponse {
-        pub job_id: MetisId,
+    pub struct KillSessionResponse {
+        pub session_id: MetisId,
         pub status: String,
     }
 }
@@ -453,7 +453,7 @@ pub mod logs {
     }
 }
 
-pub mod job_status {
+pub mod artifact_status {
     use crate::{
         MetisId,
         task_status::{Status, TaskError, TaskStatusLog},
@@ -462,16 +462,16 @@ pub mod job_status {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "status", rename_all = "snake_case")]
-    pub enum JobStatusUpdate {
+    pub enum ArtifactStatusUpdate {
         Complete,
         Failed { reason: String },
     }
 
-    impl JobStatusUpdate {
+    impl ArtifactStatusUpdate {
         pub fn to_result(&self) -> Result<(), TaskError> {
             match self {
-                JobStatusUpdate::Complete => Ok(()),
-                JobStatusUpdate::Failed { reason } => Err(TaskError::JobEngineError {
+                ArtifactStatusUpdate::Complete => Ok(()),
+                ArtifactStatusUpdate::Failed { reason } => Err(TaskError::JobEngineError {
                     reason: reason.clone(),
                 }),
             }
@@ -479,20 +479,20 @@ pub mod job_status {
 
         pub fn as_status(&self) -> Status {
             match self {
-                JobStatusUpdate::Complete => Status::Complete,
-                JobStatusUpdate::Failed { .. } => Status::Failed,
+                ArtifactStatusUpdate::Complete => Status::Complete,
+                ArtifactStatusUpdate::Failed { .. } => Status::Failed,
             }
         }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct SetJobStatusResponse {
+    pub struct SetArtifactStatusResponse {
         pub artifact_id: MetisId,
         pub status: Status,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct GetJobStatusResponse {
+    pub struct GetArtifactStatusResponse {
         pub artifact_id: MetisId,
         pub status_log: TaskStatusLog,
     }

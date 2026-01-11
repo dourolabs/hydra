@@ -1,19 +1,21 @@
 use crate::{
     AppState,
-    routes::{artifacts::ArtifactIdPath, jobs::ApiError},
+    routes::{ApiError, artifacts::ArtifactIdPath},
     store::{Event, StoreError, TaskError},
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
 use chrono::Utc;
-use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
+use metis_common::artifact_status::{
+    ArtifactStatusUpdate, GetArtifactStatusResponse, SetArtifactStatusResponse,
+};
 use tracing::{error, info};
 
 pub async fn set_artifact_status(
     State(state): State<AppState>,
     ArtifactIdPath(artifact_id): ArtifactIdPath,
-    Json(status): Json<JobStatusUpdate>,
-) -> Result<Json<SetJobStatusResponse>, ApiError> {
+    Json(status): Json<ArtifactStatusUpdate>,
+) -> Result<Json<SetArtifactStatusResponse>, ApiError> {
     info!(
         artifact_id = %artifact_id,
         status = ?status,
@@ -35,8 +37,8 @@ pub async fn set_artifact_status(
         };
 
         let event = match &status {
-            JobStatusUpdate::Complete => Event::Completed { at: Utc::now() },
-            JobStatusUpdate::Failed { reason } => Event::Failed {
+            ArtifactStatusUpdate::Complete => Event::Completed { at: Utc::now() },
+            ArtifactStatusUpdate::Failed { reason } => Event::Failed {
                 at: Utc::now(),
                 error: TaskError::JobEngineError {
                     reason: reason.clone(),
@@ -79,7 +81,7 @@ pub async fn set_artifact_status(
         artifact_id = %artifact_id,
         "artifact status stored successfully"
     );
-    Ok(Json(SetJobStatusResponse {
+    Ok(Json(SetArtifactStatusResponse {
         artifact_id,
         status: status.as_status(),
     }))
@@ -88,7 +90,7 @@ pub async fn set_artifact_status(
 pub async fn get_artifact_status(
     State(state): State<AppState>,
     ArtifactIdPath(artifact_id): ArtifactIdPath,
-) -> Result<Json<GetJobStatusResponse>, ApiError> {
+) -> Result<Json<GetArtifactStatusResponse>, ApiError> {
     info!(artifact_id = %artifact_id, "get_artifact_status invoked");
 
     let store = state.store.read().await;
@@ -120,7 +122,7 @@ pub async fn get_artifact_status(
             }
         })?;
 
-    Ok(Json(GetJobStatusResponse {
+    Ok(Json(GetArtifactStatusResponse {
         artifact_id,
         status_log,
     }))

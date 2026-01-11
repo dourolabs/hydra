@@ -1,4 +1,4 @@
-use crate::{AppState, routes::jobs::ApiError, store::StoreError};
+use crate::{AppState, routes::ApiError, store::StoreError};
 use anyhow::anyhow;
 use axum::{
     Json, async_trait,
@@ -221,12 +221,12 @@ fn artifact_matches(
                         .iter()
                         .any(|dependency| dependency.issue_id.to_lowercase().contains(term))
                     || match context {
-                        metis_common::jobs::Bundle::GitRepository { url, .. } => {
+                        metis_common::sessions::Bundle::GitRepository { url, .. } => {
                             url.to_lowercase().contains(term)
                         }
-                        metis_common::jobs::Bundle::GitBundle { .. } => false,
-                        metis_common::jobs::Bundle::TarGz { .. } => false,
-                        metis_common::jobs::Bundle::None => false,
+                        metis_common::sessions::Bundle::GitBundle { .. } => false,
+                        metis_common::sessions::Bundle::TarGz { .. } => false,
+                        metis_common::sessions::Bundle::None => false,
                     }
             }
         };
