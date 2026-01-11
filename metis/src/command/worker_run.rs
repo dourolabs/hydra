@@ -9,7 +9,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::artifacts::{Artifact, UpsertArtifactRequest};
+use metis_common::artifacts::{
+    Artifact, IssueDependency, IssueDependencyType, UpsertArtifactRequest,
+};
 use metis_common::job_status::JobStatusUpdate;
 use metis_common::MetisId;
 use metis_common::{
@@ -277,16 +279,18 @@ async fn submit_job_status(
     let patch = fs::read_to_string(&patch_file)
         .with_context(|| format!("failed to read patch output at '{}'", patch_file.display()))?;
 
+    let dependencies = vec![IssueDependency {
+        dependency_type: IssueDependencyType::CreatedBy,
+        issue_id: job.to_string(),
+    }];
+
     client
         .create_artifact(&UpsertArtifactRequest {
-            artifact: crate::client::attach_created_by_dependency(
-                Artifact::Patch {
-                    diff: patch.clone(),
-                    description: last_message.clone(),
-                    dependencies: vec![],
-                },
-                Some(job),
-            ),
+            artifact: Artifact::Patch {
+                diff: patch.clone(),
+                description: last_message.clone(),
+                dependencies,
+            },
         })
         .await?;
     println!("Updating status for job '{job}' via metis-server…");

@@ -4,8 +4,8 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactRecord, IssueDependency, IssueDependencyType, ListArtifactsResponse,
-        SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
+        UpsertArtifactResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
@@ -498,50 +498,6 @@ impl MetisClient {
     }
 }
 
-pub(crate) fn attach_created_by_dependency(
-    artifact: Artifact,
-    job_id: Option<&MetisId>,
-) -> Artifact {
-    match (artifact, job_id) {
-        (
-            Artifact::Patch {
-                diff,
-                description,
-                mut dependencies,
-            },
-            Some(job_id),
-        ) => {
-            let job_id = job_id.trim();
-            if job_id.is_empty() {
-                return Artifact::Patch {
-                    diff,
-                    description,
-                    dependencies,
-                };
-            }
-
-            let has_created_by = dependencies.iter().any(|dependency| {
-                dependency.dependency_type == IssueDependencyType::CreatedBy
-                    && dependency.issue_id == job_id
-            });
-
-            if !has_created_by {
-                dependencies.push(IssueDependency {
-                    dependency_type: IssueDependencyType::CreatedBy,
-                    issue_id: job_id.to_string(),
-                });
-            }
-
-            Artifact::Patch {
-                diff,
-                description,
-                dependencies,
-            }
-        }
-        (artifact, _) => artifact,
-    }
-}
-
 fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
     let mut event_name = None;
     let mut data_lines = Vec::new();
@@ -620,61 +576,6 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse> {
         MetisClient::list_artifacts(self, query).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn attach_created_by_dependency_adds_created_by_link() {
-        let artifact = Artifact::Patch {
-            diff: "diff".to_string(),
-            description: "desc".to_string(),
-            dependencies: vec![],
-        };
-
-        let job_id = "job-1".to_string();
-        let updated = attach_created_by_dependency(artifact, Some(&job_id));
-        match updated {
-            Artifact::Patch { dependencies, .. } => assert_eq!(
-                dependencies,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::CreatedBy,
-                    issue_id: "job-1".to_string(),
-                }]
-            ),
-            other => panic!("expected patch artifact, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn attach_created_by_dependency_does_not_duplicate_link() {
-        let artifact = Artifact::Patch {
-            diff: "diff".to_string(),
-            description: "desc".to_string(),
-            dependencies: vec![IssueDependency {
-                dependency_type: IssueDependencyType::CreatedBy,
-                issue_id: "job-1".to_string(),
-            }],
-        };
-
-        let job_id = "job-1".to_string();
-        let updated = attach_created_by_dependency(artifact, Some(&job_id));
-        match updated {
-            Artifact::Patch { dependencies, .. } => {
-                assert_eq!(dependencies.len(), 1);
-                assert_eq!(
-                    dependencies[0],
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::CreatedBy,
-                        issue_id: "job-1".to_string(),
-                    }
-                );
-            }
-            other => panic!("expected patch artifact, got {other:?}"),
-        }
     }
 }
 
