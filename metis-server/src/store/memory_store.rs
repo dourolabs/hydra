@@ -213,6 +213,7 @@ mod tests {
             image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
             dependencies,
+            status: Status::Pending,
         }
     }
 

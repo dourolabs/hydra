@@ -10,6 +10,7 @@ use metis_common::{
     artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     sessions::{CreateSessionRequest, CreateSessionResponse},
+    task_status::Status,
 };
 use tracing::{error, info};
 
@@ -65,6 +66,7 @@ pub async fn create_session(
             image,
             env_vars,
             dependencies: parent_dependencies,
+            status: Status::Pending,
         };
         store
             .add_artifact_with_id(session_id.clone(), artifact, Utc::now())

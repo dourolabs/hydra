@@ -180,6 +180,7 @@ mod tests {
             image,
             env_vars,
             dependencies: vec![],
+            status: Status::Pending,
         }
     }
 
@@ -260,6 +261,7 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                         dependencies: vec![],
+                        status: Status::Pending,
                     },
                     Utc::now(),
                 )
@@ -988,6 +990,7 @@ mod tests {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: "parent-job".to_string(),
                         }],
+                        status: Status::Pending,
                     },
                     Utc::now(),
                 )

@@ -5,7 +5,7 @@ pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::{MetisId, sessions::Bundle};
+    use crate::{MetisId, sessions::Bundle, task_status::Status};
     use serde::{Deserialize, Serialize};
     use std::{collections::HashMap, fmt, str::FromStr};
 
@@ -166,7 +166,13 @@ pub mod artifacts {
             env_vars: HashMap<String, String>,
             #[serde(default)]
             dependencies: Vec<IssueDependency>,
+            #[serde(default = "default_session_status")]
+            status: Status,
         },
+    }
+
+    const fn default_session_status() -> Status {
+        Status::Pending
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
