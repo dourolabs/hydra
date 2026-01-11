@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     job_engine::JobStatus,
-    store::{Status, TaskError},
+    store::{Event, Status, TaskError},
 };
 use chrono::Utc;
 use metis_common::{MetisId, artifacts::ArtifactKind};
@@ -110,12 +110,14 @@ pub async fn monitor_running_jobs(state: AppState) {
                             if duration_since_completion.num_seconds() >= 60 {
                                 let failure_reason = "Job completed without submitting results (timeout after 1 minute)".to_string();
                                 match store
-                                    .mark_task_complete(
+                                    .append_status_event(
                                         &metis_id,
-                                        Err(TaskError::JobEngineError {
-                                            reason: failure_reason,
-                                        }),
-                                        completion_time,
+                                        Event::Failed {
+                                            at: completion_time,
+                                            error: TaskError::JobEngineError {
+                                                reason: failure_reason,
+                                            },
+                                        },
                                     )
                                     .await
                                 {
@@ -136,12 +138,14 @@ pub async fn monitor_running_jobs(state: AppState) {
                                 "Job failed for an undetermined reason".to_string()
                             });
                             match store
-                                .mark_task_complete(
+                                .append_status_event(
                                     &metis_id,
-                                    Err(TaskError::JobEngineError {
-                                        reason: failure_reason,
-                                    }),
-                                    end_time,
+                                    Event::Failed {
+                                        at: end_time,
+                                        error: TaskError::JobEngineError {
+                                            reason: failure_reason,
+                                        },
+                                    },
                                 )
                                 .await
                             {
@@ -166,12 +170,14 @@ pub async fn monitor_running_jobs(state: AppState) {
                     let mut store = state.store.write().await;
                     let failure_reason = "Job not found in job engine".to_string();
                     if let Err(update_err) = store
-                        .mark_task_complete(
+                        .append_status_event(
                             &metis_id,
-                            Err(TaskError::JobEngineError {
-                                reason: failure_reason,
-                            }),
-                            Utc::now(),
+                            Event::Failed {
+                                at: Utc::now(),
+                                error: TaskError::JobEngineError {
+                                    reason: failure_reason,
+                                },
+                            },
                         )
                         .await
                     {

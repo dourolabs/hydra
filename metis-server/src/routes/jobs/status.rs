@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     routes::{artifacts::ArtifactIdPath, jobs::ApiError},
-    store::StoreError,
+    store::{Event, StoreError, TaskError},
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
@@ -34,10 +34,18 @@ pub async fn set_artifact_status(
             )));
         };
 
-        let result = status.to_result();
+        let event = match &status {
+            JobStatusUpdate::Complete => Event::Completed { at: Utc::now() },
+            JobStatusUpdate::Failed { reason } => Event::Failed {
+                at: Utc::now(),
+                error: TaskError::JobEngineError {
+                    reason: reason.clone(),
+                },
+            },
+        };
 
         store
-            .mark_task_complete(&artifact_id, result, Utc::now())
+            .append_status_event(&artifact_id, event)
             .await
             .map_err(|err| match err {
                 StoreError::TaskNotFound(_) | StoreError::ArtifactNotFound(_) => {
