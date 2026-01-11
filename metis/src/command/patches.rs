@@ -9,7 +9,8 @@ use anyhow::{bail, Context, Result};
 use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, SearchArtifactsQuery, UpsertArtifactRequest,
+        Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType,
+        SearchArtifactsQuery, UpsertArtifactRequest,
     },
     constants::ENV_METIS_ID,
     MetisId,
@@ -138,16 +139,21 @@ async fn create_patch(
         bail!("No changes detected. Make edits before creating a patch artifact.");
     }
 
+    let mut dependencies = Vec::new();
+    if let Some(job_id) = job_id.as_deref() {
+        dependencies.push(IssueDependency {
+            dependency_type: IssueDependencyType::CreatedBy,
+            issue_id: job_id.to_string(),
+        });
+    }
+
     let response = client
         .create_artifact(&UpsertArtifactRequest {
-            artifact: crate::client::attach_created_by_dependency(
-                Artifact::Patch {
-                    diff: patch,
-                    description,
-                    dependencies: vec![],
-                },
-                job_id.as_ref(),
-            ),
+            artifact: Artifact::Patch {
+                diff: patch,
+                description,
+                dependencies,
+            },
         })
         .await
         .context("failed to create patch artifact")?;
