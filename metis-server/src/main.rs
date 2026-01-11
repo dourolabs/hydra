@@ -1202,7 +1202,10 @@ mod tests {
                         params: vec![],
                         context: context.clone(),
                         image: default_image.clone(),
-                        env_vars: HashMap::new(),
+                        env_vars: HashMap::from([(
+                            "SECRET_VALUE".to_string(),
+                            "keep-me-safe".to_string(),
+                        )]),
                         dependencies: vec![IssueDependency {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: "parent-job".to_string(),
