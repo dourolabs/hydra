@@ -483,16 +483,6 @@ pub mod jobs {
         },
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct WorkerContext {
-        pub request_context: Bundle,
-        pub program: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub params: Vec<String>,
-        #[serde(default)]
-        pub variables: HashMap<String, String>,
-    }
-
     #[derive(Debug, Serialize, Deserialize)]
     pub struct CreateJobResponse {
         pub job_id: MetisId,

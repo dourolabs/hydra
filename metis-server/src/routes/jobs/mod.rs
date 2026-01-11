@@ -19,7 +19,6 @@ use metis_common::{
 use serde_json::json;
 use tracing::{error, info};
 
-pub mod context;
 pub mod kill;
 pub mod logs;
 pub mod status;
