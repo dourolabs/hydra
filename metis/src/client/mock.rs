@@ -8,7 +8,7 @@ use metis_common::{
         UpsertArtifactResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse},
+    jobs::{CreateJobRequest, CreateJobResponse, KillJobResponse, ListJobsResponse},
     logs::LogsQuery,
     MetisId,
 };
@@ -110,10 +110,6 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
-    }
-
-    async fn get_job(&self, _job_id: &MetisId) -> Result<JobSummary> {
-        Err(anyhow!("get_job not implemented in MockMetisClient"))
     }
 
     async fn kill_job(&self, _job_id: &MetisId) -> Result<KillJobResponse> {
