@@ -1,8 +1,4 @@
-use crate::{
-    AppState,
-    state::ResolvedBundle,
-    store::{Store, StoreError, TaskError, TaskStatusLog},
-};
+use crate::{AppState, state::ResolvedBundle};
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, State},
@@ -12,7 +8,7 @@ use axum::{
 use chrono::Utc;
 use metis_common::{
     MetisId,
-    artifacts::{Artifact, ArtifactKind, IssueDependency, IssueDependencyType},
+    artifacts::{Artifact, IssueDependency, IssueDependencyType},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse},
 };

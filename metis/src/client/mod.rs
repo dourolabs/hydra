@@ -175,10 +175,7 @@ impl MetisClient {
     ) -> Result<Option<(JobSummary, Option<DateTime<Utc>>)>> {
         let ArtifactRecord { id, artifact } = record;
         let Artifact::Session {
-            program,
-            params,
-            log,
-            ..
+            program, params, ..
         } = artifact
         else {
             return Ok(None);
@@ -186,7 +183,7 @@ impl MetisClient {
 
         let status_log = match self.get_job_status(&id).await {
             Ok(response) => response.status_log,
-            Err(_) => log,
+            Err(_) => TaskStatusLog::default(),
         };
 
         let notes = self.derive_job_notes(&status_log).await;
@@ -650,7 +647,6 @@ mod tests {
             context: metis_common::jobs::Bundle::None,
             image: "worker".into(),
             env_vars: std::collections::HashMap::new(),
-            log: TaskStatusLog::default(),
             dependencies: vec![],
         };
         assert_eq!(note_from_artifact(&session), Some("summarize".into()));
