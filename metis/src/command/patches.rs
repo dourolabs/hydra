@@ -430,6 +430,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "not a patch".to_string(),
                 status: IssueStatus::Open,
+                assignee: None,
                 dependencies: vec![],
             },
         });

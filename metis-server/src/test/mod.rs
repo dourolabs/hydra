@@ -44,6 +44,7 @@ pub(crate) fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
+        spawners: Vec::new(),
     }
 }
 
