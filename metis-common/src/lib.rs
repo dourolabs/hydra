@@ -148,6 +148,8 @@ pub mod artifacts {
             description: String,
             #[serde(default)]
             status: IssueStatus,
+            #[serde(skip_serializing_if = "Option::is_none", default)]
+            assignee: Option<String>,
             #[serde(default)]
             dependencies: Vec<IssueDependency>,
         },

@@ -486,6 +486,7 @@ mod tests {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
             status: IssueStatus::Open,
+            assignee: None,
             dependencies: vec![],
         };
 

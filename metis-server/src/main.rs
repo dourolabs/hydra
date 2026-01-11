@@ -9,7 +9,7 @@ mod store;
 #[cfg(test)]
 mod test;
 
-use crate::background::{monitor_running_jobs, process_pending_jobs};
+use crate::background::{Spawner, monitor_running_jobs, process_pending_jobs, run_spawners};
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
 use crate::state::ServiceState;
@@ -30,6 +30,7 @@ pub struct AppState {
     pub service_state: Arc<ServiceState>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
+    pub spawners: Vec<Arc<dyn Spawner>>,
 }
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
@@ -43,6 +44,12 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     let monitor_state = state.clone();
     tokio::spawn(async move {
         monitor_running_jobs(monitor_state).await;
+    });
+
+    // Spawn background task to run configured spawners
+    let spawner_state = state.clone();
+    tokio::spawn(async move {
+        run_spawners(spawner_state).await;
     });
 
     let app = Router::new()
@@ -122,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
+        spawners: Vec::new(),
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -1365,18 +1373,21 @@ mod tests {
             issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
             status: IssueStatus::Open,
+            assignee: None,
             dependencies: vec![],
         };
         let feature_issue = Artifact::Issue {
             issue_type: IssueType::Feature,
             description: "add dark mode support".to_string(),
             status: IssueStatus::InProgress,
+            assignee: None,
             dependencies: vec![],
         };
         let closed_issue = Artifact::Issue {
             issue_type: IssueType::Task,
             description: "retire old endpoint".to_string(),
             status: IssueStatus::Closed,
+            assignee: None,
             dependencies: vec![],
         };
         let filtered_patch = Artifact::Patch {
@@ -1490,6 +1501,7 @@ mod tests {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
                     status: IssueStatus::InProgress,
+                    assignee: None,
                     dependencies: vec![],
                 },
                 job_id: None,
@@ -1518,6 +1530,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
                 status: IssueStatus::InProgress,
+                assignee: None,
                 dependencies: vec![],
             }
         );
