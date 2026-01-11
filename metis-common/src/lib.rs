@@ -1,11 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 
-/// Identifier used for jobs, tasks, and artifacts within Metis.
+/// Identifier used for sessions, tasks, and artifacts within Metis.
 pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::{MetisId, jobs::Bundle};
+    use crate::{MetisId, sessions::Bundle};
     use serde::{Deserialize, Serialize};
     use std::{collections::HashMap, fmt, str::FromStr};
 
@@ -221,7 +221,6 @@ pub mod artifacts {
     }
 }
 pub mod task_status {
-    use crate::MetisId;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -244,25 +243,10 @@ pub mod task_status {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum Event {
-        Created {
-            at: DateTime<Utc>,
-            status: Status,
-        },
-        Started {
-            at: DateTime<Utc>,
-        },
-        Emitted {
-            at: DateTime<Utc>,
-            /// MetisIds for any artifacts produced by the task at this moment.
-            artifact_ids: Vec<MetisId>,
-        },
-        Completed {
-            at: DateTime<Utc>,
-        },
-        Failed {
-            at: DateTime<Utc>,
-            error: TaskError,
-        },
+        Created { at: DateTime<Utc>, status: Status },
+        Started { at: DateTime<Utc> },
+        Completed { at: DateTime<Utc> },
+        Failed { at: DateTime<Utc>, error: TaskError },
     }
 
     #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,13 +269,13 @@ pub mod task_status {
             self.events
                 .iter()
                 .rev()
-                .find_map(|event| match event {
-                    Event::Created { status, .. } => Some(*status),
-                    Event::Started { .. } => Some(Status::Running),
-                    Event::Completed { .. } => Some(Status::Complete),
-                    Event::Failed { .. } => Some(Status::Failed),
-                    Event::Emitted { .. } => None,
+                .map(|event| match event {
+                    Event::Created { status, .. } => *status,
+                    Event::Started { .. } => Status::Running,
+                    Event::Completed { .. } => Status::Complete,
+                    Event::Failed { .. } => Status::Failed,
                 })
+                .next()
                 .unwrap_or(Status::Pending)
         }
 
@@ -323,25 +307,6 @@ pub mod task_status {
                 _ => None,
             })
         }
-
-        pub fn emitted_artifacts(&self) -> Option<Vec<MetisId>> {
-            let mut artifact_ids = Vec::new();
-
-            for event in &self.events {
-                if let Event::Emitted {
-                    artifact_ids: ids, ..
-                } = event
-                {
-                    artifact_ids.extend(ids.clone());
-                }
-            }
-
-            if artifact_ids.is_empty() {
-                None
-            } else {
-                Some(artifact_ids)
-            }
-        }
     }
 
     #[cfg(test)]
@@ -350,60 +315,25 @@ pub mod task_status {
         use chrono::Utc;
 
         #[test]
-        fn current_status_ignores_emitted_events() {
+        fn current_status_follows_latest_state_events() {
             let now = Utc::now();
             let mut log = TaskStatusLog::new(Status::Pending, now);
             log.events.push(Event::Started { at: now });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-1".into(), "artifact-2".into()],
-            });
+            log.events.push(Event::Completed { at: now });
 
-            assert_eq!(log.current_status(), Status::Running);
-        }
-
-        #[test]
-        fn emitted_artifacts_returns_none_when_missing() {
-            let now = Utc::now();
-            let log = TaskStatusLog::new(Status::Pending, now);
-
-            assert_eq!(log.emitted_artifacts(), None);
-        }
-
-        #[test]
-        fn emitted_artifacts_collects_all_in_order() {
-            let now = Utc::now();
-            let mut log = TaskStatusLog::new(Status::Pending, now);
-            log.events.push(Event::Started { at: now });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-1".into()],
-            });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-2".into(), "artifact-3".into()],
-            });
-
-            assert_eq!(
-                log.emitted_artifacts(),
-                Some(vec![
-                    "artifact-1".into(),
-                    "artifact-2".into(),
-                    "artifact-3".into()
-                ])
-            );
+            assert_eq!(log.current_status(), Status::Complete);
         }
     }
 }
 
-pub mod jobs {
+pub mod sessions {
     use crate::MetisId;
     use crate::task_status::TaskStatusLog;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct CreateJobRequest {
+    pub struct CreateSessionRequest {
         pub program: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub params: Vec<String>,
@@ -427,7 +357,7 @@ pub mod jobs {
             archive_base64: String,
         },
         GitRepository {
-            /// Remote Git repository URL that should be cloned for the job context.
+            /// Remote Git repository URL that should be cloned for the session context.
             url: String,
             /// Specific git revision (branch, tag, or commit) to checkout after cloning.
             rev: String,
@@ -484,17 +414,17 @@ pub mod jobs {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct CreateJobResponse {
-        pub job_id: MetisId,
+    pub struct CreateSessionResponse {
+        pub session_id: MetisId,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct ListJobsResponse {
-        pub jobs: Vec<JobSummary>,
+    pub struct ListSessionsResponse {
+        pub sessions: Vec<SessionSummary>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct JobSummary {
+    pub struct SessionSummary {
         pub id: MetisId,
         #[serde(default)]
         pub notes: Option<String>,
@@ -505,8 +435,8 @@ pub mod jobs {
     }
 
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct KillJobResponse {
-        pub job_id: MetisId,
+    pub struct KillSessionResponse {
+        pub session_id: MetisId,
         pub status: String,
     }
 }
@@ -523,7 +453,7 @@ pub mod logs {
     }
 }
 
-pub mod job_status {
+pub mod artifact_status {
     use crate::{
         MetisId,
         task_status::{Status, TaskError, TaskStatusLog},
@@ -532,16 +462,16 @@ pub mod job_status {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "status", rename_all = "snake_case")]
-    pub enum JobStatusUpdate {
+    pub enum ArtifactStatusUpdate {
         Complete,
         Failed { reason: String },
     }
 
-    impl JobStatusUpdate {
+    impl ArtifactStatusUpdate {
         pub fn to_result(&self) -> Result<(), TaskError> {
             match self {
-                JobStatusUpdate::Complete => Ok(()),
-                JobStatusUpdate::Failed { reason } => Err(TaskError::JobEngineError {
+                ArtifactStatusUpdate::Complete => Ok(()),
+                ArtifactStatusUpdate::Failed { reason } => Err(TaskError::JobEngineError {
                     reason: reason.clone(),
                 }),
             }
@@ -549,21 +479,21 @@ pub mod job_status {
 
         pub fn as_status(&self) -> Status {
             match self {
-                JobStatusUpdate::Complete => Status::Complete,
-                JobStatusUpdate::Failed { .. } => Status::Failed,
+                ArtifactStatusUpdate::Complete => Status::Complete,
+                ArtifactStatusUpdate::Failed { .. } => Status::Failed,
             }
         }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct SetJobStatusResponse {
-        pub job_id: MetisId,
+    pub struct SetArtifactStatusResponse {
+        pub artifact_id: MetisId,
         pub status: Status,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct GetJobStatusResponse {
-        pub job_id: MetisId,
+    pub struct GetArtifactStatusResponse {
+        pub artifact_id: MetisId,
         pub status_log: TaskStatusLog,
     }
 }

@@ -2,7 +2,7 @@ use crate::{client::MetisClientInterface, util::truncate_lines};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
-    jobs::JobSummary,
+    sessions::SessionSummary,
     task_status::{Status, TaskStatusLog},
 };
 use owo_colors::OwoColorize;
@@ -17,18 +17,18 @@ const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
 pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> {
-    let response = client.list_jobs().await?;
+    let response = client.list_sessions().await?;
     let terminal_width = current_terminal_width();
     let now = Utc::now();
 
-    if response.jobs.is_empty() {
-        println!("No Metis jobs found.");
+    if response.sessions.is_empty() {
+        println!("No Metis sessions found.");
         return Ok(());
     }
 
     let limit = limit.max(1);
-    let total_jobs = response.jobs.len();
-    let (jobs, truncated) = truncate_jobs(response.jobs, limit);
+    let total_jobs = response.sessions.len();
+    let (jobs, truncated) = truncate_jobs(response.sessions, limit);
     let (plain_header, colored_header) = header_row();
     println!("{colored_header}");
     println!("{}", "-".repeat(plain_header.len()));
@@ -54,13 +54,16 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     }
 
     if truncated {
-        println!("Showing {limit} of {total_jobs} jobs. Use --limit to display more.");
+        println!("Showing {limit} of {total_jobs} sessions. Use --limit to display more.");
     }
 
     Ok(())
 }
 
-pub(crate) fn truncate_jobs(jobs: Vec<JobSummary>, limit: usize) -> (Vec<JobSummary>, bool) {
+pub(crate) fn truncate_jobs(
+    jobs: Vec<SessionSummary>,
+    limit: usize,
+) -> (Vec<SessionSummary>, bool) {
     if jobs.len() <= limit {
         return (jobs, false);
     }
@@ -210,7 +213,7 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
-fn job_note(job: &JobSummary) -> Option<String> {
+fn job_note(job: &SessionSummary) -> Option<String> {
     job.notes.clone()
 }
 
@@ -218,8 +221,8 @@ fn job_note(job: &JobSummary) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn sample_job(id: &str) -> JobSummary {
-        JobSummary {
+    fn sample_job(id: &str) -> SessionSummary {
+        SessionSummary {
             id: id.to_string(),
             notes: None,
             program: "0".to_string(),
@@ -246,7 +249,7 @@ mod tests {
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<JobSummary> = (0..12)
+        let jobs: Vec<SessionSummary> = (0..12)
             .map(|idx| sample_job(&format!("job-{idx}")))
             .collect();
 

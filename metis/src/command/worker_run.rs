@@ -9,14 +9,14 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
+use metis_common::artifact_status::ArtifactStatusUpdate;
 use metis_common::artifacts::{
     Artifact, IssueDependency, IssueDependencyType, UpsertArtifactRequest,
 };
-use metis_common::job_status::JobStatusUpdate;
 use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
-    jobs::Bundle,
+    sessions::Bundle,
 };
 use tar::Archive;
 
@@ -299,11 +299,11 @@ async fn submit_job_status(
         .await?;
     println!("Updating status for job '{job}' via metis-server…");
     let response = client
-        .set_job_status(job, &JobStatusUpdate::Complete)
+        .set_artifact_status(job, &ArtifactStatusUpdate::Complete)
         .await?;
     println!(
         "Status updated for job '{}'. Stored last message length: {}, patch length: {}",
-        response.job_id,
+        response.artifact_id,
         last_message.len(),
         patch.len()
     );

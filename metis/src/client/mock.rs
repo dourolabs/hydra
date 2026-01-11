@@ -3,13 +3,15 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::stream;
 use metis_common::{
+    artifact_status::{ArtifactStatusUpdate, GetArtifactStatusResponse, SetArtifactStatusResponse},
     artifacts::{
         ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
         UpsertArtifactResponse,
     },
-    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
-    jobs::{CreateJobRequest, CreateJobResponse, KillJobResponse, ListJobsResponse},
     logs::LogsQuery,
+    sessions::{
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse, ListSessionsResponse,
+    },
     MetisId,
 };
 use std::collections::VecDeque;
@@ -17,8 +19,8 @@ use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct MockMetisClient {
-    pub create_job_responses: Mutex<VecDeque<CreateJobResponse>>,
-    pub list_jobs_responses: Mutex<VecDeque<ListJobsResponse>>,
+    pub create_session_responses: Mutex<VecDeque<CreateSessionResponse>>,
+    pub list_sessions_responses: Mutex<VecDeque<ListSessionsResponse>>,
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
     pub log_requests: Mutex<Vec<MetisId>>,
     pub artifact_upsert_responses: Mutex<VecDeque<UpsertArtifactResponse>>,
@@ -27,19 +29,22 @@ pub struct MockMetisClient {
     pub artifact_upsert_requests: Mutex<Vec<(Option<MetisId>, UpsertArtifactRequest)>>,
     pub artifact_get_requests: Mutex<Vec<MetisId>>,
     pub list_artifacts_queries: Mutex<Vec<SearchArtifactsQuery>>,
-    pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
+    pub recorded_requests: Mutex<Vec<CreateSessionRequest>>,
 }
 
 impl MockMetisClient {
-    pub fn push_create_job_response(&self, response: CreateJobResponse) {
-        self.create_job_responses
+    pub fn push_create_session_response(&self, response: CreateSessionResponse) {
+        self.create_session_responses
             .lock()
             .unwrap()
             .push_back(response);
     }
 
-    pub fn push_list_jobs_response(&self, response: ListJobsResponse) {
-        self.list_jobs_responses.lock().unwrap().push_back(response);
+    pub fn push_list_sessions_response(&self, response: ListSessionsResponse) {
+        self.list_sessions_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
     }
 
     pub fn push_log_lines<I, S>(&self, lines: I)
@@ -51,7 +56,7 @@ impl MockMetisClient {
         self.log_responses.lock().unwrap().push_back(lines);
     }
 
-    pub fn recorded_requests(&self) -> Vec<CreateJobRequest> {
+    pub fn recorded_requests(&self) -> Vec<CreateSessionRequest> {
         self.recorded_requests.lock().unwrap().clone()
     }
 
@@ -95,49 +100,66 @@ impl MockMetisClient {
 
 #[async_trait]
 impl MetisClientInterface for MockMetisClient {
-    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
+    async fn create_session(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
         self.recorded_requests.lock().unwrap().push(request.clone());
-        self.create_job_responses
+        self.create_session_responses
             .lock()
             .unwrap()
             .pop_front()
-            .ok_or_else(|| anyhow!("no mock response configured for create_job"))
+            .ok_or_else(|| anyhow!("no mock response configured for create_session"))
     }
 
-    async fn list_jobs(&self) -> Result<ListJobsResponse> {
-        self.list_jobs_responses
+    async fn list_sessions(&self) -> Result<ListSessionsResponse> {
+        self.list_sessions_responses
             .lock()
             .unwrap()
             .pop_front()
-            .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
+            .ok_or_else(|| anyhow!("no mock response configured for list_sessions"))
     }
 
-    async fn kill_job(&self, _job_id: &MetisId) -> Result<KillJobResponse> {
-        Err(anyhow!("kill_job not implemented in MockMetisClient"))
+    async fn kill_session(&self, _session_id: &MetisId) -> Result<KillSessionResponse> {
+        Err(anyhow!("kill_session not implemented in MockMetisClient"))
     }
 
-    async fn get_job_logs(&self, job_id: &MetisId, _query: &LogsQuery) -> Result<LogStream> {
-        self.log_requests.lock().unwrap().push(job_id.to_string());
+    async fn get_session_logs(
+        &self,
+        session_id: &MetisId,
+        _query: &LogsQuery,
+    ) -> Result<LogStream> {
+        self.log_requests
+            .lock()
+            .unwrap()
+            .push(session_id.to_string());
         let lines = self
             .log_responses
             .lock()
             .unwrap()
             .pop_front()
-            .ok_or_else(|| anyhow!("no mock response configured for get_job_logs"))?;
+            .ok_or_else(|| anyhow!("no mock response configured for get_session_logs"))?;
         let stream = stream::iter(lines.into_iter().map(Ok));
         Ok(Box::pin(stream))
     }
 
-    async fn set_job_status(
+    async fn set_artifact_status(
         &self,
-        _job_id: &MetisId,
-        _status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse> {
-        Err(anyhow!("set_job_status not implemented in MockMetisClient"))
+        _artifact_id: &MetisId,
+        _status: &ArtifactStatusUpdate,
+    ) -> Result<SetArtifactStatusResponse> {
+        Err(anyhow!(
+            "set_artifact_status not implemented in MockMetisClient"
+        ))
     }
 
-    async fn get_job_status(&self, _job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        Err(anyhow!("get_job_status not implemented in MockMetisClient"))
+    async fn get_artifact_status(
+        &self,
+        _artifact_id: &MetisId,
+    ) -> Result<GetArtifactStatusResponse> {
+        Err(anyhow!(
+            "get_artifact_status not implemented in MockMetisClient"
+        ))
     }
 
     async fn create_artifact(

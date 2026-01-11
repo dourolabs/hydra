@@ -2,17 +2,17 @@ use crate::client::MetisClientInterface;
 use anyhow::{bail, Result};
 use metis_common::MetisId;
 
-pub async fn run(client: &dyn MetisClientInterface, job: String) -> Result<()> {
-    let job_id: MetisId = job.trim().to_string();
-    if job_id.is_empty() {
-        bail!("Job ID must not be empty.");
+pub async fn run(client: &dyn MetisClientInterface, session: String) -> Result<()> {
+    let session_id: MetisId = session.trim().to_string();
+    if session_id.is_empty() {
+        bail!("Session ID must not be empty.");
     }
 
-    let response = client.kill_job(&job_id).await?;
+    let response = client.kill_session(&session_id).await?;
 
     println!(
-        "Kill request for job '{}' acknowledged: {}",
-        response.job_id, response.status
+        "Kill request for session '{}' acknowledged: {}",
+        response.session_id, response.status
     );
 
     Ok(())

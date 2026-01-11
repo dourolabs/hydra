@@ -4,13 +4,16 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
+    artifact_status::{ArtifactStatusUpdate, GetArtifactStatusResponse, SetArtifactStatusResponse},
     artifacts::{
         Artifact, ArtifactKind, ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery,
         UpsertArtifactRequest, UpsertArtifactResponse,
     },
-    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse},
     logs::LogsQuery,
+    sessions::{
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse, ListSessionsResponse,
+        SessionSummary,
+    },
     task_status::{TaskError, TaskStatusLog},
     MetisId,
 };
@@ -32,17 +35,19 @@ type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
-    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
-    async fn list_jobs(&self) -> Result<ListJobsResponse>;
-    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
-    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
-    async fn set_job_status(
+    async fn create_session(&self, request: &CreateSessionRequest)
+        -> Result<CreateSessionResponse>;
+    async fn list_sessions(&self) -> Result<ListSessionsResponse>;
+    async fn kill_session(&self, session_id: &MetisId) -> Result<KillSessionResponse>;
+    async fn get_session_logs(&self, session_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
+    async fn set_artifact_status(
         &self,
-        job_id: &MetisId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse>;
+        artifact_id: &MetisId,
+        status: &ArtifactStatusUpdate,
+    ) -> Result<SetArtifactStatusResponse>;
     #[allow(dead_code)]
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse>;
+    async fn get_artifact_status(&self, artifact_id: &MetisId)
+        -> Result<GetArtifactStatusResponse>;
     async fn create_artifact(
         &self,
         request: &UpsertArtifactRequest,
@@ -119,27 +124,30 @@ impl MetisClient {
         Ok(health.status)
     }
 
-    /// Call `POST /v1/jobs` to create a new job.
-    pub async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
-        let url = self.endpoint("/v1/jobs")?;
+    /// Call `POST /v1/sessions` to create a new session.
+    pub async fn create_session(
+        &self,
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
+        let url = self.endpoint("/v1/sessions")?;
         let response = self
             .http
             .post(url)
             .json(request)
             .send()
             .await
-            .context("failed to submit create job request")?
+            .context("failed to submit create session request")?
             .error_for_status()
-            .context("metis-server rejected create job request")?;
+            .context("metis-server rejected create session request")?;
 
         response
-            .json::<CreateJobResponse>()
+            .json::<CreateSessionResponse>()
             .await
-            .context("failed to decode create job response")
+            .context("failed to decode create session response")
     }
 
-    /// Build job summaries from session artifacts and their status logs.
-    pub async fn list_jobs(&self) -> Result<ListJobsResponse> {
+    /// Build session summaries from session artifacts and their status logs.
+    pub async fn list_sessions(&self) -> Result<ListSessionsResponse> {
         let artifacts = self
             .list_artifacts(&SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Session),
@@ -153,7 +161,7 @@ impl MetisClient {
         let mut summaries_with_times = Vec::new();
 
         for record in artifacts.artifacts {
-            match self.job_summary_from_artifact(record).await {
+            match self.session_summary_from_artifact(record).await {
                 Ok(Some(summary_with_time)) => summaries_with_times.push(summary_with_time),
                 Ok(None) => {}
                 Err(_) => {}
@@ -161,39 +169,36 @@ impl MetisClient {
         }
 
         summaries_with_times.sort_by(|a, b| b.1.cmp(&a.1));
-        let jobs = summaries_with_times
+        let sessions = summaries_with_times
             .into_iter()
             .map(|(summary, _)| summary)
             .collect();
 
-        Ok(ListJobsResponse { jobs })
+        Ok(ListSessionsResponse { sessions })
     }
 
-    async fn job_summary_from_artifact(
+    async fn session_summary_from_artifact(
         &self,
         record: ArtifactRecord,
-    ) -> Result<Option<(JobSummary, Option<DateTime<Utc>>)>> {
+    ) -> Result<Option<(SessionSummary, Option<DateTime<Utc>>)>> {
         let ArtifactRecord { id, artifact } = record;
         let Artifact::Session {
-            program,
-            params,
-            log,
-            ..
+            program, params, ..
         } = artifact
         else {
             return Ok(None);
         };
 
-        let status_log = match self.get_job_status(&id).await {
+        let status_log = match self.get_artifact_status(&id).await {
             Ok(response) => response.status_log,
-            Err(_) => log,
+            Err(_) => TaskStatusLog::default(),
         };
 
-        let notes = self.derive_job_notes(&status_log).await;
+        let notes = Self::derive_session_notes(&status_log);
         let reference_time = status_log.start_time().or(status_log.creation_time());
 
         Ok(Some((
-            JobSummary {
+            SessionSummary {
                 id,
                 notes,
                 program,
@@ -204,58 +209,53 @@ impl MetisClient {
         )))
     }
 
-    async fn derive_job_notes(&self, status_log: &TaskStatusLog) -> Option<String> {
+    fn derive_session_notes(status_log: &TaskStatusLog) -> Option<String> {
         if let Some(Err(error)) = status_log.result() {
             return format_error_note(&error);
-        }
-
-        let artifact_ids = status_log.emitted_artifacts()?;
-        for artifact_id in artifact_ids {
-            if let Ok(record) = self.get_artifact(&artifact_id).await {
-                if let Some(note) = note_from_artifact(&record.artifact) {
-                    return Some(note);
-                }
-            }
         }
 
         None
     }
 
-    /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
-    pub async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+    /// Call `DELETE /v1/sessions/:session_id` to terminate a running session.
+    pub async fn kill_session(&self, session_id: &MetisId) -> Result<KillSessionResponse> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("session_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}");
+        let path = format!("/v1/sessions/{session_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .http
             .delete(url)
             .send()
             .await
-            .context("failed to submit kill job request")?
+            .context("failed to submit kill session request")?
             .error_for_status()
-            .context("metis-server returned an error while killing job")?;
+            .context("metis-server returned an error while killing session")?;
 
         response
-            .json::<KillJobResponse>()
+            .json::<KillSessionResponse>()
             .await
-            .context("failed to decode kill job response")
+            .context("failed to decode kill session response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/logs` to fetch or stream job logs.
+    /// Call `GET /v1/sessions/:session_id/logs` to fetch or stream session logs.
     ///
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
-    pub async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+    pub async fn get_session_logs(
+        &self,
+        session_id: &MetisId,
+        query: &LogsQuery,
+    ) -> Result<LogStream> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("session_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/logs");
+        let path = format!("/v1/sessions/{session_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
             .http
@@ -263,9 +263,9 @@ impl MetisClient {
             .query(query)
             .send()
             .await
-            .context("failed to request job logs")?
+            .context("failed to request session logs")?
             .error_for_status()
-            .context("metis-server returned an error while fetching job logs")?;
+            .context("metis-server returned an error while fetching session logs")?;
 
         let is_sse = response
             .headers()
@@ -282,18 +282,18 @@ impl MetisClient {
         }
     }
 
-    /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
-    pub async fn set_job_status(
+    /// Call `POST /v1/artifacts/:artifact_id/status` to update the recorded agent status.
+    pub async fn set_artifact_status(
         &self,
-        job_id: &MetisId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+        artifact_id: &MetisId,
+        status: &ArtifactStatusUpdate,
+    ) -> Result<SetArtifactStatusResponse> {
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/status");
+        let path = format!("/v1/artifacts/{artifact_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .http
@@ -301,38 +301,41 @@ impl MetisClient {
             .json(status)
             .send()
             .await
-            .context("failed to submit set job status request")?
+            .context("failed to submit set artifact status request")?
             .error_for_status()
-            .context("metis-server returned an error while setting job status")?;
+            .context("metis-server returned an error while setting artifact status")?;
 
         response
-            .json::<SetJobStatusResponse>()
+            .json::<SetArtifactStatusResponse>()
             .await
-            .context("failed to decode set job status response")
+            .context("failed to decode set artifact status response")
     }
 
-    /// Call `GET /v1/jobs/:job_id/status` to retrieve the status log for a job.
-    pub async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
+    /// Call `GET /v1/artifacts/:artifact_id/status` to retrieve the status log for an artifact.
+    pub async fn get_artifact_status(
+        &self,
+        artifact_id: &MetisId,
+    ) -> Result<GetArtifactStatusResponse> {
+        let artifact_id = artifact_id.trim();
+        if artifact_id.is_empty() {
+            return Err(anyhow!("artifact_id must not be empty"));
         }
 
-        let path = format!("/v1/jobs/{job_id}/status");
+        let path = format!("/v1/artifacts/{artifact_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
             .http
             .get(url)
             .send()
             .await
-            .context("failed to request job status")?
+            .context("failed to request artifact status")?
             .error_for_status()
-            .context("metis-server returned an error while fetching job status")?;
+            .context("metis-server returned an error while fetching artifact status")?;
 
         response
-            .json::<GetJobStatusResponse>()
+            .json::<GetArtifactStatusResponse>()
             .await
-            .context("failed to decode job status response")
+            .context("failed to decode artifact status response")
     }
 
     /// Call `POST /v1/artifacts` to create a new artifact.
@@ -529,15 +532,6 @@ fn format_error_note(error: &TaskError) -> Option<String> {
     }
 }
 
-fn note_from_artifact(artifact: &Artifact) -> Option<String> {
-    match artifact {
-        Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
-            sanitize_note(description)
-        }
-        Artifact::Session { program, .. } => sanitize_note(program),
-    }
-}
-
 fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
     let mut event_name = None;
     let mut data_lines = Vec::new();
@@ -559,32 +553,38 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
 
 #[async_trait]
 impl MetisClientInterface for MetisClient {
-    async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
-        MetisClient::create_job(self, request).await
-    }
-
-    async fn list_jobs(&self) -> Result<ListJobsResponse> {
-        MetisClient::list_jobs(self).await
-    }
-
-    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
-        MetisClient::kill_job(self, job_id).await
-    }
-
-    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
-        MetisClient::get_job_logs(self, job_id, query).await
-    }
-
-    async fn set_job_status(
+    async fn create_session(
         &self,
-        job_id: &MetisId,
-        status: &JobStatusUpdate,
-    ) -> Result<SetJobStatusResponse> {
-        MetisClient::set_job_status(self, job_id, status).await
+        request: &CreateSessionRequest,
+    ) -> Result<CreateSessionResponse> {
+        MetisClient::create_session(self, request).await
     }
 
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        MetisClient::get_job_status(self, job_id).await
+    async fn list_sessions(&self) -> Result<ListSessionsResponse> {
+        MetisClient::list_sessions(self).await
+    }
+
+    async fn kill_session(&self, session_id: &MetisId) -> Result<KillSessionResponse> {
+        MetisClient::kill_session(self, session_id).await
+    }
+
+    async fn get_session_logs(&self, session_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
+        MetisClient::get_session_logs(self, session_id, query).await
+    }
+
+    async fn set_artifact_status(
+        &self,
+        artifact_id: &MetisId,
+        status: &ArtifactStatusUpdate,
+    ) -> Result<SetArtifactStatusResponse> {
+        MetisClient::set_artifact_status(self, artifact_id, status).await
+    }
+
+    async fn get_artifact_status(
+        &self,
+        artifact_id: &MetisId,
+    ) -> Result<GetArtifactStatusResponse> {
+        MetisClient::get_artifact_status(self, artifact_id).await
     }
 
     async fn create_artifact(
@@ -633,27 +633,6 @@ mod tests {
             format_error_note(&error),
             Some("error: boom happens".to_string())
         );
-    }
-
-    #[test]
-    fn note_from_artifact_prefers_description_fields() {
-        let patch = Artifact::Patch {
-            diff: "diff --git".into(),
-            description: "  fix   issue ".into(),
-            dependencies: vec![],
-        };
-        assert_eq!(note_from_artifact(&patch), Some("fix issue".to_string()));
-
-        let session = Artifact::Session {
-            program: " summarize".into(),
-            params: vec![],
-            context: metis_common::jobs::Bundle::None,
-            image: "worker".into(),
-            env_vars: std::collections::HashMap::new(),
-            log: TaskStatusLog::default(),
-            dependencies: vec![],
-        };
-        assert_eq!(note_from_artifact(&session), Some("summarize".into()));
     }
 }
 

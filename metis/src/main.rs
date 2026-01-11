@@ -108,21 +108,21 @@ enum Commands {
         )]
         limit: usize,
     },
-    /// Show logs for an existing Metis job.
+    /// Show logs for an existing Metis session.
     Logs {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
+        /// Session identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "ID")]
         id: String,
 
-        /// Stream logs if the job is still running.
+        /// Stream logs if the session is still running.
         #[arg(short = 'w', long = "watch")]
         watch: bool,
     },
-    /// Terminate a running Metis job.
+    /// Terminate a running Metis session.
     Kill {
-        /// Job identifier returned by `metis spawn` or `metis jobs`.
-        #[arg(value_name = "JOB_ID")]
-        job: String,
+        /// Session identifier returned by `metis spawn` or `metis jobs`.
+        #[arg(value_name = "SESSION_ID")]
+        session: String,
     },
     /// Manage patch artifacts.
     Patches {
@@ -136,7 +136,7 @@ enum Commands {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
     },
-    /// Retrieve a job's context and extract/copy it to a directory, then submit the job output.
+    /// Retrieve a session's context and extract/copy it to a directory, then submit the job output.
     WorkerRun {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
         }
         Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
-        Commands::Kill { job } => command::kill::run(&client, job).await?,
+        Commands::Kill { session } => command::kill::run(&client, session).await?,
         Commands::Patches { command } => command::patches::run(&client, command).await?,
         Commands::Dashboard => command::dashboard::run(&client).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
