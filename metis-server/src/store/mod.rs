@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::MetisId;
-use metis_common::artifacts::{Artifact, ArtifactKind};
+use metis_common::artifacts::{Artifact, ArtifactDelta, ArtifactKind};
 
 mod memory_store;
 
@@ -20,6 +20,8 @@ pub enum StoreError {
     Internal(String),
     #[error("Invalid status transition: task is not in Pending state")]
     InvalidStatusTransition,
+    #[error("Invalid artifact delta: {0}")]
+    InvalidArtifactDelta(String),
 }
 
 /// Trait for storing artifacts and tracking status logs.
@@ -47,12 +49,15 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `id` - The MetisId of the artifact to update
-    /// * `artifact` - The new artifact value
+    /// * `artifact_delta` - The delta to apply to the artifact
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if the artifact doesn't exist
-    async fn update_artifact(&mut self, id: &MetisId, artifact: Artifact)
-    -> Result<(), StoreError>;
+    async fn update_artifact(
+        &mut self,
+        id: &MetisId,
+        artifact_delta: ArtifactDelta,
+    ) -> Result<(), StoreError>;
 
     /// Lists all artifacts in the store with their corresponding IDs.
     ///

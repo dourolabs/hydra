@@ -151,9 +151,10 @@ mod tests {
     use metis_common::{
         artifact_status::GetArtifactStatusResponse,
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType,
-            IssueStatus, IssueType, ListArtifactsResponse, SearchArtifactsQuery,
-            UpsertArtifactRequest, UpsertArtifactResponse,
+            Artifact, ArtifactDelta, ArtifactKind, ArtifactRecord, IssueDelta, IssueDependency,
+            IssueDependencyType, IssueStatus, IssueType, ListArtifactsResponse,
+            SearchArtifactsQuery, UpdateArtifactRequest, UpsertArtifactRequest,
+            UpsertArtifactResponse,
         },
         constants::ENV_GH_TOKEN,
         sessions::{Bundle, CreateSessionResponse},
@@ -1213,16 +1214,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_artifact_replaces_existing_value() -> anyhow::Result<()> {
+    async fn update_artifact_updates_issue_status() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
 
         let created: UpsertArtifactResponse = client
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
-                artifact: Artifact::Patch {
-                    diff: "old diff".to_string(),
-                    description: "old patch".to_string(),
+                artifact: Artifact::Issue {
+                    issue_type: IssueType::Task,
+                    description: "updated details".to_string(),
+                    status: IssueStatus::InProgress,
                     dependencies: vec![],
                 },
             })
@@ -1237,13 +1239,10 @@ mod tests {
                 server.base_url(),
                 created.artifact_id
             ))
-            .json(&UpsertArtifactRequest {
-                artifact: Artifact::Issue {
-                    issue_type: IssueType::Task,
-                    description: "updated details".to_string(),
-                    status: IssueStatus::InProgress,
-                    dependencies: vec![],
-                },
+            .json(&UpdateArtifactRequest {
+                artifact_delta: ArtifactDelta::Issue(IssueDelta::Status {
+                    status: IssueStatus::Closed,
+                }),
             })
             .send()
             .await?
@@ -1268,7 +1267,7 @@ mod tests {
             Artifact::Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
-                status: IssueStatus::InProgress,
+                status: IssueStatus::Closed,
                 dependencies: vec![],
             }
         );

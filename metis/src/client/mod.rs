@@ -7,7 +7,7 @@ use metis_common::{
     artifact_status::{ArtifactStatusUpdate, GetArtifactStatusResponse, SetArtifactStatusResponse},
     artifacts::{
         Artifact, ArtifactKind, ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery,
-        UpsertArtifactRequest, UpsertArtifactResponse,
+        UpdateArtifactRequest, UpsertArtifactRequest, UpsertArtifactResponse,
     },
     logs::LogsQuery,
     sessions::{
@@ -56,7 +56,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn update_artifact(
         &self,
         artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
+        request: &UpdateArtifactRequest,
     ) -> Result<UpsertArtifactResponse>;
     async fn get_artifact(&self, artifact_id: &MetisId) -> Result<ArtifactRecord>;
     async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse>;
@@ -364,7 +364,7 @@ impl MetisClient {
     pub async fn update_artifact(
         &self,
         artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
+        request: &UpdateArtifactRequest,
     ) -> Result<UpsertArtifactResponse> {
         let artifact_id = artifact_id.trim();
         if artifact_id.is_empty() {
@@ -597,7 +597,7 @@ impl MetisClientInterface for MetisClient {
     async fn update_artifact(
         &self,
         artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
+        request: &UpdateArtifactRequest,
     ) -> Result<UpsertArtifactResponse> {
         MetisClient::update_artifact(self, artifact_id, request).await
     }

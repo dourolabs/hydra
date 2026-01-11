@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{Status, Store, StoreError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::{Artifact, ArtifactKind};
+use metis_common::artifacts::{Artifact, ArtifactDelta, ArtifactKind};
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
@@ -88,17 +88,23 @@ impl Store for MemoryStore {
     async fn update_artifact(
         &mut self,
         id: &MetisId,
-        artifact: Artifact,
+        artifact_delta: ArtifactDelta,
     ) -> Result<(), StoreError> {
-        if !self.artifacts.contains_key(id) {
-            return Err(StoreError::ArtifactNotFound(id.clone()));
-        }
+        let existing = self
+            .artifacts
+            .get(id)
+            .cloned()
+            .ok_or_else(|| StoreError::ArtifactNotFound(id.clone()))?;
 
-        let initial_status = initial_status_for_artifact(&artifact);
-        let new_kind = ArtifactKind::from(&artifact);
-        let previous_kind = self.artifacts.get(id).map(ArtifactKind::from);
-        self.artifacts.insert(id.clone(), artifact);
-        if previous_kind != Some(new_kind) {
+        let updated_artifact = artifact_delta
+            .apply_to(&existing)
+            .map_err(|err| StoreError::InvalidArtifactDelta(err.to_string()))?;
+
+        let initial_status = initial_status_for_artifact(&updated_artifact);
+        let new_kind = ArtifactKind::from(&updated_artifact);
+        let previous_kind = ArtifactKind::from(&existing);
+        self.artifacts.insert(id.clone(), updated_artifact);
+        if previous_kind != new_kind {
             self.status_logs
                 .insert(id.clone(), TaskStatusLog::new(initial_status, Utc::now()));
         } else {
@@ -200,7 +206,10 @@ mod tests {
     use super::*;
     use chrono::Duration;
     use metis_common::{
-        artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+        artifacts::{
+            Artifact, ArtifactDelta, IssueDelta, IssueDependency, IssueDependencyType, IssueStatus,
+            IssueType,
+        },
         sessions::Bundle,
     };
     use std::collections::{HashMap, HashSet};
@@ -236,20 +245,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_artifact_overwrites_existing_value() {
+    async fn update_artifact_updates_issue_status() {
         let mut store = MemoryStore::new();
 
-        let id = store.add_artifact(sample_artifact()).await.unwrap();
-        let updated = Artifact::Issue {
-            issue_type: IssueType::Task,
-            description: "issue details".to_string(),
-            status: IssueStatus::Open,
-            dependencies: vec![],
-        };
+        let id = store
+            .add_artifact(Artifact::Issue {
+                issue_type: IssueType::Task,
+                description: "issue details".to_string(),
+                status: IssueStatus::Open,
+                dependencies: vec![],
+            })
+            .await
+            .unwrap();
 
-        store.update_artifact(&id, updated.clone()).await.unwrap();
+        store
+            .update_artifact(
+                &id,
+                ArtifactDelta::Issue(IssueDelta::Status {
+                    status: IssueStatus::Closed,
+                }),
+            )
+            .await
+            .unwrap();
 
-        assert_eq!(store.get_artifact(&id).await.unwrap(), updated);
+        match store.get_artifact(&id).await.unwrap() {
+            Artifact::Issue { status, .. } => assert_eq!(status, IssueStatus::Closed),
+            other => panic!("expected issue artifact, got {other:?}"),
+        }
         assert!(store.status_logs.contains_key(&id));
         assert_eq!(store.get_status(&id).await.unwrap(), Status::Complete);
     }
@@ -262,11 +284,9 @@ mod tests {
         let err = store
             .update_artifact(
                 &missing,
-                Artifact::Patch {
-                    diff: "noop".to_string(),
-                    description: "noop patch".to_string(),
-                    dependencies: vec![],
-                },
+                ArtifactDelta::Issue(IssueDelta::Status {
+                    status: IssueStatus::InProgress,
+                }),
             )
             .await
             .unwrap_err();
@@ -275,17 +295,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_artifact_changes_status_log_when_type_changes() {
+    async fn update_artifact_rejects_mismatched_delta() {
         let mut store = MemoryStore::new();
         let id = store.add_artifact(sample_artifact()).await.unwrap();
-        assert_eq!(store.get_status(&id).await.unwrap(), Status::Complete);
 
-        store
-            .update_artifact(&id, session_artifact_with_dependencies(vec![]))
+        let err = store
+            .update_artifact(
+                &id,
+                ArtifactDelta::Issue(IssueDelta::Status {
+                    status: IssueStatus::Closed,
+                }),
+            )
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(store.get_status(&id).await.unwrap(), Status::Pending);
+        assert!(matches!(err, StoreError::InvalidArtifactDelta(_)));
+        assert_eq!(store.get_artifact(&id).await.unwrap(), sample_artifact());
     }
 
     #[tokio::test]

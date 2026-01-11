@@ -194,8 +194,83 @@ pub mod artifacts {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum ArtifactDelta {
+        Issue(IssueDelta),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "field", rename_all = "snake_case")]
+    pub enum IssueDelta {
+        Status { status: IssueStatus },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum ArtifactDeltaError {
+        ArtifactKindMismatch {
+            expected: ArtifactKind,
+            actual: ArtifactKind,
+        },
+    }
+
+    impl fmt::Display for ArtifactDeltaError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                ArtifactDeltaError::ArtifactKindMismatch { expected, actual } => write!(
+                    f,
+                    "artifact delta applies to {expected:?} artifacts but saw {actual:?}"
+                ),
+            }
+        }
+    }
+
+    impl ArtifactDelta {
+        pub fn apply_to(&self, artifact: &Artifact) -> Result<Artifact, ArtifactDeltaError> {
+            match (self, artifact) {
+                (ArtifactDelta::Issue(issue_delta), Artifact::Issue { .. }) => {
+                    issue_delta.apply_to_issue(artifact)
+                }
+                (ArtifactDelta::Issue(_), other) => Err(ArtifactDeltaError::ArtifactKindMismatch {
+                    expected: ArtifactKind::Issue,
+                    actual: ArtifactKind::from(other),
+                }),
+            }
+        }
+    }
+
+    impl IssueDelta {
+        fn apply_to_issue(&self, artifact: &Artifact) -> Result<Artifact, ArtifactDeltaError> {
+            match (self, artifact) {
+                (
+                    IssueDelta::Status { status },
+                    Artifact::Issue {
+                        issue_type,
+                        description,
+                        dependencies,
+                        ..
+                    },
+                ) => Ok(Artifact::Issue {
+                    issue_type: *issue_type,
+                    description: description.clone(),
+                    status: *status,
+                    dependencies: dependencies.clone(),
+                }),
+                _ => Err(ArtifactDeltaError::ArtifactKindMismatch {
+                    expected: ArtifactKind::Issue,
+                    actual: ArtifactKind::from(artifact),
+                }),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct UpdateArtifactRequest {
+        pub artifact_delta: ArtifactDelta,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

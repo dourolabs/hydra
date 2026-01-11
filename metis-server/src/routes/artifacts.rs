@@ -7,7 +7,7 @@ use axum::{
 };
 use metis_common::artifacts::{
     Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-    SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+    SearchArtifactsQuery, UpdateArtifactRequest, UpsertArtifactRequest, UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -40,16 +40,36 @@ pub async fn create_artifact(
     Json(payload): Json<UpsertArtifactRequest>,
 ) -> Result<Json<UpsertArtifactResponse>, ApiError> {
     info!("create_artifact invoked");
-    upsert_artifact_internal(state, None, payload).await
+    let UpsertArtifactRequest { artifact } = payload;
+
+    let mut store = state.store.write().await;
+    let artifact_id = store
+        .add_artifact(artifact)
+        .await
+        .map_err(|err| map_store_error(err, None))?;
+
+    info!(artifact_id = %artifact_id, "artifact stored successfully");
+
+    Ok(Json(UpsertArtifactResponse { artifact_id }))
 }
 
 pub async fn update_artifact(
     State(state): State<AppState>,
     ArtifactIdPath(artifact_id): ArtifactIdPath,
-    Json(payload): Json<UpsertArtifactRequest>,
+    Json(payload): Json<UpdateArtifactRequest>,
 ) -> Result<Json<UpsertArtifactResponse>, ApiError> {
     info!(artifact_id = %artifact_id, "update_artifact invoked");
-    upsert_artifact_internal(state, Some(artifact_id), payload).await
+    let UpdateArtifactRequest { artifact_delta } = payload;
+
+    let mut store = state.store.write().await;
+    store
+        .update_artifact(&artifact_id, artifact_delta)
+        .await
+        .map_err(|err| map_store_error(err, Some(&artifact_id)))?;
+
+    info!(artifact_id = %artifact_id, "artifact stored successfully");
+
+    Ok(Json(UpsertArtifactResponse { artifact_id }))
 }
 
 pub async fn get_artifact(
@@ -118,30 +138,6 @@ pub async fn list_artifacts(
     Ok(Json(ListArtifactsResponse {
         artifacts: filtered,
     }))
-}
-
-async fn upsert_artifact_internal(
-    state: AppState,
-    artifact_id: Option<String>,
-    payload: UpsertArtifactRequest,
-) -> Result<Json<UpsertArtifactResponse>, ApiError> {
-    let UpsertArtifactRequest { artifact } = payload;
-
-    let mut store = state.store.write().await;
-    let artifact_id = match artifact_id {
-        Some(id) => match store.update_artifact(&id, artifact).await {
-            Ok(()) => id,
-            Err(err) => return Err(map_store_error(err, Some(&id))),
-        },
-        None => store
-            .add_artifact(artifact)
-            .await
-            .map_err(|err| map_store_error(err, None))?,
-    };
-
-    info!(artifact_id = %artifact_id, "artifact stored successfully");
-
-    Ok(Json(UpsertArtifactResponse { artifact_id }))
 }
 
 fn artifact_matches(
@@ -248,6 +244,14 @@ fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {
         StoreError::ArtifactNotFound(id) => {
             error!(artifact_id = %id, "artifact not found");
             ApiError::not_found(format!("artifact '{id}' not found"))
+        }
+        StoreError::InvalidArtifactDelta(reason) => {
+            error!(
+                artifact_id = artifact_id.unwrap_or_default(),
+                error = %reason,
+                "invalid artifact delta provided"
+            );
+            ApiError::bad_request(reason)
         }
         other => {
             error!(

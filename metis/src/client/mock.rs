@@ -5,8 +5,8 @@ use futures::stream;
 use metis_common::{
     artifact_status::{ArtifactStatusUpdate, GetArtifactStatusResponse, SetArtifactStatusResponse},
     artifacts::{
-        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
-        UpsertArtifactResponse,
+        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpdateArtifactRequest,
+        UpsertArtifactRequest, UpsertArtifactResponse,
     },
     logs::LogsQuery,
     sessions::{
@@ -27,6 +27,7 @@ pub struct MockMetisClient {
     pub get_artifact_responses: Mutex<VecDeque<ArtifactRecord>>,
     pub list_artifacts_responses: Mutex<VecDeque<ListArtifactsResponse>>,
     pub artifact_upsert_requests: Mutex<Vec<(Option<MetisId>, UpsertArtifactRequest)>>,
+    pub artifact_update_requests: Mutex<Vec<(MetisId, UpdateArtifactRequest)>>,
     pub artifact_get_requests: Mutex<Vec<MetisId>>,
     pub list_artifacts_queries: Mutex<Vec<SearchArtifactsQuery>>,
     pub recorded_requests: Mutex<Vec<CreateSessionRequest>>,
@@ -87,6 +88,11 @@ impl MockMetisClient {
 
     pub fn recorded_artifact_upserts(&self) -> Vec<(Option<MetisId>, UpsertArtifactRequest)> {
         self.artifact_upsert_requests.lock().unwrap().clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn recorded_artifact_updates(&self) -> Vec<(MetisId, UpdateArtifactRequest)> {
+        self.artifact_update_requests.lock().unwrap().clone()
     }
 
     pub fn recorded_get_artifact_requests(&self) -> Vec<MetisId> {
@@ -180,12 +186,12 @@ impl MetisClientInterface for MockMetisClient {
     async fn update_artifact(
         &self,
         artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
+        request: &UpdateArtifactRequest,
     ) -> Result<UpsertArtifactResponse> {
-        self.artifact_upsert_requests
+        self.artifact_update_requests
             .lock()
             .unwrap()
-            .push((Some(artifact_id.clone()), request.clone()));
+            .push((artifact_id.clone(), request.clone()));
         self.artifact_upsert_responses
             .lock()
             .unwrap()
