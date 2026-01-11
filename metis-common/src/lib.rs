@@ -5,7 +5,7 @@ pub type MetisId = String;
 
 pub mod constants;
 pub mod artifacts {
-    use crate::{MetisId, jobs::Bundle, task_status::TaskStatusLog};
+    use crate::{MetisId, jobs::Bundle};
     use serde::{Deserialize, Serialize};
     use std::{collections::HashMap, fmt, str::FromStr};
 
@@ -98,6 +98,7 @@ pub mod artifacts {
     pub enum IssueDependencyType {
         ChildOf,
         BlockedOn,
+        CreatedBy,
     }
 
     impl IssueDependencyType {
@@ -105,6 +106,7 @@ pub mod artifacts {
             match self {
                 IssueDependencyType::ChildOf => "child-of",
                 IssueDependencyType::BlockedOn => "blocked-on",
+                IssueDependencyType::CreatedBy => "created-by",
             }
         }
     }
@@ -123,6 +125,7 @@ pub mod artifacts {
             match value.as_str() {
                 "child-of" | "childof" | "child_of" => Ok(IssueDependencyType::ChildOf),
                 "blocked-on" | "blockedon" | "blocked_on" => Ok(IssueDependencyType::BlockedOn),
+                "created-by" | "createdby" | "created_by" => Ok(IssueDependencyType::CreatedBy),
                 other => Err(format!("unsupported issue dependency type '{other}'")),
             }
         }
@@ -141,6 +144,8 @@ pub mod artifacts {
         Patch {
             diff: String,
             description: String,
+            #[serde(default)]
+            dependencies: Vec<IssueDependency>,
         },
         Issue {
             #[serde(rename = "type")]
@@ -159,8 +164,6 @@ pub mod artifacts {
             image: String,
             #[serde(default, skip_serializing_if = "HashMap::is_empty")]
             env_vars: HashMap<String, String>,
-            #[serde(default)]
-            log: TaskStatusLog,
             #[serde(default)]
             dependencies: Vec<IssueDependency>,
         },
@@ -193,8 +196,6 @@ pub mod artifacts {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     pub struct UpsertArtifactRequest {
         pub artifact: Artifact,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub job_id: Option<MetisId>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -480,16 +481,6 @@ pub mod jobs {
             /// Base64-encoded git bundle representing the repository HEAD.
             bundle_base64: String,
         },
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    pub struct WorkerContext {
-        pub request_context: Bundle,
-        pub program: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        pub params: Vec<String>,
-        #[serde(default)]
-        pub variables: HashMap<String, String>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]

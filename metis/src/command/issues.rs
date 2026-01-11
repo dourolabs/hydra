@@ -154,7 +154,6 @@ async fn create_issue(
             status,
             dependencies,
         },
-        job_id: None,
     };
 
     let response = client
@@ -333,7 +332,6 @@ mod tests {
                         description: "New issue description".into(),
                         dependencies,
                     },
-                    job_id: None,
                 }
             )]
         );

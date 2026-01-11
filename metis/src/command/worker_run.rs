@@ -9,12 +9,14 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::artifacts::{Artifact, UpsertArtifactRequest};
+use metis_common::artifacts::{
+    Artifact, IssueDependency, IssueDependencyType, UpsertArtifactRequest,
+};
 use metis_common::job_status::JobStatusUpdate;
 use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
-    jobs::{Bundle, WorkerContext},
+    jobs::Bundle,
 };
 use tar::Archive;
 
@@ -28,13 +30,17 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
         bail!("job ID must not be empty");
     }
 
-    let WorkerContext {
-        request_context,
-        variables,
-        program,
-        params,
-        ..
-    } = client.get_job_context(&job_id).await?;
+    let (request_context, variables, program, params) =
+        match client.get_artifact(&job_id).await?.artifact {
+            Artifact::Session {
+                context,
+                env_vars,
+                program,
+                params,
+                ..
+            } => (context, env_vars, program, params),
+            other => bail!("artifact '{job_id}' is not a session: {other:?}"),
+        };
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).map(String::as_str);
@@ -277,13 +283,18 @@ async fn submit_job_status(
     let patch = fs::read_to_string(&patch_file)
         .with_context(|| format!("failed to read patch output at '{}'", patch_file.display()))?;
 
+    let dependencies = vec![IssueDependency {
+        dependency_type: IssueDependencyType::CreatedBy,
+        issue_id: job.to_string(),
+    }];
+
     client
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
                 diff: patch.clone(),
                 description: last_message.clone(),
+                dependencies,
             },
-            job_id: Some(job.clone()),
         })
         .await?;
     println!("Updating status for job '{job}' via metis-server…");
