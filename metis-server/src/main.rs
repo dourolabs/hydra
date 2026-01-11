@@ -152,7 +152,7 @@ mod tests {
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
-        jobs::{Bundle, CreateJobResponse, WorkerContext},
+        jobs::{Bundle, CreateJobResponse},
         task_status::Event,
     };
     use serde_json::json;
