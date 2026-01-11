@@ -703,7 +703,6 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
-        let artifact_id;
         {
             let mut store_write = store.write().await;
             let job_id = "spawn-job".to_string();
@@ -721,16 +720,6 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
-            artifact_id = store_write
-                .add_artifact(Artifact::Patch {
-                    diff: "diff".to_string(),
-                    description: "done".to_string(),
-                    dependencies: vec![],
-                })
-                .await?;
-            store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
-                .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
 
@@ -755,7 +744,6 @@ mod tests {
         let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
         assert_eq!(status_log.current_status(), Status::Complete);
         assert!(matches!(status_log.result(), Some(Ok(()))));
-        assert_eq!(status_log.emitted_artifacts(), Some(vec![artifact_id]));
 
         Ok(())
     }
@@ -911,90 +899,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn job_output_can_be_retrieved_via_events_and_artifacts() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = default_image();
-        let store = state.store.clone();
-        let job_id = "with-output".to_string();
-        let artifact_id;
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_artifact_with_id(
-                    job_id.clone(),
-                    session_artifact(
-                        "0",
-                        vec![],
-                        Bundle::None,
-                        default_image.clone(),
-                        HashMap::new(),
-                    ),
-                    Utc::now(),
-                )
-                .await?;
-            store_write.mark_task_running(&job_id, Utc::now()).await?;
-            artifact_id = store_write
-                .add_artifact(Artifact::Patch {
-                    diff: "diff".to_string(),
-                    description: "all good".to_string(),
-                    dependencies: vec![],
-                })
-                .await?;
-            store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
-                .await?;
-            store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
-                .await?;
-        }
-        let server = spawn_test_server_with_state(state).await?;
-
-        let client = test_client();
-        let response = client
-            .get(format!(
-                "{}/v1/artifacts/{}/status",
-                server.base_url(),
-                job_id
-            ))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let status: GetJobStatusResponse = response.json().await?;
-        let emitted_ids = status
-            .status_log
-            .events
-            .iter()
-            .find_map(|event| match event {
-                Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(emitted_ids, vec![artifact_id.clone()]);
-
-        let artifact_response = client
-            .get(format!("{}/v1/artifacts/{artifact_id}", server.base_url()))
-            .send()
-            .await?;
-        assert!(artifact_response.status().is_success());
-        let artifact: ArtifactRecord = artifact_response.json().await?;
-        assert_eq!(artifact.id, artifact_id);
-        match artifact.artifact {
-            Artifact::Patch {
-                diff,
-                description,
-                dependencies,
-            } => {
-                assert_eq!(diff, "diff");
-                assert_eq!(description, "all good");
-                assert!(dependencies.is_empty());
-            }
-            other => panic!("expected patch artifact, got {other:?}"),
-        };
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn get_artifact_rejects_empty_id() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
@@ -1050,20 +954,6 @@ mod tests {
                 .await?;
             store_write
                 .mark_task_running(&"parent-job".to_string(), Utc::now())
-                .await?;
-            let parent_artifact_id = store_write
-                .add_artifact(Artifact::Patch {
-                    diff: "patch-content".to_string(),
-                    description: "done".to_string(),
-                    dependencies: vec![],
-                })
-                .await?;
-            store_write
-                .emit_task_artifacts(
-                    &"parent-job".to_string(),
-                    vec![parent_artifact_id],
-                    Utc::now(),
-                )
                 .await?;
             store_write
                 .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())

@@ -106,14 +106,6 @@ pub trait Store: Send + Sync {
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError>;
 
-    /// Records an emitted event for a running task.
-    async fn emit_task_artifacts(
-        &mut self,
-        id: &MetisId,
-        artifact_ids: Vec<MetisId>,
-        at: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
     /// Marks a task as running.
     ///
     /// Valid transitions:

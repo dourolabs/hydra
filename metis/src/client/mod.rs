@@ -186,7 +186,7 @@ impl MetisClient {
             Err(_) => TaskStatusLog::default(),
         };
 
-        let notes = self.derive_job_notes(&status_log).await;
+        let notes = Self::derive_job_notes(&status_log);
         let reference_time = status_log.start_time().or(status_log.creation_time());
 
         Ok(Some((
@@ -201,18 +201,9 @@ impl MetisClient {
         )))
     }
 
-    async fn derive_job_notes(&self, status_log: &TaskStatusLog) -> Option<String> {
+    fn derive_job_notes(status_log: &TaskStatusLog) -> Option<String> {
         if let Some(Err(error)) = status_log.result() {
             return format_error_note(&error);
-        }
-
-        let artifact_ids = status_log.emitted_artifacts()?;
-        for artifact_id in artifact_ids {
-            if let Ok(record) = self.get_artifact(&artifact_id).await {
-                if let Some(note) = note_from_artifact(&record.artifact) {
-                    return Some(note);
-                }
-            }
         }
 
         None
@@ -526,15 +517,6 @@ fn format_error_note(error: &TaskError) -> Option<String> {
     }
 }
 
-fn note_from_artifact(artifact: &Artifact) -> Option<String> {
-    match artifact {
-        Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
-            sanitize_note(description)
-        }
-        Artifact::Session { program, .. } => sanitize_note(program),
-    }
-}
-
 fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
     let mut event_name = None;
     let mut data_lines = Vec::new();
@@ -630,26 +612,6 @@ mod tests {
             format_error_note(&error),
             Some("error: boom happens".to_string())
         );
-    }
-
-    #[test]
-    fn note_from_artifact_prefers_description_fields() {
-        let patch = Artifact::Patch {
-            diff: "diff --git".into(),
-            description: "  fix   issue ".into(),
-            dependencies: vec![],
-        };
-        assert_eq!(note_from_artifact(&patch), Some("fix issue".to_string()));
-
-        let session = Artifact::Session {
-            program: " summarize".into(),
-            params: vec![],
-            context: metis_common::jobs::Bundle::None,
-            image: "worker".into(),
-            env_vars: std::collections::HashMap::new(),
-            dependencies: vec![],
-        };
-        assert_eq!(note_from_artifact(&session), Some("summarize".into()));
     }
 }
 
