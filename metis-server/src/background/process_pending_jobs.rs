@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status, TaskError},
+    store::{Event, Status, TaskError},
 };
 use chrono::Utc;
 use metis_common::artifacts::{Artifact, ArtifactKind};
@@ -54,7 +54,10 @@ pub async fn process_pending_jobs(state: AppState) {
             match state.job_engine.create_job(&metis_id, &image).await {
                 Ok(()) => {
                     let mut store = state.store.write().await;
-                    match store.mark_task_running(&metis_id, Utc::now()).await {
+                    match store
+                        .append_status_event(&metis_id, Event::Started { at: Utc::now() })
+                        .await
+                    {
                         Ok(()) => {
                             info!(metis_id = %metis_id, "set task status to Running (spawned)");
                         }
@@ -67,12 +70,14 @@ pub async fn process_pending_jobs(state: AppState) {
                     let mut store = state.store.write().await;
                     let failure_reason = format!("Failed to create Kubernetes job: {err}");
                     if let Err(update_err) = store
-                        .mark_task_complete(
+                        .append_status_event(
                             &metis_id,
-                            Err(TaskError::JobEngineError {
-                                reason: failure_reason,
-                            }),
-                            Utc::now(),
+                            Event::Failed {
+                                at: Utc::now(),
+                                error: TaskError::JobEngineError {
+                                    reason: failure_reason,
+                                },
+                            },
                         )
                         .await
                     {
