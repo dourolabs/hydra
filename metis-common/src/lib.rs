@@ -221,7 +221,6 @@ pub mod artifacts {
     }
 }
 pub mod task_status {
-    use crate::MetisId;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -244,25 +243,10 @@ pub mod task_status {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum Event {
-        Created {
-            at: DateTime<Utc>,
-            status: Status,
-        },
-        Started {
-            at: DateTime<Utc>,
-        },
-        Emitted {
-            at: DateTime<Utc>,
-            /// MetisIds for any artifacts produced by the task at this moment.
-            artifact_ids: Vec<MetisId>,
-        },
-        Completed {
-            at: DateTime<Utc>,
-        },
-        Failed {
-            at: DateTime<Utc>,
-            error: TaskError,
-        },
+        Created { at: DateTime<Utc>, status: Status },
+        Started { at: DateTime<Utc> },
+        Completed { at: DateTime<Utc> },
+        Failed { at: DateTime<Utc>, error: TaskError },
     }
 
     #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,13 +269,13 @@ pub mod task_status {
             self.events
                 .iter()
                 .rev()
-                .find_map(|event| match event {
-                    Event::Created { status, .. } => Some(*status),
-                    Event::Started { .. } => Some(Status::Running),
-                    Event::Completed { .. } => Some(Status::Complete),
-                    Event::Failed { .. } => Some(Status::Failed),
-                    Event::Emitted { .. } => None,
+                .map(|event| match event {
+                    Event::Created { status, .. } => *status,
+                    Event::Started { .. } => Status::Running,
+                    Event::Completed { .. } => Status::Complete,
+                    Event::Failed { .. } => Status::Failed,
                 })
+                .next()
                 .unwrap_or(Status::Pending)
         }
 
@@ -323,25 +307,6 @@ pub mod task_status {
                 _ => None,
             })
         }
-
-        pub fn emitted_artifacts(&self) -> Option<Vec<MetisId>> {
-            let mut artifact_ids = Vec::new();
-
-            for event in &self.events {
-                if let Event::Emitted {
-                    artifact_ids: ids, ..
-                } = event
-                {
-                    artifact_ids.extend(ids.clone());
-                }
-            }
-
-            if artifact_ids.is_empty() {
-                None
-            } else {
-                Some(artifact_ids)
-            }
-        }
     }
 
     #[cfg(test)]
@@ -350,48 +315,13 @@ pub mod task_status {
         use chrono::Utc;
 
         #[test]
-        fn current_status_ignores_emitted_events() {
+        fn current_status_follows_latest_state_events() {
             let now = Utc::now();
             let mut log = TaskStatusLog::new(Status::Pending, now);
             log.events.push(Event::Started { at: now });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-1".into(), "artifact-2".into()],
-            });
+            log.events.push(Event::Completed { at: now });
 
-            assert_eq!(log.current_status(), Status::Running);
-        }
-
-        #[test]
-        fn emitted_artifacts_returns_none_when_missing() {
-            let now = Utc::now();
-            let log = TaskStatusLog::new(Status::Pending, now);
-
-            assert_eq!(log.emitted_artifacts(), None);
-        }
-
-        #[test]
-        fn emitted_artifacts_collects_all_in_order() {
-            let now = Utc::now();
-            let mut log = TaskStatusLog::new(Status::Pending, now);
-            log.events.push(Event::Started { at: now });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-1".into()],
-            });
-            log.events.push(Event::Emitted {
-                at: now,
-                artifact_ids: vec!["artifact-2".into(), "artifact-3".into()],
-            });
-
-            assert_eq!(
-                log.emitted_artifacts(),
-                Some(vec![
-                    "artifact-1".into(),
-                    "artifact-2".into(),
-                    "artifact-3".into()
-                ])
-            );
+            assert_eq!(log.current_status(), Status::Complete);
         }
     }
 }
