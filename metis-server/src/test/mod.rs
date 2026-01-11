@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    config::{AppConfig, KubernetesSection, MetisSection, ServiceSection},
+    config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
     job_engine::{JobEngine, MockJobEngine},
     run_with_state,
     state::ServiceState,
@@ -35,6 +35,7 @@ pub(crate) fn test_app_config() -> AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
         service: ServiceSection::default(),
+        background: BackgroundSection::default(),
     }
 }
 

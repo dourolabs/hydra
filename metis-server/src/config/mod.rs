@@ -3,6 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
+use metis_common::jobs::Bundle;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -18,6 +19,8 @@ pub struct AppConfig {
     pub kubernetes: KubernetesSection,
     #[serde(default)]
     pub service: ServiceSection,
+    #[serde(default)]
+    pub background: BackgroundSection,
 }
 
 impl AppConfig {
@@ -89,6 +92,12 @@ pub struct ServiceSection {
     pub repositories: HashMap<String, Repository>,
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct BackgroundSection {
+    #[serde(default)]
+    pub agent_queues: Vec<AgentQueueConfig>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Repository {
     pub remote_url: String,
@@ -98,6 +107,18 @@ pub struct Repository {
     pub github_token: Option<String>,
     #[serde(default)]
     pub default_image: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AgentQueueConfig {
+    pub name: String,
+    pub prompt: String,
+    #[serde(default = "default_bundle")]
+    pub context: Bundle,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub env_vars: HashMap<String, String>,
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
@@ -126,4 +147,8 @@ fn default_worker_image() -> String {
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
+}
+
+fn default_bundle() -> Bundle {
+    Bundle::None
 }

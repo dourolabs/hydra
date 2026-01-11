@@ -9,7 +9,9 @@ mod store;
 #[cfg(test)]
 mod test;
 
-use crate::background::{Spawner, monitor_running_jobs, process_pending_jobs, run_spawners};
+use crate::background::{
+    AgentQueue, Spawner, monitor_running_jobs, process_pending_jobs, run_spawners,
+};
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
 use crate::state::ServiceState;
@@ -124,12 +126,14 @@ async fn main() -> anyhow::Result<()> {
 
     let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
 
+    let spawners = build_spawners(&app_config);
+
     let state = AppState {
         config: Arc::new(app_config),
         service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
-        spawners: Vec::new(),
+        spawners,
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -146,6 +150,17 @@ fn config_path() -> PathBuf {
     std::env::var(ENV_METIS_CONFIG)
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
+}
+
+fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
+    let default_image = config.metis.worker_image.clone();
+
+    config
+        .background
+        .agent_queues
+        .iter()
+        .map(|queue| Arc::new(AgentQueue::from_config(queue, &default_image)) as Arc<dyn Spawner>)
+        .collect()
 }
 
 #[cfg(test)]

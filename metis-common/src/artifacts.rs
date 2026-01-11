@@ -144,6 +144,8 @@ pub enum Artifact {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         assignee: Option<String>,
         #[serde(default)]
+        assignee: Option<String>,
+        #[serde(default)]
         dependencies: Vec<IssueDependency>,
     },
 }

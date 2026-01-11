@@ -1,5 +1,6 @@
 use crate::{
     AppState,
+    config::AgentQueueConfig,
     store::{Status, Store, StoreError, Task},
 };
 use anyhow::Context;
@@ -20,24 +21,41 @@ pub trait Spawner: Send + Sync {
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>>;
 }
 
+pub const DEFAULT_AGENT_PROGRAM: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../metis/scripts/default_codex_prompt.rhai"
+));
+
 pub struct AgentQueue {
     pub name: String,
-    pub program: String,
-    pub params: Vec<String>,
+    pub prompt: String,
     pub context: Bundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,
 }
 
 impl AgentQueue {
+    pub fn from_config(config: &AgentQueueConfig, default_image: &str) -> Self {
+        Self {
+            name: config.name.clone(),
+            prompt: config.prompt.clone(),
+            context: config.context.clone(),
+            image: config
+                .image
+                .clone()
+                .unwrap_or_else(|| default_image.to_string()),
+            env_vars: config.env_vars.clone(),
+        }
+    }
+
     fn build_task(&self, issue_id: &MetisId) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.clone());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
         Task::Spawn {
-            program: self.program.clone(),
-            params: self.params.clone(),
+            program: DEFAULT_AGENT_PROGRAM.to_string(),
+            params: vec![self.prompt.clone()],
             context: self.context.clone(),
             image: self.image.clone(),
             env_vars,
@@ -127,14 +145,13 @@ async fn existing_issue_tasks_for_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::test_state;
+    use crate::{config::AgentQueueConfig, test::test_state};
     use chrono::Utc;
 
     fn queue(agent_name: &str) -> AgentQueue {
         AgentQueue {
             name: agent_name.to_string(),
-            program: "0".to_string(),
-            params: vec![],
+            prompt: "Fix the issue".to_string(),
             context: Bundle::None,
             image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
@@ -194,8 +211,8 @@ mod tests {
                 image,
                 env_vars,
             } => {
-                assert_eq!(program, "0");
-                assert!(params.is_empty());
+                assert_eq!(program, DEFAULT_AGENT_PROGRAM);
+                assert_eq!(params, &["Fix the issue".to_string()]);
                 assert_eq!(context, &Bundle::None);
                 assert_eq!(image, "metis-worker:latest");
                 assert_eq!(env_vars.get(ISSUE_ID_ENV_VAR), Some(&assigned_issue_id));
@@ -230,8 +247,8 @@ mod tests {
             store
                 .add_task(
                     Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
+                        program: DEFAULT_AGENT_PROGRAM.to_string(),
+                        params: vec!["Fix the issue".to_string()],
                         context: Bundle::None,
                         image: "metis-worker:latest".to_string(),
                         env_vars: HashMap::from([
@@ -249,5 +266,23 @@ mod tests {
         assert!(tasks.is_empty());
 
         Ok(())
+    }
+
+    #[test]
+    fn builds_from_config_with_default_image() {
+        let config = AgentQueueConfig {
+            name: "agent-config".to_string(),
+            prompt: "Handle issues".to_string(),
+            context: Bundle::None,
+            image: None,
+            env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
+        };
+
+        let queue = AgentQueue::from_config(&config, "default-image");
+
+        assert_eq!(queue.name, "agent-config");
+        assert_eq!(queue.prompt, "Handle issues");
+        assert_eq!(queue.image, "default-image");
+        assert_eq!(queue.env_vars.get("CUSTOM"), Some(&"1".to_string()));
     }
 }
