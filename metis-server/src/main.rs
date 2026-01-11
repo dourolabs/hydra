@@ -937,6 +937,7 @@ mod tests {
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             artifact_id = store_write
                 .add_artifact(Artifact::Patch {
+                    title: "done".to_string(),
                     diff: "diff".to_string(),
                     description: "done".to_string(),
                 })
@@ -1087,6 +1088,7 @@ mod tests {
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             artifact_id = store_write
                 .add_artifact(Artifact::Patch {
+                    title: "all good".to_string(),
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
                 })
@@ -1127,7 +1129,12 @@ mod tests {
         let artifact: ArtifactRecord = artifact_response.json().await?;
         assert_eq!(artifact.id, artifact_id);
         match artifact.artifact {
-            Artifact::Patch { diff, description } => {
+            Artifact::Patch {
+                title,
+                diff,
+                description,
+            } => {
+                assert_eq!(title, "all good");
                 assert_eq!(diff, "diff");
                 assert_eq!(description, "all good");
             }
@@ -1196,6 +1203,7 @@ mod tests {
                 .await?;
             let parent_artifact_id = store_write
                 .add_artifact(Artifact::Patch {
+                    title: "done".to_string(),
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
                 })
@@ -1290,6 +1298,7 @@ mod tests {
         let server = spawn_test_server().await?;
         let client = test_client();
         let artifact = Artifact::Patch {
+            title: "Initial patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
         };
@@ -1354,6 +1363,7 @@ mod tests {
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
                 artifact: Artifact::Patch {
+                    title: "artifact for emit".to_string(),
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
                 },
@@ -1381,6 +1391,7 @@ mod tests {
         let server = spawn_test_server().await?;
         let client = test_client();
         let patch = Artifact::Patch {
+            title: "refactor logging".to_string(),
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
         };
@@ -1406,6 +1417,7 @@ mod tests {
             dependencies: vec![],
         };
         let filtered_patch = Artifact::Patch {
+            title: "login retry patch".to_string(),
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
         };
@@ -1495,6 +1507,7 @@ mod tests {
             .post(format!("{}/v1/artifacts", server.base_url()))
             .json(&UpsertArtifactRequest {
                 artifact: Artifact::Patch {
+                    title: "old patch".to_string(),
                     diff: "old diff".to_string(),
                     description: "old patch".to_string(),
                 },

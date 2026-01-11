@@ -15,7 +15,7 @@ use metis_common::{
     MetisId,
 };
 
-use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo};
+use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -42,6 +42,10 @@ pub enum PatchesCommand {
 
     /// Create a patch artifact from the current git repository.
     Create {
+        /// Title for the patch artifact.
+        #[arg(long = "title", value_name = "TITLE", required = true)]
+        title: String,
+
         /// Description for the patch artifact.
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
@@ -54,6 +58,10 @@ pub enum PatchesCommand {
             value_parser = NonEmptyStringValueParser::new()
         )]
         job: Option<MetisId>,
+
+        /// Create a GitHub pull request with the patch contents.
+        #[arg(long = "github")]
+        github: bool,
     },
 
     /// Apply a patch artifact to the current git repository.
@@ -67,7 +75,12 @@ pub enum PatchesCommand {
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
-        PatchesCommand::Create { description, job } => create_patch(client, description, job).await,
+        PatchesCommand::Create {
+            title,
+            description,
+            job,
+            github,
+        } => create_patch(client, title, description, job, github).await,
         PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
     }
 }
@@ -124,9 +137,20 @@ async fn list_patches(
 
 async fn create_patch(
     client: &dyn MetisClientInterface,
+    title: String,
     description: String,
     job_id: Option<MetisId>,
+    create_github_pr: bool,
 ) -> Result<()> {
+    let title = title.trim().to_string();
+    let description = description.trim().to_string();
+    if title.is_empty() {
+        bail!("Patch title must not be empty.");
+    }
+    if description.is_empty() {
+        bail!("Patch description must not be empty.");
+    }
+
     let job_id = job_id
         .or_else(|| env::var(ENV_METIS_ID).ok())
         .map(|value| value.trim().to_string())
@@ -141,13 +165,18 @@ async fn create_patch(
     let response = client
         .create_artifact(&UpsertArtifactRequest {
             artifact: Artifact::Patch {
+                title: title.clone(),
                 diff: patch,
-                description,
+                description: description.clone(),
             },
-            job_id,
+            job_id: job_id.clone(),
         })
         .await
         .context("failed to create patch artifact")?;
+
+    if create_github_pr {
+        create_github_pull_request(&repo_root, &title, &description, job_id.as_deref())?;
+    }
 
     println!(
         "{}",
@@ -185,6 +214,13 @@ fn ensure_patch(record: &ArtifactRecord, id: &str) -> Result<()> {
     }
 }
 
+fn extract_patch_title<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
+    match &record.artifact {
+        Artifact::Patch { title, .. } => Ok(title),
+        _ => bail!("artifact '{id}' is not a patch"),
+    }
+}
+
 fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
     match &record.artifact {
         Artifact::Patch { diff, .. } => Ok(diff),
@@ -201,8 +237,12 @@ fn extract_patch_description<'a>(record: &'a ArtifactRecord, id: &str) -> Result
 
 fn print_patch_artifact(record: &ArtifactRecord) -> Result<()> {
     let diff = extract_patch_diff(record, &record.id)?;
+    let title = extract_patch_title(record, &record.id)?;
     let description = extract_patch_description(record, &record.id)?;
-    println!("Patch {}: {}", record.id, description);
+    println!("Patch {}: {}", record.id, title);
+    if !description.trim().is_empty() {
+        println!("{description}");
+    }
     println!();
     pretty_print_patch(diff);
     println!();
@@ -288,6 +328,186 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
         output.status.code().unwrap_or(-1),
         stderr
     );
+}
+
+fn create_github_pull_request(
+    repo_root: &Path,
+    title: &str,
+    description: &str,
+    job_id: Option<&str>,
+) -> Result<()> {
+    let branch_name = ensure_feature_branch(repo_root, job_id)?;
+    stage_changes_for_pr(repo_root)?;
+    ensure_staged_changes(repo_root)?;
+    commit_changes(repo_root, title)?;
+    push_branch(repo_root, &branch_name)?;
+    open_pull_request(repo_root, title, description, &branch_name)?;
+    Ok(())
+}
+
+fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
+    let current_branch = current_branch(repo_root)?;
+    if !should_create_new_branch(&current_branch) {
+        return Ok(current_branch);
+    }
+
+    let sanitized_job = sanitize_branch_segment(job_id.unwrap_or("patch"));
+    let mut candidate = if sanitized_job.is_empty() {
+        "metis-patch".to_string()
+    } else {
+        format!("metis-{sanitized_job}")
+    };
+    let mut suffix = 0;
+    while branch_exists(repo_root, &candidate)? {
+        suffix += 1;
+        candidate = format!("{candidate}-{suffix}");
+    }
+
+    checkout_new_branch(repo_root, &candidate)?;
+    Ok(candidate)
+}
+
+fn should_create_new_branch(branch: &str) -> bool {
+    matches!(branch, "HEAD" | "main" | "master")
+}
+
+fn sanitize_branch_segment(input: &str) -> String {
+    let mut normalized = input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+
+    normalized.trim_matches('-').to_string()
+}
+
+fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool> {
+    let status = Command::new("git")
+        .args(["show-ref", "--verify", &format!("refs/heads/{branch}")])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to check for existing branch")?;
+
+    Ok(status.success())
+}
+
+fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["checkout", "-b", branch])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to create feature branch for GitHub PR")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to create branch '{branch}'");
+}
+
+fn current_branch(repo_root: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to resolve current branch")?;
+    if !output.status.success() {
+        bail!("git rev-parse --abbrev-ref failed");
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        bail!("unable to determine current branch");
+    }
+
+    Ok(branch)
+}
+
+fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .arg("add")
+        .args(["-A", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to stage changes for GitHub PR")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to stage changes for GitHub PR");
+}
+
+fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to check staged changes")?;
+
+    match status.code() {
+        Some(0) => bail!("No staged changes to commit for GitHub PR"),
+        Some(1) => Ok(()),
+        _ => bail!("failed to check staged changes before committing"),
+    }
+}
+
+fn commit_changes(repo_root: &Path, title: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["commit", "-m", title])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to commit changes for GitHub PR")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to commit changes for GitHub PR");
+}
+
+fn push_branch(repo_root: &Path, branch: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["push", "-u", "origin", branch])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to push branch to origin for GitHub PR")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to push branch '{branch}' to origin");
+}
+
+fn open_pull_request(repo_root: &Path, title: &str, description: &str, branch: &str) -> Result<()> {
+    let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
+    writeln!(body_file, "{description}").context("failed to write pull request description")?;
+
+    let status = Command::new("gh")
+        .args(["pr", "create"])
+        .args(["--head", branch])
+        .args(["--title", title])
+        .args(["--body-file"])
+        .arg(body_file.path())
+        .current_dir(repo_root)
+        .status()
+        .context("failed to create GitHub pull request")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to open GitHub pull request for branch '{branch}'");
 }
 
 #[cfg(test)]
@@ -454,17 +674,33 @@ mod tests {
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "patch-1".to_string(),
         });
+        let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
-        create_patch(&client, patch_description.clone(), None).await?;
+        create_patch(
+            &client,
+            patch_title.clone(),
+            patch_description.clone(),
+            None,
+            false,
+        )
+        .await?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
 
         let (_, request) = &requests[0];
-        let (generated_patch, generated_description) = match &request.artifact {
-            Artifact::Patch { diff, description } => (diff, description),
+        let (generated_title, generated_patch, generated_description) = match &request.artifact {
+            Artifact::Patch {
+                title,
+                diff,
+                description,
+            } => (title, diff, description),
             other => panic!("expected patch artifact, got {other:?}"),
         };
+        assert_eq!(
+            generated_title, &patch_title,
+            "expected provided title to be applied"
+        );
         assert_eq!(
             generated_description, &patch_description,
             "expected provided description to be applied"
@@ -527,10 +763,18 @@ mod tests {
             artifact_id: "patch-2".to_string(),
         });
 
+        let title = "patch with job title".to_string();
         let job_id = Some("job-1234".to_string());
         let description = "patch with job id".to_string();
 
-        create_patch(&client, description.clone(), job_id.clone()).await?;
+        create_patch(
+            &client,
+            title.clone(),
+            description.clone(),
+            job_id.clone(),
+            false,
+        )
+        .await?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
@@ -543,9 +787,13 @@ mod tests {
 
         match &request.artifact {
             Artifact::Patch {
+                title: recorded_title,
                 description: recorded_description,
                 ..
-            } => assert_eq!(recorded_description, &description),
+            } => {
+                assert_eq!(recorded_title, &title);
+                assert_eq!(recorded_description, &description);
+            }
             other => panic!("expected patch artifact, got {other:?}"),
         }
 
@@ -563,9 +811,10 @@ mod tests {
             artifact_id: "patch-3".to_string(),
         });
 
+        let title = "patch with env title".to_string();
         let description = "patch with env job id".to_string();
 
-        create_patch(&client, description.clone(), None).await?;
+        create_patch(&client, title.clone(), description.clone(), None, false).await?;
 
         let requests = client.recorded_artifact_upserts();
         assert_eq!(requests.len(), 1, "expected one artifact upsert");
@@ -579,11 +828,26 @@ mod tests {
 
         match &request.artifact {
             Artifact::Patch {
+                title: recorded_title,
                 description: recorded_description,
                 ..
-            } => assert_eq!(recorded_description, &description),
+            } => {
+                assert_eq!(recorded_title, &title);
+                assert_eq!(recorded_description, &description);
+            }
             other => panic!("expected patch artifact, got {other:?}"),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_feature_branch_uses_job_id_when_on_main() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let branch = ensure_feature_branch(&repo_path, Some("Job 123"))?;
+
+        assert_eq!(branch, "metis-job-123");
+        assert_eq!(current_branch(&repo_path)?, branch);
 
         Ok(())
     }

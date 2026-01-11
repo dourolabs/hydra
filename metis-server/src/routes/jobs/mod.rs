@@ -339,8 +339,9 @@ fn format_error_note(error: &TaskError) -> Option<String> {
 
 fn note_from_artifact(artifact: &Artifact) -> Option<String> {
     match artifact {
-        Artifact::Patch { description, .. } | Artifact::Issue { description, .. } => {
-            sanitize_note(description)
-        }
+        Artifact::Patch {
+            title, description, ..
+        } => sanitize_note(title).or_else(|| sanitize_note(description)),
+        Artifact::Issue { description, .. } => sanitize_note(description),
     }
 }

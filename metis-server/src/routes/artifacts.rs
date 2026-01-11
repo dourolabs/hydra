@@ -233,8 +233,14 @@ fn artifact_matches(
         }
 
         return match artifact {
-            Artifact::Patch { diff, description } => {
-                diff.to_lowercase().contains(term) || description.to_lowercase().contains(term)
+            Artifact::Patch {
+                title,
+                diff,
+                description,
+            } => {
+                title.to_lowercase().contains(term)
+                    || diff.to_lowercase().contains(term)
+                    || description.to_lowercase().contains(term)
             }
             Artifact::Issue {
                 description,
