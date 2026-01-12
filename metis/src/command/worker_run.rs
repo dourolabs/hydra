@@ -268,27 +268,6 @@ fn last_message_path(dest: &Path) -> PathBuf {
     output_dir.join(constants::OUTPUT_TXT_FILE)
 }
 
-#[cfg(test)]
-fn create_patch_file(dest: &Path) -> Result<()> {
-    let patch_file = dest
-        .join(constants::METIS_DIR)
-        .join(constants::OUTPUT_DIR)
-        .join(constants::CHANGES_PATCH_FILE);
-
-    // Ensure the output directory exists
-    if let Some(parent) = patch_file.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create output directory at {parent:?}"))?;
-    }
-
-    let patch = create_patch_from_repo(dest)?;
-
-    fs::write(&patch_file, patch.as_bytes())
-        .with_context(|| format!("failed to write patch file to {patch_file:?}"))?;
-
-    Ok(())
-}
-
 /// Create a unified diff from the repository at `dest`, staging all changes (including
 /// untracked files) except for `.metis/**`, and returning the diff as a string.
 pub fn create_patch_from_repo(dest: &Path) -> Result<String> {
@@ -360,7 +339,6 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    // Test helpers for create_patch_file tests
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         let repo_str = repo_path
             .to_str()
@@ -425,15 +403,6 @@ mod tests {
         let repo_str = init_git_repo(repo_path)?;
         create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
         Ok(repo_str)
-    }
-
-    fn read_patch_file(repo_path: &Path) -> Result<String> {
-        let patch_file = repo_path
-            .join(constants::METIS_DIR)
-            .join(constants::OUTPUT_DIR)
-            .join(constants::CHANGES_PATCH_FILE);
-        fs::read_to_string(&patch_file)
-            .with_context(|| format!("failed to read patch file at {}", patch_file.display()))
     }
 
     #[test]
@@ -514,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn create_patch_file_includes_untracked_files() -> Result<()> {
+    fn create_patch_from_repo_includes_untracked_files() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
 
@@ -527,11 +496,8 @@ mod tests {
         std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
             .context("failed to write main.rs")?;
 
-        // Create patch file
-        create_patch_file(repo_path)?;
-
-        // Read and verify patch file
-        let patch_content = read_patch_file(repo_path)?;
+        // Create patch
+        let patch_content = create_patch_from_repo(repo_path)?;
 
         // Verify new files are included in patch
         assert!(
@@ -555,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn create_patch_file_excludes_metis_directory() -> Result<()> {
+    fn create_patch_from_repo_excludes_metis_directory() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
 
@@ -578,11 +544,8 @@ mod tests {
         std::fs::write(repo_path.join("regular_file.txt"), "regular content")
             .context("failed to write regular file")?;
 
-        // Create patch file
-        create_patch_file(repo_path)?;
-
-        // Read and verify patch file
-        let patch_content = read_patch_file(repo_path)?;
+        // Create patch
+        let patch_content = create_patch_from_repo(repo_path)?;
 
         // Verify .metis files are excluded from patch
         assert!(
@@ -616,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn create_patch_file_ignores_gitignored_paths() -> Result<()> {
+    fn create_patch_from_repo_ignores_gitignored_paths() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
@@ -655,11 +618,8 @@ mod tests {
         std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
             .context("failed to write src/main.rs")?;
 
-        // Create patch file
-        create_patch_file(repo_path)?;
-
-        // Read and verify patch file
-        let patch_content = read_patch_file(repo_path)?;
+        // Create patch
+        let patch_content = create_patch_from_repo(repo_path)?;
 
         // Verify gitignored files are excluded from patch
         assert!(
@@ -693,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn create_patch_file_generates_empty_patch_when_no_changes() -> Result<()> {
+    fn create_patch_from_repo_generates_empty_patch_when_no_changes() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
 
@@ -701,11 +661,8 @@ mod tests {
 
         // No changes made after the commit - directory is clean
 
-        // Create patch file
-        create_patch_file(repo_path)?;
-
-        // Read and verify patch file is empty
-        let patch_content = read_patch_file(repo_path)?;
+        // Create patch and verify it is empty
+        let patch_content = create_patch_from_repo(repo_path)?;
 
         // Verify patch is empty when there are no changes
         assert!(
