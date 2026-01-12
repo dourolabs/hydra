@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::{HashMap, HashSet},
     io::{stdout, Stdout},
     ops::ControlFlow,
     time::Duration,
@@ -14,9 +15,13 @@ use crossterm::{
 };
 use futures::StreamExt;
 use metis_common::{
-    artifacts::{Artifact, ArtifactKind, ArtifactRecord, SearchArtifactsQuery},
+    artifacts::{
+        Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
+        SearchArtifactsQuery,
+    },
     jobs::JobSummary,
     task_status::{Status, TaskError, TaskStatusLog},
+    MetisId,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -35,11 +40,19 @@ const MAX_RUNNING_JOBS: usize = 10;
 const MAX_FINISHED_JOBS: usize = 12;
 const MAX_ARTIFACT_ROWS: usize = 12;
 const MAX_MESSAGE_WIDTH: usize = 90;
+const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 
 #[derive(Default, Clone, PartialEq)]
 struct JobSections {
     running: Vec<JobDisplay>,
     finished: Vec<JobDisplay>,
+}
+
+#[derive(Clone, PartialEq)]
+struct JobDetails {
+    display: JobDisplay,
+    issue_id: Option<String>,
+    emitted_artifacts: Vec<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -51,22 +64,61 @@ struct JobDisplay {
     last_change: Option<DateTime<Utc>>,
 }
 
-#[derive(Default, Clone, PartialEq)]
-struct ArtifactSections {
-    issues: Vec<ArtifactDisplay>,
-    patches: Vec<ArtifactDisplay>,
-}
-
 #[derive(Clone, PartialEq)]
 struct ArtifactDisplay {
     id: String,
     summary: String,
 }
 
+#[derive(Clone, PartialEq)]
+struct IssueRecord {
+    id: String,
+    description: String,
+    status: IssueStatus,
+    assignee: Option<String>,
+    dependencies: Vec<IssueDependency>,
+}
+
+#[derive(Clone, PartialEq)]
+struct PatchRecord {
+    id: String,
+    summary: String,
+}
+
+#[derive(Default, Clone, PartialEq)]
+struct IssueLines {
+    rows: Vec<IssueLine>,
+}
+
+#[derive(Clone, PartialEq)]
+struct IssueLine {
+    id: String,
+    summary: String,
+    status: IssueStatus,
+    assignee: Option<String>,
+    blocked_on: Vec<String>,
+    patch_count: usize,
+    task_status: Option<Status>,
+    depth: usize,
+}
+
+#[derive(Clone)]
+struct IssueNode {
+    record: IssueRecord,
+    parent: Option<String>,
+    children: Vec<String>,
+    patch_count: usize,
+    task_status: Option<Status>,
+}
+
 #[derive(Default, Clone, PartialEq)]
 struct DashboardState {
-    jobs: JobSections,
-    artifacts: ArtifactSections,
+    jobs: Vec<JobDetails>,
+    issues: Vec<IssueRecord>,
+    patches: Vec<PatchRecord>,
+    issue_lines: IssueLines,
+    unassociated_jobs: JobSections,
+    unassociated_patches: Vec<ArtifactDisplay>,
     jobs_error: Option<String>,
     artifacts_error: Option<String>,
 }
@@ -194,15 +246,15 @@ fn render(frame: &mut Frame, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Min(10),
-            Constraint::Length(9),
+            Constraint::Length(3),
+            Constraint::Min(12),
+            Constraint::Length(10),
         ])
         .split(frame.size());
 
     render_header(frame, chunks[0], state);
-    render_jobs(frame, chunks[1], state);
-    render_artifacts(frame, chunks[2], state);
+    render_issues(frame, chunks[1], state);
+    render_other_panels(frame, chunks[2], state);
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -237,15 +289,98 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     frame.render_widget(paragraph, area);
 }
 
-fn render_jobs(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+    let items: Vec<ListItem> = if state.issue_lines.rows.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "No issues found",
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        state
+            .issue_lines
+            .rows
+            .iter()
+            .map(|line| {
+                let mut spans = Vec::new();
+                spans.push(Span::raw("  ".repeat(line.depth)));
+                spans.push(Span::styled(
+                    format!("[{}]", issue_status_label(line.status)),
+                    issue_status_style(line.status),
+                ));
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    line.id.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+                if let Some(task_status) = line.task_status {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("[task:{}]", status_label(task_status)),
+                        status_style(task_status),
+                    ));
+                }
+                if line.patch_count > 0 {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("[patch:{}]", line.patch_count),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                if let Some(assignee) = &line.assignee {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("@{assignee}"),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                if !line.blocked_on.is_empty() {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("blocked: {}", line.blocked_on.join(", ")),
+                        Style::default().fg(Color::Magenta),
+                    ));
+                }
+                spans.push(Span::raw(" — "));
+                spans.push(Span::raw(truncate_message(
+                    &line.summary,
+                    MAX_MESSAGE_WIDTH,
+                )));
+
+                ListItem::new(Line::from(spans))
+            })
+            .collect()
+    };
+
+    let block = Block::default()
+        .title("Issues")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    frame.render_widget(List::new(items).block(block), area);
+}
+
+fn render_other_panels(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+    let rows = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+
+    render_unassociated_jobs(frame, rows[0], state);
+    render_unassociated_patches(frame, rows[1], state);
+}
+
+fn render_unassociated_jobs(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &DashboardState,
+) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     let running_table = job_table(
-        "Running jobs",
-        &state.jobs.running,
+        "Other running tasks",
+        &state.unassociated_jobs.running,
         &[
             Constraint::Percentage(28),
             Constraint::Length(12),
@@ -254,8 +389,8 @@ fn render_jobs(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboard
         ],
     );
     let finished_table = job_table(
-        "Recent results",
-        &state.jobs.finished,
+        "Other recent results",
+        &state.unassociated_jobs.finished,
         &[
             Constraint::Percentage(28),
             Constraint::Length(12),
@@ -301,31 +436,23 @@ fn job_table<'a>(title: &'a str, jobs: &'a [JobDisplay], widths: &'a [Constraint
         .block(Block::default().title(title).borders(Borders::ALL))
 }
 
-fn render_artifacts(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let rows = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    let issues = artifact_list("Recent issues", &state.artifacts.issues, Color::Yellow);
-    let patches = artifact_list("Recent patches", &state.artifacts.patches, Color::Cyan);
-
-    frame.render_widget(issues, rows[0]);
-    frame.render_widget(patches, rows[1]);
-}
-
-fn artifact_list<'a>(title: &'a str, artifacts: &'a [ArtifactDisplay], color: Color) -> List<'a> {
-    let items: Vec<ListItem> = if artifacts.is_empty() {
+fn render_unassociated_patches(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &DashboardState,
+) {
+    let items: Vec<ListItem> = if state.unassociated_patches.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "No records",
             Style::default().fg(Color::DarkGray),
         )))]
     } else {
-        artifacts
+        state
+            .unassociated_patches
             .iter()
             .map(|artifact| {
                 ListItem::new(Line::from(vec![
-                    Span::styled(&artifact.id, Style::default().fg(color)),
+                    Span::styled(&artifact.id, Style::default().fg(Color::Cyan)),
                     Span::raw(" — "),
                     Span::raw(truncate_message(&artifact.summary, MAX_MESSAGE_WIDTH)),
                 ]))
@@ -333,7 +460,10 @@ fn artifact_list<'a>(title: &'a str, artifacts: &'a [ArtifactDisplay], color: Co
             .collect()
     };
 
-    List::new(items).block(Block::default().title(title).borders(Borders::ALL))
+    let block = Block::default()
+        .title("Patches without issues")
+        .borders(Borders::ALL);
+    frame.render_widget(List::new(items).block(block), area);
 }
 
 async fn refresh_jobs(
@@ -342,78 +472,152 @@ async fn refresh_jobs(
 ) -> Result<bool> {
     let response = client.list_jobs().await?;
     let now = Utc::now();
-    let jobs = categorize_jobs(response.jobs, now);
 
-    if state.jobs == jobs {
-        return Ok(false);
+    let previous_jobs = state.jobs.clone();
+    let mut jobs = Vec::new();
+    for summary in response.jobs {
+        let issue_id = match cached_issue_id(&previous_jobs, &summary.id) {
+            Some(id) => id,
+            None => fetch_issue_id(client, &summary.id).await?,
+        };
+        let emitted_artifacts = summary
+            .status_log
+            .emitted_artifacts()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let display = summarize_job(summary, now);
+        jobs.push(JobDetails {
+            display,
+            issue_id,
+            emitted_artifacts,
+        });
     }
 
-    state.jobs = jobs;
-    Ok(true)
+    let jobs_changed = jobs != state.jobs;
+    if jobs_changed {
+        state.jobs = jobs;
+    }
+
+    let derived_changed = update_views(state);
+    Ok(jobs_changed || derived_changed)
 }
 
 async fn refresh_artifacts(
     client: &dyn MetisClientInterface,
     state: &mut DashboardState,
 ) -> Result<bool> {
-    let issues = fetch_artifacts(client, ArtifactKind::Issue).await?;
-    let patches = fetch_artifacts(client, ArtifactKind::Patch).await?;
-    let artifacts = ArtifactSections { issues, patches };
+    let issues = fetch_issues(client).await?;
+    let patches = fetch_patches(client).await?;
 
-    if state.artifacts == artifacts {
-        return Ok(false);
+    let changed = issues != state.issues || patches != state.patches;
+    if changed {
+        state.issues = issues;
+        state.patches = patches;
     }
 
-    state.artifacts = artifacts;
-    Ok(true)
+    let derived_changed = update_views(state);
+    Ok(changed || derived_changed)
 }
 
-async fn fetch_artifacts(
+fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &str) -> Option<Option<String>> {
+    previous_jobs
+        .iter()
+        .find(|job| job.display.id == job_id)
+        .map(|job| job.issue_id.clone())
+}
+
+async fn fetch_issue_id(
     client: &dyn MetisClientInterface,
-    kind: ArtifactKind,
-) -> Result<Vec<ArtifactDisplay>> {
+    job_id: &MetisId,
+) -> Result<Option<String>> {
+    let context = client
+        .get_job_context(job_id)
+        .await
+        .with_context(|| format!("failed to fetch job context for '{job_id}'"))?;
+
+    let issue_id = context
+        .variables
+        .get(ISSUE_ID_VAR)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+
+    Ok(issue_id)
+}
+
+async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueRecord>> {
     let response = client
         .list_artifacts(&SearchArtifactsQuery {
-            artifact_type: Some(kind),
+            artifact_type: Some(ArtifactKind::Issue),
             issue_type: None,
             status: None,
             assignee: None,
             q: None,
         })
         .await
-        .with_context(|| format!("failed to fetch {kind:?} artifacts"))?;
+        .context("failed to fetch issue artifacts")?;
 
-    let mut artifacts: Vec<ArtifactDisplay> = response
+    let issues = response
         .artifacts
         .into_iter()
-        .filter_map(|record| artifact_to_display(record, kind))
+        .filter_map(issue_to_record)
         .collect();
 
-    artifacts.truncate(MAX_ARTIFACT_ROWS);
-    Ok(artifacts)
+    Ok(issues)
 }
 
-fn artifact_to_display(
-    record: ArtifactRecord,
-    expected_kind: ArtifactKind,
-) -> Option<ArtifactDisplay> {
-    match (record.artifact, expected_kind) {
-        (Artifact::Issue { description, .. }, ArtifactKind::Issue) => Some(ArtifactDisplay {
+async fn fetch_patches(client: &dyn MetisClientInterface) -> Result<Vec<PatchRecord>> {
+    let response = client
+        .list_artifacts(&SearchArtifactsQuery {
+            artifact_type: Some(ArtifactKind::Patch),
+            issue_type: None,
+            status: None,
+            assignee: None,
+            q: None,
+        })
+        .await
+        .context("failed to fetch patch artifacts")?;
+
+    let patches = response
+        .artifacts
+        .into_iter()
+        .filter_map(patch_to_record)
+        .collect();
+
+    Ok(patches)
+}
+
+fn issue_to_record(record: ArtifactRecord) -> Option<IssueRecord> {
+    match record.artifact {
+        Artifact::Issue {
+            description,
+            status,
+            assignee,
+            dependencies,
+            ..
+        } => Some(IssueRecord {
             id: record.id,
-            summary: description,
+            description,
+            status,
+            assignee,
+            dependencies,
         }),
-        (
-            Artifact::Patch {
-                title, description, ..
-            },
-            ArtifactKind::Patch,
-        ) => {
+        _ => None,
+    }
+}
+
+fn patch_to_record(record: ArtifactRecord) -> Option<PatchRecord> {
+    match record.artifact {
+        Artifact::Patch {
+            title, description, ..
+        } => {
             let summary = if title.trim().is_empty() {
                 description
             } else {
                 title
             };
-            Some(ArtifactDisplay {
+            Some(PatchRecord {
                 id: record.id,
                 summary,
             })
@@ -422,15 +626,225 @@ fn artifact_to_display(
     }
 }
 
-fn categorize_jobs(jobs: Vec<JobSummary>, now: DateTime<Utc>) -> JobSections {
+fn update_views(state: &mut DashboardState) -> bool {
+    let previous_issue_lines = state.issue_lines.clone();
+    let previous_unassociated_jobs = state.unassociated_jobs.clone();
+    let previous_unassociated_patches = state.unassociated_patches.clone();
+
+    let (issue_lines, associated_patch_ids) =
+        build_issue_lines(&state.issues, &state.jobs, &state.patches);
+
+    let unassociated_jobs = categorize_jobs(
+        state
+            .jobs
+            .iter()
+            .filter(|job| job.issue_id.is_none())
+            .map(|job| job.display.clone())
+            .collect(),
+    );
+
+    let mut unassociated_patches: Vec<ArtifactDisplay> = state
+        .patches
+        .iter()
+        .filter(|patch| !associated_patch_ids.contains(&patch.id))
+        .map(|patch| ArtifactDisplay {
+            id: patch.id.clone(),
+            summary: patch.summary.clone(),
+        })
+        .collect();
+    unassociated_patches.truncate(MAX_ARTIFACT_ROWS);
+
+    state.issue_lines = issue_lines;
+    state.unassociated_jobs = unassociated_jobs;
+    state.unassociated_patches = unassociated_patches;
+
+    previous_issue_lines != state.issue_lines
+        || previous_unassociated_jobs != state.unassociated_jobs
+        || previous_unassociated_patches != state.unassociated_patches
+}
+
+fn build_issue_lines(
+    issues: &[IssueRecord],
+    jobs: &[JobDetails],
+    patches: &[PatchRecord],
+) -> (IssueLines, HashSet<String>) {
+    let issue_ids: HashSet<String> = issues.iter().map(|issue| issue.id.clone()).collect();
+    let mut task_status_by_issue: HashMap<String, Vec<Status>> = HashMap::new();
+    let mut emitted_artifacts_by_issue: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for job in jobs {
+        if let Some(issue_id) = &job.issue_id {
+            task_status_by_issue
+                .entry(issue_id.clone())
+                .or_default()
+                .push(job.display.status);
+
+            let emitted = emitted_artifacts_by_issue
+                .entry(issue_id.clone())
+                .or_default();
+            for artifact_id in &job.emitted_artifacts {
+                emitted.insert(artifact_id.clone());
+            }
+        }
+    }
+
+    let patch_lookup: HashSet<String> = patches.iter().map(|patch| patch.id.clone()).collect();
+    let mut patch_ids_by_issue: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut associated_patch_ids = HashSet::new();
+    for (issue_id, artifact_ids) in &emitted_artifacts_by_issue {
+        if !issue_ids.contains(issue_id) {
+            continue;
+        }
+        for artifact_id in artifact_ids {
+            if patch_lookup.contains(artifact_id) {
+                patch_ids_by_issue
+                    .entry(issue_id.clone())
+                    .or_default()
+                    .insert(artifact_id.clone());
+                associated_patch_ids.insert(artifact_id.clone());
+            }
+        }
+    }
+
+    let mut nodes: HashMap<String, IssueNode> = issues
+        .iter()
+        .map(|issue| {
+            let task_status = task_status_by_issue
+                .get(&issue.id)
+                .and_then(|statuses| best_task_status(statuses));
+            let patch_count = patch_ids_by_issue
+                .get(&issue.id)
+                .map(|set| set.len())
+                .unwrap_or(0);
+            (
+                issue.id.clone(),
+                IssueNode {
+                    record: issue.clone(),
+                    parent: None,
+                    children: Vec::new(),
+                    patch_count,
+                    task_status,
+                },
+            )
+        })
+        .collect();
+
+    let ids: Vec<String> = nodes.keys().cloned().collect();
+    for id in &ids {
+        let parent = nodes.get(id).and_then(|node| {
+            node.record
+                .dependencies
+                .iter()
+                .find(|dep| dep.dependency_type == IssueDependencyType::ChildOf)
+                .map(|dep| dep.issue_id.clone())
+        });
+
+        if let Some(parent_id) = parent {
+            if let Some(parent_node) = nodes.get_mut(&parent_id) {
+                parent_node.children.push(id.clone());
+                if let Some(node) = nodes.get_mut(id) {
+                    node.parent = Some(parent_id);
+                }
+            }
+        }
+    }
+
+    let mut roots: Vec<String> = nodes
+        .iter()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(id, _)| id.clone())
+        .collect();
+    roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
+
+    let mut rows = Vec::new();
+    let mut visited = HashSet::new();
+    for root in roots {
+        append_issue(&root, 0, &mut rows, &mut visited, &nodes);
+    }
+
+    (IssueLines { rows }, associated_patch_ids)
+}
+
+fn append_issue(
+    id: &str,
+    depth: usize,
+    rows: &mut Vec<IssueLine>,
+    visited: &mut HashSet<String>,
+    nodes: &HashMap<String, IssueNode>,
+) {
+    if !visited.insert(id.to_string()) {
+        return;
+    }
+
+    let Some(node) = nodes.get(id) else {
+        return;
+    };
+
+    let blocked_on: Vec<String> = node
+        .record
+        .dependencies
+        .iter()
+        .filter(|dep| dep.dependency_type == IssueDependencyType::BlockedOn)
+        .map(|dep| dep.issue_id.clone())
+        .collect();
+
+    rows.push(IssueLine {
+        id: node.record.id.clone(),
+        summary: node.record.description.clone(),
+        status: node.record.status,
+        assignee: node.record.assignee.clone(),
+        blocked_on,
+        patch_count: node.patch_count,
+        task_status: node.task_status,
+        depth,
+    });
+
+    let mut children = node.children.clone();
+    children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
+    for child in children {
+        append_issue(&child, depth + 1, rows, visited, nodes);
+    }
+}
+
+fn compare_issue_nodes(nodes: &HashMap<String, IssueNode>, a: &str, b: &str) -> Ordering {
+    let Some(left) = nodes.get(a) else {
+        return Ordering::Less;
+    };
+    let Some(right) = nodes.get(b) else {
+        return Ordering::Greater;
+    };
+
+    issue_status_order(left.record.status)
+        .cmp(&issue_status_order(right.record.status))
+        .then_with(|| left.record.id.cmp(&right.record.id))
+}
+
+fn best_task_status(statuses: &[Status]) -> Option<Status> {
+    statuses.iter().cloned().min_by_key(|status| match status {
+        Status::Running => 0,
+        Status::Pending => 1,
+        Status::Blocked => 2,
+        Status::Failed => 3,
+        Status::Complete => 4,
+    })
+}
+
+fn issue_status_order(status: IssueStatus) -> usize {
+    match status {
+        IssueStatus::InProgress => 0,
+        IssueStatus::Open => 1,
+        IssueStatus::Closed => 2,
+    }
+}
+
+fn categorize_jobs(jobs: Vec<JobDisplay>) -> JobSections {
     let mut running = Vec::new();
     let mut finished = Vec::new();
 
     for job in jobs {
-        let display = summarize_job(job, now);
-        match display.status {
-            Status::Complete | Status::Failed => finished.push(display),
-            _ => running.push(display),
+        match job.status {
+            Status::Complete | Status::Failed => finished.push(job),
+            _ => running.push(job),
         }
     }
 
@@ -513,6 +927,22 @@ fn status_style(status: Status) -> Style {
     }
 }
 
+fn issue_status_label(status: IssueStatus) -> &'static str {
+    match status {
+        IssueStatus::Open => "open",
+        IssueStatus::InProgress => "in-progress",
+        IssueStatus::Closed => "closed",
+    }
+}
+
+fn issue_status_style(status: IssueStatus) -> Style {
+    match status {
+        IssueStatus::Open => Style::default().fg(Color::Blue),
+        IssueStatus::InProgress => Style::default().fg(Color::Yellow),
+        IssueStatus::Closed => Style::default().fg(Color::Green),
+    }
+}
+
 fn truncate_message(message: &str, max_chars: usize) -> String {
     if message.chars().count() <= max_chars {
         return message.to_string();
@@ -561,15 +991,48 @@ mod tests {
         }
     }
 
+    fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
+        IssueRecord {
+            id: id.to_string(),
+            description: id.to_string(),
+            status,
+            assignee: None,
+            dependencies,
+        }
+    }
+
+    fn job_details_with_issue(
+        id: &str,
+        status: Status,
+        issue_id: Option<&str>,
+        emitted_artifacts: Vec<&str>,
+    ) -> JobDetails {
+        JobDetails {
+            display: JobDisplay {
+                id: id.to_string(),
+                status,
+                runtime: None,
+                note: "-".to_string(),
+                last_change: Some(Utc::now()),
+            },
+            issue_id: issue_id.map(|value| value.to_string()),
+            emitted_artifacts: emitted_artifacts
+                .into_iter()
+                .map(|value| value.to_string())
+                .collect(),
+        }
+    }
+
     #[test]
     fn categorize_jobs_splits_running_and_finished() {
+        let now = Utc::now();
         let jobs = vec![
-            job_with_status("job-running", Status::Running, 0),
-            job_with_status("job-complete", Status::Complete, 1),
-            job_with_status("job-failed", Status::Failed, 2),
+            summarize_job(job_with_status("job-running", Status::Running, 0), now),
+            summarize_job(job_with_status("job-complete", Status::Complete, 1), now),
+            summarize_job(job_with_status("job-failed", Status::Failed, 2), now),
         ];
 
-        let categorized = categorize_jobs(jobs, Utc::now());
+        let categorized = categorize_jobs(jobs);
 
         assert_eq!(categorized.running.len(), 1);
         assert_eq!(categorized.finished.len(), 2);
@@ -602,5 +1065,51 @@ mod tests {
 
         assert_eq!(truncated.len(), 20);
         assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn issue_lines_sorted_by_status_and_nested() {
+        let issues = vec![
+            issue("ISSUE-1", IssueStatus::Open, vec![]),
+            issue(
+                "ISSUE-3",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: "ISSUE-1".into(),
+                }],
+            ),
+            issue("ISSUE-2", IssueStatus::InProgress, vec![]),
+        ];
+
+        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+
+        assert_eq!(lines.rows.len(), 3);
+        assert_eq!(lines.rows[0].id, "ISSUE-2");
+        assert_eq!(lines.rows[1].id, "ISSUE-1");
+        assert_eq!(lines.rows[2].id, "ISSUE-3");
+        assert_eq!(lines.rows[2].depth, 1);
+    }
+
+    #[test]
+    fn issue_lines_include_task_and_patch_indicators() {
+        let issues = vec![issue("ISSUE-1", IssueStatus::Open, vec![])];
+        let patches = vec![PatchRecord {
+            id: "patch-1".to_string(),
+            summary: "fix".to_string(),
+        }];
+        let jobs = vec![job_details_with_issue(
+            "job-1",
+            Status::Running,
+            Some("ISSUE-1"),
+            vec!["patch-1"],
+        )];
+
+        let (lines, associated_patches) = build_issue_lines(&issues, &jobs, &patches);
+
+        assert!(associated_patches.contains("patch-1"));
+        let line = lines.rows.first().expect("issue line missing");
+        assert_eq!(line.patch_count, 1);
+        assert_eq!(line.task_status, Some(Status::Running));
     }
 }
