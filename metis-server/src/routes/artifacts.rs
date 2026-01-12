@@ -255,6 +255,7 @@ fn artifact_matches(
                 title,
                 diff,
                 description,
+                ..
             } => {
                 title.to_lowercase().contains(term)
                     || diff.to_lowercase().contains(term)

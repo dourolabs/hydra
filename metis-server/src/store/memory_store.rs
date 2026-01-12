@@ -458,6 +458,7 @@ mod tests {
             title: "sample patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
+            reviews: Vec::new(),
         }
     }
 
@@ -508,6 +509,7 @@ mod tests {
                     title: "noop patch".to_string(),
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
+                    reviews: Vec::new(),
                 },
             )
             .await

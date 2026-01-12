@@ -260,6 +260,7 @@ async fn submit_job_status(
                 title: patch_title,
                 diff: patch.clone(),
                 description: last_message.clone(),
+                reviews: Vec::new(),
             },
             job_id: Some(job.clone()),
         })
