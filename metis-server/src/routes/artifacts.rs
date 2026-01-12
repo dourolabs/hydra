@@ -82,6 +82,7 @@ pub async fn list_artifacts(
         artifact_type = ?query.artifact_type,
         issue_type = ?query.issue_type,
         status = ?query.status,
+        assignee = ?query.assignee,
         query = ?query.q,
         "list_artifacts invoked"
     );
@@ -90,6 +91,11 @@ pub async fn list_artifacts(
         .q
         .as_ref()
         .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+    let assignee_filter = query
+        .assignee
+        .as_ref()
+        .map(|value| value.trim())
         .filter(|value| !value.is_empty());
 
     let store_read = state.store.read().await;
@@ -106,6 +112,7 @@ pub async fn list_artifacts(
                 query.issue_type,
                 query.status,
                 search_term.as_deref(),
+                assignee_filter,
                 id,
                 artifact,
             )
@@ -195,6 +202,7 @@ fn artifact_matches(
     issue_type_filter: Option<IssueType>,
     status_filter: Option<IssueStatus>,
     search_term: Option<&str>,
+    assignee_filter: Option<&str>,
     artifact_id: &str,
     artifact: &Artifact,
 ) -> bool {
@@ -226,6 +234,16 @@ fn artifact_matches(
         }
     }
 
+    if let Some(expected_assignee) = assignee_filter {
+        match artifact {
+            Artifact::Issue { assignee, .. } => match assignee.as_ref() {
+                Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+
     if let Some(term) = search_term {
         let lower_id = artifact_id.to_lowercase();
         if lower_id.contains(term) {
@@ -246,11 +264,16 @@ fn artifact_matches(
                 description,
                 issue_type,
                 status,
+                assignee,
                 ..
             } => {
                 description.to_lowercase().contains(term)
                     || issue_type_matches(term, issue_type)
                     || issue_status_matches(term, status)
+                    || assignee
+                        .as_deref()
+                        .map(|value| value.to_lowercase().contains(term))
+                        .unwrap_or(false)
             }
         };
     }

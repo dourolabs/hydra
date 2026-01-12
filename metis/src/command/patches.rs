@@ -114,6 +114,7 @@ async fn list_patches(
             artifact_type: Some(ArtifactKind::Patch),
             issue_type: None,
             status: None,
+            assignee: None,
             q: query,
         })
         .await
