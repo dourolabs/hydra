@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::{Artifact, IssueDependency, IssueDependencyType};
+use metis_common::artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus};
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
@@ -201,6 +201,80 @@ impl Store for MemoryStore {
                 "artifact '{issue_id}' is not an issue"
             ))),
             None => Err(StoreError::ArtifactNotFound(issue_id.clone())),
+        }
+    }
+
+    async fn is_issue_ready(&self, issue_id: &MetisId) -> Result<bool, StoreError> {
+        let artifact = self
+            .artifacts
+            .get(issue_id)
+            .ok_or_else(|| StoreError::ArtifactNotFound(issue_id.clone()))?;
+
+        let (status, dependencies) = match artifact {
+            Artifact::Issue {
+                status,
+                dependencies,
+                ..
+            } => (status, dependencies.as_slice()),
+            _ => {
+                return Err(StoreError::InvalidDependency(format!(
+                    "artifact '{issue_id}' is not an issue"
+                )));
+            }
+        };
+
+        match status {
+            IssueStatus::Closed => Ok(false),
+            IssueStatus::Open => {
+                for dependency in dependencies {
+                    if dependency.dependency_type == IssueDependencyType::BlockedOn {
+                        let blocker_status = match self.artifacts.get(&dependency.issue_id) {
+                            Some(Artifact::Issue { status, .. }) => status,
+                            Some(_) => {
+                                return Err(StoreError::InvalidDependency(format!(
+                                    "artifact '{}' is not an issue",
+                                    dependency.issue_id
+                                )));
+                            }
+                            None => {
+                                return Err(StoreError::ArtifactNotFound(
+                                    dependency.issue_id.clone(),
+                                ));
+                            }
+                        };
+
+                        if !matches!(blocker_status, IssueStatus::Closed) {
+                            return Ok(false);
+                        }
+                    }
+                }
+
+                Ok(true)
+            }
+            IssueStatus::InProgress => {
+                let children = self
+                    .issue_children
+                    .get(issue_id)
+                    .cloned()
+                    .unwrap_or_default();
+                for child_id in children {
+                    let child_status = match self.artifacts.get(&child_id) {
+                        Some(Artifact::Issue { status, .. }) => status,
+                        Some(_) => {
+                            return Err(StoreError::InvalidDependency(format!(
+                                "artifact '{child_id}' is not an issue"
+                            )));
+                        }
+                        None => return Err(StoreError::ArtifactNotFound(child_id)),
+                    };
+
+                    if !matches!(child_status, IssueStatus::Closed) {
+                        return Ok(false);
+                    }
+                }
+
+                Ok(true)
+            }
         }
     }
 
@@ -584,6 +658,16 @@ mod tests {
         }
     }
 
+    fn issue_with_status(status: IssueStatus, dependencies: Vec<IssueDependency>) -> Artifact {
+        Artifact::Issue {
+            issue_type: IssueType::Task,
+            description: "issue details".to_string(),
+            status,
+            assignee: None,
+            dependencies,
+        }
+    }
+
     fn edge(id: &str) -> Edge {
         Edge {
             id: id.to_string(),
@@ -762,6 +846,83 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn open_issue_ready_when_not_blocked() {
+        let mut store = MemoryStore::new();
+
+        let issue_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
+
+        assert!(store.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_issue_not_ready_when_blocked_on_open_issue() {
+        let mut store = MemoryStore::new();
+
+        let blocker_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
+        let blocked_issue_id = store
+            .add_artifact(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: blocker_id.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        assert!(!store.is_issue_ready(&blocked_issue_id).await.unwrap());
+
+        store
+            .update_artifact(&blocker_id, issue_with_status(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap();
+
+        assert!(store.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_issue_ready_after_children_closed() {
+        let mut store = MemoryStore::new();
+
+        let parent_id = store
+            .add_artifact(issue_with_status(IssueStatus::InProgress, vec![]))
+            .await
+            .unwrap();
+        let child_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        }];
+        let child_id = store
+            .add_artifact(issue_with_status(
+                IssueStatus::Open,
+                child_dependencies.clone(),
+            ))
+            .await
+            .unwrap();
+
+        assert!(!store.is_issue_ready(&parent_id).await.unwrap());
+
+        store
+            .update_artifact(
+                &child_id,
+                issue_with_status(IssueStatus::Closed, child_dependencies),
+            )
+            .await
+            .unwrap();
+
+        assert!(store.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn closed_issue_is_not_ready() {
+        let mut store = MemoryStore::new();
+
+        let issue_id = store
+            .add_artifact(issue_with_status(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap();
+
+        assert!(!store.is_issue_ready(&issue_id).await.unwrap());
     }
 
     #[tokio::test]
