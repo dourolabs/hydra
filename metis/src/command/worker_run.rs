@@ -95,8 +95,10 @@ fn extract_tar_gz_base64(archive_base64: &str, dest: &Path) -> Result<()> {
 }
 
 fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
-    if let Some(token) = github_token {
-        authenticate_github(token)?;
+    if let Some(_token) = github_token {
+        // The token is also present as an environment variable so it doesn't need to be explicitly
+        // passed to authenticate.
+        authenticate_github()?;
     }
 
     let status = Command::new("git")
@@ -117,33 +119,7 @@ fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>)
     Ok(())
 }
 
-fn authenticate_github(token: &str) -> Result<()> {
-    // Authenticate the GitHub CLI and configure git credentials for private repo access.
-    let mut login_cmd = Command::new("gh")
-        .args(["auth", "login", "--with-token"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("failed to spawn gh auth login")?;
-
-    {
-        let mut stdin = login_cmd
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("failed to open stdin for gh auth login"))?;
-        stdin
-            .write_all(format!("{token}\n").as_bytes())
-            .with_context(|| format!("failed to write {ENV_GH_TOKEN} to gh auth login"))?;
-    }
-
-    let status = login_cmd
-        .wait()
-        .context("failed waiting for gh auth login to finish")?;
-    if !status.success() {
-        return Err(anyhow!("gh auth login failed with status {status}"));
-    }
-
+fn authenticate_github() -> Result<()> {
     let status = Command::new("gh")
         .args(["auth", "setup-git"])
         .status()
