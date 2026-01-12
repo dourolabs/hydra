@@ -92,6 +92,9 @@ pub trait Store: Send + Sync {
     /// Lists all issues that are blocked on the provided issue.
     async fn get_issue_blocked_on(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
 
+    /// Returns whether the issue is ready to be worked on based on its status and dependencies.
+    async fn is_issue_ready(&self, issue_id: &MetisId) -> Result<bool, StoreError>;
+
     /// Adds a task to the store with its parent dependencies.
     ///
     /// The parent tasks must complete before this task can start.
