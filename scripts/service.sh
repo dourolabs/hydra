@@ -23,7 +23,6 @@ SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH
 
 # Config generation defaults (can be overridden by env vars)
 SERVER_OPENAI_API_KEY="${SERVER_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
-REPOSITORY_GITHUB_TOKEN="${REPOSITORY_GITHUB_TOKEN:-${GH_TOKEN:-}}"
 DEFAULT_KUBECONFIG_PATH="${KUBECONFIG:-~/.kube/config}"
 SERVER_KUBECONFIG_PATH="${SERVER_KUBECONFIG_PATH:-${DEFAULT_KUBECONFIG_PATH}}"
 DEFAULT_KUBE_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
@@ -75,7 +74,7 @@ OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
 [service.repositories."dourolabs/metis"]
 remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
-github_token = "${REPOSITORY_GITHUB_TOKEN}"
+github_token = "${GH_TOKEN}"
 
 [kubernetes]
 in_cluster = ${SERVER_KUBERNETES_IN_CLUSTER}
