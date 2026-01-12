@@ -19,6 +19,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
         id: Option<MetisId>,
 
+        /// Pretty-print issues instead of emitting JSONL.
+        #[arg(long)]
+        pretty: bool,
+
         /// Filter by issue type.
         #[arg(long, value_name = "ISSUE_TYPE")]
         r#type: Option<IssueType>,
@@ -97,6 +101,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
     match command {
         IssueCommands::List {
             id,
+            pretty,
             r#type,
             status,
             assignee,
@@ -104,7 +109,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         } => {
             let artifacts = fetch_issues(client, id, r#type, status, assignee, query).await?;
             let mut stdout = io::stdout().lock();
-            print_artifacts_jsonl(&artifacts, &mut stdout)?;
+            if pretty {
+                print_issues_pretty(&artifacts, &mut stdout)?;
+            } else {
+                print_artifacts_jsonl(&artifacts, &mut stdout)?;
+            }
             Ok(())
         }
         IssueCommands::Create {
@@ -437,6 +446,51 @@ fn print_artifacts_jsonl(artifacts: &[ArtifactRecord], writer: &mut impl Write) 
     Ok(())
 }
 
+fn print_issues_pretty(artifacts: &[ArtifactRecord], writer: &mut impl Write) -> Result<()> {
+    for (index, artifact) in artifacts.iter().enumerate() {
+        let Artifact::Issue {
+            issue_type,
+            description,
+            status,
+            assignee,
+            dependencies,
+        } = &artifact.artifact
+        else {
+            bail!("artifact '{}' is not an issue", artifact.id);
+        };
+
+        writeln!(writer, "Issue {} ({issue_type}, {status})", artifact.id)?;
+        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
+        writeln!(writer, "Description:")?;
+        if description.trim().is_empty() {
+            writeln!(writer, "  -")?;
+        } else {
+            for line in description.lines() {
+                writeln!(writer, "  {line}")?;
+            }
+        }
+
+        if dependencies.is_empty() {
+            writeln!(writer, "Dependencies: none")?;
+        } else {
+            writeln!(writer, "Dependencies:")?;
+            for dependency in dependencies {
+                writeln!(
+                    writer,
+                    "  - {} {}",
+                    dependency.dependency_type, dependency.issue_id
+                )?;
+            }
+        }
+
+        if index + 1 < artifacts.len() {
+            writeln!(writer)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,5 +795,47 @@ mod tests {
                 }
             )]
         );
+    }
+
+    #[test]
+    fn pretty_prints_human_readable_issues() {
+        let artifacts = vec![
+            ArtifactRecord {
+                id: "issue-1".into(),
+                artifact: Artifact::Issue {
+                    issue_type: IssueType::Bug,
+                    description: "First issue\nwith context".into(),
+                    status: IssueStatus::Open,
+                    assignee: Some("owner-a".into()),
+                    dependencies: vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: "issue-99".into(),
+                    }],
+                },
+            },
+            ArtifactRecord {
+                id: "issue-2".into(),
+                artifact: Artifact::Issue {
+                    issue_type: IssueType::Feature,
+                    description: "Follow-up work".into(),
+                    status: IssueStatus::InProgress,
+                    assignee: None,
+                    dependencies: vec![],
+                },
+            },
+        ];
+
+        let mut output = Vec::new();
+        print_issues_pretty(&artifacts, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("Issue issue-1 (bug, open)"));
+        assert!(rendered.contains("Assignee: owner-a"));
+        assert!(rendered.contains("Description:\n  First issue\n  with context"));
+        assert!(rendered.contains("Dependencies:\n  - blocked-on issue-99"));
+        assert!(rendered.contains("Issue issue-2 (feature, in-progress)"));
+        assert!(rendered.contains("Assignee: -"));
+        assert!(rendered.contains("Dependencies: none"));
+        assert!(rendered.contains("Follow-up work"));
     }
 }
