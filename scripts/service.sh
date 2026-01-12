@@ -97,6 +97,10 @@ Once you start working on the issue, please mark it as in-progress.
 Note that issues are not closed until their corresponding PRs have been merged into main.
 """
 
+[background.agent_queues.context]
+type = "service_repository"
+name = "dourolabs/metis"
+
 [[background.agent_queues]]
 name = "pm"
 prompt = """You are a product manager specifying a feature.

@@ -190,3 +190,6 @@ Question stack:
 The right way to think about this is that I am building infrastructure for running a set of experiments with LLM software development.
 The object of those experiments is to invent a technique/method for autonomously developing software. 
 So what we need is an experimental setup -- what are the inputs and outputs? how will we measure the results? what conditions do we want to try?
+
+
+The TUI 'metis dashboard' command needs some work. First of all, it should be issue centric -- issues should be the primary thing shown to the user. For each issue, users should be able to see the status of the issue, plus related issues & artifacts. In particular, child issues should be listed under their parents (possibly indented?). We should also be able to see whether there is a task running related to an issue, and whether a patch has been created for an issue. These should be indicated near the issue itself for easy reference. The issues panel should have in-progress issues at the top, followed by open issues, followed by closed issues. Please retain separate (small) panels for tasks & patches that are not associated with issues
