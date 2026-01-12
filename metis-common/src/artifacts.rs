@@ -136,6 +136,8 @@ pub enum Artifact {
         title: String,
         description: String,
         diff: String,
+        #[serde(default)]
+        reviews: Vec<Review>,
     },
     Issue {
         #[serde(rename = "type")]
@@ -170,6 +172,13 @@ impl From<&Artifact> for ArtifactKind {
 pub struct ArtifactRecord {
     pub id: String,
     pub artifact: Artifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Review {
+    pub contents: String,
+    pub is_approved: bool,
+    pub author: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
