@@ -465,6 +465,7 @@ mod tests {
                         Event::Started { at: start_time },
                         Event::Completed {
                             at: start_time + ChronoDuration::seconds(1),
+                            last_message: None,
                         },
                     ],
                 },

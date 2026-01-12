@@ -18,6 +18,7 @@ pub const OUTPUT_TXT_FILE: &str = "output.txt";
 
 /// The patch file name (`changes.patch`) stored in the output directory,
 /// containing the git diff of changes made during job execution.
+#[cfg(test)]
 pub const CHANGES_PATCH_FILE: &str = "changes.patch";
 
 /// The default configuration file name (`config.toml`) used when no config

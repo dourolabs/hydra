@@ -972,6 +972,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_job_status_records_last_message() -> anyhow::Result<()> {
+        let state = test_state();
+        let default_image = default_image();
+        let job_id = "job-with-last-message".to_string();
+        {
+            let mut store_write = state.store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image.clone(),
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+        }
+        let server = spawn_test_server_with_state(state.clone()).await?;
+        let client = test_client();
+
+        let response = client
+            .post(format!(
+                "{}/v1/jobs/{}/status",
+                server.base_url(),
+                job_id.as_str()
+            ))
+            .json(&json!({
+                "status": "complete",
+                "last_message": "all done"
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+
+        let store_read = state.store.read().await;
+        let status_log = store_read.get_status_log(&job_id).await?;
+        match status_log.events.last() {
+            Some(Event::Completed { last_message, .. }) => {
+                assert_eq!(last_message.as_deref(), Some("all done"))
+            }
+            other => panic!("expected completed event, got {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         let state = test_state();
         {
@@ -1040,7 +1093,7 @@ mod tests {
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .mark_task_complete(&job_id, Ok(()), None, Utc::now())
                 .await?;
         }
 
@@ -1099,7 +1152,7 @@ mod tests {
                 .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
                 .await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .mark_task_complete(&job_id, Ok(()), None, Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1220,7 +1273,7 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())
+                .mark_task_complete(&"parent-job".to_string(), Ok(()), None, Utc::now())
                 .await?;
             store_write
                 .add_task_with_id(

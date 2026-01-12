@@ -9,7 +9,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::artifacts::{Artifact, UpsertArtifactRequest};
 use metis_common::job_status::JobStatusUpdate;
 use metis_common::MetisId;
 use metis_common::{
@@ -239,61 +238,37 @@ async fn submit_job_status(
         bail!("Job ID must not be empty.");
     }
 
-    // Create patch file from git changes (excluding METIS_DIR directory)
-    create_patch_file(dest)?;
-
-    let (last_message_file, patch_file) = resolve_output_paths(dest);
-
+    let last_message_file = last_message_path(dest);
     let last_message = fs::read_to_string(&last_message_file).with_context(|| {
         format!(
             "failed to read last message output at '{}'",
             last_message_file.display()
         )
     })?;
-    let patch = fs::read_to_string(&patch_file)
-        .with_context(|| format!("failed to read patch output at '{}'", patch_file.display()))?;
 
-    let patch_title = derive_patch_title(&last_message, job);
-    client
-        .create_artifact(&UpsertArtifactRequest {
-            artifact: Artifact::Patch {
-                title: patch_title,
-                diff: patch.clone(),
-                description: last_message.clone(),
-                reviews: Vec::new(),
-            },
-            job_id: Some(job.clone()),
-        })
-        .await?;
     println!("Updating status for job '{job}' via metis-server…");
     let response = client
-        .set_job_status(job, &JobStatusUpdate::Complete)
+        .set_job_status(
+            job,
+            &JobStatusUpdate::Complete {
+                last_message: Some(last_message.clone()),
+            },
+        )
         .await?;
     println!(
-        "Status updated for job '{}'. Stored last message length: {}, patch length: {}",
+        "Status updated for job '{}'. Stored last message length: {}",
         response.job_id,
         last_message.len(),
-        patch.len()
     );
     Ok(())
 }
 
-fn resolve_output_paths(dest: &Path) -> (PathBuf, PathBuf) {
+fn last_message_path(dest: &Path) -> PathBuf {
     let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
-    let last_message_file = output_dir.join(constants::OUTPUT_TXT_FILE);
-    let patch_file = output_dir.join(constants::CHANGES_PATCH_FILE);
-    (last_message_file, patch_file)
+    output_dir.join(constants::OUTPUT_TXT_FILE)
 }
 
-fn derive_patch_title(last_message: &str, job: &MetisId) -> String {
-    last_message
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .unwrap_or_else(|| format!("Patch for job {job}"))
-}
-
+#[cfg(test)]
 fn create_patch_file(dest: &Path) -> Result<()> {
     let patch_file = dest
         .join(constants::METIS_DIR)
