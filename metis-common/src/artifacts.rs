@@ -193,6 +193,8 @@ pub struct SearchArtifactsQuery {
     #[serde(default)]
     pub status: Option<IssueStatus>,
     #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
     pub q: Option<String>,
 }
 

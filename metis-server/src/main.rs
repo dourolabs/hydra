@@ -1409,6 +1409,13 @@ mod tests {
             assignee: None,
             dependencies: vec![],
         };
+        let assigned_issue = Artifact::Issue {
+            issue_type: IssueType::Task,
+            description: "assigned issue".to_string(),
+            status: IssueStatus::Open,
+            assignee: Some("owner-1".to_string()),
+            dependencies: vec![],
+        };
         let closed_issue = Artifact::Issue {
             issue_type: IssueType::Task,
             description: "retire old endpoint".to_string(),
@@ -1426,6 +1433,7 @@ mod tests {
             patch.clone(),
             issue.clone(),
             feature_issue.clone(),
+            assigned_issue.clone(),
             closed_issue.clone(),
             filtered_patch.clone(),
         ] {
@@ -1446,7 +1454,7 @@ mod tests {
             .await?
             .json()
             .await?;
-        assert_eq!(all.artifacts.len(), 5);
+        assert_eq!(all.artifacts.len(), 6);
 
         let filtered: ListArtifactsResponse = client
             .get(format!("{}/v1/artifacts", server.base_url()))
@@ -1454,6 +1462,7 @@ mod tests {
                 artifact_type: Some(ArtifactKind::Patch),
                 issue_type: None,
                 status: None,
+                assignee: None,
                 q: Some("login".to_string()),
             })
             .send()
@@ -1470,6 +1479,7 @@ mod tests {
                 artifact_type: Some(ArtifactKind::Issue),
                 issue_type: Some(IssueType::Bug),
                 status: None,
+                assignee: None,
                 q: None,
             })
             .send()
@@ -1480,12 +1490,30 @@ mod tests {
         assert_eq!(filtered_issues.artifacts.len(), 1);
         assert_eq!(filtered_issues.artifacts[0].artifact, issue);
 
+        let filtered_by_assignee: ListArtifactsResponse = client
+            .get(format!("{}/v1/artifacts", server.base_url()))
+            .query(&SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                issue_type: None,
+                status: None,
+                assignee: Some("OWNER-1".to_string()),
+                q: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(filtered_by_assignee.artifacts.len(), 1);
+        assert_eq!(filtered_by_assignee.artifacts[0].artifact, assigned_issue);
+
         let filtered_by_status: ListArtifactsResponse = client
             .get(format!("{}/v1/artifacts", server.base_url()))
             .query(&SearchArtifactsQuery {
                 artifact_type: Some(ArtifactKind::Issue),
                 issue_type: None,
                 status: Some(IssueStatus::Closed),
+                assignee: None,
                 q: None,
             })
             .send()

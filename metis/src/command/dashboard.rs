@@ -377,6 +377,7 @@ async fn fetch_artifacts(
             artifact_type: Some(kind),
             issue_type: None,
             status: None,
+            assignee: None,
             q: None,
         })
         .await

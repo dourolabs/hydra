@@ -27,6 +27,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_STATUS")]
         status: Option<IssueStatus>,
 
+        /// Filter by assignee.
+        #[arg(long, value_name = "ASSIGNEE")]
+        assignee: Option<String>,
+
         /// Search by query string.
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
@@ -45,6 +49,10 @@ pub enum IssueCommands {
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
         dependencies: Vec<IssueDependency>,
 
+        /// Assignee for the issue.
+        #[arg(long, value_name = "ASSIGNEE")]
+        assignee: Option<String>,
+
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -57,9 +65,10 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             id,
             r#type,
             status,
+            assignee,
             query,
         } => {
-            let artifacts = fetch_issues(client, id, r#type, status, query).await?;
+            let artifacts = fetch_issues(client, id, r#type, status, assignee, query).await?;
             let mut stdout = io::stdout().lock();
             print_artifacts_jsonl(&artifacts, &mut stdout)?;
             Ok(())
@@ -68,8 +77,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             r#type,
             status,
             dependencies,
+            assignee,
             description,
-        } => create_issue(client, r#type, status, dependencies, description).await,
+        } => create_issue(client, r#type, status, dependencies, assignee, description).await,
     }
 }
 
@@ -78,6 +88,7 @@ async fn fetch_issues(
     id: Option<MetisId>,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
+    assignee: Option<String>,
     query: Option<String>,
 ) -> Result<Vec<ArtifactRecord>> {
     if let Some(id) = id {
@@ -99,8 +110,26 @@ async fn fetch_issues(
         if let Some(expected_status) = status {
             ensure_issue_status(&artifact, expected_status)?;
         }
+        if let Some(expected_assignee) = assignee {
+            let trimmed_assignee = expected_assignee.trim();
+            if trimmed_assignee.is_empty() {
+                bail!("Assignee filter must not be empty.");
+            }
+            ensure_issue_assignee(&artifact, trimmed_assignee)?;
+        }
         return Ok(vec![artifact]);
     }
+
+    let trimmed_assignee = match assignee {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Assignee filter must not be empty.");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
 
     let trimmed_query = query.and_then(|value| {
         let trimmed = value.trim();
@@ -116,6 +145,7 @@ async fn fetch_issues(
             artifact_type: Some(ArtifactKind::Issue),
             issue_type,
             status,
+            assignee: trimmed_assignee.clone(),
             q: trimmed_query,
         })
         .await
@@ -130,6 +160,9 @@ async fn fetch_issues(
         if let Some(expected_status) = status {
             ensure_issue_status(artifact, expected_status)?;
         }
+        if let Some(ref expected_assignee) = trimmed_assignee {
+            ensure_issue_assignee(artifact, expected_assignee)?;
+        }
     }
 
     Ok(artifacts)
@@ -140,6 +173,7 @@ async fn create_issue(
     issue_type: IssueType,
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
+    assignee: Option<String>,
     description: String,
 ) -> Result<()> {
     let description = description.trim();
@@ -147,12 +181,23 @@ async fn create_issue(
         bail!("Issue description must not be empty.");
     }
 
+    let assignee = match assignee {
+        Some(value) => {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                bail!("Assignee must not be empty.");
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
+
     let request = UpsertArtifactRequest {
         artifact: Artifact::Issue {
             issue_type,
             description: description.to_string(),
             status,
-            assignee: None,
+            assignee,
             dependencies,
         },
         job_id: None,
@@ -192,6 +237,23 @@ fn ensure_issue_status(record: &ArtifactRecord, expected: IssueStatus) -> Result
             "artifact '{}' has status '{status}' (expected '{expected}')",
             record.id
         )),
+        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
+    }
+}
+
+fn ensure_issue_assignee(record: &ArtifactRecord, expected: &str) -> Result<()> {
+    match record.artifact {
+        Artifact::Issue { ref assignee, .. } => match assignee {
+            Some(current) if current.eq_ignore_ascii_case(expected) => Ok(()),
+            Some(current) => Err(anyhow!(
+                "artifact '{}' has assignee '{current}' (expected '{expected}')",
+                record.id
+            )),
+            None => Err(anyhow!(
+                "artifact '{}' is missing an assignee (expected '{expected}')",
+                record.id
+            )),
+        },
         _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
     }
 }
@@ -252,6 +314,7 @@ mod tests {
             None,
             Some(IssueType::Bug),
             Some(IssueStatus::Open),
+            None,
             Some("bug".into()),
         )
         .await
@@ -263,6 +326,7 @@ mod tests {
                 artifact_type: Some(ArtifactKind::Issue),
                 issue_type: Some(IssueType::Bug),
                 status: Some(IssueStatus::Open),
+                assignee: None,
                 q: Some("bug".into()),
             }]
         );
@@ -294,6 +358,7 @@ mod tests {
             Some(IssueType::Task),
             Some(IssueStatus::InProgress),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -301,6 +366,40 @@ mod tests {
         assert_eq!(client.recorded_get_artifact_requests(), vec!["issue-123"]);
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].id, "issue-123");
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_assignee() {
+        let client = MockMetisClient::default();
+        client.push_list_artifacts_response(ListArtifactsResponse {
+            artifacts: vec![ArtifactRecord {
+                id: "issue-7".into(),
+                artifact: Artifact::Issue {
+                    issue_type: IssueType::Task,
+                    description: "Edge case bug".into(),
+                    status: IssueStatus::Open,
+                    assignee: Some("owner-a".into()),
+                    dependencies: vec![],
+                },
+            }],
+        });
+
+        let artifacts = fetch_issues(&client, None, None, None, Some("OWNER-A".into()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.recorded_list_artifacts_queries(),
+            vec![SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                issue_type: None,
+                status: None,
+                assignee: Some("OWNER-A".into()),
+                q: None,
+            }]
+        );
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].id, "issue-7");
     }
 
     #[tokio::test]
@@ -320,6 +419,7 @@ mod tests {
             IssueType::MergeRequest,
             IssueStatus::Closed,
             dependencies.clone(),
+            Some("team-a".into()),
             "New issue description".into(),
         )
         .await
@@ -334,7 +434,7 @@ mod tests {
                         issue_type: IssueType::MergeRequest,
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
-                        assignee: None,
+                        assignee: Some("team-a".into()),
                         dependencies,
                     },
                     job_id: None,
@@ -351,7 +451,23 @@ mod tests {
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
+            None,
             "   ".into()
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn create_issue_rejects_empty_assignee() {
+        let client = MockMetisClient::default();
+        assert!(create_issue(
+            &client,
+            IssueType::Bug,
+            IssueStatus::Open,
+            vec![],
+            Some("   ".into()),
+            "Valid description".into()
         )
         .await
         .is_err());
