@@ -434,18 +434,28 @@ fn current_branch(repo_root: &Path) -> Result<String> {
 }
 
 fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
-    let status = Command::new("git")
+    let add_status = Command::new("git")
         .arg("add")
-        .args(["-A", "--", ".", &format!(":!{}/**", constants::METIS_DIR)])
+        .args(["-A", "--", "."])
         .current_dir(repo_root)
         .status()
         .context("failed to stage changes for GitHub PR")?;
 
-    if status.success() {
+    if !add_status.success() {
+        bail!("failed to stage changes for GitHub PR");
+    }
+
+    let reset_status = Command::new("git")
+        .args(["reset", "-q", "--", constants::METIS_DIR])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to exclude .metis directory from GitHub PR staging")?;
+
+    if reset_status.success() {
         return Ok(());
     }
 
-    bail!("failed to stage changes for GitHub PR");
+    bail!("failed to exclude .metis directory from GitHub PR staging");
 }
 
 fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
@@ -838,6 +848,45 @@ mod tests {
             }
             other => panic!("expected patch artifact, got {other:?}"),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn stage_changes_for_pr_keeps_metis_directory() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        fs::write(
+            repo_path.join(".gitignore"),
+            format!("{}/\n", constants::METIS_DIR),
+        )
+        .context("failed to write .gitignore for test repo")?;
+
+        stage_changes_for_pr(&repo_path)?;
+
+        assert!(
+            repo_path.join(constants::METIS_DIR).exists(),
+            ".metis directory should remain after staging PR changes"
+        );
+
+        let staged_output = Command::new("git")
+            .args(["-C", repo_str, "diff", "--cached", "--name-only"])
+            .output()
+            .context("failed to read staged changes")?;
+        let staged_paths = String::from_utf8_lossy(&staged_output.stdout);
+        assert!(
+            staged_paths.contains("README.md"),
+            "expected README.md to be staged for PR creation: {staged_paths}"
+        );
+        assert!(
+            !staged_paths
+                .lines()
+                .any(|line| line.starts_with(constants::METIS_DIR)),
+            ".metis contents should not be staged for PR creation: {staged_paths}"
+        );
 
         Ok(())
     }

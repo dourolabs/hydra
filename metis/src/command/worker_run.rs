@@ -330,18 +330,21 @@ fn create_patch_with_index(dest: &Path, index_file: Option<&Path>) -> Result<Str
 }
 
 fn stage_changes(dest: &Path, index_file: Option<&Path>) -> Result<()> {
-    // Stage all changes excluding METIS_DIR directory
-    // Note that we don't care if this fails, as it fails if there are no changes.
-    git_command(dest, index_file)
-        .args([
-            "add",
-            "-A",
-            "--",
-            ".",
-            &format!(":!{}/**", constants::METIS_DIR),
-        ])
+    let add_status = git_command(dest, index_file)
+        .args(["add", "-A", "--", "."])
         .status()
-        .context("failed to spawn git add")?;
+        .context("failed to stage repository changes")?;
+    if !add_status.success() {
+        bail!("git add failed while preparing patch contents");
+    }
+
+    let reset_status = git_command(dest, index_file)
+        .args(["reset", "-q", "--", constants::METIS_DIR])
+        .status()
+        .context("failed to exclude .metis contents from patch")?;
+    if !reset_status.success() {
+        bail!("git reset failed while excluding {}", constants::METIS_DIR);
+    }
 
     Ok(())
 }
