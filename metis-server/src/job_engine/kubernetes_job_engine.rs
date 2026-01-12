@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -157,6 +157,100 @@ impl KubernetesJobEngine {
         })
     }
 
+    fn pod_status(pod: &Pod) -> JobStatus {
+        match pod
+            .status
+            .as_ref()
+            .and_then(|status| status.phase.as_deref())
+        {
+            Some("Succeeded") => JobStatus::Complete,
+            Some("Failed") => JobStatus::Failed,
+            _ => JobStatus::Running,
+        }
+    }
+
+    fn pod_metis_id(pod: &Pod) -> Option<MetisId> {
+        pod.metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get("metis-id"))
+            .cloned()
+    }
+
+    fn pod_completion_time(pod: &Pod) -> Option<DateTime<Utc>> {
+        pod.status
+            .as_ref()
+            .and_then(|status| status.container_statuses.as_ref())
+            .and_then(|containers| {
+                containers
+                    .iter()
+                    .filter_map(|container_status| {
+                        container_status
+                            .state
+                            .as_ref()
+                            .and_then(|state| state.terminated.as_ref())
+                            .and_then(|terminated| terminated.finished_at.as_ref())
+                            .map(|time| time.0)
+                    })
+                    .max()
+            })
+    }
+
+    fn pod_failure_message(pod: &Pod) -> Option<String> {
+        let status = pod.status.as_ref()?;
+
+        if let Some(container_statuses) = status.container_statuses.as_ref() {
+            for container_status in container_statuses {
+                if let Some(terminated) = container_status
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.terminated.as_ref())
+                {
+                    if terminated.exit_code != 0 {
+                        if let Some(message) = terminated.message.clone() {
+                            return Some(message);
+                        }
+
+                        if let Some(reason) = terminated.reason.clone() {
+                            return Some(reason);
+                        }
+                    }
+                }
+            }
+        }
+
+        status.message.clone()
+    }
+
+    fn to_metis_job_from_pod(pod: &Pod) -> Result<MetisJob, JobEngineError> {
+        let pod_name = pod
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let id = Self::pod_metis_id(pod).ok_or_else(|| {
+            JobEngineError::Internal(format!("Pod '{pod_name}' is missing metis-id label"))
+        })?;
+        let status = Self::pod_status(pod);
+        let creation_time = pod.metadata.creation_timestamp.as_ref().map(|t| t.0);
+        let start_time = pod
+            .status
+            .as_ref()
+            .and_then(|s| s.start_time.as_ref())
+            .map(|t| t.0);
+        let completion_time = Self::pod_completion_time(pod);
+        let failure_message = Self::pod_failure_message(pod);
+
+        Ok(MetisJob {
+            id,
+            status,
+            creation_time,
+            start_time,
+            completion_time,
+            failure_message,
+        })
+    }
+
     async fn find_kubernetes_job_by_metis_id(
         &self,
         job_id: &MetisId,
@@ -164,8 +258,70 @@ impl KubernetesJobEngine {
         find_kubernetes_job_by_metis_id_impl(&self.client, &self.namespace, job_id).await
     }
 
-    async fn wait_for_pod_name(&self, job_name: &str) -> Result<String, JobEngineError> {
-        wait_for_pod_name_impl(&self.client, &self.namespace, job_name).await
+    async fn find_kubernetes_pod_by_metis_id(
+        &self,
+        job_id: &MetisId,
+    ) -> Result<Pod, JobEngineError> {
+        find_kubernetes_pod_by_metis_id_impl(&self.client, &self.namespace, job_id).await
+    }
+
+    async fn resolve_pod_name(&self, job_id: &MetisId) -> Result<String, JobEngineError> {
+        resolve_pod_name_impl(&self.client, &self.namespace, job_id).await
+    }
+
+    async fn kill_pods_by_metis_id(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        let selector = format!("metis-id={metis_id}");
+        let lp = ListParams::default().labels(&selector);
+        let pod_list = pods
+            .list(&lp)
+            .await
+            .map_err(|err| {
+                error!(metis_id = %metis_id, error = ?err, namespace = %self.namespace, "failed to list pods before deletion");
+                JobEngineError::Kubernetes(err)
+            })?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        if pod_list.is_empty() {
+            return Err(JobEngineError::NotFound(metis_id.clone()));
+        }
+
+        let dp = DeleteParams::default();
+        let mut deleted_any = false;
+
+        for mut pod in pod_list {
+            if let Some(pod_name) = pod.metadata.name.take() {
+                match pods.delete(&pod_name, &dp).await {
+                    Ok(_) => {
+                        deleted_any = true;
+                        info!(
+                            metis_id = %metis_id,
+                            pod_name = %pod_name,
+                            namespace = %self.namespace,
+                            "pod deleted successfully"
+                        );
+                    }
+                    Err(kube::Error::Api(err)) if err.code == 404 => {}
+                    Err(err) => {
+                        error!(
+                            metis_id = %metis_id,
+                            pod_name = %pod_name,
+                            namespace = %self.namespace,
+                            error = ?err,
+                            "failed to delete pod"
+                        );
+                        return Err(JobEngineError::Kubernetes(err));
+                    }
+                }
+            }
+        }
+
+        if deleted_any {
+            Ok(())
+        } else {
+            Err(JobEngineError::NotFound(metis_id.clone()))
+        }
     }
 }
 
@@ -189,6 +345,30 @@ async fn find_kubernetes_job_by_metis_id_impl(
             .into_iter()
             .next()
             .expect("validated single job response")),
+        _ => Err(JobEngineError::MultipleFound(job_id.clone())),
+    }
+}
+
+async fn find_kubernetes_pod_by_metis_id_impl(
+    client: &Client,
+    namespace: &str,
+    job_id: &MetisId,
+) -> Result<Pod, JobEngineError> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let selector = format!("metis-id={job_id}");
+    let lp = ListParams::default().labels(&selector);
+    let items = pods
+        .list(&lp)
+        .await
+        .map_err(JobEngineError::Kubernetes)?
+        .items;
+
+    match items.len() {
+        0 => Err(JobEngineError::NotFound(job_id.clone())),
+        1 => Ok(items
+            .into_iter()
+            .next()
+            .expect("validated single pod response")),
         _ => Err(JobEngineError::MultipleFound(job_id.clone())),
     }
 }
@@ -222,6 +402,28 @@ async fn wait_for_pod_name_impl(
         }
 
         sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn resolve_pod_name_impl(
+    client: &Client,
+    namespace: &str,
+    job_id: &MetisId,
+) -> Result<String, JobEngineError> {
+    match find_kubernetes_job_by_metis_id_impl(client, namespace, job_id).await {
+        Ok(job) => {
+            let job_name = job.metadata.name.ok_or_else(|| {
+                JobEngineError::Internal(format!("Job '{job_id}' is missing a Kubernetes name."))
+            })?;
+            wait_for_pod_name_impl(client, namespace, &job_name).await
+        }
+        Err(JobEngineError::NotFound(_)) => {
+            let mut pod = find_kubernetes_pod_by_metis_id_impl(client, namespace, job_id).await?;
+            pod.metadata.name.take().ok_or_else(|| {
+                JobEngineError::Internal(format!("Pod '{job_id}' is missing a Kubernetes name."))
+            })
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -311,6 +513,24 @@ impl JobEngine for KubernetesJobEngine {
             .into_iter()
             .filter_map(|job| Self::to_metis_job(&job).ok())
             .collect();
+        let mut seen_ids: HashSet<MetisId> = metis_jobs.iter().map(|job| job.id.clone()).collect();
+
+        let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        let pods = pods_api
+            .list(&ListParams::default().labels("metis-id"))
+            .await
+            .map_err(|err| {
+                error!(error = ?err, namespace = %self.namespace, "failed to list pods from Kubernetes");
+                JobEngineError::Kubernetes(err)
+            })?;
+
+        for pod in pods {
+            if let Ok(pod_job) = Self::to_metis_job_from_pod(&pod) {
+                if seen_ids.insert(pod_job.id.clone()) {
+                    metis_jobs.push(pod_job);
+                }
+            }
+        }
 
         // Sort by reference time (start_time or creation_time), most recent first
         metis_jobs.sort_by(|a, b| {
@@ -329,8 +549,14 @@ impl JobEngine for KubernetesJobEngine {
     }
 
     async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
-        let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
-        Self::to_metis_job(&job)
+        match self.find_kubernetes_job_by_metis_id(metis_id).await {
+            Ok(job) => Self::to_metis_job(&job),
+            Err(JobEngineError::NotFound(_)) => {
+                let pod = self.find_kubernetes_pod_by_metis_id(metis_id).await?;
+                Self::to_metis_job_from_pod(&pod)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     async fn get_logs(
@@ -338,12 +564,7 @@ impl JobEngine for KubernetesJobEngine {
         job_id: &MetisId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
-        let job = self.find_kubernetes_job_by_metis_id(job_id).await?;
-        let job_name = job.metadata.name.ok_or_else(|| {
-            JobEngineError::Internal(format!("Job '{job_id}' is missing a Kubernetes name."))
-        })?;
-
-        let pod_name = self.wait_for_pod_name(&job_name).await?;
+        let pod_name = self.resolve_pod_name(job_id).await?;
 
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
         let params = LogParams {
@@ -387,60 +608,41 @@ impl JobEngine for KubernetesJobEngine {
         let sender = tx;
 
         tokio::spawn(async move {
-            match find_kubernetes_job_by_metis_id_impl(&client, &namespace, &job_id).await {
-                Ok(job) => {
-                    let job_name = match job.metadata.name {
-                        Some(name) => name,
-                        None => {
-                            let _ = sender.unbounded_send(format!(
-                                "Error: Job '{job_id}' is missing a Kubernetes name."
-                            ));
-                            return;
-                        }
-                    };
+            let pod_name = match resolve_pod_name_impl(&client, &namespace, &job_id).await {
+                Ok(name) => name,
+                Err(err) => {
+                    let _ = sender.unbounded_send(format!("Error: {err}"));
+                    return;
+                }
+            };
 
-                    match wait_for_pod_name_impl(&client, &namespace, &job_name).await {
-                        Ok(pod_name) => {
-                            let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-                            let params = LogParams {
-                                follow,
-                                ..Default::default()
-                            };
+            let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
+            let params = LogParams {
+                follow,
+                ..Default::default()
+            };
 
-                            match pods.log_stream(&pod_name, &params).await {
-                                Ok(mut reader) => {
-                                    let mut buffer = vec![0u8; 1024];
+            match pods.log_stream(&pod_name, &params).await {
+                Ok(mut reader) => {
+                    let mut buffer = vec![0u8; 1024];
 
-                                    loop {
-                                        match reader.read(&mut buffer).await {
-                                            Ok(0) => break,
-                                            Ok(read) => {
-                                                if read == 0 {
-                                                    continue;
-                                                }
-
-                                                let chunk =
-                                                    String::from_utf8_lossy(&buffer[..read])
-                                                        .to_string();
-                                                if sender.unbounded_send(chunk).is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            Err(err) => {
-                                                let _ =
-                                                    sender.unbounded_send(format!("Error: {err}"));
-                                                break;
-                                            }
-                                        }
-                                    }
+                    loop {
+                        match reader.read(&mut buffer).await {
+                            Ok(0) => break,
+                            Ok(read) => {
+                                if read == 0 {
+                                    continue;
                                 }
-                                Err(err) => {
-                                    let _ = sender.unbounded_send(format!("Error: {err}"));
+
+                                let chunk = String::from_utf8_lossy(&buffer[..read]).to_string();
+                                if sender.unbounded_send(chunk).is_err() {
+                                    break;
                                 }
                             }
-                        }
-                        Err(err) => {
-                            let _ = sender.unbounded_send(format!("Error: {err}"));
+                            Err(err) => {
+                                let _ = sender.unbounded_send(format!("Error: {err}"));
+                                break;
+                            }
                         }
                     }
                 }
@@ -454,37 +656,136 @@ impl JobEngine for KubernetesJobEngine {
     }
 
     async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
-        let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
-        let job_name = job.metadata.name.ok_or_else(|| {
-            JobEngineError::Internal(format!("Job '{metis_id}' is missing a Kubernetes name."))
-        })?;
+        match self.find_kubernetes_job_by_metis_id(metis_id).await {
+            Ok(job) => {
+                let job_name = job.metadata.name.ok_or_else(|| {
+                    JobEngineError::Internal(format!(
+                        "Job '{metis_id}' is missing a Kubernetes name."
+                    ))
+                })?;
 
-        let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
-        let dp = DeleteParams::default();
+                let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
+                let dp = DeleteParams::default();
 
-        match jobs.delete(&job_name, &dp).await {
-            Ok(_) => {
-                info!(
-                    metis_id = %metis_id,
-                    job_name = %job_name,
-                    namespace = %self.namespace,
-                    "job deleted successfully"
-                );
-                Ok(())
+                match jobs.delete(&job_name, &dp).await {
+                    Ok(_) => {
+                        info!(
+                            metis_id = %metis_id,
+                            job_name = %job_name,
+                            namespace = %self.namespace,
+                            "job deleted successfully"
+                        );
+                        if let Err(err) = self.kill_pods_by_metis_id(metis_id).await {
+                            if !matches!(err, JobEngineError::NotFound(_)) {
+                                return Err(err);
+                            }
+                        }
+                        Ok(())
+                    }
+                    Err(kube::Error::Api(err)) if err.code == 404 => {
+                        self.kill_pods_by_metis_id(metis_id).await
+                    }
+                    Err(err) => {
+                        error!(
+                            metis_id = %metis_id,
+                            job_name = %job_name,
+                            namespace = %self.namespace,
+                            error = ?err,
+                            "failed to delete job"
+                        );
+                        Err(JobEngineError::Kubernetes(err))
+                    }
+                }
             }
-            Err(kube::Error::Api(err)) if err.code == 404 => {
-                Err(JobEngineError::NotFound(metis_id.clone()))
-            }
-            Err(err) => {
-                error!(
-                    metis_id = %metis_id,
-                    job_name = %job_name,
-                    namespace = %self.namespace,
-                    error = ?err,
-                    "failed to delete job"
-                );
-                Err(JobEngineError::Kubernetes(err))
-            }
+            Err(JobEngineError::NotFound(_)) => self.kill_pods_by_metis_id(metis_id).await,
+            Err(err) => Err(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use k8s_openapi::{
+        api::core::v1::{ContainerState, ContainerStateTerminated, ContainerStatus, PodStatus},
+        apimachinery::pkg::apis::meta::v1::Time,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn to_metis_job_from_pod_uses_pod_metadata() {
+        let creation = Time(Utc::now());
+        let start = Time(Utc::now());
+        let finished = Time(Utc::now());
+        let pod = Pod {
+            metadata: ObjectMeta {
+                name: Some("pod-name".into()),
+                creation_timestamp: Some(creation.clone()),
+                labels: Some(BTreeMap::from([("metis-id".into(), "abc123".into())])),
+                ..Default::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Succeeded".into()),
+                start_time: Some(start.clone()),
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "container".into(),
+                    state: Some(ContainerState {
+                        terminated: Some(ContainerStateTerminated {
+                            finished_at: Some(finished.clone()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let metis_job =
+            KubernetesJobEngine::to_metis_job_from_pod(&pod).expect("conversion should succeed");
+
+        assert_eq!(metis_job.id, "abc123");
+        assert_eq!(metis_job.status, JobStatus::Complete);
+        assert_eq!(metis_job.creation_time, Some(creation.0));
+        assert_eq!(metis_job.start_time, Some(start.0));
+        assert_eq!(metis_job.completion_time, Some(finished.0));
+    }
+
+    #[test]
+    fn pod_failure_message_prefers_terminated_message() {
+        let pod = Pod {
+            metadata: ObjectMeta {
+                name: Some("pod-name".into()),
+                labels: Some(BTreeMap::from([("metis-id".into(), "abc123".into())])),
+                ..Default::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Failed".into()),
+                container_statuses: Some(vec![ContainerStatus {
+                    name: "container".into(),
+                    state: Some(ContainerState {
+                        terminated: Some(ContainerStateTerminated {
+                            exit_code: 1,
+                            message: Some("boom".into()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }]),
+                message: Some("unused".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let metis_job =
+            KubernetesJobEngine::to_metis_job_from_pod(&pod).expect("conversion should succeed");
+
+        assert_eq!(metis_job.failure_message.as_deref(), Some("boom"));
+        assert_eq!(metis_job.status, JobStatus::Failed);
     }
 }
