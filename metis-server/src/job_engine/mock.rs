@@ -11,6 +11,7 @@ use std::{
 pub struct MockJobEngine {
     jobs: Arc<Mutex<Vec<MetisJob>>>,
     logs: Arc<Mutex<HashMap<MetisId, Vec<String>>>>,
+    env_vars: Arc<Mutex<HashMap<MetisId, HashMap<String, String>>>>,
 }
 
 impl MockJobEngine {
@@ -34,11 +35,21 @@ impl MockJobEngine {
         let mut logs = self.logs.lock().unwrap();
         logs.insert(metis_id.to_string(), chunks);
     }
+
+    pub fn env_vars_for_job(&self, metis_id: &MetisId) -> Option<HashMap<String, String>> {
+        let env_vars = self.env_vars.lock().unwrap();
+        env_vars.get(metis_id).cloned()
+    }
 }
 
 #[async_trait]
 impl JobEngine for MockJobEngine {
-    async fn create_job(&self, metis_id: &MetisId, _image: &str) -> Result<(), JobEngineError> {
+    async fn create_job(
+        &self,
+        metis_id: &MetisId,
+        _image: &str,
+        env_vars: &HashMap<String, String>,
+    ) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
             return Err(JobEngineError::AlreadyExists(metis_id.clone()));
@@ -52,6 +63,10 @@ impl JobEngine for MockJobEngine {
             completion_time: None,
             failure_message: None,
         });
+        self.env_vars
+            .lock()
+            .unwrap()
+            .insert(metis_id.clone(), env_vars.clone());
         Ok(())
     }
 
@@ -155,5 +170,29 @@ impl JobEngine for MockJobEngine {
             }
             _ => Err(JobEngineError::MultipleFound(metis_id.clone())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job_engine::JobEngine;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn create_job_records_env_vars() {
+        let engine = MockJobEngine::new();
+        let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
+        let metis_id = "job-1".to_string();
+
+        engine
+            .create_job(&metis_id, "image", &env_vars)
+            .await
+            .expect("job creation should succeed");
+
+        let recorded = engine
+            .env_vars_for_job(&metis_id)
+            .expect("env vars should be recorded");
+        assert_eq!(recorded.get("FOO"), Some(&"bar".to_string()));
     }
 }
