@@ -111,6 +111,14 @@ impl Spawner for AgentQueue {
                     continue;
                 }
 
+                let is_ready = store
+                    .is_issue_ready(&artifact_id)
+                    .await
+                    .context("failed to determine if issue is ready")?;
+                if !is_ready {
+                    continue;
+                }
+
                 if existing_issue_ids.contains(&artifact_id) {
                     continue;
                 }
@@ -195,7 +203,10 @@ mod tests {
         test::test_state,
     };
     use chrono::Utc;
-    use metis_common::jobs::{Bundle, BundleSpec};
+    use metis_common::{
+        artifacts::{IssueDependency, IssueDependencyType},
+        jobs::{Bundle, BundleSpec},
+    };
     use std::sync::Arc;
 
     fn queue(agent_name: &str) -> AgentQueue {
@@ -310,6 +321,44 @@ mod tests {
                     vec![],
                     Utc::now(),
                 )
+                .await?;
+        }
+
+        let tasks = queue("agent-a").spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
+        let state = test_state();
+        let blocker_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_artifact(Artifact::Issue {
+                    issue_type: metis_common::artifacts::IssueType::Task,
+                    description: "Blocker".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                })
+                .await?
+        };
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_artifact(Artifact::Issue {
+                    issue_type: metis_common::artifacts::IssueType::Task,
+                    description: "Blocked issue".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: blocker_id.clone(),
+                    }],
+                })
                 .await?;
         }
 
