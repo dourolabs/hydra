@@ -86,6 +86,12 @@ pub trait Store: Send + Sync {
     /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
     async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
+    /// Lists all issues that declare the provided issue as a parent via `child-of`.
+    async fn get_issue_children(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
+
+    /// Lists all issues that are blocked on the provided issue.
+    async fn get_issue_blocked_on(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
+
     /// Adds a task to the store with its parent dependencies.
     ///
     /// The parent tasks must complete before this task can start.
