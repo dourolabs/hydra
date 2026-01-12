@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    job_engine::JobStatus,
+    job_engine::{JobStatus, MetisId},
     store::{Status, TaskError},
 };
 use chrono::Utc;
@@ -21,6 +21,17 @@ pub async fn monitor_running_jobs(state: AppState) {
         // Check every 5 seconds
         sleep(Duration::from_secs(5)).await;
 
+        let store_task_set: Option<HashSet<MetisId>> = {
+            let store = state.store.read().await;
+            match store.list_tasks().await {
+                Ok(ids) => Some(ids.into_iter().collect()),
+                Err(err) => {
+                    error!(error = %err, "failed to list tasks from store for job reconciliation");
+                    None
+                }
+            }
+        };
+
         // Kill any jobs that are running in the engine but missing from the store
         let job_engine_jobs = match state.job_engine.list_jobs().await {
             Ok(jobs) => jobs,
@@ -31,19 +42,7 @@ pub async fn monitor_running_jobs(state: AppState) {
         };
 
         if !job_engine_jobs.is_empty() {
-            let store_task_ids = {
-                let store = state.store.read().await;
-                match store.list_tasks().await {
-                    Ok(ids) => Some(ids),
-                    Err(err) => {
-                        error!(error = %err, "failed to list tasks from store for job reconciliation");
-                        None
-                    }
-                }
-            };
-
-            if let Some(store_task_ids) = store_task_ids {
-                let store_task_set: HashSet<_> = store_task_ids.into_iter().collect();
+            if let Some(store_task_set) = store_task_set.as_ref() {
                 let orphaned_jobs: Vec<_> = job_engine_jobs
                     .into_iter()
                     .filter(|job| !store_task_set.contains(&job.id))
@@ -67,6 +66,10 @@ pub async fn monitor_running_jobs(state: AppState) {
                     }
                 }
             }
+        }
+
+        if let Some(store_task_set) = store_task_set.as_ref() {
+            cleanup_unknown_pods(&state, store_task_set).await;
         }
 
         // Get running tasks
@@ -178,5 +181,101 @@ pub async fn monitor_running_jobs(state: AppState) {
                 }
             }
         }
+    }
+}
+
+async fn cleanup_unknown_pods(state: &AppState, known_task_ids: &HashSet<MetisId>) {
+    let pods = match state.job_engine.list_job_pods().await {
+        Ok(pods) => pods,
+        Err(err) => {
+            error!(error = %err, "failed to list pods in job engine");
+            return;
+        }
+    };
+
+    let unknown_pods: Vec<_> = pods
+        .into_iter()
+        .filter(|pod| !known_task_ids.contains(&pod.id))
+        .collect();
+
+    if unknown_pods.is_empty() {
+        return;
+    }
+
+    info!(
+        count = unknown_pods.len(),
+        "deleting pods present in engine but missing from store"
+    );
+
+    for pod in unknown_pods {
+        match state.job_engine.delete_pod(&pod.id, &pod.name).await {
+            Ok(()) => {
+                info!(
+                    metis_id = %pod.id,
+                    pod_name = %pod.name,
+                    "deleted pod not present in store"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    metis_id = %pod.id,
+                    pod_name = %pod.name,
+                    error = %err,
+                    "failed to delete pod not present in store"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cleanup_unknown_pods;
+    use crate::{
+        job_engine::{JobEngine, MockJobEngine},
+        store::Task,
+        test::test_state_with_engine,
+    };
+    use chrono::Utc;
+    use metis_common::jobs::Bundle;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn cleanup_unknown_pods_removes_orphaned_pods() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let known_id = "known-id".to_string();
+        let unknown_id = "unknown-id".to_string();
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_task_with_id(
+                    known_id.clone(),
+                    Task::Spawn {
+                        program: "test".to_string(),
+                        params: Vec::new(),
+                        context: Bundle::None,
+                        image: "image".to_string(),
+                        env_vars: HashMap::new(),
+                    },
+                    Vec::new(),
+                    Utc::now(),
+                )
+                .await
+                .expect("failed to insert task into store");
+        }
+
+        job_engine.insert_pod(&known_id, "known-pod").await;
+        job_engine.insert_pod(&unknown_id, "unknown-pod").await;
+
+        let known_ids: HashSet<_> = [known_id.clone()].into_iter().collect();
+        cleanup_unknown_pods(&state, &known_ids).await;
+
+        let pods = job_engine.list_job_pods().await.expect("pods should list");
+        assert_eq!(pods.len(), 1);
+        assert_eq!(pods[0].id, known_id);
+        assert_eq!(pods[0].name, "known-pod");
     }
 }

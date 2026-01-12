@@ -52,11 +52,22 @@ pub struct MetisJob {
     pub failure_message: Option<String>,
 }
 
+/// Represents a pod created for a Metis job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetisPod {
+    /// The Metis job ID associated with the pod.
+    pub id: MetisId,
+    /// The Kubernetes pod name.
+    pub name: String,
+}
+
 /// Error type for job engine operations
 #[derive(Debug, thiserror::Error)]
 pub enum JobEngineError {
     #[error("Job not found: {0}")]
     NotFound(MetisId),
+    #[error("Pod not found: {0}")]
+    PodNotFound(String),
     #[error("Multiple jobs found: {0}")]
     MultipleFound(MetisId),
     #[error("Job already exists: {0}")]
@@ -92,6 +103,12 @@ pub trait JobEngine: Send + Sync {
     /// # Returns
     /// A vector of MetisJob resources matching the selector
     async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError>;
+
+    /// Lists all pods associated with Metis jobs.
+    ///
+    /// # Returns
+    /// A vector of MetisPod resources matching the selector
+    async fn list_job_pods(&self) -> Result<Vec<MetisPod>, JobEngineError>;
 
     /// Finds a single job by its metis-id.
     ///
@@ -139,4 +156,7 @@ pub trait JobEngine: Send + Sync {
     /// Implementations should delete the underlying job and any associated
     /// resources necessary to stop execution.
     async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError>;
+
+    /// Deletes a pod if it exists.
+    async fn delete_pod(&self, metis_id: &MetisId, pod_name: &str) -> Result<(), JobEngineError>;
 }

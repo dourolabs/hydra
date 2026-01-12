@@ -1,4 +1,4 @@
-use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob};
+use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob, MetisPod};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::channel::mpsc;
@@ -11,6 +11,7 @@ use std::{
 pub struct MockJobEngine {
     jobs: Arc<Mutex<Vec<MetisJob>>>,
     logs: Arc<Mutex<HashMap<MetisId, Vec<String>>>>,
+    pods: Arc<Mutex<Vec<MetisPod>>>,
 }
 
 impl MockJobEngine {
@@ -33,6 +34,14 @@ impl MockJobEngine {
     pub async fn set_logs(&self, metis_id: &MetisId, chunks: Vec<String>) {
         let mut logs = self.logs.lock().unwrap();
         logs.insert(metis_id.to_string(), chunks);
+    }
+
+    pub async fn insert_pod(&self, metis_id: &MetisId, name: &str) {
+        let mut pods = self.pods.lock().unwrap();
+        pods.push(MetisPod {
+            id: metis_id.clone(),
+            name: name.to_string(),
+        });
     }
 }
 
@@ -58,6 +67,11 @@ impl JobEngine for MockJobEngine {
     async fn list_jobs(&self) -> Result<Vec<MetisJob>, JobEngineError> {
         let jobs = self.jobs.lock().unwrap();
         Ok(jobs.clone())
+    }
+
+    async fn list_job_pods(&self) -> Result<Vec<MetisPod>, JobEngineError> {
+        let pods = self.pods.lock().unwrap();
+        Ok(pods.clone())
     }
 
     async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
@@ -154,6 +168,19 @@ impl JobEngine for MockJobEngine {
                 Ok(())
             }
             _ => Err(JobEngineError::MultipleFound(metis_id.clone())),
+        }
+    }
+
+    async fn delete_pod(&self, metis_id: &MetisId, pod_name: &str) -> Result<(), JobEngineError> {
+        let mut pods = self.pods.lock().unwrap();
+        if let Some(position) = pods
+            .iter()
+            .position(|pod| pod.name == pod_name && pod.id == *metis_id)
+        {
+            pods.remove(position);
+            Ok(())
+        } else {
+            Err(JobEngineError::PodNotFound(pod_name.to_string()))
         }
     }
 }
