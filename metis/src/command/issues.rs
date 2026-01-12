@@ -57,6 +57,40 @@ pub enum IssueCommands {
         #[arg(value_name = "DESCRIPTION")]
         description: String,
     },
+    /// Update an existing issue artifact.
+    Update {
+        /// Issue ID to update.
+        #[arg(value_name = "ISSUE_ID")]
+        id: MetisId,
+
+        /// New issue type.
+        #[arg(long, value_name = "ISSUE_TYPE")]
+        r#type: Option<IssueType>,
+
+        /// New issue status.
+        #[arg(long, value_name = "ISSUE_STATUS")]
+        status: Option<IssueStatus>,
+
+        /// Updated assignee.
+        #[arg(long, value_name = "ASSIGNEE", conflicts_with = "clear_assignee")]
+        assignee: Option<String>,
+
+        /// Remove the current assignee.
+        #[arg(long)]
+        clear_assignee: bool,
+
+        /// Updated description.
+        #[arg(long, value_name = "DESCRIPTION")]
+        description: Option<String>,
+
+        /// Replace dependencies with the provided set in the format TYPE:ISSUE_ID (e.g. child-of:ISSUE-123).
+        #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency, conflicts_with = "clear_dependencies")]
+        dependencies: Vec<IssueDependency>,
+
+        /// Remove all dependencies from the issue.
+        #[arg(long)]
+        clear_dependencies: bool,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
@@ -80,6 +114,29 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             assignee,
             description,
         } => create_issue(client, r#type, status, dependencies, assignee, description).await,
+        IssueCommands::Update {
+            id,
+            r#type,
+            status,
+            assignee,
+            clear_assignee,
+            description,
+            dependencies,
+            clear_dependencies,
+        } => {
+            update_issue(
+                client,
+                id,
+                r#type,
+                status,
+                assignee,
+                clear_assignee,
+                description,
+                dependencies,
+                clear_dependencies,
+            )
+            .await
+        }
     }
 }
 
@@ -207,6 +264,101 @@ async fn create_issue(
         .create_artifact(&request)
         .await
         .context("failed to create issue")?;
+
+    println!("{}", response.artifact_id);
+    Ok(())
+}
+
+async fn update_issue(
+    client: &dyn MetisClientInterface,
+    id: MetisId,
+    issue_type: Option<IssueType>,
+    status: Option<IssueStatus>,
+    assignee: Option<String>,
+    clear_assignee: bool,
+    description: Option<String>,
+    dependencies: Vec<IssueDependency>,
+    clear_dependencies: bool,
+) -> Result<()> {
+    let issue_id = id.trim();
+    if issue_id.is_empty() {
+        bail!("Issue ID must not be empty.");
+    }
+    let issue_id = issue_id.to_string();
+
+    let description = match description {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Issue description must not be empty.");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+
+    let assignee = if clear_assignee {
+        Some(None)
+    } else if let Some(value) = assignee {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("Assignee must not be empty.");
+        }
+        Some(Some(trimmed.to_string()))
+    } else {
+        None
+    };
+
+    let dependencies_update = if clear_dependencies {
+        Some(Vec::new())
+    } else if dependencies.is_empty() {
+        None
+    } else {
+        Some(dependencies)
+    };
+
+    let no_changes = issue_type.is_none()
+        && status.is_none()
+        && assignee.is_none()
+        && description.is_none()
+        && dependencies_update.is_none();
+    if no_changes {
+        bail!("At least one field must be provided to update.");
+    }
+
+    let artifact = client
+        .get_artifact(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch artifact '{issue_id}'"))?;
+    ensure_issue(&artifact)?;
+
+    let updated_artifact = match artifact.artifact {
+        Artifact::Issue {
+            issue_type: current_type,
+            description: current_description,
+            status: current_status,
+            assignee: current_assignee,
+            dependencies: current_dependencies,
+        } => Artifact::Issue {
+            issue_type: issue_type.unwrap_or(current_type),
+            description: description.unwrap_or(current_description),
+            status: status.unwrap_or(current_status),
+            assignee: assignee.unwrap_or(current_assignee),
+            dependencies: dependencies_update.unwrap_or(current_dependencies),
+        },
+        _ => unreachable!("non-issue artifacts rejected earlier"),
+    };
+
+    let response = client
+        .update_artifact(
+            &issue_id,
+            &UpsertArtifactRequest {
+                artifact: updated_artifact,
+                job_id: None,
+            },
+        )
+        .await
+        .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
     println!("{}", response.artifact_id);
     Ok(())
@@ -478,5 +630,116 @@ mod tests {
         let dependency = parse_issue_dependency("child-of:ISSUE-42").unwrap();
         assert_eq!(dependency.dependency_type, IssueDependencyType::ChildOf);
         assert_eq!(dependency.issue_id, "ISSUE-42");
+    }
+
+    #[tokio::test]
+    async fn update_issue_modifies_requested_fields() {
+        let client = MockMetisClient::default();
+        client.push_get_artifact_response(ArtifactRecord {
+            id: "issue-9".into(),
+            artifact: Artifact::Issue {
+                issue_type: IssueType::Task,
+                description: "Initial issue".into(),
+                status: IssueStatus::Open,
+                assignee: Some("owner-a".into()),
+                dependencies: vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: "issue-1".into(),
+                }],
+            },
+        });
+        client.push_upsert_artifact_response(UpsertArtifactResponse {
+            artifact_id: "issue-9".into(),
+        });
+
+        update_issue(
+            &client,
+            "issue-9".into(),
+            Some(IssueType::Bug),
+            Some(IssueStatus::Closed),
+            Some("owner-b".into()),
+            false,
+            Some("Updated issue description".into()),
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: "issue-2".into(),
+            }],
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(client.recorded_get_artifact_requests(), vec!["issue-9"]);
+        assert_eq!(
+            client.recorded_artifact_upserts(),
+            vec![(
+                Some("issue-9".into()),
+                UpsertArtifactRequest {
+                    artifact: Artifact::Issue {
+                        issue_type: IssueType::Bug,
+                        description: "Updated issue description".into(),
+                        status: IssueStatus::Closed,
+                        assignee: Some("owner-b".into()),
+                        dependencies: vec![IssueDependency {
+                            dependency_type: IssueDependencyType::BlockedOn,
+                            issue_id: "issue-2".into(),
+                        }],
+                    },
+                    job_id: None,
+                }
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_issue_allows_clearing_assignee_and_dependencies() {
+        let client = MockMetisClient::default();
+        client.push_get_artifact_response(ArtifactRecord {
+            id: "issue-10".into(),
+            artifact: Artifact::Issue {
+                issue_type: IssueType::Feature,
+                description: "Existing issue".into(),
+                status: IssueStatus::InProgress,
+                assignee: Some("owner-a".into()),
+                dependencies: vec![IssueDependency {
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: "issue-5".into(),
+                }],
+            },
+        });
+        client.push_upsert_artifact_response(UpsertArtifactResponse {
+            artifact_id: "issue-10".into(),
+        });
+
+        update_issue(
+            &client,
+            "issue-10".into(),
+            None,
+            None,
+            None,
+            true,
+            None,
+            vec![],
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            client.recorded_artifact_upserts(),
+            vec![(
+                Some("issue-10".into()),
+                UpsertArtifactRequest {
+                    artifact: Artifact::Issue {
+                        issue_type: IssueType::Feature,
+                        description: "Existing issue".into(),
+                        status: IssueStatus::InProgress,
+                        assignee: None,
+                        dependencies: vec![],
+                    },
+                    job_id: None,
+                }
+            )]
+        );
     }
 }
