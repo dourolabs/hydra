@@ -110,6 +110,10 @@ Follow the instructions in the task and submit a PR.
 
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**"""
 
+IMPORTANT: please update the issue tracker as you go with the status of the task.
+Once you start working on the issue, please mark it as in-progress.
+Note that issues are not closed until their corresponding PRs have been merged into main.
+
 [background.agent_queues.context]
 type = "service_repository"
 name = "dourolabs/metis"
