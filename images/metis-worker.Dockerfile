@@ -45,8 +45,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Ensure rustfmt is available for formatting tasks run inside the worker image
-RUN rustup component add rustfmt
+# Ensure rustfmt and clippy are available for formatting and linting tasks run inside the worker image
+RUN rustup component add rustfmt clippy
 
 # Create a non-root user
 RUN useradd -m -s /bin/bash -u 1000 worker \

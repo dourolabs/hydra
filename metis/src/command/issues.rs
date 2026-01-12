@@ -37,15 +37,15 @@ pub enum IssueCommands {
     },
     /// Create a new issue artifact.
     Create {
-        /// Issue type (defaults to task).
+        /// Issue type: bug, feature, task, chore, or merge-request (defaults to task).
         #[arg(long, value_name = "ISSUE_TYPE", default_value_t = IssueType::Task)]
         r#type: IssueType,
 
-        /// Issue status (defaults to open).
+        /// Issue status: open, in-progress, or closed (defaults to open).
         #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
         status: IssueStatus,
 
-        /// Issue dependencies in the format dependency-type:ISSUE_ID (e.g. child-of:ISSUE-123).
+        /// Issue dependencies in the format dependency-type:ISSUE_ID where dependency-type is child-of or blocked-on (e.g. child-of:ISSUE-123).
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
         dependencies: Vec<IssueDependency>,
 
