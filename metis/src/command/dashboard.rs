@@ -968,7 +968,10 @@ mod tests {
             Status::Running => log.events.push(Event::Started { at: now }),
             Status::Complete => {
                 log.events.push(Event::Started { at: now });
-                log.events.push(Event::Completed { at: now });
+                log.events.push(Event::Completed {
+                    at: now,
+                    last_message: None,
+                });
             }
             Status::Failed => {
                 log.events.push(Event::Started { at: now });

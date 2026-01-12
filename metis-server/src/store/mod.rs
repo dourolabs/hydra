@@ -289,6 +289,7 @@ pub trait Store: Send + Sync {
     /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
     ///              If Err, the task is marked as Failed with the error as the failure reason.
     /// * `end_time` - The timestamp when the task completed or failed
+    /// * `last_message` - Optional final worker message to store with the completion event
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
@@ -298,6 +299,7 @@ pub trait Store: Send + Sync {
         &mut self,
         id: &MetisId,
         result: Result<(), TaskError>,
+        last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }

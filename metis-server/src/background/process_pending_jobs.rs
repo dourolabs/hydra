@@ -77,6 +77,7 @@ pub async fn process_pending_jobs(state: AppState) {
                             Err(TaskError::JobEngineError {
                                 reason: failure_reason,
                             }),
+                            None,
                             Utc::now(),
                         )
                         .await

@@ -382,6 +382,7 @@ impl Store for MemoryStore {
         &mut self,
         id: &MetisId,
         result: Result<(), TaskError>,
+        last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Verify task exists
@@ -399,7 +400,10 @@ impl Store for MemoryStore {
         }
 
         let event = match result {
-            Ok(()) => Event::Completed { at: end_time },
+            Ok(()) => Event::Completed {
+                at: end_time,
+                last_message,
+            },
             Err(error) => Event::Failed {
                 at: end_time,
                 error,
@@ -676,7 +680,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -717,7 +721,7 @@ mod tests {
 
         // Then mark as complete
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -743,6 +747,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "test failure".to_string(),
                 }),
+                None,
                 Utc::now(),
             )
             .await
@@ -768,7 +773,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
 
@@ -799,7 +804,7 @@ mod tests {
         // Complete the root task (first mark as running, then complete)
         store.mark_task_running(&root_id, Utc::now()).await.unwrap();
         store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
 
@@ -843,7 +848,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root1_id, Ok(()), Utc::now())
+            .mark_task_complete(&root1_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Blocked);
@@ -854,7 +859,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_task_complete(&root2_id, Ok(()), Utc::now())
+            .mark_task_complete(&root2_id, Ok(()), None, Utc::now())
             .await
             .unwrap();
         assert_eq!(store.get_status(&child_id).await.unwrap(), Status::Pending);
@@ -888,7 +893,7 @@ mod tests {
 
         // Trying to mark as complete from pending should fail
         let err = store
-            .mark_task_complete(&root_id, Ok(()), Utc::now())
+            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -908,6 +913,7 @@ mod tests {
                 Err(TaskError::JobEngineError {
                     reason: "test".to_string(),
                 }),
+                None,
                 Utc::now(),
             )
             .await
