@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -27,6 +27,38 @@ pub struct KubernetesJobEngine {
     pub client: Client,
 }
 
+fn merge_env_vars(
+    job_uuid: &MetisId,
+    env_vars: &HashMap<String, String>,
+    openai_api_key: &str,
+    server_hostname: &str,
+) -> Vec<EnvVar> {
+    let mut merged_vars: BTreeMap<String, String> = env_vars
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+
+    merged_vars.insert(ENV_OPENAI_API_KEY.to_string(), openai_api_key.to_string());
+    merged_vars.insert(ENV_METIS_ID.to_string(), job_uuid.to_string());
+
+    let hostname = server_hostname.trim();
+    if !hostname.is_empty() {
+        merged_vars.insert(
+            ENV_METIS_SERVER_URL.to_string(),
+            format!("http://{hostname}"),
+        );
+    }
+
+    merged_vars
+        .into_iter()
+        .map(|(name, value)| EnvVar {
+            name,
+            value: Some(value),
+            ..Default::default()
+        })
+        .collect()
+}
+
 impl KubernetesJobEngine {
     fn build_metadata_labels(job_uuid: &MetisId) -> BTreeMap<String, String> {
         let mut metadata_labels = BTreeMap::new();
@@ -34,29 +66,17 @@ impl KubernetesJobEngine {
         metadata_labels
     }
 
-    fn build_env_vars(&self, job_uuid: &MetisId) -> Option<Vec<EnvVar>> {
-        let mut vars = vec![
-            EnvVar {
-                name: ENV_OPENAI_API_KEY.to_string(),
-                value: Some(self.openai_api_key.clone()),
-                ..Default::default()
-            },
-            EnvVar {
-                name: ENV_METIS_ID.to_string(),
-                value: Some(job_uuid.to_string()),
-                ..Default::default()
-            },
-        ];
-
-        if !self.server_hostname.trim().is_empty() {
-            vars.push(EnvVar {
-                name: ENV_METIS_SERVER_URL.to_string(),
-                value: Some(format!("http://{}", self.server_hostname.trim())),
-                ..Default::default()
-            });
-        }
-
-        Some(vars)
+    fn build_env_vars(
+        &self,
+        job_uuid: &MetisId,
+        env_vars: &HashMap<String, String>,
+    ) -> Vec<EnvVar> {
+        merge_env_vars(
+            job_uuid,
+            env_vars,
+            &self.openai_api_key,
+            &self.server_hostname,
+        )
     }
 
     fn job_status(job: &Job) -> JobStatus {
@@ -429,7 +449,12 @@ async fn resolve_pod_name_impl(
 
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
-    async fn create_job(&self, metis_id: &MetisId, image: &str) -> Result<(), JobEngineError> {
+    async fn create_job(
+        &self,
+        metis_id: &MetisId,
+        image: &str,
+        env_vars: &HashMap<String, String>,
+    ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
         info!(metis_id = %metis_id, namespace = %self.namespace, "creating Kubernetes job");
@@ -455,7 +480,7 @@ impl JobEngine for KubernetesJobEngine {
                             image: Some(image.to_string()),
                             image_pull_policy: Some("IfNotPresent".into()),
                             args: None,
-                            env: self.build_env_vars(metis_id),
+                            env: Some(self.build_env_vars(metis_id, env_vars)),
                             ..Default::default()
                         }],
                         restart_policy: Some("Never".into()),
@@ -711,7 +736,52 @@ mod tests {
         api::core::v1::{ContainerState, ContainerStateTerminated, ContainerStatus, PodStatus},
         apimachinery::pkg::apis::meta::v1::Time,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
+
+    #[test]
+    fn merge_env_vars_combines_task_and_system_values() {
+        let mut task_env = HashMap::from([("CUSTOM".to_string(), "1".to_string())]);
+        task_env.insert(ENV_METIS_ID.to_string(), "override-me".to_string());
+        task_env.insert(
+            ENV_METIS_SERVER_URL.to_string(),
+            "http://example.com".to_string(),
+        );
+
+        let merged = merge_env_vars(
+            &"job-123".to_string(),
+            &task_env,
+            "openai-key",
+            "metis.example.com",
+        );
+
+        let merged_map: HashMap<_, _> = merged
+            .into_iter()
+            .map(|env| (env.name, env.value.unwrap_or_default()))
+            .collect();
+
+        assert_eq!(merged_map.get("CUSTOM"), Some(&"1".to_string()));
+        assert_eq!(
+            merged_map.get(ENV_OPENAI_API_KEY),
+            Some(&"openai-key".to_string())
+        );
+        assert_eq!(merged_map.get(ENV_METIS_ID), Some(&"job-123".to_string()));
+        assert_eq!(
+            merged_map.get(ENV_METIS_SERVER_URL),
+            Some(&"http://metis.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn merge_env_vars_skips_empty_server_hostname() {
+        let merged = merge_env_vars(&"job-123".to_string(), &HashMap::new(), "openai-key", "   ");
+
+        let merged_map: HashMap<_, _> = merged
+            .into_iter()
+            .map(|env| (env.name, env.value.unwrap_or_default()))
+            .collect();
+
+        assert!(!merged_map.contains_key(ENV_METIS_SERVER_URL));
+    }
 
     #[test]
     fn to_metis_job_from_pod_uses_pod_metadata() {

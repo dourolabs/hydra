@@ -38,10 +38,12 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
-            let image = {
+            let (image, env_vars) = {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn { image, .. }) => image,
+                    Ok(Task::Spawn {
+                        image, env_vars, ..
+                    }) => (image, env_vars),
                     Err(err) => {
                         warn!(metis_id = %metis_id, error = %err, "failed to load task for spawning");
                         continue;
@@ -50,7 +52,11 @@ pub async fn process_pending_jobs(state: AppState) {
             };
 
             // Spawn the job
-            match state.job_engine.create_job(&metis_id, &image).await {
+            match state
+                .job_engine
+                .create_job(&metis_id, &image, &env_vars)
+                .await
+            {
                 Ok(()) => {
                     let mut store = state.store.write().await;
                     match store.mark_task_running(&metis_id, Utc::now()).await {

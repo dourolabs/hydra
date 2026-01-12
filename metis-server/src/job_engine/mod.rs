@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 mod kubernetes_job_engine;
 
@@ -82,10 +83,16 @@ pub trait JobEngine: Send + Sync {
     /// # Arguments
     /// * `metis_id` - The Metis ID to use for the job
     /// * `image` - The container image the job should run
+    /// * `env_vars` - Environment variables to inject into the job container
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
-    async fn create_job(&self, metis_id: &MetisId, image: &str) -> Result<(), JobEngineError>;
+    async fn create_job(
+        &self,
+        metis_id: &MetisId,
+        image: &str,
+        env_vars: &HashMap<String, String>,
+    ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
     ///
