@@ -433,7 +433,10 @@ impl MetisClient {
     }
 
     fn stream_sse_logs(response: Response) -> LogStream {
-        let byte_stream: BytesStream = Box::pin(response.bytes_stream());
+        Self::stream_sse_bytes(Box::pin(response.bytes_stream()))
+    }
+
+    fn stream_sse_bytes(byte_stream: BytesStream) -> LogStream {
         Box::pin(stream::unfold(
             (byte_stream, String::new(), false),
             |(mut byte_stream, mut buffer, finished)| async move {
@@ -442,9 +445,13 @@ impl MetisClient {
                 }
 
                 loop {
-                    if let Some(idx) = buffer.find("\n\n") {
+                    if let Some((idx, separator_len)) = buffer
+                        .find("\n\n")
+                        .map(|idx| (idx, 2))
+                        .or_else(|| buffer.find("\r\n\r\n").map(|idx| (idx, "\r\n\r\n".len())))
+                    {
                         let event_block = buffer[..idx].to_string();
-                        buffer.drain(..idx + 2);
+                        buffer.drain(..idx + separator_len);
                         if event_block.trim().is_empty() {
                             continue;
                         }
@@ -466,8 +473,8 @@ impl MetisClient {
                             if chunk.is_empty() {
                                 continue;
                             }
-                            let normalized = String::from_utf8_lossy(&chunk).replace('\r', "");
-                            buffer.push_str(&normalized);
+                            let chunk_text = String::from_utf8_lossy(&chunk);
+                            buffer.push_str(&chunk_text);
                         }
                         Some(Err(err)) => {
                             return Some((Err(err.into()), (byte_stream, buffer, true)));
@@ -506,7 +513,8 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
         if let Some(value) = line.strip_prefix("event:") {
             event_name = Some(value.trim().to_string());
         } else if let Some(value) = line.strip_prefix("data:") {
-            data_lines.push(value.trim_start());
+            let trimmed = value.strip_prefix(' ').unwrap_or(value);
+            data_lines.push(trimmed);
         }
     }
 
@@ -576,6 +584,39 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse> {
         MetisClient::list_artifacts(self, query).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stream_sse_logs_preserves_carriage_returns() {
+        let events = b"data: Downloading 10%\rprogress\n\n";
+        let byte_stream: BytesStream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(events))]));
+
+        let mut stream = MetisClient::stream_sse_bytes(byte_stream);
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first, "Downloading 10%\rprogress");
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_sse_logs_handles_crlf_separators() {
+        let events = b"data: first line\r\n\r\ndata: second\r\n\r\n";
+        let byte_stream: BytesStream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(events))]));
+
+        let mut stream = MetisClient::stream_sse_bytes(byte_stream);
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first, "first line");
+
+        let second = stream.next().await.unwrap().unwrap();
+        assert_eq!(second, "second");
+
+        assert!(stream.next().await.is_none());
     }
 }
 
