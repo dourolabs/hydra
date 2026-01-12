@@ -16,9 +16,9 @@ use kube::{
 };
 use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_OPENAI_API_KEY};
 use tokio::time::{Duration, sleep};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob};
+use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob, MetisPod};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -155,6 +155,21 @@ impl KubernetesJobEngine {
             completion_time,
             failure_message,
         })
+    }
+
+    fn pod_metis_id(pod: &Pod) -> Option<MetisId> {
+        pod.metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get("metis-id"))
+            .cloned()
+    }
+
+    fn to_metis_pod(pod: &Pod) -> Option<MetisPod> {
+        let name = pod.metadata.name.clone()?;
+        let metis_id = Self::pod_metis_id(pod)?;
+
+        Some(MetisPod { name, metis_id })
     }
 
     async fn find_kubernetes_job_by_metis_id(
@@ -328,6 +343,33 @@ impl JobEngine for KubernetesJobEngine {
         Ok(metis_jobs)
     }
 
+    async fn list_pods(&self) -> Result<Vec<MetisPod>, JobEngineError> {
+        info!(namespace = %self.namespace, "listing Kubernetes pods for metis jobs");
+
+        let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        let pods = pods_api
+            .list(&ListParams::default().labels("metis-id"))
+            .await
+            .map_err(|err| {
+                error!(error = ?err, namespace = %self.namespace, "failed to list pods from Kubernetes");
+                JobEngineError::Kubernetes(err)
+            })?;
+
+        let mut metis_pods: Vec<MetisPod> = Vec::new();
+
+        for pod in pods {
+            match Self::to_metis_pod(&pod) {
+                Some(pod) => metis_pods.push(pod),
+                None => warn!(
+                    namespace = %self.namespace,
+                    "skipping pod missing metis-id label or name"
+                ),
+            }
+        }
+
+        Ok(metis_pods)
+    }
+
     async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
         let job = self.find_kubernetes_job_by_metis_id(metis_id).await?;
         Self::to_metis_job(&job)
@@ -486,5 +528,61 @@ impl JobEngine for KubernetesJobEngine {
                 Err(JobEngineError::Kubernetes(err))
             }
         }
+    }
+
+    async fn delete_pods_for_metis_id(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+        let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        let selector = format!("metis-id={metis_id}");
+        let lp = ListParams::default().labels(&selector);
+        let pod_list = pods_api
+            .list(&lp)
+            .await
+            .map_err(|err| {
+                error!(metis_id = %metis_id, namespace = %self.namespace, error = ?err, "failed to list pods for cleanup");
+                JobEngineError::Kubernetes(err)
+            })?;
+
+        if pod_list.items.is_empty() {
+            return Ok(());
+        }
+
+        let dp = DeleteParams::default();
+        for mut pod in pod_list.items {
+            match pod.metadata.name.take() {
+                Some(pod_name) => match pods_api.delete(&pod_name, &dp).await {
+                    Ok(_) => info!(
+                        metis_id = %metis_id,
+                        pod_name = %pod_name,
+                        namespace = %self.namespace,
+                        "pod deleted successfully"
+                    ),
+                    Err(kube::Error::Api(err)) if err.code == 404 => {
+                        warn!(
+                            metis_id = %metis_id,
+                            pod_name = %pod_name,
+                            namespace = %self.namespace,
+                            "pod already deleted before cleanup"
+                        );
+                    }
+                    Err(err) => {
+                        error!(
+                            metis_id = %metis_id,
+                            pod_name = %pod_name,
+                            namespace = %self.namespace,
+                            error = ?err,
+                            "failed to delete pod"
+                        );
+                        return Err(JobEngineError::Kubernetes(err));
+                    }
+                },
+                None => warn!(
+                    metis_id = %metis_id,
+                    namespace = %self.namespace,
+                    "encountered pod without name during cleanup"
+                ),
+            }
+        }
+
+        Ok(())
     }
 }
