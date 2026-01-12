@@ -172,6 +172,8 @@ impl From<&Artifact> for ArtifactKind {
 pub struct ArtifactRecord {
     pub id: String,
     pub artifact: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub is_ready: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

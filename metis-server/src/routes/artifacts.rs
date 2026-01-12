@@ -10,9 +10,11 @@ use axum::{
     http::request::Parts,
 };
 use chrono::Utc;
+use metis_common::MetisId;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueStatus, IssueType,
-    ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
+    IssueType, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
+    UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -68,9 +70,11 @@ pub async fn get_artifact(
         .await
         .map_err(|err| map_store_error(err, Some(&artifact_id)))?;
 
+    let readiness = compute_issue_readiness(store_read.as_ref(), &artifact_id, &artifact).await?;
     Ok(Json(ArtifactRecord {
         id: artifact_id,
         artifact,
+        is_ready: readiness,
     }))
 }
 
@@ -104,21 +108,27 @@ pub async fn list_artifacts(
         .await
         .map_err(|err| map_store_error(err, None))?;
 
-    let filtered = artifacts
-        .into_iter()
-        .filter(|(id, artifact)| {
-            artifact_matches(
-                &query.artifact_type,
-                query.issue_type,
-                query.status,
-                search_term.as_deref(),
-                assignee_filter,
-                id,
-                artifact,
-            )
-        })
-        .map(|(id, artifact)| ArtifactRecord { id, artifact })
-        .collect();
+    let mut filtered = Vec::new();
+    for (id, artifact) in artifacts {
+        if !artifact_matches(
+            &query.artifact_type,
+            query.issue_type,
+            query.status,
+            search_term.as_deref(),
+            assignee_filter,
+            &id,
+            &artifact,
+        ) {
+            continue;
+        }
+
+        let readiness = compute_issue_readiness(store_read.as_ref(), &id, &artifact).await?;
+        filtered.push(ArtifactRecord {
+            id,
+            artifact,
+            is_ready: readiness,
+        });
+    }
 
     Ok(Json(ListArtifactsResponse {
         artifacts: filtered,
@@ -161,6 +171,16 @@ async fn upsert_artifact_internal(
     let mut store = state.store.write().await;
     if let Artifact::Issue { dependencies, .. } = &artifact {
         validate_issue_dependencies(store.as_mut(), dependencies).await?;
+    }
+    if let (
+        Some(id),
+        Artifact::Issue {
+            status: IssueStatus::Closed,
+            ..
+        },
+    ) = (&artifact_id, &artifact)
+    {
+        ensure_issue_can_close(store.as_mut(), id).await?;
     }
     let artifact_id = match artifact_id {
         Some(id) => {
@@ -319,6 +339,108 @@ fn issue_status_matches(search_term: &str, status: &IssueStatus) -> bool {
     status.as_str() == search_term
 }
 
+async fn compute_issue_readiness(
+    store: &dyn Store,
+    issue_id: &MetisId,
+    artifact: &Artifact,
+) -> Result<Option<bool>, ApiError> {
+    let (status, dependencies) = match artifact {
+        Artifact::Issue {
+            status,
+            dependencies,
+            ..
+        } => (status, dependencies),
+        _ => return Ok(None),
+    };
+
+    if matches!(status, IssueStatus::Closed) {
+        return Ok(Some(false));
+    }
+
+    if has_open_blockers(store, dependencies).await? {
+        return Ok(Some(false));
+    }
+
+    if matches!(status, IssueStatus::Open) {
+        return Ok(Some(true));
+    }
+
+    let children = store
+        .get_issue_children(issue_id)
+        .await
+        .map_err(|err| map_store_error(err, Some(issue_id.as_str())))?;
+    for child_id in children {
+        match store.get_artifact(&child_id).await {
+            Ok(Artifact::Issue {
+                status: IssueStatus::Closed,
+                ..
+            }) => {}
+            Ok(Artifact::Issue { .. }) => return Ok(Some(false)),
+            Ok(_) => {
+                return Err(ApiError::internal(anyhow!(
+                    "artifact '{child_id}' indexed as an issue child is not an issue"
+                )));
+            }
+            Err(err) => return Err(map_store_error(err, Some(&child_id))),
+        }
+    }
+
+    Ok(Some(true))
+}
+
+async fn has_open_blockers(
+    store: &dyn Store,
+    dependencies: &[IssueDependency],
+) -> Result<bool, ApiError> {
+    for dependency in dependencies
+        .iter()
+        .filter(|dep| dep.dependency_type == IssueDependencyType::BlockedOn)
+    {
+        match store.get_artifact(&dependency.issue_id).await {
+            Ok(Artifact::Issue { status, .. }) if status != IssueStatus::Closed => return Ok(true),
+            Ok(Artifact::Issue { .. }) => {}
+            Ok(_) => {
+                return Err(ApiError::internal(anyhow!(
+                    "artifact '{}' is not an issue",
+                    dependency.issue_id
+                )));
+            }
+            Err(err) => return Err(map_store_error(err, Some(&dependency.issue_id))),
+        }
+    }
+
+    Ok(false)
+}
+
+async fn ensure_issue_can_close(store: &mut dyn Store, issue_id: &MetisId) -> Result<(), ApiError> {
+    let children = store
+        .get_issue_children(issue_id)
+        .await
+        .map_err(|err| map_store_error(err, Some(issue_id.as_str())))?;
+
+    for child_id in children {
+        match store.get_artifact(&child_id).await {
+            Ok(Artifact::Issue {
+                status: IssueStatus::Closed,
+                ..
+            }) => {}
+            Ok(Artifact::Issue { status, .. }) => {
+                return Err(ApiError::bad_request(format!(
+                    "issue '{issue_id}' cannot be closed while child '{child_id}' has status '{status}'"
+                )));
+            }
+            Ok(_) => {
+                return Err(ApiError::internal(anyhow!(
+                    "artifact '{child_id}' indexed as an issue child is not an issue"
+                )));
+            }
+            Err(err) => return Err(map_store_error(err, Some(&child_id))),
+        }
+    }
+
+    Ok(())
+}
+
 fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {
     match err {
         StoreError::ArtifactNotFound(id) => {
@@ -354,5 +476,204 @@ fn map_emit_error(err: StoreError, job_id: &str) -> ApiError {
             error!(job_id = %job_id, error = %other, "failed to emit artifacts");
             ApiError::internal(anyhow!("failed to emit artifacts for '{job_id}': {other}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::test_state;
+    use axum::extract::Query;
+    use metis_common::artifacts::{Artifact, ArtifactKind};
+
+    fn issue(status: IssueStatus, dependencies: Vec<IssueDependency>) -> Artifact {
+        Artifact::Issue {
+            issue_type: IssueType::Task,
+            description: "issue details".to_string(),
+            status,
+            assignee: None,
+            dependencies,
+        }
+    }
+
+    #[tokio::test]
+    async fn issue_readiness_respects_blockers_and_children() {
+        let state = test_state();
+        let mut store = state.store.write().await;
+        let blocker_id = store
+            .add_artifact(issue(IssueStatus::InProgress, vec![]))
+            .await
+            .unwrap();
+        let parent_id = store
+            .add_artifact(issue(IssueStatus::InProgress, vec![]))
+            .await
+            .unwrap();
+
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        let child_id = store
+            .add_artifact(issue(IssueStatus::Open, vec![child_dependency.clone()]))
+            .await
+            .unwrap();
+        let open_issue_id = store
+            .add_artifact(issue(
+                IssueStatus::Open,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: blocker_id.clone(),
+                }],
+            ))
+            .await
+            .unwrap();
+        drop(store);
+
+        let store_read = state.store.read().await;
+        let open_artifact = store_read.get_artifact(&open_issue_id).await.unwrap();
+        assert_eq!(
+            compute_issue_readiness(store_read.as_ref(), &open_issue_id, &open_artifact)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+
+        let parent_artifact = store_read.get_artifact(&parent_id).await.unwrap();
+        assert_eq!(
+            compute_issue_readiness(store_read.as_ref(), &parent_id, &parent_artifact)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        drop(store_read);
+
+        let mut store = state.store.write().await;
+        store
+            .update_artifact(
+                &child_id,
+                issue(IssueStatus::Closed, vec![child_dependency]),
+            )
+            .await
+            .unwrap();
+        store
+            .update_artifact(&blocker_id, issue(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap();
+        drop(store);
+
+        let store_read = state.store.read().await;
+        let open_artifact = store_read.get_artifact(&open_issue_id).await.unwrap();
+        assert_eq!(
+            compute_issue_readiness(store_read.as_ref(), &open_issue_id, &open_artifact)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        let parent_artifact = store_read.get_artifact(&parent_id).await.unwrap();
+        assert_eq!(
+            compute_issue_readiness(store_read.as_ref(), &parent_id, &parent_artifact)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_rejects_closing_when_children_open() {
+        let state = test_state();
+        let mut store = state.store.write().await;
+        let parent_id = store
+            .add_artifact(issue(IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        store
+            .add_artifact(issue(
+                IssueStatus::InProgress,
+                vec![child_dependency.clone()],
+            ))
+            .await
+            .unwrap();
+        drop(store);
+
+        let result = update_artifact(
+            State(state.clone()),
+            ArtifactIdPath(parent_id.clone()),
+            Json(UpsertArtifactRequest {
+                artifact: issue(IssueStatus::Closed, vec![]),
+                job_id: None,
+            }),
+        )
+        .await;
+        assert!(result.is_err(), "expected closing to be rejected");
+
+        let mut store = state.store.write().await;
+        let child_id = store.get_issue_children(&parent_id).await.unwrap()[0].clone();
+        store
+            .update_artifact(
+                &child_id,
+                issue(IssueStatus::Closed, vec![child_dependency]),
+            )
+            .await
+            .unwrap();
+        drop(store);
+
+        let _ = update_artifact(
+            State(state.clone()),
+            ArtifactIdPath(parent_id.clone()),
+            Json(UpsertArtifactRequest {
+                artifact: issue(IssueStatus::Closed, vec![]),
+                job_id: None,
+            }),
+        )
+        .await
+        .expect("closing should succeed when children are closed");
+    }
+
+    #[tokio::test]
+    async fn api_responses_include_issue_readiness() {
+        let state = test_state();
+        let mut store = state.store.write().await;
+        let blocker_id = store
+            .add_artifact(issue(IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let issue_id = store
+            .add_artifact(issue(
+                IssueStatus::Open,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: blocker_id,
+                }],
+            ))
+            .await
+            .unwrap();
+        drop(store);
+
+        let artifact = get_artifact(State(state.clone()), ArtifactIdPath(issue_id.clone()))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(artifact.is_ready, Some(false));
+
+        let list = list_artifacts(
+            State(state.clone()),
+            Query(SearchArtifactsQuery {
+                artifact_type: Some(ArtifactKind::Issue),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        let record = list
+            .artifacts
+            .into_iter()
+            .find(|record| record.id == issue_id)
+            .expect("issue missing from list response");
+        assert_eq!(record.is_ready, Some(false));
     }
 }

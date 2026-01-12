@@ -754,6 +754,7 @@ mod tests {
                 assignee: None,
                 dependencies: vec![],
             },
+            is_ready: None,
         });
 
         let err = list_patches(&client, Some("artifact-1".to_string()), None, false)
@@ -959,6 +960,7 @@ mod tests {
                 diff: "diff --git a/file b/file\n+example".to_string(),
                 reviews: vec![existing_review.clone()],
             },
+            is_ready: None,
         });
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "patch-123".to_string(),

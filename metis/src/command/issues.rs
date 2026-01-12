@@ -458,6 +458,7 @@ mod tests {
                     assignee: None,
                     dependencies: vec![],
                 },
+                is_ready: None,
             }],
         });
 
@@ -502,6 +503,7 @@ mod tests {
                 assignee: None,
                 dependencies: vec![],
             },
+            is_ready: None,
         });
 
         let artifacts = fetch_issues(
@@ -533,6 +535,7 @@ mod tests {
                     assignee: Some("owner-a".into()),
                     dependencies: vec![],
                 },
+                is_ready: None,
             }],
         });
 
@@ -647,6 +650,7 @@ mod tests {
                     issue_id: "issue-1".into(),
                 }],
             },
+            is_ready: None,
         });
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "issue-9".into(),
@@ -706,6 +710,7 @@ mod tests {
                     issue_id: "issue-5".into(),
                 }],
             },
+            is_ready: None,
         });
         client.push_upsert_artifact_response(UpsertArtifactResponse {
             artifact_id: "issue-10".into(),
