@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use metis_common::{
     MetisId,
     artifacts::{Artifact, IssueStatus},
-    jobs::Bundle,
+    constants::ENV_GH_TOKEN,
+    jobs::BundleSpec,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -29,8 +30,9 @@ pub const DEFAULT_AGENT_PROGRAM: &str = include_str!(concat!(
 pub struct AgentQueue {
     pub name: String,
     pub prompt: String,
-    pub context: Bundle,
-    pub image: String,
+    pub context_spec: BundleSpec,
+    pub image: Option<String>,
+    pub fallback_image: String,
     pub env_vars: HashMap<String, String>,
 }
 
@@ -39,27 +41,40 @@ impl AgentQueue {
         Self {
             name: config.name.clone(),
             prompt: config.prompt.clone(),
-            context: config.context.clone(),
-            image: config
-                .image
-                .clone()
-                .unwrap_or_else(|| default_image.to_string()),
+            context_spec: config.context.clone(),
+            image: config.image.clone(),
+            fallback_image: default_image.to_string(),
             env_vars: config.env_vars.clone(),
         }
     }
 
-    fn build_task(&self, issue_id: &MetisId) -> Task {
+    fn build_task(&self, state: &AppState, issue_id: &MetisId) -> anyhow::Result<Task> {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.clone());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
-        Task::Spawn {
+        let resolved = state
+            .service_state
+            .resolve_bundle_spec(self.context_spec.clone())
+            .map_err(|err| anyhow::anyhow!("failed to resolve queue context: {err:?}"))?;
+        if let Some(token) = resolved.github_token {
+            env_vars.entry(ENV_GH_TOKEN.to_string()).or_insert(token);
+        }
+
+        let image = resolve_image(
+            self.image.clone(),
+            resolved.default_image,
+            &self.fallback_image,
+        )
+        .context("failed to resolve queue image")?;
+
+        Ok(Task::Spawn {
             program: DEFAULT_AGENT_PROGRAM.to_string(),
             params: vec![self.prompt.clone()],
-            context: self.context.clone(),
-            image: self.image.clone(),
+            context: resolved.bundle,
+            image,
             env_vars,
-        }
+        })
     }
 }
 
@@ -100,12 +115,41 @@ impl Spawner for AgentQueue {
                     continue;
                 }
 
-                tasks.push(self.build_task(&artifact_id));
+                let task = self.build_task(state, &artifact_id)?;
+                tasks.push(task);
             }
         }
 
         Ok(tasks)
     }
+}
+fn resolve_image(
+    user_supplied: Option<String>,
+    repo_default: Option<String>,
+    fallback: &str,
+) -> Result<String, anyhow::Error> {
+    if let Some(image) = user_supplied {
+        let trimmed = image.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    if let Some(default_image) = repo_default {
+        let trimmed = default_image.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let trimmed = fallback.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "default worker image must not be empty for agent queue"
+        ));
+    }
+
+    Ok(trimmed.to_string())
 }
 
 async fn existing_issue_tasks_for_agent(
@@ -145,15 +189,22 @@ async fn existing_issue_tasks_for_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::AgentQueueConfig, test::test_state};
+    use crate::{
+        config::AgentQueueConfig,
+        state::{GitRepository, ServiceState},
+        test::test_state,
+    };
     use chrono::Utc;
+    use metis_common::jobs::{Bundle, BundleSpec};
+    use std::sync::Arc;
 
     fn queue(agent_name: &str) -> AgentQueue {
         AgentQueue {
             name: agent_name.to_string(),
             prompt: "Fix the issue".to_string(),
-            context: Bundle::None,
-            image: "metis-worker:latest".to_string(),
+            context_spec: BundleSpec::None,
+            image: None,
+            fallback_image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
         }
     }
@@ -273,7 +324,7 @@ mod tests {
         let config = AgentQueueConfig {
             name: "agent-config".to_string(),
             prompt: "Handle issues".to_string(),
-            context: Bundle::None,
+            context: BundleSpec::None,
             image: None,
             env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
         };
@@ -282,7 +333,73 @@ mod tests {
 
         assert_eq!(queue.name, "agent-config");
         assert_eq!(queue.prompt, "Handle issues");
-        assert_eq!(queue.image, "default-image");
+        assert_eq!(queue.image, None);
+        assert_eq!(queue.fallback_image, "default-image");
         assert_eq!(queue.env_vars.get("CUSTOM"), Some(&"1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
+        let mut state = test_state();
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([(
+                "dourolabs/metis".to_string(),
+                GitRepository {
+                    name: "dourolabs/metis".to_string(),
+                    remote_url: "https://github.com/dourolabs/metis.git".to_string(),
+                    default_branch: Some("main".to_string()),
+                    github_token: Some("token".to_string()),
+                    default_image: Some("repo-image".to_string()),
+                },
+            )]),
+        });
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_artifact(Artifact::Issue {
+                    issue_type: metis_common::artifacts::IssueType::Task,
+                    description: "Assigned".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![],
+                })
+                .await?
+        };
+        let queue = AgentQueue {
+            name: "agent-a".to_string(),
+            prompt: "Do the thing".to_string(),
+            context_spec: BundleSpec::ServiceRepository {
+                name: "dourolabs/metis".to_string(),
+                rev: None,
+            },
+            image: None,
+            fallback_image: "default-image".to_string(),
+            env_vars: HashMap::new(),
+        };
+
+        let tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        match &tasks[0] {
+            Task::Spawn {
+                context,
+                image,
+                env_vars,
+                ..
+            } => {
+                assert_eq!(
+                    context,
+                    &Bundle::GitRepository {
+                        url: "https://github.com/dourolabs/metis.git".to_string(),
+                        rev: "main".to_string(),
+                    }
+                );
+                assert_eq!(image, "repo-image");
+                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token".to_string()));
+                assert_eq!(env_vars.get(ISSUE_ID_ENV_VAR), Some(&issue_id));
+            }
+        }
+
+        Ok(())
     }
 }
