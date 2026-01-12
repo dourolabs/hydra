@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::jobs::Bundle;
+use metis_common::jobs::BundleSpec;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -113,8 +113,8 @@ pub struct Repository {
 pub struct AgentQueueConfig {
     pub name: String,
     pub prompt: String,
-    #[serde(default = "default_bundle")]
-    pub context: Bundle,
+    #[serde(default = "default_bundle_spec")]
+    pub context: BundleSpec,
     #[serde(default)]
     pub image: Option<String>,
     #[serde(default)]
@@ -149,6 +149,6 @@ fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
 }
 
-fn default_bundle() -> Bundle {
-    Bundle::None
+fn default_bundle_spec() -> BundleSpec {
+    BundleSpec::None
 }
