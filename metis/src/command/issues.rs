@@ -267,6 +267,7 @@ async fn create_issue(
             status,
             assignee,
             dependencies,
+            patches: Vec::new(),
         },
         job_id: None,
     };
@@ -344,6 +345,7 @@ async fn update_issue(
         status: status.unwrap_or(current.issue.status),
         assignee: assignee.unwrap_or(current.issue.assignee),
         dependencies: dependencies_update.unwrap_or(current.issue.dependencies),
+        patches: current.issue.patches,
     };
 
     let response = client
@@ -395,6 +397,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
             status,
             assignee,
             dependencies,
+            ..
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
@@ -451,6 +454,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
+                    patches: Vec::new(),
                 },
             }],
         });
@@ -496,6 +500,7 @@ mod tests {
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![],
+                patches: Vec::new(),
             },
         });
 
@@ -530,6 +535,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 },
             }],
         });
@@ -585,6 +591,7 @@ mod tests {
                         description: "New issue description".into(),
                         assignee: Some("team-a".into()),
                         dependencies,
+                        patches: Vec::new(),
                     },
                     job_id: None,
                 }
@@ -643,6 +650,7 @@ mod tests {
                     dependency_type: IssueDependencyType::ChildOf,
                     issue_id: issue_id("i-1"),
                 }],
+                patches: Vec::new(),
             },
         });
         client.push_upsert_issue_response(UpsertIssueResponse {
@@ -681,6 +689,7 @@ mod tests {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: issue_id("i-2"),
                         }],
+                        patches: Vec::new(),
                     },
                     job_id: None,
                 }
@@ -702,6 +711,7 @@ mod tests {
                     dependency_type: IssueDependencyType::BlockedOn,
                     issue_id: issue_id("i-5"),
                 }],
+                patches: Vec::new(),
             },
         });
         client.push_upsert_issue_response(UpsertIssueResponse {
@@ -733,6 +743,7 @@ mod tests {
                         status: IssueStatus::InProgress,
                         assignee: None,
                         dependencies: vec![],
+                        patches: Vec::new(),
                     },
                     job_id: None,
                 }
@@ -754,6 +765,7 @@ mod tests {
                         dependency_type: IssueDependencyType::BlockedOn,
                         issue_id: issue_id("i-99"),
                     }],
+                    patches: Vec::new(),
                 },
             },
             IssueRecord {
@@ -764,6 +776,7 @@ mod tests {
                     status: IssueStatus::InProgress,
                     assignee: None,
                     dependencies: vec![],
+                    patches: Vec::new(),
                 },
             },
         ];

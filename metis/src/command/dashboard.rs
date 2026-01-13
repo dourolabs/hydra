@@ -78,6 +78,7 @@ struct IssueRecord {
     status: IssueStatus,
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
+    patch_count: usize,
 }
 
 #[derive(Clone, PartialEq)]
@@ -589,6 +590,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
+        patch_count: issue.patches.len(),
     })
 }
 
@@ -694,10 +696,10 @@ fn build_issue_lines(
             let task = tasks_by_issue
                 .get(&issue.id)
                 .and_then(|tasks| best_task_indicator(tasks));
-            let patch_count = patch_ids_by_issue
-                .get(&issue.id)
-                .map(|set| set.len())
-                .unwrap_or(0);
+            let mut patch_count = issue.patch_count;
+            if let Some(ids) = patch_ids_by_issue.get(&issue.id) {
+                patch_count += ids.len();
+            }
             (
                 issue.id.clone(),
                 IssueNode {
@@ -1010,6 +1012,7 @@ mod tests {
             status,
             assignee: None,
             dependencies,
+            patch_count: 0,
         }
     }
 
@@ -1161,5 +1164,23 @@ mod tests {
         let task = line.task.as_ref().expect("task indicator missing");
         assert_eq!(task.status, Status::Running);
         assert_eq!(task.runtime.as_deref(), Some("3s"));
+    }
+
+    #[test]
+    fn issue_lines_include_embedded_patch_count() {
+        let issues = vec![IssueRecord {
+            id: issue_id("i-embedded"),
+            description: "embedded patches".to_string(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: vec![],
+            patch_count: 2,
+        }];
+
+        let (lines, associated_patches) = build_issue_lines(&issues, &[], &[]);
+
+        assert!(associated_patches.is_empty());
+        let line = lines.rows.first().expect("issue line missing");
+        assert_eq!(line.patch_count, 2);
     }
 }
