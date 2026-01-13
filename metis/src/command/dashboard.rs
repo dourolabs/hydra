@@ -762,13 +762,7 @@ fn append_issue(
         return;
     };
 
-    let blocked_on: Vec<String> = node
-        .record
-        .dependencies
-        .iter()
-        .filter(|dep| dep.dependency_type == IssueDependencyType::BlockedOn)
-        .map(|dep| dep.issue_id.to_string())
-        .collect();
+    let blocked_on = active_blockers(node, nodes);
 
     rows.push(IssueLine {
         id: node.record.id.to_string(),
@@ -786,6 +780,21 @@ fn append_issue(
     for child in children {
         append_issue(&child, depth + 1, rows, visited, nodes);
     }
+}
+
+fn active_blockers(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> Vec<String> {
+    node.record
+        .dependencies
+        .iter()
+        .filter(|dep| dep.dependency_type == IssueDependencyType::BlockedOn)
+        .filter(|dep| {
+            nodes
+                .get(&dep.issue_id)
+                .map(|blocker| blocker.record.status != IssueStatus::Closed)
+                .unwrap_or(true)
+        })
+        .map(|dep| dep.issue_id.to_string())
+        .collect()
 }
 
 fn compare_issue_nodes(nodes: &HashMap<IssueId, IssueNode>, a: &IssueId, b: &IssueId) -> Ordering {
@@ -1093,6 +1102,40 @@ mod tests {
         assert_eq!(lines.rows[1].id, issue_id("i-1").to_string());
         assert_eq!(lines.rows[2].id, issue_id("i-3").to_string());
         assert_eq!(lines.rows[2].depth, 1);
+    }
+
+    #[test]
+    fn blocked_on_excludes_closed_dependencies() {
+        let issues = vec![
+            issue(
+                "i-1",
+                IssueStatus::Open,
+                vec![
+                    IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: issue_id("i-closed"),
+                    },
+                    IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: issue_id("i-open"),
+                    },
+                ],
+            ),
+            issue("i-closed", IssueStatus::Closed, vec![]),
+            issue("i-open", IssueStatus::Open, vec![]),
+        ];
+
+        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+
+        let blocked_line = lines
+            .rows
+            .iter()
+            .find(|line| line.id == issue_id("i-1").to_string())
+            .expect("issue line missing");
+        assert_eq!(
+            blocked_line.blocked_on,
+            vec![issue_id("i-open").to_string()]
+        );
     }
 
     #[test]
