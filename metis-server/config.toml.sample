@@ -24,6 +24,8 @@ github_token = ""
 name = "agent-a"
 # Prompt provided to the agent; passed as the first parameter to the default program.
 prompt = "You are agent-a working on assigned issues."
+# Maximum number of times to spawn a task for the same issue state.
+max_tries = 3
 # Optional: override the worker image for this queue (falls back to metis.worker_image)
 image = "metis-worker:latest"
 

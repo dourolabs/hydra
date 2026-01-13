@@ -14,6 +14,7 @@ use metis_common::{
     jobs::BundleSpec,
 };
 use std::collections::{HashMap, HashSet};
+use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
@@ -29,6 +30,12 @@ pub const DEFAULT_AGENT_PROGRAM: &str = include_str!(concat!(
     "/../metis/scripts/default_codex_prompt.rhai"
 ));
 
+#[derive(Clone, Copy, Debug)]
+struct SpawnAttempt {
+    status: IssueStatus,
+    attempts: u32,
+}
+
 pub struct AgentQueue {
     pub name: String,
     pub prompt: String,
@@ -36,6 +43,8 @@ pub struct AgentQueue {
     pub image: Option<String>,
     pub fallback_image: String,
     pub env_vars: HashMap<String, String>,
+    pub max_tries: u32,
+    spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
 impl AgentQueue {
@@ -47,6 +56,8 @@ impl AgentQueue {
             image: config.image.clone(),
             fallback_image: default_image.to_string(),
             env_vars: config.env_vars.clone(),
+            max_tries: config.max_tries,
+            spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
@@ -78,6 +89,28 @@ impl AgentQueue {
             env_vars,
         })
     }
+
+    async fn register_spawn_attempt(&self, issue_id: &IssueId, status: IssueStatus) -> bool {
+        let mut attempts = self.spawn_attempts.write().await;
+        let entry = attempts.entry(issue_id.clone()).or_insert(SpawnAttempt {
+            status,
+            attempts: 0,
+        });
+
+        if entry.status != status {
+            *entry = SpawnAttempt {
+                status,
+                attempts: 0,
+            };
+        }
+
+        if entry.attempts >= self.max_tries {
+            return false;
+        }
+
+        entry.attempts += 1;
+        true
+    }
 }
 
 #[async_trait]
@@ -107,8 +140,8 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            // Only spawn tasks for open issues.
-            if status != IssueStatus::Open {
+            // Do not spawn tasks for closed issues.
+            if status == IssueStatus::Closed {
                 continue;
             }
 
@@ -121,6 +154,10 @@ impl Spawner for AgentQueue {
             }
 
             if existing_issue_ids.contains(&issue_id) {
+                continue;
+            }
+
+            if !self.register_spawn_attempt(&issue_id, status).await {
                 continue;
             }
 
@@ -198,7 +235,7 @@ async fn existing_issue_tasks_for_agent(
 mod tests {
     use super::*;
     use crate::{
-        config::AgentQueueConfig,
+        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
         state::{GitRepository, ServiceState},
         test::test_state,
     };
@@ -214,11 +251,23 @@ mod tests {
             image: None,
             fallback_image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
+            max_tries: DEFAULT_AGENT_MAX_TRIES,
+            spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
+    async fn record_completed_task(state: &AppState, task: Task) -> anyhow::Result<()> {
+        let mut store = state.store.write().await;
+        let task_id = store.add_task(task, Utc::now()).await?;
+        store.mark_task_running(&task_id, Utc::now()).await?;
+        store
+            .mark_task_complete(&task_id, Ok(()), None, Utc::now())
+            .await?;
+        Ok(())
+    }
+
     #[tokio::test]
-    async fn spawns_tasks_for_assigned_open_issues() -> anyhow::Result<()> {
+    async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
         let state = test_state();
         let assigned_issue_id = {
             let mut store = state.store.write().await;
@@ -227,6 +276,20 @@ mod tests {
                     issue_type: IssueType::Task,
                     description: "Fix login page".to_string(),
                     status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+
+        let in_progress_issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "In-progress but ready".to_string(),
+                    status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -248,45 +311,37 @@ mod tests {
                 .await?;
         }
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Ignore in-progress".to_string(),
-                    status: IssueStatus::InProgress,
-                    assignee: Some("agent-a".to_string()),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
-
         let tasks = queue("agent-a").spawn(&state).await?;
-        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks.len(), 2);
 
-        match &tasks[0] {
-            Task::Spawn {
-                program,
-                params,
-                context,
-                image,
-                env_vars,
-            } => {
-                assert_eq!(program, DEFAULT_AGENT_PROGRAM);
-                assert_eq!(params, &["Fix the issue".to_string()]);
-                assert_eq!(context, &Bundle::None);
-                assert_eq!(image, "metis-worker:latest");
-                assert_eq!(
-                    env_vars.get(ISSUE_ID_ENV_VAR).map(|value| value.as_str()),
-                    Some(assigned_issue_id.as_ref())
-                );
-                assert_eq!(
-                    env_vars.get(AGENT_NAME_ENV_VAR),
-                    Some(&"agent-a".to_string())
-                );
+        let mut issue_ids = HashSet::new();
+        for task in tasks {
+            match task {
+                Task::Spawn {
+                    program,
+                    params,
+                    context,
+                    image,
+                    env_vars,
+                } => {
+                    assert_eq!(program, DEFAULT_AGENT_PROGRAM);
+                    assert_eq!(params, &["Fix the issue".to_string()]);
+                    assert_eq!(context, Bundle::None);
+                    assert_eq!(image, "metis-worker:latest");
+                    issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
+                    assert_eq!(
+                        env_vars.get(AGENT_NAME_ENV_VAR),
+                        Some(&"agent-a".to_string())
+                    );
+                }
             }
         }
+
+        let expected = HashSet::from([
+            Some(assigned_issue_id.to_string()),
+            Some(in_progress_issue_id.to_string()),
+        ]);
+        assert_eq!(issue_ids, expected);
 
         Ok(())
     }
@@ -373,6 +428,77 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn enforces_max_spawn_attempts_per_state() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 2;
+
+        let state = test_state();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Retry limited".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let mut tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&state, tasks.remove(0)).await?;
+
+        let mut tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&state, tasks.remove(0)).await?;
+
+        let tasks = queue.spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resets_attempt_counter_when_status_changes() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 1;
+
+        let state = test_state();
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "State change reset".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+
+        let first_run = queue.spawn(&state).await?;
+        assert_eq!(first_run.len(), 1);
+        assert!(queue.spawn(&state).await?.is_empty());
+
+        {
+            let mut store = state.store.write().await;
+            let mut issue = store.get_issue(&issue_id).await?;
+            issue.status = IssueStatus::InProgress;
+            store.update_issue(&issue_id, issue).await?;
+        }
+
+        let tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        Ok(())
+    }
+
     #[test]
     fn builds_from_config_with_default_image() {
         let config = AgentQueueConfig {
@@ -380,6 +506,7 @@ mod tests {
             prompt: "Handle issues".to_string(),
             context: BundleSpec::None,
             image: None,
+            max_tries: DEFAULT_AGENT_MAX_TRIES,
             env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
         };
 
@@ -430,6 +557,8 @@ mod tests {
             image: None,
             fallback_image: "default-image".to_string(),
             env_vars: HashMap::new(),
+            max_tries: DEFAULT_AGENT_MAX_TRIES,
+            spawn_attempts: RwLock::new(HashMap::new()),
         };
 
         let tasks = queue.spawn(&state).await?;
