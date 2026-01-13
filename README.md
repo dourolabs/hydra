@@ -12,7 +12,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 
 | Path | Description |
 | --- | --- |
-| `metis` | End-user CLI with subcommands such as `spawn`, `jobs`, `logs`, `patches`, `issues`, and the TUI `dashboard`. |
+| `metis` | End-user CLI with subcommands such as `spawn`, `jobs`, `logs`, `patches`, `issues`, `chat`, and the TUI `dashboard`. |
 | `metis-server` | Axum HTTP API plus background agents and Kubernetes `Job` engine. Responsible for job orchestration, persistence, and webhooks. |
 | `metis-common` | Shared models (`MetisId`, job/log/artifact types, env var constants) used by both crates. |
 | `images/` | Dockerfiles for the server and worker images. |
@@ -45,6 +45,22 @@ cargo test --workspace
    `metis/src/main.rs`.
 
 The CLI reads `--config <file>` if passed, otherwise `~/metis/config.toml`.
+
+#### Natural language chat
+
+`metis chat` opens an interactive Codex session that already knows how to call the
+`metis` CLI and starts in the current workspace. Codex will greet you and wait for
+your first instruction. For a single-turn question, pass `--prompt`:
+
+```bash
+metis chat --prompt "What jobs are running right now?"
+```
+
+Both modes launch Codex in the current workspace, inject a description of the
+available subcommands, and set `METIS_SERVER_URL` so every CLI call targets the
+same server as the parent process. Pass `--model <name>` to override the Codex
+model or `--full-auto` to forward Codex's `--full-auto` flag and let it run
+commands without manual approvals.
 
 ### Server (`metis-server`)
 

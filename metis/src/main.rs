@@ -151,6 +151,20 @@ enum Commands {
         #[arg(value_name = "SCRIPT_OR_FILE")]
         script: String,
     },
+    /// Chat with a Codex agent that can call the metis CLI.
+    Chat {
+        /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
+        #[arg(long = "prompt", value_name = "PROMPT")]
+        prompt: Option<String>,
+
+        /// Optional Codex model override (e.g. gpt-4o).
+        #[arg(long = "model", value_name = "MODEL")]
+        model: Option<String>,
+
+        /// Allow the agent to run commands without prompting (maps to Codex --full-auto).
+        #[arg(long = "full-auto")]
+        full_auto: bool,
+    },
 }
 
 #[tokio::main]
@@ -208,6 +222,11 @@ async fn main() -> Result<()> {
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
         Commands::Run { script } => command::run::run(script).await?,
+        Commands::Chat {
+            prompt,
+            model,
+            full_auto,
+        } => command::chat::run(&app_config, prompt, model, full_auto).await?,
     }
 
     Ok(())
