@@ -9,7 +9,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
     constants::ENV_METIS_ID,
-    patches::{Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest},
+    patches::{
+        Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+    },
     MetisId,
 };
 

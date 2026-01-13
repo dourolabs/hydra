@@ -396,7 +396,7 @@ fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
-    use metis_common::artifacts::UpsertPatchResponse;
+    use metis_common::patches::UpsertPatchResponse;
     use std::process::Command;
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
