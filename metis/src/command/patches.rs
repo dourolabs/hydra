@@ -9,7 +9,11 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
-    constants::ENV_METIS_ID,
+    constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
+        UpsertIssueRequest,
+    },
     patches::{
         Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
     },
@@ -58,6 +62,18 @@ pub enum PatchesCommand {
         /// Create a GitHub pull request with the patch contents.
         #[arg(long = "github")]
         github: bool,
+
+        /// Assign the merge-request issue to a user and automatically create it.
+        #[arg(long = "assignee", value_name = "ASSIGNEE")]
+        assignee: Option<String>,
+
+        /// Associate the merge-request issue with an existing issue id.
+        #[arg(
+            long = "issue-id",
+            value_name = "ISSUE_ID",
+            env = ENV_METIS_ISSUE_ID
+        )]
+        issue_id: Option<IssueId>,
     },
 
     /// Apply a patch to the current git repository.
@@ -95,7 +111,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             description,
             job,
             github,
-        } => create_patch(client, title, description, job, github).await,
+            assignee,
+            issue_id,
+        } => create_patch(client, title, description, job, github, assignee, issue_id).await,
         PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
         PatchesCommand::Review {
             id,
@@ -156,15 +174,20 @@ async fn create_patch(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
+    assignee: Option<String>,
+    issue_id: Option<IssueId>,
 ) -> Result<()> {
     let job_id = resolve_job_id(job_id)?;
+    let issue_id = resolve_issue_id(issue_id)?;
     let repo_root = git_repository_root()?;
     let is_automatic_backup = false;
+    let patch_title = title.clone();
+    let patch_description = description.clone();
     let response = create_patch_artifact_from_repo(
         client,
         &repo_root,
-        title,
-        description,
+        patch_title,
+        patch_description,
         job_id.clone(),
         create_github_pr,
         is_automatic_backup,
@@ -172,15 +195,96 @@ async fn create_patch(
     .await?
     .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
 
-    println!(
-        "{}",
-        serde_json::to_string(&serde_json::json!({
-            "patch_id": response.patch_id,
-            "type": "patch"
-        }))?
-    );
+    let mut merge_request_issue_id = None;
+    if let Some(assignee) = assignee {
+        let merge_issue_id = create_merge_request_issue(
+            client,
+            response.patch_id.clone(),
+            assignee,
+            issue_id,
+            title,
+            description,
+        )
+        .await?;
+        merge_request_issue_id = Some(merge_issue_id);
+    }
+
+    let mut output = serde_json::json!({
+        "patch_id": response.patch_id,
+        "type": "patch"
+    });
+
+    if let Some(issue_id) = merge_request_issue_id {
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "merge_request_issue_id".to_string(),
+                serde_json::json!(issue_id),
+            );
+        }
+    }
+
+    println!("{}", serde_json::to_string(&output)?);
 
     Ok(())
+}
+
+async fn create_merge_request_issue(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    assignee: String,
+    parent_issue_id: Option<IssueId>,
+    patch_title: String,
+    patch_description: String,
+) -> Result<IssueId> {
+    let assignee = assignee.trim().to_string();
+    if assignee.is_empty() {
+        bail!("Assignee must not be empty.");
+    }
+
+    let mut dependencies = Vec::new();
+    if let Some(issue_id) = parent_issue_id {
+        dependencies.push(IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id,
+        });
+    }
+
+    let patch_record = client
+        .get_patch(&patch_id)
+        .await
+        .with_context(|| format!("failed to fetch patch '{patch_id}' for merge-request issue"))?;
+
+    let summary = patch_title.trim();
+    let title = if summary.is_empty() {
+        patch_description
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .unwrap_or("Patch review")
+            .to_string()
+    } else {
+        summary.to_string()
+    };
+
+    let description = format!("Review patch {}: {title}", patch_id.as_ref());
+
+    let response = client
+        .create_issue(&UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::MergeRequest,
+                description,
+                status: IssueStatus::Open,
+                assignee: Some(assignee),
+                dependencies,
+                patches: vec![patch_record.patch],
+            },
+            job_id: None,
+        })
+        .await
+        .context("failed to create merge-request issue")?;
+
+    Ok(response.issue_id)
 }
 
 fn resolve_job_id(job_id: Option<TaskId>) -> Result<Option<TaskId>> {
@@ -200,6 +304,25 @@ fn resolve_job_id(job_id: Option<TaskId>) -> Result<Option<TaskId>> {
     let task_id = TaskId::from_str(trimmed)
         .with_context(|| format!("invalid {ENV_METIS_ID} value '{trimmed}'"))?;
     Ok(Some(task_id))
+}
+
+fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
+    if issue_id.is_some() {
+        return Ok(issue_id);
+    }
+
+    let env_value = match env::var(ENV_METIS_ISSUE_ID) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let trimmed = env_value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let issue_id = IssueId::from_str(trimmed)
+        .with_context(|| format!("invalid {ENV_METIS_ISSUE_ID} value '{trimmed}'"))?;
+    Ok(Some(issue_id))
 }
 
 pub async fn create_patch_artifact_from_repo(
@@ -614,9 +737,12 @@ mod tests {
     use crate::{
         client::MockMetisClient,
         constants,
-        test_utils::ids::{patch_id, task_id},
+        test_utils::ids::{issue_id, patch_id, task_id},
     };
     use anyhow::anyhow;
+    use metis_common::issues::{
+        IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
+    };
     use metis_common::patches::{
         ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
     };
@@ -758,6 +884,8 @@ mod tests {
             patch_description.clone(),
             None,
             false,
+            None,
+            None,
         )
         .await?;
 
@@ -849,6 +977,8 @@ mod tests {
             description.clone(),
             job_id.clone(),
             false,
+            None,
+            None,
         )
         .await?;
 
@@ -883,7 +1013,16 @@ mod tests {
         let title = "patch with env title".to_string();
         let description = "patch with env job id".to_string();
 
-        create_patch(&client, title.clone(), description.clone(), None, false).await?;
+        create_patch(
+            &client,
+            title.clone(),
+            description.clone(),
+            None,
+            false,
+            None,
+            None,
+        )
+        .await?;
 
         let requests = client.recorded_patch_upserts();
         assert_eq!(requests.len(), 1, "expected one patch upsert");
@@ -893,6 +1032,77 @@ mod tests {
 
         assert_eq!(request.patch.title, title);
         assert_eq!(request.patch.description, description);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
+
+        let client = MockMetisClient::default();
+        let created_patch_id = patch_id("p-merge");
+        let recorded_patch = Patch {
+            title: "merge patch".to_string(),
+            description: "merge description".to_string(),
+            diff: "diff --git a/file b/file\n+change".to_string(),
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+        };
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: created_patch_id.clone(),
+        });
+        client.push_get_patch_response(PatchRecord {
+            id: created_patch_id.clone(),
+            patch: recorded_patch.clone(),
+        });
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: issue_id("i-merge"),
+        });
+
+        let title = "custom patch title".to_string();
+        let description = "custom patch description".to_string();
+        let parent_issue = issue_id("i-parent");
+
+        create_patch(
+            &client,
+            title.clone(),
+            description.clone(),
+            None,
+            false,
+            Some("owner-a".to_string()),
+            Some(parent_issue.clone()),
+        )
+        .await?;
+
+        assert_eq!(
+            client.recorded_get_patch_requests(),
+            vec![created_patch_id.clone()]
+        );
+
+        let issue_requests = client.recorded_issue_upserts();
+        assert_eq!(issue_requests.len(), 1);
+        let (issue_id, request) = &issue_requests[0];
+        assert!(issue_id.is_none());
+        assert_eq!(request.issue.issue_type, IssueType::MergeRequest);
+        assert_eq!(request.issue.status, IssueStatus::Open);
+        assert_eq!(request.issue.assignee.as_deref(), Some("owner-a"));
+        assert_eq!(
+            request.issue.dependencies,
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent_issue.clone()
+            }]
+        );
+        assert_eq!(request.issue.patches, vec![recorded_patch]);
+        assert!(
+            request
+                .issue
+                .description
+                .contains(created_patch_id.as_ref()),
+            "description should link to patch id"
+        );
 
         Ok(())
     }

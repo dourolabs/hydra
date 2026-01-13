@@ -140,6 +140,8 @@ pub struct Issue {
     pub assignee: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
+    #[serde(default)]
+    pub patches: Vec<crate::patches::Patch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
