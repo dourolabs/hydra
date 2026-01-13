@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -37,7 +38,9 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
     } = client.get_job_context(&job_id).await?;
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
-    let github_token = variables.get(ENV_GH_TOKEN).map(String::as_str);
+    let github_token = variables.get(ENV_GH_TOKEN).cloned();
+    let mut execution_env = variables;
+    ensure_color_output_env(&mut execution_env);
     match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -46,7 +49,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
             extract_tar_gz_base64(&archive_base64, &dest)?;
         }
         Bundle::GitRepository { url, rev } => {
-            clone_git_repo(&url, &rev, &dest, github_token)?;
+            clone_git_repo(&url, &rev, &dest, github_token.as_deref())?;
         }
         Bundle::GitBundle { bundle_base64 } => {
             clone_from_git_bundle_base64(&bundle_base64, &dest)?;
@@ -57,7 +60,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
     login_codex()?;
     configure_git_repo(&dest)?;
 
-    let _ = eval_with_closure_unwrapping(&program, params, &variables)
+    let _ = eval_with_closure_unwrapping(&program, params, &execution_env)
         .await
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
@@ -232,6 +235,17 @@ fn create_output_directory(dest: &Path) -> Result<()> {
     Ok(())
 }
 
+fn ensure_color_output_env(env: &mut HashMap<String, String>) {
+    env.entry("TERM".to_string())
+        .or_insert_with(|| "xterm-256color".to_string());
+    env.entry("COLORTERM".to_string())
+        .or_insert_with(|| "truecolor".to_string());
+    env.entry("CLICOLOR_FORCE".to_string())
+        .or_insert_with(|| "1".to_string());
+    env.entry("FORCE_COLOR".to_string())
+        .or_insert_with(|| "1".to_string());
+}
+
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &MetisId,
@@ -400,6 +414,7 @@ mod tests {
     use super::*;
     use crate::client::MockMetisClient;
     use metis_common::patches::UpsertPatchResponse;
+    use std::collections::HashMap;
     use std::process::Command;
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
@@ -543,6 +558,33 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn ensure_color_output_env_sets_defaults() {
+        let mut env = HashMap::new();
+
+        ensure_color_output_env(&mut env);
+
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
+        assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn ensure_color_output_env_preserves_existing_entries() {
+        let mut env = HashMap::from([
+            ("TERM".to_string(), "vt100".to_string()),
+            ("FORCE_COLOR".to_string(), "0".to_string()),
+        ]);
+
+        ensure_color_output_env(&mut env);
+
+        assert_eq!(env.get("TERM").map(String::as_str), Some("vt100"));
+        assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
+        assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
     }
 
     #[test]
