@@ -36,7 +36,7 @@ pub enum IssueCommands {
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
 
-        /// Filter by dependency graph relationships (e.g. '*:child-of:i-123' or '**:blocked-on:i-7').
+        /// Filter by dependency graph relationships (e.g. '*:child-of:i-abc' or '**:blocked-on:i-def').
         #[arg(
             long = "graph",
             value_name = "FILTER",
