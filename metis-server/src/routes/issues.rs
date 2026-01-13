@@ -14,10 +14,12 @@ use chrono::Utc;
 use metis_common::{
     MetisId,
     issues::{
-        Issue, IssueDependency, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
+        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
+        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     },
 };
+use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,7 @@ pub async fn list_issues(
         status = ?query.status,
         assignee = ?query.assignee,
         query = ?query.q,
+        graph_filters = ?query.graph_filters,
         "list_issues invoked"
     );
 
@@ -102,19 +105,32 @@ pub async fn list_issues(
         .await
         .map_err(|err| map_issue_error(err, None))?;
 
-    let filtered = issues
+    let issue_records: Vec<IssueRecord> = issues
         .into_iter()
-        .filter(|(id, issue)| {
+        .map(|(id, issue)| IssueRecord { id, issue })
+        .collect();
+
+    let graph_matches = if query.graph_filters.is_empty() {
+        None
+    } else {
+        let context = IssueGraphContext::new(&issue_records);
+        Some(apply_graph_filters(&context, &query.graph_filters)?)
+    };
+
+    let filtered = issue_records
+        .into_iter()
+        .filter(|record| {
             issue_matches(
                 query.issue_type,
                 query.status,
                 search_term.as_deref(),
                 assignee_filter,
-                id,
-                issue,
-            )
+                &record.id,
+                &record.issue,
+            ) && graph_matches
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&record.id))
         })
-        .map(|(id, issue)| IssueRecord { id, issue })
         .collect();
 
     Ok(Json(ListIssuesResponse { issues: filtered }))
@@ -249,6 +265,135 @@ fn issue_matches(
     true
 }
 
+struct IssueGraphContext {
+    known_issues: HashSet<IssueId>,
+    forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+    reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+}
+
+impl IssueGraphContext {
+    fn new(records: &[IssueRecord]) -> Self {
+        let mut known_issues = HashSet::new();
+        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+
+        for record in records {
+            known_issues.insert(record.id.clone());
+            for dependency in &record.issue.dependencies {
+                let dependents = forward
+                    .entry(dependency.dependency_type)
+                    .or_default()
+                    .entry(dependency.issue_id.clone())
+                    .or_default();
+                dependents.push(record.id.clone());
+
+                let targets = reverse
+                    .entry(dependency.dependency_type)
+                    .or_default()
+                    .entry(record.id.clone())
+                    .or_default();
+                targets.push(dependency.issue_id.clone());
+            }
+        }
+
+        Self {
+            known_issues,
+            forward,
+            reverse,
+        }
+    }
+
+    fn contains_issue(&self, issue_id: &IssueId) -> bool {
+        self.known_issues.contains(issue_id)
+    }
+
+    fn adjacency(
+        &self,
+        side: IssueGraphFilterSide,
+        dependency_type: IssueDependencyType,
+    ) -> Option<&HashMap<IssueId, Vec<IssueId>>> {
+        match side {
+            IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
+            IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
+        }
+    }
+}
+
+fn apply_graph_filters(
+    context: &IssueGraphContext,
+    filters: &[IssueGraphFilter],
+) -> Result<HashSet<IssueId>, ApiError> {
+    let mut intersection: Option<HashSet<IssueId>> = None;
+
+    for filter in filters {
+        let literal = filter.literal_issue_id();
+        if !context.contains_issue(literal) {
+            return Err(ApiError::bad_request(format!(
+                "issue '{literal}' referenced in graph filter does not exist"
+            )));
+        }
+
+        let adjacency = context.adjacency(filter.wildcard_position(), filter.dependency_type);
+
+        let matches = collect_matches(adjacency, literal, filter.wildcard_kind());
+
+        match &mut intersection {
+            Some(existing) => existing.retain(|id| matches.contains(id)),
+            None => intersection = Some(matches),
+        }
+
+        if let Some(existing) = &intersection {
+            if existing.is_empty() {
+                break;
+            }
+        }
+    }
+
+    Ok(intersection.unwrap_or_default())
+}
+
+fn collect_matches(
+    adjacency: Option<&HashMap<IssueId, Vec<IssueId>>>,
+    literal: &IssueId,
+    wildcard: IssueGraphWildcard,
+) -> HashSet<IssueId> {
+    let Some(map) = adjacency else {
+        return HashSet::new();
+    };
+
+    match wildcard {
+        IssueGraphWildcard::Immediate => map
+            .get(literal)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        IssueGraphWildcard::Transitive => {
+            let mut matches = HashSet::new();
+            let mut visited = HashSet::new();
+            let mut queue = VecDeque::new();
+
+            visited.insert(literal.clone());
+            queue.push_back(literal.clone());
+
+            while let Some(current) = queue.pop_front() {
+                if let Some(neighbors) = map.get(&current) {
+                    for neighbor in neighbors {
+                        if visited.insert(neighbor.clone()) {
+                            queue.push_back(neighbor.clone());
+                        }
+                        matches.insert(neighbor.clone());
+                    }
+                }
+            }
+
+            matches
+        }
+    }
+}
+
 fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
     match err {
         StoreError::IssueNotFound(id) => {
@@ -269,5 +414,113 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
             );
             ApiError::internal(anyhow!("issue store error: {other}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::HashSet, str::FromStr};
+
+    fn issue_id(value: &str) -> IssueId {
+        IssueId::from_str(value).unwrap()
+    }
+
+    fn issue_record(id: &str, deps: Vec<(IssueDependencyType, &str)>) -> IssueRecord {
+        IssueRecord {
+            id: issue_id(id),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: format!("Issue {id}"),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: deps
+                    .into_iter()
+                    .map(|(dependency_type, target)| IssueDependency {
+                        dependency_type,
+                        issue_id: issue_id(target),
+                    })
+                    .collect(),
+                patches: Vec::new(),
+            },
+        }
+    }
+
+    fn filter(expr: &str) -> IssueGraphFilter {
+        IssueGraphFilter::from_str(expr).unwrap()
+    }
+
+    #[test]
+    fn graph_filter_returns_children() {
+        let records = vec![
+            issue_record("i-abcd", vec![]),
+            issue_record("i-efgh", vec![(IssueDependencyType::ChildOf, "i-abcd")]),
+            issue_record("i-ijkl", vec![(IssueDependencyType::ChildOf, "i-efgh")]),
+        ];
+        let context = IssueGraphContext::new(&records);
+        let matches = apply_graph_filters(&context, &[filter("*:child-of:i-abcd")]).unwrap();
+        assert_eq!(matches, HashSet::from([issue_id("i-efgh")]));
+    }
+
+    #[test]
+    fn graph_filter_returns_transitive_children() {
+        let records = vec![
+            issue_record("i-abcd", vec![]),
+            issue_record("i-efgh", vec![(IssueDependencyType::ChildOf, "i-abcd")]),
+            issue_record("i-ijkl", vec![(IssueDependencyType::ChildOf, "i-efgh")]),
+        ];
+        let context = IssueGraphContext::new(&records);
+        let matches = apply_graph_filters(&context, &[filter("**:child-of:i-abcd")]).unwrap();
+        assert_eq!(
+            matches,
+            HashSet::from([issue_id("i-efgh"), issue_id("i-ijkl")])
+        );
+    }
+
+    #[test]
+    fn graph_filter_returns_ancestors_for_right_wildcards() {
+        let records = vec![
+            issue_record("i-abcd", vec![]),
+            issue_record("i-efgh", vec![(IssueDependencyType::ChildOf, "i-abcd")]),
+            issue_record("i-ijkl", vec![(IssueDependencyType::ChildOf, "i-efgh")]),
+        ];
+        let context = IssueGraphContext::new(&records);
+        let matches = apply_graph_filters(&context, &[filter("i-ijkl:child-of:**")]).unwrap();
+        assert_eq!(
+            matches,
+            HashSet::from([issue_id("i-abcd"), issue_id("i-efgh")])
+        );
+    }
+
+    #[test]
+    fn graph_filters_intersect_multiple_constraints() {
+        let records = vec![
+            issue_record("i-abcd", vec![]),
+            issue_record("i-mnop", vec![]),
+            issue_record(
+                "i-qrst",
+                vec![
+                    (IssueDependencyType::ChildOf, "i-abcd"),
+                    (IssueDependencyType::BlockedOn, "i-mnop"),
+                ],
+            ),
+            issue_record("i-uvwx", vec![(IssueDependencyType::ChildOf, "i-abcd")]),
+            issue_record("i-yzab", vec![(IssueDependencyType::BlockedOn, "i-mnop")]),
+        ];
+        let context = IssueGraphContext::new(&records);
+        let matches = apply_graph_filters(
+            &context,
+            &[filter("*:child-of:i-abcd"), filter("*:blocked-on:i-mnop")],
+        )
+        .unwrap();
+        assert_eq!(matches, HashSet::from([issue_id("i-qrst")]));
+    }
+
+    #[test]
+    fn graph_filter_errors_when_literal_missing() {
+        let records = vec![issue_record("i-abcd", vec![])];
+        let context = IssueGraphContext::new(&records);
+        let result = apply_graph_filters(&context, &[filter("*:child-of:i-cdef")]);
+        assert!(result.is_err());
     }
 }

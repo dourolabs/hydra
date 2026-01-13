@@ -2,8 +2,8 @@ use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::issues::{
-    Issue, IssueDependency, IssueDependencyType, IssueId, IssueRecord, IssueStatus, IssueType,
-    SearchIssuesQuery, UpsertIssueRequest,
+    Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueId, IssueRecord,
+    IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest,
 };
 use std::io::{self, Write};
 use std::str::FromStr;
@@ -35,6 +35,15 @@ pub enum IssueCommands {
         /// Search by query string.
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
+
+        /// Filter by dependency graph relationships (e.g. '*:child-of:i-123' or '**:blocked-on:i-7').
+        #[arg(
+            long = "graph",
+            value_name = "FILTER",
+            value_parser = parse_issue_graph_filter,
+            conflicts_with = "id"
+        )]
+        graph_filters: Vec<IssueGraphFilter>,
     },
     /// Create a new issue.
     Create {
@@ -103,8 +112,10 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             status,
             assignee,
             query,
+            graph_filters,
         } => {
-            let issues = fetch_issues(client, id, r#type, status, assignee, query).await?;
+            let issues =
+                fetch_issues(client, id, r#type, status, assignee, query, graph_filters).await?;
             let mut stdout = io::stdout().lock();
             if pretty {
                 print_issues_pretty(&issues, &mut stdout)?;
@@ -153,6 +164,7 @@ async fn fetch_issues(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     query: Option<String>,
+    graph_filters: Vec<IssueGraphFilter>,
 ) -> Result<Vec<IssueRecord>> {
     if let Some(issue_id) = id {
         let record = client
@@ -209,6 +221,7 @@ async fn fetch_issues(
             status,
             assignee: trimmed_assignee.clone(),
             q: trimmed_query,
+            graph_filters,
         })
         .await
         .context("failed to list issues")?
@@ -363,6 +376,10 @@ async fn update_issue(
     Ok(())
 }
 
+fn parse_issue_graph_filter(raw: &str) -> Result<IssueGraphFilter, String> {
+    raw.parse()
+}
+
 fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     let (dependency_type, issue_id) = raw
         .split_once(':')
@@ -438,8 +455,8 @@ mod tests {
     use crate::client::MockMetisClient;
     use crate::test_utils::ids::issue_id;
     use metis_common::issues::{
-        Issue, IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
-        UpsertIssueResponse,
+        Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
+        SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
 
     #[tokio::test]
@@ -466,6 +483,7 @@ mod tests {
             Some(IssueStatus::Open),
             None,
             Some("bug".into()),
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -477,6 +495,7 @@ mod tests {
                 status: Some(IssueStatus::Open),
                 assignee: None,
                 q: Some("bug".into()),
+                graph_filters: Vec::new(),
             }]
         );
 
@@ -511,6 +530,7 @@ mod tests {
             Some(IssueStatus::InProgress),
             None,
             None,
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -540,9 +560,17 @@ mod tests {
             }],
         });
 
-        let issues = fetch_issues(&client, None, None, None, Some("OWNER-A".into()), None)
-            .await
-            .unwrap();
+        let issues = fetch_issues(
+            &client,
+            None,
+            None,
+            None,
+            Some("OWNER-A".into()),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             client.recorded_list_issue_queries(),
@@ -551,10 +579,36 @@ mod tests {
                 status: None,
                 assignee: Some("OWNER-A".into()),
                 q: None,
+                graph_filters: Vec::new(),
             }]
         );
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].id, issue_id("i-7"));
+    }
+
+    #[tokio::test]
+    async fn list_issues_includes_graph_filters_in_query() {
+        let client = MockMetisClient::default();
+        client.push_list_issues_response(ListIssuesResponse { issues: vec![] });
+        let filters = vec![
+            parse_issue_graph_filter("*:child-of:i-abcd").unwrap(),
+            parse_issue_graph_filter("i-efgh:blocked-on:**").unwrap(),
+        ];
+
+        let _ = fetch_issues(&client, None, None, None, None, None, filters.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.recorded_list_issue_queries(),
+            vec![SearchIssuesQuery {
+                issue_type: None,
+                status: None,
+                assignee: None,
+                q: None,
+                graph_filters: filters,
+            }]
+        );
     }
 
     #[tokio::test]
@@ -634,6 +688,21 @@ mod tests {
         let dependency = parse_issue_dependency("child-of:i-abcd").unwrap();
         assert_eq!(dependency.dependency_type, IssueDependencyType::ChildOf);
         assert_eq!(dependency.issue_id, issue_id("i-abcd"));
+    }
+
+    #[test]
+    fn parse_issue_graph_filter_parses_format() {
+        let filter = parse_issue_graph_filter("*:child-of:i-abcd").unwrap();
+        assert!(matches!(
+            filter.lhs,
+            IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate)
+        ));
+        assert_eq!(filter.literal_issue_id(), &issue_id("i-abcd"));
+    }
+
+    #[test]
+    fn parse_issue_graph_filter_rejects_invalid_shapes() {
+        assert!(parse_issue_graph_filter("i-abcd:child-of:i-efgh").is_err());
     }
 
     #[tokio::test]

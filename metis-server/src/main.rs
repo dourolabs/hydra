@@ -1521,6 +1521,7 @@ mod tests {
                 status: None,
                 assignee: None,
                 q: None,
+                graph_filters: Vec::new(),
             })
             .send()
             .await?
@@ -1537,6 +1538,7 @@ mod tests {
                 status: None,
                 assignee: Some("OWNER-1".to_string()),
                 q: None,
+                graph_filters: Vec::new(),
             })
             .send()
             .await?
@@ -1553,6 +1555,7 @@ mod tests {
                 status: Some(IssueStatus::Closed),
                 assignee: None,
                 q: None,
+                graph_filters: Vec::new(),
             })
             .send()
             .await?
