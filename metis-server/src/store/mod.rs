@@ -8,13 +8,6 @@ mod memory_store;
 
 pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 
-/// Represents a dependency edge between tasks.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Edge {
-    pub id: TaskId,
-    pub name: Option<String>,
-}
-
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Task {
@@ -45,12 +38,7 @@ pub enum StoreError {
     InvalidStatusTransition,
 }
 
-/// Trait for storing and managing a directed acyclic graph (DAG) of tasks.
-///
-/// The Store holds a DAG where:
-/// - Vertices are tasks identified by TaskId
-/// - Edges represent blocking dependencies (source must complete before destination can start)
-/// - The graph must remain acyclic
+/// Trait for storing issues, patches, and tasks along with their statuses.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new issue to the store and assigns it an IssueId.
@@ -86,34 +74,19 @@ pub trait Store: Send + Sync {
     /// Returns whether the issue is ready to be worked on based on its status and dependencies.
     async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError>;
 
-    /// Adds a task to the store with its parent dependencies.
+    /// Adds a task to the store.
     ///
-    /// The parent tasks must complete before this task can start.
-    /// This operation will fail if adding the dependencies would create a cycle
-    /// or if any parent task doesn't exist.
-    ///
+    /// Tasks start in the Pending state.
     /// # Arguments
     /// * `task` - The task to add
-    /// * `parent_ids` - A vector of TaskIds representing parent tasks that must complete first
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
-    ///
-    /// # Arguments
-    /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task(
         &mut self,
         task: Task,
-        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<TaskId, StoreError>;
 
-    /// Adds a task to the store with a specific ID and parent dependencies.
+    /// Adds a task to the store with a specific ID.
     ///
     /// This is similar to `add_task`, but allows specifying the TaskId directly.
     /// Useful when the ID comes from an external source (e.g., Kubernetes job ID).
@@ -121,32 +94,25 @@ pub trait Store: Send + Sync {
     /// # Arguments
     /// * `metis_id` - The TaskId to use for this task
     /// * `task` - The task to add
-    /// * `parent_ids` - A vector of TaskIds representing parent tasks that must complete first
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
     /// - The task already exists
-    /// - Any parent task doesn't exist
-    /// - Adding the dependencies would create a cycle
     ///
     /// # Arguments
     /// * `metis_id` - The TaskId to use for this task
     /// * `task` - The task to add
-    /// * `parent_edges` - A vector of dependency edges representing parent tasks that must complete first
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task_with_id(
         &mut self,
         metis_id: TaskId,
         task: Task,
-        parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
     /// Updates an existing task in the store.
     ///
-    /// This function overwrites the task data for the given vertex without
-    /// modifying the edge structure of the graph (parent and child relationships
-    /// remain unchanged).
+    /// This function overwrites the task data for the given vertex.
     ///
     /// # Arguments
     /// * `metis_id` - The TaskId of the task to update
@@ -165,29 +131,7 @@ pub trait Store: Send + Sync {
     /// The task if found, or an error if not found
     async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError>;
 
-    /// Gets all parent tasks (dependencies) of a given task.
-    ///
-    /// Parents are tasks that must complete before the given task can start.
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task
-    ///
-    /// # Returns
-    /// A vector of dependency edges for the parent tasks, or an error if the task doesn't exist
-    async fn get_parents(&self, id: &TaskId) -> Result<Vec<Edge>, StoreError>;
-
-    /// Gets all child tasks (dependents) of a given task.
-    ///
-    /// Children are tasks that must wait for the given task to complete before they can start.
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task
-    ///
-    /// # Returns
-    /// A vector of TaskIds representing the child tasks, or an error if the task doesn't exist
-    async fn get_children(&self, id: &TaskId) -> Result<Vec<TaskId>, StoreError>;
-
-    /// Removes a task and all its associated edges from the store.
+    /// Removes a task and its status information from the store.
     ///
     /// # Arguments
     /// * `id` - The TaskId of the task to remove
@@ -279,10 +223,6 @@ pub trait Store: Send + Sync {
     /// Valid transitions:
     /// - From Running to Complete (if result is Ok)
     /// - From Running to Failed (if result is Err)
-    ///
-    /// This function will also update the status of dependent tasks:
-    /// - All children (dependents) are checked
-    /// - Children that are Blocked and have all their parents Complete or Failed are moved to Pending
     ///
     /// # Arguments
     /// * `id` - The TaskId of the task to update

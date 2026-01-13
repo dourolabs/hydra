@@ -822,9 +822,8 @@ fn task_status_order(status: Status) -> usize {
     match status {
         Status::Running => 0,
         Status::Pending => 1,
-        Status::Blocked => 2,
-        Status::Failed => 3,
-        Status::Complete => 4,
+        Status::Failed => 2,
+        Status::Complete => 3,
     }
 }
 
@@ -921,7 +920,6 @@ fn status_style(status: Status) -> Style {
         Status::Complete => Style::default().fg(Color::Green),
         Status::Running => Style::default().fg(Color::Yellow),
         Status::Failed => Style::default().fg(Color::Red),
-        Status::Blocked => Style::default().fg(Color::Magenta),
         Status::Pending => Style::default().fg(Color::Blue),
     }
 }
@@ -982,7 +980,7 @@ mod tests {
                     },
                 });
             }
-            Status::Blocked | Status::Pending => {}
+            Status::Pending => {}
         }
 
         JobSummary {

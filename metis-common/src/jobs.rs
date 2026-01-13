@@ -12,8 +12,6 @@ pub struct CreateJobRequest {
     pub image: Option<String>,
     #[serde(default)]
     pub context: BundleSpec,
-    #[serde(default)]
-    pub parent_ids: Vec<TaskId>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
 }
