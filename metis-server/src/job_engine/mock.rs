@@ -1,4 +1,4 @@
-use super::{JobEngine, JobEngineError, JobStatus, MetisId, MetisJob};
+use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::channel::mpsc;
@@ -10,8 +10,8 @@ use std::{
 #[derive(Clone, Default)]
 pub struct MockJobEngine {
     jobs: Arc<Mutex<Vec<MetisJob>>>,
-    logs: Arc<Mutex<HashMap<MetisId, Vec<String>>>>,
-    env_vars: Arc<Mutex<HashMap<MetisId, HashMap<String, String>>>>,
+    logs: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
+    env_vars: Arc<Mutex<HashMap<TaskId, HashMap<String, String>>>>,
 }
 
 impl MockJobEngine {
@@ -19,7 +19,7 @@ impl MockJobEngine {
         Self::default()
     }
 
-    pub async fn insert_job(&self, metis_id: &MetisId, status: JobStatus) {
+    pub async fn insert_job(&self, metis_id: &TaskId, status: JobStatus) {
         let mut jobs = self.jobs.lock().unwrap();
         jobs.push(MetisJob {
             id: metis_id.clone(),
@@ -31,12 +31,12 @@ impl MockJobEngine {
         });
     }
 
-    pub async fn set_logs(&self, metis_id: &MetisId, chunks: Vec<String>) {
+    pub async fn set_logs(&self, metis_id: &TaskId, chunks: Vec<String>) {
         let mut logs = self.logs.lock().unwrap();
-        logs.insert(metis_id.to_string(), chunks);
+        logs.insert(metis_id.clone(), chunks);
     }
 
-    pub fn env_vars_for_job(&self, metis_id: &MetisId) -> Option<HashMap<String, String>> {
+    pub fn env_vars_for_job(&self, metis_id: &TaskId) -> Option<HashMap<String, String>> {
         let env_vars = self.env_vars.lock().unwrap();
         env_vars.get(metis_id).cloned()
     }
@@ -46,7 +46,7 @@ impl MockJobEngine {
 impl JobEngine for MockJobEngine {
     async fn create_job(
         &self,
-        metis_id: &MetisId,
+        metis_id: &TaskId,
         _image: &str,
         env_vars: &HashMap<String, String>,
     ) -> Result<(), JobEngineError> {
@@ -75,7 +75,7 @@ impl JobEngine for MockJobEngine {
         Ok(jobs.clone())
     }
 
-    async fn find_job_by_metis_id(&self, metis_id: &MetisId) -> Result<MetisJob, JobEngineError> {
+    async fn find_job_by_metis_id(&self, metis_id: &TaskId) -> Result<MetisJob, JobEngineError> {
         let mut matches: Vec<MetisJob> = {
             let jobs = self.jobs.lock().unwrap();
             jobs.iter()
@@ -93,7 +93,7 @@ impl JobEngine for MockJobEngine {
 
     async fn get_logs(
         &self,
-        job_id: &MetisId,
+        job_id: &TaskId,
         tail_lines: Option<i64>,
     ) -> Result<String, JobEngineError> {
         let exists = {
@@ -117,7 +117,7 @@ impl JobEngine for MockJobEngine {
 
     fn get_logs_stream(
         &self,
-        job_id: &MetisId,
+        job_id: &TaskId,
         _follow: bool,
     ) -> Result<mpsc::UnboundedReceiver<String>, JobEngineError> {
         let exists = {
@@ -149,7 +149,7 @@ impl JobEngine for MockJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, metis_id: &MetisId) -> Result<(), JobEngineError> {
+    async fn kill_job(&self, metis_id: &TaskId) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         let matching_indices: Vec<_> = jobs
             .iter()
@@ -183,7 +183,7 @@ mod tests {
     async fn create_job_records_env_vars() {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
-        let metis_id = "job-1".to_string();
+        let metis_id = TaskId::new();
 
         engine
             .create_job(&metis_id, "image", &env_vars)

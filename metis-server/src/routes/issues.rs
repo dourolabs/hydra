@@ -14,14 +14,14 @@ use chrono::Utc;
 use metis_common::{
     MetisId,
     issues::{
-        Issue, IssueDependency, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
+        Issue, IssueDependency, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
-pub struct IssueIdPath(pub String);
+pub struct IssueIdPath(pub IssueId);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for IssueIdPath
@@ -31,16 +31,11 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(issue_id) = Path::<String>::from_request_parts(parts, state)
+        let Path(issue_id) = Path::<IssueId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        let trimmed = issue_id.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request("issue_id must not be empty"));
-        }
-
-        Ok(Self(trimmed.to_string()))
+        Ok(Self(issue_id))
     }
 }
 
@@ -144,7 +139,7 @@ async fn validate_issue_dependencies(
 
 async fn upsert_issue_internal(
     state: AppState,
-    issue_id: Option<MetisId>,
+    issue_id: Option<IssueId>,
     payload: UpsertIssueRequest,
 ) -> Result<Json<UpsertIssueResponse>, ApiError> {
     let UpsertIssueRequest { issue, job_id } = payload;
@@ -166,16 +161,7 @@ async fn upsert_issue_internal(
             }
         }
         None => {
-            let job_id = job_id
-                .as_ref()
-                .map(|value| value.trim())
-                .map(|value| value.to_string());
-
             if let Some(ref job_id) = job_id {
-                if job_id.is_empty() {
-                    return Err(ApiError::bad_request("job_id must not be empty"));
-                }
-
                 let status = store.get_status(job_id).await.map_err(|err| match err {
                     StoreError::TaskNotFound(id) => {
                         error!(job_id = %id, "job not found when creating issue");
@@ -203,9 +189,9 @@ async fn upsert_issue_internal(
 
             if let Some(job_id) = job_id {
                 store
-                    .emit_task_artifacts(&job_id, vec![id.clone()], Utc::now())
+                    .emit_task_artifacts(&job_id, vec![MetisId::from(id.clone())], Utc::now())
                     .await
-                    .map_err(|err| map_emit_error(err, &job_id))?;
+                    .map_err(|err| map_emit_error(err, job_id.as_ref()))?;
             }
 
             id
@@ -222,7 +208,7 @@ fn issue_matches(
     status_filter: Option<IssueStatus>,
     search_term: Option<&str>,
     assignee_filter: Option<&str>,
-    issue_id: &str,
+    issue_id: &IssueId,
     issue: &Issue,
 ) -> bool {
     if let Some(issue_type) = issue_type_filter {
@@ -245,7 +231,7 @@ fn issue_matches(
     }
 
     if let Some(term) = search_term {
-        let lower_id = issue_id.to_lowercase();
+        let lower_id = issue_id.to_string().to_lowercase();
         if lower_id.contains(term) {
             return true;
         }
@@ -263,19 +249,21 @@ fn issue_matches(
     true
 }
 
-fn map_issue_error(err: StoreError, issue_id: Option<&str>) -> ApiError {
+fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
     match err {
         StoreError::IssueNotFound(id) => {
             error!(issue_id = %id, "issue not found");
             ApiError::not_found(format!("issue '{id}' not found"))
         }
         StoreError::InvalidDependency(message) => {
-            error!(issue_id = issue_id.unwrap_or_default(), %message, "invalid issue dependency");
+            let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
+            error!(issue_id = %issue_id, %message, "invalid issue dependency");
             ApiError::bad_request(message)
         }
         other => {
+            let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
             error!(
-                issue_id = issue_id.unwrap_or_default(),
+                issue_id = %issue_id,
                 error = %other,
                 "issue store operation failed"
             );

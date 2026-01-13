@@ -16,7 +16,7 @@ use metis_common::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    MetisId,
+    IssueId, PatchId, TaskId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
 use serde::Deserialize;
@@ -39,35 +39,35 @@ pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self) -> Result<ListJobsResponse>;
     #[allow(dead_code)]
-    async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary>;
-    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse>;
-    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream>;
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary>;
+    async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
+    async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
     async fn set_job_status(
         &self,
-        job_id: &MetisId,
+        job_id: &TaskId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse>;
     #[allow(dead_code)]
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse>;
+    async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse>;
 
-    async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
+    async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
     #[allow(dead_code)]
     async fn update_issue(
         &self,
-        issue_id: &MetisId,
+        issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse>;
-    async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord>;
+    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
     #[allow(dead_code)]
     async fn update_patch(
         &self,
-        patch_id: &MetisId,
+        patch_id: &PatchId,
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse>;
-    async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord>;
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
 }
 
@@ -171,12 +171,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
+    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -195,12 +190,7 @@ impl MetisClient {
     }
 
     /// Call `DELETE /v1/jobs/:job_id` to terminate a running job.
-    pub async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
+    pub async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -222,12 +212,7 @@ impl MetisClient {
     ///
     /// When `query.watch` is `Some(true)` the returned stream yields log lines
     /// as new SSE events arrive.
-    pub async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
+    pub async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream> {
         let path = format!("/v1/jobs/{job_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
@@ -258,14 +243,9 @@ impl MetisClient {
     /// Call `POST /v1/jobs/:job_id/status` to update the recorded agent status.
     pub async fn set_job_status(
         &self,
-        job_id: &MetisId,
+        job_id: &TaskId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
         let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
@@ -285,12 +265,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/status` to retrieve the status log for a job.
-    pub async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
-
+    pub async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse> {
         let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
@@ -309,11 +284,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id/context` to retrieve the stored job context.
-    pub async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {
-        let job_id = job_id.trim();
-        if job_id.is_empty() {
-            return Err(anyhow!("job_id must not be empty"));
-        }
+    pub async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {
         let path = format!("/v1/jobs/{job_id}/context");
         let url = self.endpoint(&path)?;
         let response = self
@@ -352,14 +323,9 @@ impl MetisClient {
     /// Call `PUT /v1/issues/:issue_id` to update an existing issue.
     pub async fn update_issue(
         &self,
-        issue_id: &MetisId,
+        issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse> {
-        let issue_id = issue_id.trim();
-        if issue_id.is_empty() {
-            return Err(anyhow!("issue_id must not be empty"));
-        }
-
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -379,12 +345,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/issues/:issue_id` to fetch an issue.
-    pub async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord> {
-        let issue_id = issue_id.trim();
-        if issue_id.is_empty() {
-            return Err(anyhow!("issue_id must not be empty"));
-        }
-
+    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -443,14 +404,9 @@ impl MetisClient {
     /// Call `PUT /v1/patches/:patch_id` to update an existing patch.
     pub async fn update_patch(
         &self,
-        patch_id: &MetisId,
+        patch_id: &PatchId,
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse> {
-        let patch_id = patch_id.trim();
-        if patch_id.is_empty() {
-            return Err(anyhow!("patch_id must not be empty"));
-        }
-
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -470,12 +426,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/patches/:patch_id` to fetch a patch.
-    pub async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord> {
-        let patch_id = patch_id.trim();
-        if patch_id.is_empty() {
-            return Err(anyhow!("patch_id must not be empty"));
-        }
-
+    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -629,31 +580,31 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_jobs(self).await
     }
 
-    async fn get_job(&self, job_id: &MetisId) -> Result<JobSummary> {
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary> {
         MetisClient::get_job(self, job_id).await
     }
 
-    async fn kill_job(&self, job_id: &MetisId) -> Result<KillJobResponse> {
+    async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse> {
         MetisClient::kill_job(self, job_id).await
     }
 
-    async fn get_job_logs(&self, job_id: &MetisId, query: &LogsQuery) -> Result<LogStream> {
+    async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream> {
         MetisClient::get_job_logs(self, job_id, query).await
     }
 
     async fn set_job_status(
         &self,
-        job_id: &MetisId,
+        job_id: &TaskId,
         status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
         MetisClient::set_job_status(self, job_id, status).await
     }
 
-    async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse> {
+    async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse> {
         MetisClient::get_job_status(self, job_id).await
     }
 
-    async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext> {
+    async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {
         MetisClient::get_job_context(self, job_id).await
     }
 
@@ -663,13 +614,13 @@ impl MetisClientInterface for MetisClient {
 
     async fn update_issue(
         &self,
-        issue_id: &MetisId,
+        issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse> {
         MetisClient::update_issue(self, issue_id, request).await
     }
 
-    async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord> {
+    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
         MetisClient::get_issue(self, issue_id).await
     }
 
@@ -683,13 +634,13 @@ impl MetisClientInterface for MetisClient {
 
     async fn update_patch(
         &self,
-        patch_id: &MetisId,
+        patch_id: &PatchId,
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse> {
         MetisClient::update_patch(self, patch_id, request).await
     }
 
-    async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord> {
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
         MetisClient::get_patch(self, patch_id).await
     }
 

@@ -1,4 +1,4 @@
-use crate::MetisId;
+use crate::TaskId;
 use crate::task_status::TaskStatusLog;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ pub struct CreateJobRequest {
     #[serde(default)]
     pub context: BundleSpec,
     #[serde(default)]
-    pub parent_ids: Vec<MetisId>,
+    pub parent_ids: Vec<TaskId>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
 }
@@ -96,7 +96,7 @@ pub struct WorkerContext {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateJobResponse {
-    pub job_id: MetisId,
+    pub job_id: TaskId,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,7 +106,7 @@ pub struct ListJobsResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JobSummary {
-    pub id: MetisId,
+    pub id: TaskId,
     #[serde(default)]
     pub notes: Option<String>,
     pub program: String,
@@ -117,6 +117,6 @@ pub struct JobSummary {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KillJobResponse {
-    pub job_id: MetisId,
+    pub job_id: TaskId,
     pub status: String,
 }

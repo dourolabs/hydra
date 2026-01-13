@@ -8,8 +8,8 @@ use async_trait::async_trait;
 #[cfg(test)]
 use metis_common::issues::{IssueDependency, IssueDependencyType, IssueType};
 use metis_common::{
-    MetisId,
     constants::ENV_GH_TOKEN,
+    issues::IssueId,
     issues::{Issue, IssueStatus},
     jobs::BundleSpec,
 };
@@ -50,9 +50,9 @@ impl AgentQueue {
         }
     }
 
-    fn build_task(&self, state: &AppState, issue_id: &MetisId) -> anyhow::Result<Task> {
+    fn build_task(&self, state: &AppState, issue_id: &IssueId) -> anyhow::Result<Task> {
         let mut env_vars = self.env_vars.clone();
-        env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.clone());
+        env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
         let resolved = state
@@ -163,7 +163,7 @@ fn resolve_image(
 async fn existing_issue_tasks_for_agent(
     store: &dyn Store,
     agent_name: &str,
-) -> Result<HashSet<MetisId>, StoreError> {
+) -> Result<HashSet<IssueId>, StoreError> {
     let mut issue_ids = HashSet::new();
     let task_ids = store.list_tasks().await?;
 
@@ -176,17 +176,17 @@ async fn existing_issue_tasks_for_agent(
                 continue;
             }
 
-            match env_vars.get(ISSUE_ID_ENV_VAR) {
-                Some(issue_id) => {
-                    // Only consider tasks that are still actionable (not completed or failed).
-                    if matches!(
-                        store.get_status(&task_id).await?,
-                        Status::Pending | Status::Running | Status::Blocked
-                    ) {
-                        issue_ids.insert(issue_id.clone());
-                    }
+            if let Some(issue_id) = env_vars
+                .get(ISSUE_ID_ENV_VAR)
+                .and_then(|value| value.parse::<IssueId>().ok())
+            {
+                // Only consider tasks that are still actionable (not completed or failed).
+                if matches!(
+                    store.get_status(&task_id).await?,
+                    Status::Pending | Status::Running | Status::Blocked
+                ) {
+                    issue_ids.insert(issue_id);
                 }
-                None => continue,
             }
         }
     }
@@ -274,7 +274,10 @@ mod tests {
                 assert_eq!(params, &["Fix the issue".to_string()]);
                 assert_eq!(context, &Bundle::None);
                 assert_eq!(image, "metis-worker:latest");
-                assert_eq!(env_vars.get(ISSUE_ID_ENV_VAR), Some(&assigned_issue_id));
+                assert_eq!(
+                    env_vars.get(ISSUE_ID_ENV_VAR).map(|value| value.as_str()),
+                    Some(assigned_issue_id.as_ref())
+                );
                 assert_eq!(
                     env_vars.get(AGENT_NAME_ENV_VAR),
                     Some(&"agent-a".to_string())
@@ -311,7 +314,7 @@ mod tests {
                         context: Bundle::None,
                         image: "metis-worker:latest".to_string(),
                         env_vars: HashMap::from([
-                            (ISSUE_ID_ENV_VAR.to_string(), issue_id.clone()),
+                            (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
                     },
@@ -442,7 +445,10 @@ mod tests {
                 );
                 assert_eq!(image, "repo-image");
                 assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token".to_string()));
-                assert_eq!(env_vars.get(ISSUE_ID_ENV_VAR), Some(&issue_id));
+                assert_eq!(
+                    env_vars.get(ISSUE_ID_ENV_VAR).map(|value| value.as_str()),
+                    Some(issue_id.as_ref())
+                );
             }
         }
 

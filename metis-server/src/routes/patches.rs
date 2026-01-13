@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::{
-    MetisId,
+    PatchId,
     patches::{
         ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
@@ -21,7 +21,7 @@ use metis_common::{
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
-pub struct PatchIdPath(pub String);
+pub struct PatchIdPath(pub PatchId);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for PatchIdPath
@@ -31,16 +31,11 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(patch_id) = Path::<String>::from_request_parts(parts, state)
+        let Path(patch_id) = Path::<PatchId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        let trimmed = patch_id.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request("patch_id must not be empty"));
-        }
-
-        Ok(Self(trimmed.to_string()))
+        Ok(Self(patch_id))
     }
 }
 
@@ -107,7 +102,7 @@ pub async fn list_patches(
 
 async fn upsert_patch_internal(
     state: AppState,
-    patch_id: Option<MetisId>,
+    patch_id: Option<PatchId>,
     payload: UpsertPatchRequest,
 ) -> Result<Json<UpsertPatchResponse>, ApiError> {
     let UpsertPatchRequest { patch, job_id } = payload;
@@ -127,16 +122,7 @@ async fn upsert_patch_internal(
             }
         }
         None => {
-            let job_id = job_id
-                .as_ref()
-                .map(|value| value.trim())
-                .map(|value| value.to_string());
-
             if let Some(ref job_id) = job_id {
-                if job_id.is_empty() {
-                    return Err(ApiError::bad_request("job_id must not be empty"));
-                }
-
                 let status = store.get_status(job_id).await.map_err(|err| match err {
                     StoreError::TaskNotFound(id) => {
                         error!(job_id = %id, "job not found when creating patch");
@@ -164,9 +150,9 @@ async fn upsert_patch_internal(
 
             if let Some(job_id) = job_id {
                 store
-                    .emit_task_artifacts(&job_id, vec![id.clone()], Utc::now())
+                    .emit_task_artifacts(&job_id, vec![id.clone().into()], Utc::now())
                     .await
-                    .map_err(|err| map_emit_error(err, &job_id))?;
+                    .map_err(|err| map_emit_error(err, job_id.as_ref()))?;
             }
 
             id
@@ -178,9 +164,9 @@ async fn upsert_patch_internal(
     Ok(Json(UpsertPatchResponse { patch_id }))
 }
 
-fn patch_matches(search_term: Option<&str>, patch_id: &str, patch: &Patch) -> bool {
+fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
     if let Some(term) = search_term {
-        let lower_id = patch_id.to_lowercase();
+        let lower_id = patch_id.to_string().to_lowercase();
         if lower_id.contains(term) {
             return true;
         }
@@ -193,15 +179,16 @@ fn patch_matches(search_term: Option<&str>, patch_id: &str, patch: &Patch) -> bo
     true
 }
 
-fn map_patch_error(err: StoreError, patch_id: Option<&str>) -> ApiError {
+fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
     match err {
         StoreError::PatchNotFound(id) => {
             error!(patch_id = %id, "patch not found");
             ApiError::not_found(format!("patch '{id}' not found"))
         }
         other => {
+            let patch_id = patch_id.map(|id| id.to_string()).unwrap_or_default();
             error!(
-                patch_id = patch_id.unwrap_or_default(),
+                patch_id = %patch_id,
                 error = %other,
                 "patch store operation failed"
             );

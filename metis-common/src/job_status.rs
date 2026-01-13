@@ -1,5 +1,5 @@
 use crate::{
-    MetisId,
+    TaskId,
     task_status::{Status, TaskError, TaskStatusLog},
 };
 use serde::{Deserialize, Serialize};
@@ -38,12 +38,12 @@ impl JobStatusUpdate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetJobStatusResponse {
-    pub job_id: MetisId,
+    pub job_id: TaskId,
     pub status: Status,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetJobStatusResponse {
-    pub job_id: MetisId,
+    pub job_id: TaskId,
     pub status_log: TaskStatusLog,
 }

@@ -7,11 +7,14 @@ mod constants;
 mod exec;
 mod util;
 
+#[cfg(test)]
+mod test_utils;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use client::MetisClient;
 use config::AppConfig;
-use metis_common::constants::ENV_METIS_SERVER_URL;
+use metis_common::{constants::ENV_METIS_SERVER_URL, TaskId};
 use std::env;
 use std::path::PathBuf;
 
@@ -75,7 +78,7 @@ enum Commands {
 
         /// Create the job after the given Metis job ID (repeatable).
         #[arg(long = "after", value_name = "JOB_ID")]
-        after: Vec<String>,
+        after: Vec<TaskId>,
 
         /// Override or set job variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
@@ -112,7 +115,7 @@ enum Commands {
     Logs {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "ID")]
-        id: String,
+        id: TaskId,
 
         /// Stream logs if the job is still running.
         #[arg(short = 'w', long = "watch")]
@@ -122,7 +125,7 @@ enum Commands {
     Kill {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
-        job: String,
+        job: TaskId,
     },
     /// Manage patches.
     Patches {
@@ -140,7 +143,7 @@ enum Commands {
     WorkerRun {
         /// Job identifier returned by `metis spawn` or `metis jobs`.
         #[arg(value_name = "JOB_ID")]
-        job: String,
+        job: TaskId,
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,

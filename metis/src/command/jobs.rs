@@ -37,7 +37,7 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
         let status_display = format_status(&job.status_log.current_status());
         let runtime = format_runtime(&job.status_log, now).unwrap_or_else(|| "-".into());
         let notes = job_note(&job).unwrap_or_else(|| "-".into());
-        let cells = job_row_cells(&job.id, status_display, &runtime);
+        let cells = job_row_cells(job.id.as_ref(), status_display, &runtime);
         let plain_prefix = job_row_prefix(&cells);
         let colored_prefix = colored_job_row_prefix(&cells, &job.status_log.current_status());
         for (index, line) in format_job_lines(&plain_prefix, &notes, terminal_width)
@@ -217,10 +217,11 @@ fn job_note(job: &JobSummary) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::ids::task_id;
 
     fn sample_job(id: &str) -> JobSummary {
         JobSummary {
-            id: id.to_string(),
+            id: task_id(id),
             notes: None,
             program: "0".to_string(),
             params: vec![],
@@ -231,31 +232,31 @@ mod tests {
     #[test]
     fn truncate_jobs_keeps_all_when_below_limit() {
         let jobs = vec![
-            sample_job("job-1"),
-            sample_job("job-2"),
-            sample_job("job-3"),
+            sample_job("t-job-1"),
+            sample_job("t-job-2"),
+            sample_job("t-job-3"),
         ];
 
         let (kept, truncated) = truncate_jobs(jobs, 5);
 
         assert!(!truncated);
         assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0].id, "job-1");
-        assert_eq!(kept[2].id, "job-3");
+        assert_eq!(kept[0].id, task_id("t-job-1"));
+        assert_eq!(kept[2].id, task_id("t-job-3"));
     }
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
         let jobs: Vec<JobSummary> = (0..12)
-            .map(|idx| sample_job(&format!("job-{idx}")))
+            .map(|idx| sample_job(&format!("t-job-{idx}")))
             .collect();
 
         let (kept, truncated) = truncate_jobs(jobs, 10);
 
         assert!(truncated);
         assert_eq!(kept.len(), 10);
-        assert_eq!(kept.first().unwrap().id, "job-0");
-        assert_eq!(kept.last().unwrap().id, "job-9");
+        assert_eq!(kept.first().unwrap().id, task_id("t-job-0"));
+        assert_eq!(kept.last().unwrap().id, task_id("t-job-9"));
     }
 
     #[test]

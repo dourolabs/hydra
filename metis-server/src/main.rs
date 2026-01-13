@@ -184,6 +184,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
+        TaskId,
         constants::ENV_GH_TOKEN,
         issues::{
             Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery,
@@ -202,6 +203,10 @@ mod tests {
 
     fn default_image() -> String {
         crate::config::MetisSection::default().worker_image
+    }
+
+    fn task_id(value: &str) -> TaskId {
+        value.parse().expect("task id should be valid")
     }
 
     #[tokio::test]
@@ -236,7 +241,7 @@ mod tests {
 
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
-        assert!(!body.job_id.trim().is_empty());
+        assert!(!body.job_id.as_ref().trim().is_empty());
 
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
@@ -268,13 +273,14 @@ mod tests {
         let default_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
+        let parent_id = task_id("t-parent");
 
         // Seed a parent task that is still pending.
         {
             let mut store_write = store.write().await;
             store_write
                 .add_task_with_id(
-                    "parent-1".to_string(),
+                    parent_id.clone(),
                     Task::Spawn {
                         program: "0".to_string(),
                         params: vec![],
@@ -291,20 +297,20 @@ mod tests {
         let client = test_client();
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "program": "0", "parent_ids": ["parent-1"] }))
+            .json(&json!({ "program": "0", "parent_ids": [parent_id.as_ref()] }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: CreateJobResponse = response.json().await?;
-        assert!(!body.job_id.trim().is_empty());
+        assert!(!body.job_id.as_ref().trim().is_empty());
 
         let store_read = store.read().await;
         let parents = store_read.get_parents(&body.job_id).await?;
         assert_eq!(
             parents,
             vec![Edge {
-                id: "parent-1".to_string(),
+                id: parent_id,
                 name: None
             }]
         );
@@ -560,9 +566,9 @@ mod tests {
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
-        let oldest_id = "oldest".to_string();
-        let middle_id = "middle".to_string();
-        let newest_id = "newest".to_string();
+        let oldest_id = task_id("t-oldest");
+        let middle_id = task_id("t-middle");
+        let newest_id = task_id("t-newest");
         let now = Utc::now();
         {
             let mut store_write = store.write().await;
@@ -624,7 +630,7 @@ mod tests {
 
         assert!(response.status().is_success());
         let body: ListJobsResponse = response.json().await?;
-        let ids: Vec<String> = body.jobs.into_iter().map(|job| job.id).collect();
+        let ids: Vec<TaskId> = body.jobs.into_iter().map(|job| job.id).collect();
         assert_eq!(ids, vec![newest_id, middle_id, oldest_id]);
         Ok(())
     }
@@ -635,7 +641,7 @@ mod tests {
         let default_image = default_image();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
-        let job_id = "job-123".to_string();
+        let job_id = task_id("t-jobab");
         let now = Utc::now();
         {
             let mut store_write = store.write().await;
@@ -686,17 +692,20 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn get_job_trims_job_id_path() -> anyhow::Result<()> {
+    async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
-        let job_id = "trim-job".to_string();
+        let job_id = task_id("t-trim");
         let now = Utc::now();
         {
             let mut store_write = store.write().await;
@@ -725,9 +734,12 @@ mod tests {
             .send()
             .await?;
 
-        assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
-        assert_eq!(summary.id, job_id);
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "error": format!("id ' {job_id} ' is missing a supported prefix") })
+        );
         Ok(())
     }
 
@@ -735,14 +747,18 @@ mod tests {
     async fn get_job_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .get(format!("{}/v1/jobs/missing", server.base_url()))
+            .get(format!("{}/v1/jobs/{missing_id}", server.base_url()))
             .send()
             .await?;
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job 'missing' not found" }));
+        assert_eq!(
+            body,
+            json!({ "error": format!("job '{missing_id}' not found") })
+        );
         Ok(())
     }
 
@@ -757,25 +773,25 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::Result<()> {
         let engine = Arc::new(MockJobEngine::new());
-        engine
-            .insert_job(&"job-1".to_string(), JobStatus::Running)
-            .await;
-        engine
-            .insert_job(&"job-1".to_string(), JobStatus::Failed)
-            .await;
+        let job_id = task_id("t-jobaa");
+        engine.insert_job(&job_id, JobStatus::Running).await;
+        engine.insert_job(&job_id, JobStatus::Failed).await;
         let state = test_state_with_engine(engine);
         let server = spawn_test_server_with_state(state).await?;
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/job-1/logs", server.base_url()))
+            .get(format!("{}/v1/jobs/{job_id}/logs", server.base_url()))
             .send()
             .await?;
 
@@ -783,7 +799,7 @@ mod tests {
         let body: serde_json::Value = response.json().await?;
         assert_eq!(
             body,
-            json!({ "error": "Multiple jobs found for metis-id 'job-1'" })
+            json!({ "error": format!("Multiple jobs found for metis-id '{job_id}'") })
         );
         Ok(())
     }
@@ -792,21 +808,25 @@ mod tests {
     async fn get_job_logs_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .get(format!("{}/v1/jobs/missing/logs", server.base_url()))
+            .get(format!("{}/v1/jobs/{missing_id}/logs", server.base_url()))
             .send()
             .await?;
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "Job 'missing' not found" }));
+        assert_eq!(
+            body,
+            json!({ "error": format!("Job '{missing_id}' not found") })
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> {
         let engine = Arc::new(MockJobEngine::new());
-        let job_id = "job-stream".to_string();
+        let job_id = task_id("t-stream");
         engine.insert_job(&job_id, JobStatus::Running).await;
         engine
             .set_logs(
@@ -845,7 +865,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -853,32 +876,33 @@ mod tests {
     async fn kill_job_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .delete(format!("{}/v1/jobs/unknown", server.base_url()))
+            .delete(format!("{}/v1/jobs/{missing_id}", server.base_url()))
             .send()
             .await?;
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "Job 'unknown' not found" }));
+        assert_eq!(
+            body,
+            json!({ "error": format!("Job '{missing_id}' not found") })
+        );
         Ok(())
     }
 
     #[tokio::test]
     async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
         let engine = Arc::new(MockJobEngine::new());
-        engine
-            .insert_job(&"dupe".to_string(), JobStatus::Running)
-            .await;
-        engine
-            .insert_job(&"dupe".to_string(), JobStatus::Running)
-            .await;
+        let job_id = task_id("t-dupe");
+        engine.insert_job(&job_id, JobStatus::Running).await;
+        engine.insert_job(&job_id, JobStatus::Running).await;
         let state = test_state_with_engine(engine);
         let server = spawn_test_server_with_state(state).await?;
 
         let client = test_client();
         let response = client
-            .delete(format!("{}/v1/jobs/dupe", server.base_url()))
+            .delete(format!("{}/v1/jobs/{job_id}", server.base_url()))
             .send()
             .await?;
 
@@ -886,7 +910,7 @@ mod tests {
         let body: serde_json::Value = response.json().await?;
         assert_eq!(
             body,
-            json!({ "error": "Multiple jobs found for metis-id 'dupe'" })
+            json!({ "error": format!("Multiple jobs found for metis-id '{job_id}'") })
         );
         Ok(())
     }
@@ -903,7 +927,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -911,8 +938,9 @@ mod tests {
     async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .post(format!("{}/v1/jobs/missing/status", server.base_url()))
+            .post(format!("{}/v1/jobs/{missing_id}/status", server.base_url()))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
@@ -929,9 +957,9 @@ mod tests {
         let default_image = default_image();
         let store = state.store.clone();
         let patch_id;
+        let job_id = task_id("t-spawn");
         {
             let mut store_write = store.write().await;
-            let job_id = "spawn-job".to_string();
             store_write
                 .add_task_with_id(
                     job_id.clone(),
@@ -957,29 +985,35 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![patch_id.clone()], Utc::now())
+                .emit_task_artifacts(&job_id, vec![patch_id.clone().into()], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
 
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/jobs/spawn-job/status", server.base_url()))
+            .post(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "job_id": "spawn-job", "status": "complete" }));
+        assert_eq!(
+            body,
+            json!({ "job_id": job_id.as_ref(), "status": "complete" })
+        );
 
         let store_read = store.read().await;
-        let status = store_read.get_status(&"spawn-job".to_string()).await?;
+        let status = store_read.get_status(&job_id).await?;
         assert_eq!(status, Status::Complete);
-        let result = store_read.get_result(&"spawn-job".to_string());
+        let result = store_read.get_result(&job_id);
         assert!(matches!(result, Some(Ok(()))));
-        let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
-        assert_eq!(status_log.emitted_artifacts(), Some(vec![patch_id]));
+        let status_log = store_read.get_status_log(&job_id).await?;
+        assert_eq!(
+            status_log.emitted_artifacts(),
+            Some(vec![patch_id.clone().into()])
+        );
 
         Ok(())
     }
@@ -988,7 +1022,7 @@ mod tests {
     async fn set_job_status_records_last_message() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
-        let job_id = "job-with-last-message".to_string();
+        let job_id = task_id("t-lastmsg");
         {
             let mut store_write = state.store.write().await;
             store_write
@@ -1014,7 +1048,7 @@ mod tests {
             .post(format!(
                 "{}/v1/jobs/{}/status",
                 server.base_url(),
-                job_id.as_str()
+                job_id.as_ref()
             ))
             .json(&json!({
                 "status": "complete",
@@ -1040,11 +1074,12 @@ mod tests {
     #[tokio::test]
     async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         let state = test_state();
+        let job_id = task_id("t-fail");
         {
             let mut store_write = state.store.write().await;
             store_write
                 .add_task_with_id(
-                    "failing-job".to_string(),
+                    job_id.clone(),
                     Task::Spawn {
                         program: "0".to_string(),
                         params: vec![],
@@ -1056,27 +1091,28 @@ mod tests {
                     Utc::now(),
                 )
                 .await?;
-            store_write
-                .mark_task_running(&"failing-job".to_string(), Utc::now())
-                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
         }
         let server = spawn_test_server_with_state(state.clone()).await?;
         let client = test_client();
 
         let response = client
-            .post(format!("{}/v1/jobs/failing-job/status", server.base_url()))
+            .post(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
             .json(&json!({ "status": "failed", "reason": "boom" }))
             .send()
             .await?;
 
         assert!(response.status().is_success());
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "job_id": "failing-job", "status": "failed" }));
+        assert_eq!(
+            body,
+            json!({ "job_id": job_id.as_ref(), "status": "failed" })
+        );
 
         let store_read = state.store.read().await;
-        let status = store_read.get_status(&"failing-job".to_string()).await?;
+        let status = store_read.get_status(&job_id).await?;
         assert_eq!(status, Status::Failed);
-        let result = store_read.get_result(&"failing-job".to_string());
+        let result = store_read.get_result(&job_id);
         assert!(matches!(
             result,
             Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
@@ -1087,7 +1123,7 @@ mod tests {
     #[tokio::test]
     async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
         let state = test_state();
-        let job_id = "with-status".to_string();
+        let job_id = task_id("t-status");
         {
             let mut store_write = state.store.write().await;
             store_write
@@ -1114,7 +1150,7 @@ mod tests {
         let client = test_client();
 
         let response = client
-            .get(format!("{}/v1/jobs/with-status/status", server.base_url()))
+            .get(format!("{}/v1/jobs/{job_id}/status", server.base_url()))
             .send()
             .await?;
 
@@ -1134,7 +1170,7 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
-        let job_id = "with-output".to_string();
+        let job_id = task_id("t-output");
         let patch_id;
         {
             let mut store_write = store.write().await;
@@ -1163,7 +1199,7 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![patch_id.clone()], Utc::now())
+                .emit_task_artifacts(&job_id, vec![patch_id.clone().into()], Utc::now())
                 .await?;
             store_write
                 .mark_task_complete(&job_id, Ok(()), None, Utc::now())
@@ -1173,7 +1209,7 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/with-output", server.base_url()))
+            .get(format!("{}/v1/jobs/{job_id}", server.base_url()))
             .send()
             .await?;
 
@@ -1188,7 +1224,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(emitted_ids, vec![patch_id.clone()]);
+        assert_eq!(emitted_ids, vec![patch_id.clone().into()]);
 
         let patch_response = client
             .get(format!("{}/v1/patches/{patch_id}", server.base_url()))
@@ -1220,7 +1256,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -1228,8 +1267,12 @@ mod tests {
     async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .get(format!("{}/v1/jobs/missing/context", server.base_url()))
+            .get(format!(
+                "{}/v1/jobs/{missing_id}/context",
+                server.base_url()
+            ))
             .send()
             .await?;
 
@@ -1248,11 +1291,13 @@ mod tests {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         };
+        let parent_job_id = task_id("t-parentjob");
+        let ctx_job_id = task_id("t-ctxjob");
         {
             let mut store_write = store.write().await;
             store_write
                 .add_task_with_id(
-                    "parent-job".to_string(),
+                    parent_job_id.clone(),
                     Task::Spawn {
                         program: "0".to_string(),
                         params: vec![],
@@ -1265,7 +1310,7 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_running(&"parent-job".to_string(), Utc::now())
+                .mark_task_running(&parent_job_id, Utc::now())
                 .await?;
             let parent_patch_id = store_write
                 .add_patch(Patch {
@@ -1277,14 +1322,14 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&"parent-job".to_string(), vec![parent_patch_id], Utc::now())
+                .emit_task_artifacts(&parent_job_id, vec![parent_patch_id.into()], Utc::now())
                 .await?;
             store_write
-                .mark_task_complete(&"parent-job".to_string(), Ok(()), None, Utc::now())
+                .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
                 .await?;
             store_write
                 .add_task_with_id(
-                    "ctx-job".to_string(),
+                    ctx_job_id.clone(),
                     Task::Spawn {
                         program: "0".to_string(),
                         params: vec![],
@@ -1293,7 +1338,7 @@ mod tests {
                         env_vars: HashMap::new(),
                     },
                     vec![Edge {
-                        id: "parent-job".to_string(),
+                        id: parent_job_id,
                         name: None,
                     }],
                     Utc::now(),
@@ -1304,7 +1349,10 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/ctx-job/context", server.base_url()))
+            .get(format!(
+                "{}/v1/jobs/{ctx_job_id}/context",
+                server.base_url()
+            ))
             .send()
             .await?;
 
@@ -1320,11 +1368,12 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
+        let job_id = task_id("t-envjob");
         {
             let mut store_write = store.write().await;
             store_write
                 .add_task_with_id(
-                    "env-job".to_string(),
+                    job_id.clone(),
                     Task::Spawn {
                         program: "0".to_string(),
                         params: vec![],
@@ -1344,7 +1393,7 @@ mod tests {
 
         let client = test_client();
         let response = client
-            .get(format!("{}/v1/jobs/env-job/context", server.base_url()))
+            .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
             .send()
             .await?;
 
@@ -1380,7 +1429,7 @@ mod tests {
 
         assert!(response.status().is_success());
         let created: UpsertPatchResponse = response.json().await?;
-        assert!(!created.patch_id.is_empty());
+        assert!(!created.patch_id.as_ref().is_empty());
 
         let fetched: PatchRecord = client
             .get(format!(
@@ -1402,7 +1451,7 @@ mod tests {
     async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
-        let job_id = "emit-artifacts".to_string();
+        let job_id = task_id("t-emit");
         let store = state.store.clone();
         {
             let mut store_write = store.write().await;
@@ -1450,7 +1499,7 @@ mod tests {
                 .await?
                 .emitted_artifacts()
         };
-        assert_eq!(emitted, Some(vec![created.patch_id]));
+        assert_eq!(emitted, Some(vec![created.patch_id.into()]));
         Ok(())
     }
 
