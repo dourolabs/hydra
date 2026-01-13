@@ -5,8 +5,11 @@ use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::{Issue, IssueDependency, IssueDependencyType, IssueStatus, Patch};
 use metis_common::task_status::Event;
+use metis_common::{
+    issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus},
+    patches::Patch,
+};
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -632,8 +635,9 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
-        artifacts::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, Patch},
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
         jobs::Bundle,
+        patches::Patch,
     };
     use std::collections::HashSet;
 

@@ -3,10 +3,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
-    artifacts::{
-        IssueRecord, ListIssuesResponse, ListPatchesResponse, PatchRecord, SearchIssuesQuery,
-        SearchPatchesQuery, UpsertIssueRequest, UpsertIssueResponse, UpsertPatchRequest,
-        UpsertPatchResponse,
+    issues::{
+        IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
@@ -14,6 +12,10 @@ use metis_common::{
         WorkerContext,
     },
     logs::LogsQuery,
+    patches::{
+        ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+        UpsertPatchResponse,
+    },
     MetisId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
