@@ -229,6 +229,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?
         };
@@ -242,6 +243,7 @@ mod tests {
                     status: IssueStatus::Closed,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?;
         }
@@ -255,6 +257,7 @@ mod tests {
                     status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?;
         }
@@ -300,6 +303,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?
         };
@@ -341,6 +345,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?
         };
@@ -357,6 +362,7 @@ mod tests {
                         dependency_type: IssueDependencyType::BlockedOn,
                         issue_id: blocker_id.clone(),
                     }],
+                    patches: Vec::new(),
                 })
                 .await?;
         }
@@ -410,6 +416,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
+                    patches: Vec::new(),
                 })
                 .await?
         };

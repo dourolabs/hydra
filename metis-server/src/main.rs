@@ -1483,6 +1483,7 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             dependencies: vec![],
+            patches: Vec::new(),
         };
         let assigned_issue = Issue {
             issue_type: IssueType::Task,
@@ -1490,6 +1491,7 @@ mod tests {
             status: IssueStatus::Open,
             assignee: Some("owner-1".to_string()),
             dependencies: vec![],
+            patches: Vec::new(),
         };
         let closed_issue = Issue {
             issue_type: IssueType::Task,
@@ -1497,6 +1499,7 @@ mod tests {
             status: IssueStatus::Closed,
             assignee: None,
             dependencies: vec![],
+            patches: Vec::new(),
         };
 
         for issue in [issue.clone(), assigned_issue.clone(), closed_issue.clone()] {
@@ -1575,6 +1578,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
+                    patches: Vec::new(),
                 },
                 job_id: None,
             })
@@ -1596,6 +1600,7 @@ mod tests {
                     status: IssueStatus::InProgress,
                     assignee: None,
                     dependencies: vec![],
+                    patches: Vec::new(),
                 },
                 job_id: None,
             })
@@ -1625,6 +1630,7 @@ mod tests {
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![],
+                patches: Vec::new(),
             }
         );
         Ok(())

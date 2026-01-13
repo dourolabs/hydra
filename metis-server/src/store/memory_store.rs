@@ -484,6 +484,7 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             dependencies,
+            patches: Vec::new(),
         }
     }
 
@@ -494,6 +495,7 @@ mod tests {
             status,
             assignee: None,
             dependencies,
+            patches: Vec::new(),
         }
     }
 
