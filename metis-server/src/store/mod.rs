@@ -131,15 +131,6 @@ pub trait Store: Send + Sync {
     /// The task if found, or an error if not found
     async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError>;
 
-    /// Removes a task and its status information from the store.
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to remove
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if the task doesn't exist
-    async fn remove_task(&mut self, id: &TaskId) -> Result<(), StoreError>;
-
     /// Lists all task IDs in the store.
     ///
     /// # Returns

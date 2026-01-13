@@ -316,18 +316,6 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn remove_task(&mut self, id: &TaskId) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        // Remove the task
-        self.tasks.remove(id);
-        self.status_logs.remove(id);
-
-        Ok(())
-    }
-
     async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         Ok(self.tasks.keys().cloned().collect())
     }
@@ -762,31 +750,6 @@ mod tests {
 
         let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
         assert_eq!(tasks, HashSet::from([task_id]));
-    }
-
-    #[tokio::test]
-    async fn remove_task_removes_task() {
-        let mut store = MemoryStore::new();
-
-        let task_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
-
-        store.remove_task(&task_id).await.unwrap();
-
-        assert!(matches!(
-            store.get_task(&task_id).await,
-            Err(StoreError::TaskNotFound(id)) if id == task_id
-        ));
-
-        assert!(store.list_tasks().await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn removing_unknown_task_returns_error() {
-        let mut store = MemoryStore::new();
-        let missing: TaskId = "t-absent".parse().unwrap();
-
-        let err = store.remove_task(&missing).await.unwrap_err();
-        assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing));
     }
 
     #[tokio::test]
