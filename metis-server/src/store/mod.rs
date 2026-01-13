@@ -1,10 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::MetisId;
-use metis_common::{
-    artifacts::{Issue, Patch},
-    jobs::Bundle,
-};
+use metis_common::{issues::Issue, jobs::Bundle, patches::Patch};
 use std::collections::HashMap;
 
 mod memory_store;

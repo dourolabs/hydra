@@ -2,7 +2,7 @@ use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
-    artifacts::{
+    issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
         SearchIssuesQuery, UpsertIssueRequest,
     },
@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
-    /// List Metis issues (artifacts of type Issue).
+    /// List Metis issues.
     List {
         /// Filter by issue ID.
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
@@ -39,7 +39,7 @@ pub enum IssueCommands {
         #[arg(long, value_name = "QUERY")]
         query: Option<String>,
     },
-    /// Create a new issue artifact.
+    /// Create a new issue.
     Create {
         /// Issue type: bug, feature, task, chore, or merge-request (defaults to task).
         #[arg(long, value_name = "ISSUE_TYPE", default_value_t = IssueType::Task)]
@@ -61,7 +61,7 @@ pub enum IssueCommands {
         #[arg(value_name = "DESCRIPTION")]
         description: String,
     },
-    /// Update an existing issue artifact.
+    /// Update an existing issue.
     Update {
         /// Issue ID to update.
         #[arg(value_name = "ISSUE_ID")]
@@ -447,7 +447,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
-    use metis_common::artifacts::{
+    use metis_common::issues::{
         Issue, IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
         UpsertIssueResponse,
     };
@@ -468,7 +468,7 @@ mod tests {
             }],
         });
 
-        let artifacts = fetch_issues(
+        let issues = fetch_issues(
             &client,
             None,
             Some(IssueType::Bug),
@@ -490,7 +490,7 @@ mod tests {
         );
 
         let mut output = Vec::new();
-        print_issues_jsonl(&artifacts, &mut output).unwrap();
+        print_issues_jsonl(&issues, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\"id\":\"issue-1\""));
         assert!(!output.contains("\"id\":\"issue-2\""));
@@ -510,7 +510,7 @@ mod tests {
             },
         });
 
-        let artifacts = fetch_issues(
+        let issues = fetch_issues(
             &client,
             Some("issue-123".into()),
             Some(IssueType::Task),
@@ -522,8 +522,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(client.recorded_get_issue_requests(), vec!["issue-123"]);
-        assert_eq!(artifacts.len(), 1);
-        assert_eq!(artifacts[0].id, "issue-123");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].id, "issue-123");
     }
 
     #[tokio::test]
@@ -542,7 +542,7 @@ mod tests {
             }],
         });
 
-        let artifacts = fetch_issues(&client, None, None, None, Some("OWNER-A".into()), None)
+        let issues = fetch_issues(&client, None, None, None, Some("OWNER-A".into()), None)
             .await
             .unwrap();
 
@@ -555,12 +555,12 @@ mod tests {
                 q: None,
             }]
         );
-        assert_eq!(artifacts.len(), 1);
-        assert_eq!(artifacts[0].id, "issue-7");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].id, "issue-7");
     }
 
     #[tokio::test]
-    async fn create_issue_submits_issue_artifact() {
+    async fn create_issue_submits_issue_record() {
         let client = MockMetisClient::default();
         client.push_upsert_issue_response(UpsertIssueResponse {
             issue_id: "issue-456".into(),
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn pretty_prints_human_readable_issues() {
-        let artifacts = vec![
+        let issues = vec![
             IssueRecord {
                 id: "issue-1".into(),
                 issue: Issue {
@@ -777,7 +777,7 @@ mod tests {
         ];
 
         let mut output = Vec::new();
-        print_issues_pretty(&artifacts, &mut output).unwrap();
+        print_issues_pretty(&issues, &mut output).unwrap();
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("Issue issue-1 (bug, open)"));

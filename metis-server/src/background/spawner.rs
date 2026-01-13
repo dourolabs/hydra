@@ -6,11 +6,11 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
-use metis_common::artifacts::{IssueDependency, IssueDependencyType, IssueType};
+use metis_common::issues::{IssueDependency, IssueDependencyType, IssueType};
 use metis_common::{
     MetisId,
-    artifacts::{Issue, IssueStatus},
     constants::ENV_GH_TOKEN,
+    issues::{Issue, IssueStatus},
     jobs::BundleSpec,
 };
 use std::collections::{HashMap, HashSet};

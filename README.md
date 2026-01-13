@@ -3,7 +3,7 @@
 Metis is an experimental AI-orchestrator: a Rust CLI drives an Axum-based
 control plane that schedules autonomous jobs onto Kubernetes worker pods.
 The CLI (`metis`) is how humans interact with the system (spawning work,
-tailing logs, pushing artifacts), while `metis-server` stores job state,
+tailing logs, submitting issues and patches), while `metis-server` stores job state,
 coordinates background agents, and talks to Kubernetes to launch workers.
 
 > Looking for coding conventions or release expectations? See `AGENTS.md`.
@@ -14,7 +14,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 | --- | --- |
 | `metis` | End-user CLI with subcommands such as `spawn`, `jobs`, `logs`, `patches`, `issues`, `chat`, and the TUI `dashboard`. |
 | `metis-server` | Axum HTTP API plus background agents and Kubernetes `Job` engine. Responsible for job orchestration, persistence, and webhooks. |
-| `metis-common` | Shared models (`MetisId`, job/log/artifact types, env var constants) used by both crates. |
+| `metis-common` | Shared models (`MetisId`, job/log/issue/patch types, env var constants) used by both crates. |
 | `images/` | Dockerfiles for the server and worker images. |
 | `scripts/` | Helper scripts (cluster bootstrap, Docker builds, worker entrypoint). |
 | `config.toml.sample` files | Copy to `config.toml` (per crate) to override defaults. |

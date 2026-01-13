@@ -12,9 +12,10 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
-    artifacts::{Issue, Patch},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
+    issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+    patches::Patch,
 };
 use serde_json::json;
 use tracing::{error, info};
