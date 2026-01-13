@@ -5,9 +5,11 @@ use crate::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
+#[cfg(test)]
+use metis_common::artifacts::{IssueDependency, IssueDependencyType, IssueType};
 use metis_common::{
     MetisId,
-    artifacts::{Artifact, IssueStatus},
+    artifacts::{Issue, IssueStatus},
     constants::ENV_GH_TOKEN,
     jobs::BundleSpec,
 };
@@ -91,41 +93,39 @@ impl Spawner for AgentQueue {
             .await
             .context("failed to list tasks for agent queue")?;
 
-        let artifacts = store
-            .list_artifacts()
+        let issues = store
+            .list_issues()
             .await
-            .context("failed to list artifacts for agent queue")?;
+            .context("failed to list issues for agent queue")?;
 
         let mut tasks = Vec::new();
-        for (artifact_id, artifact) in artifacts {
-            if let Artifact::Issue {
+        for (issue_id, issue) in issues {
+            let Issue {
                 assignee, status, ..
-            } = artifact
-            {
-                if assignee.as_deref() != Some(self.name.as_str()) {
-                    continue;
-                }
-
-                // Only spawn tasks for open issues.
-                if status != IssueStatus::Open {
-                    continue;
-                }
-
-                let is_ready = store
-                    .is_issue_ready(&artifact_id)
-                    .await
-                    .context("failed to determine if issue is ready")?;
-                if !is_ready {
-                    continue;
-                }
-
-                if existing_issue_ids.contains(&artifact_id) {
-                    continue;
-                }
-
-                let task = self.build_task(state, &artifact_id)?;
-                tasks.push(task);
+            } = issue;
+            if assignee.as_deref() != Some(self.name.as_str()) {
+                continue;
             }
+
+            // Only spawn tasks for open issues.
+            if status != IssueStatus::Open {
+                continue;
+            }
+
+            let is_ready = store
+                .is_issue_ready(&issue_id)
+                .await
+                .context("failed to determine if issue is ready")?;
+            if !is_ready {
+                continue;
+            }
+
+            if existing_issue_ids.contains(&issue_id) {
+                continue;
+            }
+
+            let task = self.build_task(state, &issue_id)?;
+            tasks.push(task);
         }
 
         Ok(tasks)
@@ -203,10 +203,7 @@ mod tests {
         test::test_state,
     };
     use chrono::Utc;
-    use metis_common::{
-        artifacts::{IssueDependency, IssueDependencyType},
-        jobs::{Bundle, BundleSpec},
-    };
+    use metis_common::jobs::{Bundle, BundleSpec};
     use std::sync::Arc;
 
     fn queue(agent_name: &str) -> AgentQueue {
@@ -226,8 +223,8 @@ mod tests {
         let assigned_issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Fix login page".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -239,8 +236,8 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Ignore closed".to_string(),
                     status: IssueStatus::Closed,
                     assignee: Some("agent-a".to_string()),
@@ -252,8 +249,8 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Ignore in-progress".to_string(),
                     status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
@@ -294,8 +291,8 @@ mod tests {
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Already queued".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -336,8 +333,8 @@ mod tests {
         let blocker_id = {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Blocker".to_string(),
                     status: IssueStatus::Open,
                     assignee: None,
@@ -349,8 +346,8 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Blocked issue".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -405,8 +402,8 @@ mod tests {
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_artifact(Artifact::Issue {
-                    issue_type: metis_common::artifacts::IssueType::Task,
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
                     description: "Assigned".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),

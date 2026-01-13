@@ -8,9 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
-    artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, Review, SearchArtifactsQuery, UpsertArtifactRequest,
-    },
+    artifacts::{Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest},
     constants::ENV_METIS_ID,
     MetisId,
 };
@@ -122,10 +120,9 @@ async fn list_patches(
         }
 
         let artifact = client
-            .get_artifact(&id)
+            .get_patch(&id)
             .await
-            .with_context(|| format!("failed to fetch patch artifact '{id}'"))?;
-        ensure_patch(&artifact, &id)?;
+            .with_context(|| format!("failed to fetch patch '{id}'"))?;
         if pretty {
             print_patch_artifact(&artifact)?;
         } else {
@@ -135,22 +132,16 @@ async fn list_patches(
     }
 
     let response = client
-        .list_artifacts(&SearchArtifactsQuery {
-            artifact_type: Some(ArtifactKind::Patch),
-            issue_type: None,
-            status: None,
-            assignee: None,
-            q: query,
-        })
+        .list_patches(&SearchPatchesQuery { q: query })
         .await
-        .context("failed to search for patch artifacts")?;
+        .context("failed to search for patches")?;
 
-    if response.artifacts.is_empty() {
-        eprintln!("No patch artifacts found.");
+    if response.patches.is_empty() {
+        eprintln!("No patches found.");
         return Ok(());
     }
 
-    for artifact in response.artifacts {
+    for artifact in response.patches {
         if pretty {
             print_patch_artifact(&artifact)?;
         } else {
@@ -189,8 +180,8 @@ async fn create_patch(
     }
 
     let response = client
-        .create_artifact(&UpsertArtifactRequest {
-            artifact: Artifact::Patch {
+        .create_patch(&UpsertPatchRequest {
+            patch: Patch {
                 title: title.clone(),
                 diff: patch,
                 description: description.clone(),
@@ -199,7 +190,7 @@ async fn create_patch(
             job_id: job_id.clone(),
         })
         .await
-        .context("failed to create patch artifact")?;
+        .context("failed to create patch")?;
 
     if create_github_pr {
         create_github_pull_request(&repo_root, &title, &description, job_id.as_deref())?;
@@ -208,7 +199,7 @@ async fn create_patch(
     println!(
         "{}",
         serde_json::to_string(&serde_json::json!({
-            "artifact_id": response.artifact_id,
+            "patch_id": response.patch_id,
             "type": "patch"
         }))?
     );
@@ -234,38 +225,22 @@ fn git_repository_root() -> Result<PathBuf> {
     Ok(PathBuf::from(root))
 }
 
-fn ensure_patch(record: &ArtifactRecord, id: &str) -> Result<()> {
-    match &record.artifact {
-        Artifact::Patch { .. } => Ok(()),
-        _ => bail!("artifact '{id}' is not a patch"),
-    }
+fn extract_patch_title(record: &PatchRecord) -> &str {
+    &record.patch.title
 }
 
-fn extract_patch_title<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
-    match &record.artifact {
-        Artifact::Patch { title, .. } => Ok(title),
-        _ => bail!("artifact '{id}' is not a patch"),
-    }
+fn extract_patch_diff(record: &PatchRecord) -> &str {
+    &record.patch.diff
 }
 
-fn extract_patch_diff<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
-    match &record.artifact {
-        Artifact::Patch { diff, .. } => Ok(diff),
-        _ => bail!("artifact '{id}' is not a patch"),
-    }
+fn extract_patch_description(record: &PatchRecord) -> &str {
+    &record.patch.description
 }
 
-fn extract_patch_description<'a>(record: &'a ArtifactRecord, id: &str) -> Result<&'a str> {
-    match &record.artifact {
-        Artifact::Patch { description, .. } => Ok(description),
-        _ => bail!("artifact '{id}' is not a patch"),
-    }
-}
-
-fn print_patch_artifact(record: &ArtifactRecord) -> Result<()> {
-    let diff = extract_patch_diff(record, &record.id)?;
-    let title = extract_patch_title(record, &record.id)?;
-    let description = extract_patch_description(record, &record.id)?;
+fn print_patch_artifact(record: &PatchRecord) -> Result<()> {
+    let diff = extract_patch_diff(record);
+    let title = extract_patch_title(record);
+    let description = extract_patch_description(record);
     println!("Patch {}: {}", record.id, title);
     if !description.trim().is_empty() {
         println!("{description}");
@@ -294,10 +269,10 @@ fn pretty_print_patch(patch: &str) {
 
 async fn apply_patch_artifact(client: &dyn MetisClientInterface, id: MetisId) -> Result<()> {
     let artifact = client
-        .get_artifact(&id)
+        .get_patch(&id)
         .await
-        .with_context(|| format!("failed to fetch patch artifact '{id}'"))?;
-    let diff = extract_patch_diff(&artifact, &id)?;
+        .with_context(|| format!("failed to fetch patch '{id}'"))?;
+    let diff = extract_patch_diff(&artifact);
     let repo_root = git_repository_root()?;
 
     apply_patch_to_repo(diff, &repo_root)?;
@@ -379,45 +354,29 @@ async fn review_patch(
         bail!("Review contents must not be empty.");
     }
 
-    let artifact = client
-        .get_artifact(&patch_id)
+    let mut record = client
+        .get_patch(&patch_id)
         .await
-        .with_context(|| format!("failed to fetch patch artifact '{patch_id}'"))?;
+        .with_context(|| format!("failed to fetch patch '{patch_id}'"))?;
 
-    let updated_patch = match artifact.artifact {
-        Artifact::Patch {
-            title,
-            description,
-            diff,
-            mut reviews,
-        } => {
-            reviews.push(Review {
-                contents,
-                is_approved: approve,
-                author,
-            });
-            Artifact::Patch {
-                title,
-                description,
-                diff,
-                reviews,
-            }
-        }
-        _ => bail!("artifact '{patch_id}' is not a patch"),
-    };
+    record.patch.reviews.push(Review {
+        contents,
+        is_approved: approve,
+        author,
+    });
 
     let response = client
-        .update_artifact(
+        .update_patch(
             &patch_id,
-            &UpsertArtifactRequest {
-                artifact: updated_patch,
+            &UpsertPatchRequest {
+                patch: record.patch,
                 job_id: None,
             },
         )
         .await
         .with_context(|| format!("failed to update patch '{patch_id}' with review"))?;
 
-    println!("{}", response.artifact_id);
+    println!("{}", response.patch_id);
     Ok(())
 }
 
@@ -617,8 +576,7 @@ mod tests {
     use crate::{client::MockMetisClient, constants};
     use anyhow::anyhow;
     use metis_common::artifacts::{
-        Artifact, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse, Review,
-        UpsertArtifactResponse,
+        ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
     };
     use std::{env, fs, path::PathBuf, process::Command};
 
@@ -731,39 +689,14 @@ mod tests {
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let client = MockMetisClient::default();
-        client.push_list_artifacts_response(ListArtifactsResponse { artifacts: vec![] });
+        client.push_list_patches_response(ListPatchesResponse { patches: vec![] });
 
         list_patches(&client, None, Some("login".to_string()), false).await?;
 
-        let queries = client.recorded_list_artifacts_queries();
+        let queries = client.recorded_list_patch_queries();
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].artifact_type, Some(ArtifactKind::Patch));
         assert_eq!(queries[0].q.as_deref(), Some("login"));
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn list_patches_errors_when_id_is_not_patch() {
-        let client = MockMetisClient::default();
-        client.push_get_artifact_response(ArtifactRecord {
-            id: "artifact-1".to_string(),
-            artifact: Artifact::Issue {
-                issue_type: IssueType::Task,
-                description: "not a patch".to_string(),
-                status: IssueStatus::Open,
-                assignee: None,
-                dependencies: vec![],
-            },
-        });
-
-        let err = list_patches(&client, Some("artifact-1".to_string()), None, false)
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.to_string().contains("is not a patch"),
-            "expected patch type error, got {err:?}"
-        );
     }
 
     #[tokio::test]
@@ -772,8 +705,8 @@ mod tests {
         let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "patch-1".to_string(),
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-1".to_string(),
         });
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
@@ -786,19 +719,14 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_artifact_upserts();
-        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
 
         let (_, request) = &requests[0];
-        let (generated_title, generated_patch, generated_description) = match &request.artifact {
-            Artifact::Patch {
-                title,
-                diff,
-                description,
-                ..
-            } => (title, diff, description),
-            other => panic!("expected patch artifact, got {other:?}"),
-        };
+        let patch = &request.patch;
+        let generated_title = &patch.title;
+        let generated_patch = &patch.diff;
+        let generated_description = &patch.description;
         assert_eq!(
             generated_title, &patch_title,
             "expected provided title to be applied"
@@ -861,8 +789,8 @@ mod tests {
         let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "patch-2".to_string(),
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-2".to_string(),
         });
 
         let title = "patch with job title".to_string();
@@ -878,26 +806,17 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_artifact_upserts();
-        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
 
         let (_, request) = &requests[0];
         assert_eq!(
             request.job_id, job_id,
-            "job id should be forwarded to the artifact request"
+            "job id should be forwarded to the patch request"
         );
 
-        match &request.artifact {
-            Artifact::Patch {
-                title: recorded_title,
-                description: recorded_description,
-                ..
-            } => {
-                assert_eq!(recorded_title, &title);
-                assert_eq!(recorded_description, &description);
-            }
-            other => panic!("expected patch artifact, got {other:?}"),
-        }
+        assert_eq!(request.patch.title, title);
+        assert_eq!(request.patch.description, description);
 
         Ok(())
     }
@@ -909,8 +828,8 @@ mod tests {
         let _guard = EnvVarGuard::set(ENV_METIS_ID, "job-from-env");
 
         let client = MockMetisClient::default();
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "patch-3".to_string(),
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-3".to_string(),
         });
 
         let title = "patch with env title".to_string();
@@ -918,8 +837,8 @@ mod tests {
 
         create_patch(&client, title.clone(), description.clone(), None, false).await?;
 
-        let requests = client.recorded_artifact_upserts();
-        assert_eq!(requests.len(), 1, "expected one artifact upsert");
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
 
         let (_, request) = &requests[0];
         assert_eq!(
@@ -928,17 +847,8 @@ mod tests {
             "job id should default from the METIS_ID environment variable"
         );
 
-        match &request.artifact {
-            Artifact::Patch {
-                title: recorded_title,
-                description: recorded_description,
-                ..
-            } => {
-                assert_eq!(recorded_title, &title);
-                assert_eq!(recorded_description, &description);
-            }
-            other => panic!("expected patch artifact, got {other:?}"),
-        }
+        assert_eq!(request.patch.title, title);
+        assert_eq!(request.patch.description, description);
 
         Ok(())
     }
@@ -951,17 +861,17 @@ mod tests {
             is_approved: false,
             author: "bob".to_string(),
         };
-        client.push_get_artifact_response(ArtifactRecord {
+        client.push_get_patch_response(PatchRecord {
             id: "patch-123".to_string(),
-            artifact: Artifact::Patch {
+            patch: Patch {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
                 diff: "diff --git a/file b/file\n+example".to_string(),
                 reviews: vec![existing_review.clone()],
             },
         });
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "patch-123".to_string(),
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-123".to_string(),
         });
 
         review_patch(
@@ -974,29 +884,25 @@ mod tests {
         .await?;
 
         assert_eq!(
-            client.recorded_get_artifact_requests(),
+            client.recorded_get_patch_requests(),
             vec!["patch-123".to_string()]
         );
-        let updates = client.recorded_artifact_upserts();
-        assert_eq!(updates.len(), 1, "expected one artifact update");
+        let updates = client.recorded_patch_upserts();
+        assert_eq!(updates.len(), 1, "expected one patch update");
 
-        let (artifact_id, request) = &updates[0];
-        assert_eq!(artifact_id.as_deref(), Some("patch-123"));
-        match &request.artifact {
-            Artifact::Patch { reviews, .. } => {
-                assert_eq!(reviews.len(), 2);
-                assert_eq!(reviews[0], existing_review);
-                assert_eq!(
-                    reviews[1],
-                    Review {
-                        contents: "looks good now".to_string(),
-                        is_approved: true,
-                        author: "alice".to_string(),
-                    }
-                );
+        let (patch_id, request) = &updates[0];
+        assert_eq!(patch_id.as_deref(), Some("patch-123"));
+        let reviews = &request.patch.reviews;
+        assert_eq!(reviews.len(), 2);
+        assert_eq!(reviews[0], existing_review);
+        assert_eq!(
+            reviews[1],
+            Review {
+                contents: "looks good now".to_string(),
+                is_approved: true,
+                author: "alice".to_string(),
             }
-            other => panic!("expected patch artifact, got {other:?}"),
-        }
+        );
 
         Ok(())
     }

@@ -57,12 +57,20 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     let app = Router::new()
         .route("/health", get(health_check))
         .route(
-            "/v1/artifacts",
-            get(routes::artifacts::list_artifacts).post(routes::artifacts::create_artifact),
+            "/v1/issues",
+            get(routes::artifacts::list_issues).post(routes::artifacts::create_issue),
         )
         .route(
-            "/v1/artifacts/:artifact_id",
-            get(routes::artifacts::get_artifact).put(routes::artifacts::update_artifact),
+            "/v1/issues/:issue_id",
+            get(routes::artifacts::get_issue).put(routes::artifacts::update_issue),
+        )
+        .route(
+            "/v1/patches",
+            get(routes::artifacts::list_patches).post(routes::artifacts::create_patch),
+        )
+        .route(
+            "/v1/patches/:patch_id",
+            get(routes::artifacts::get_patch).put(routes::artifacts::update_patch),
         )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route(
@@ -177,8 +185,9 @@ mod tests {
     use chrono::{Duration, Utc};
     use metis_common::{
         artifacts::{
-            Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-            SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+            Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, ListPatchesResponse,
+            Patch, PatchRecord, SearchIssuesQuery, SearchPatchesQuery, UpsertIssueRequest,
+            UpsertIssueResponse, UpsertPatchRequest, UpsertPatchResponse,
         },
         constants::ENV_GH_TOKEN,
         job_status::GetJobStatusResponse,
@@ -936,7 +945,7 @@ mod tests {
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             artifact_id = store_write
-                .add_artifact(Artifact::Patch {
+                .add_patch(Patch {
                     title: "done".to_string(),
                     diff: "diff".to_string(),
                     description: "done".to_string(),
@@ -1141,7 +1150,7 @@ mod tests {
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             artifact_id = store_write
-                .add_artifact(Artifact::Patch {
+                .add_patch(Patch {
                     title: "all good".to_string(),
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
@@ -1177,25 +1186,21 @@ mod tests {
         assert_eq!(emitted_ids, vec![artifact_id.clone()]);
 
         let artifact_response = client
-            .get(format!("{}/v1/artifacts/{artifact_id}", server.base_url()))
+            .get(format!("{}/v1/patches/{artifact_id}", server.base_url()))
             .send()
             .await?;
         assert!(artifact_response.status().is_success());
-        let artifact: ArtifactRecord = artifact_response.json().await?;
+        let artifact: PatchRecord = artifact_response.json().await?;
         assert_eq!(artifact.id, artifact_id);
-        match artifact.artifact {
-            Artifact::Patch {
-                title,
-                diff,
-                description,
-                ..
-            } => {
-                assert_eq!(title, "all good");
-                assert_eq!(diff, "diff");
-                assert_eq!(description, "all good");
-            }
-            other => panic!("expected patch artifact, got {other:?}"),
-        };
+        let Patch {
+            title,
+            diff,
+            description,
+            ..
+        } = artifact.patch;
+        assert_eq!(title, "all good");
+        assert_eq!(diff, "diff");
+        assert_eq!(description, "all good");
         Ok(())
     }
 
@@ -1258,7 +1263,7 @@ mod tests {
                 .mark_task_running(&"parent-job".to_string(), Utc::now())
                 .await?;
             let parent_artifact_id = store_write
-                .add_artifact(Artifact::Patch {
+                .add_patch(Patch {
                     title: "done".to_string(),
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
@@ -1351,10 +1356,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn artifacts_can_be_created_and_retrieved() -> anyhow::Result<()> {
+    async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
-        let artifact = Artifact::Patch {
+        let patch = Patch {
             title: "Initial patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
@@ -1362,36 +1367,36 @@ mod tests {
         };
 
         let response = client
-            .post(format!("{}/v1/artifacts", server.base_url()))
-            .json(&UpsertArtifactRequest {
-                artifact: artifact.clone(),
+            .post(format!("{}/v1/patches", server.base_url()))
+            .json(&UpsertPatchRequest {
+                patch: patch.clone(),
                 job_id: None,
             })
             .send()
             .await?;
 
         assert!(response.status().is_success());
-        let created: UpsertArtifactResponse = response.json().await?;
-        assert!(!created.artifact_id.is_empty());
+        let created: UpsertPatchResponse = response.json().await?;
+        assert!(!created.patch_id.is_empty());
 
-        let fetched: ArtifactRecord = client
+        let fetched: PatchRecord = client
             .get(format!(
-                "{}/v1/artifacts/{}",
+                "{}/v1/patches/{}",
                 server.base_url(),
-                created.artifact_id
+                created.patch_id
             ))
             .send()
             .await?
             .json()
             .await?;
 
-        assert_eq!(fetched.id, created.artifact_id);
-        assert_eq!(fetched.artifact, artifact);
+        assert_eq!(fetched.id, created.patch_id);
+        assert_eq!(fetched.patch, patch);
         Ok(())
     }
 
     #[tokio::test]
-    async fn creating_artifact_with_job_id_emits_event() -> anyhow::Result<()> {
+    async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let job_id = "emit-artifacts".to_string();
@@ -1418,9 +1423,9 @@ mod tests {
         let server = spawn_test_server_with_state(state).await?;
         let client = test_client();
         let response = client
-            .post(format!("{}/v1/artifacts", server.base_url()))
-            .json(&UpsertArtifactRequest {
-                artifact: Artifact::Patch {
+            .post(format!("{}/v1/patches", server.base_url()))
+            .json(&UpsertPatchRequest {
+                patch: Patch {
                     title: "artifact for emit".to_string(),
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
@@ -1432,7 +1437,7 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
-        let created: UpsertArtifactResponse = response.json().await?;
+        let created: UpsertPatchResponse = response.json().await?;
 
         let emitted = {
             let store_read = store.read().await;
@@ -1441,67 +1446,33 @@ mod tests {
                 .await?
                 .emitted_artifacts()
         };
-        assert_eq!(emitted, Some(vec![created.artifact_id]));
+        assert_eq!(emitted, Some(vec![created.patch_id]));
         Ok(())
     }
 
     #[tokio::test]
-    async fn list_artifacts_supports_filters() -> anyhow::Result<()> {
+    async fn list_endpoints_support_filters() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
-        let patch = Artifact::Patch {
+
+        let patch = Patch {
             title: "refactor logging".to_string(),
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
             reviews: Vec::new(),
         };
-        let issue = Artifact::Issue {
-            issue_type: IssueType::Bug,
-            description: "login fails for guests".to_string(),
-            status: IssueStatus::Open,
-            assignee: None,
-            dependencies: vec![],
-        };
-        let feature_issue = Artifact::Issue {
-            issue_type: IssueType::Feature,
-            description: "add dark mode support".to_string(),
-            status: IssueStatus::InProgress,
-            assignee: None,
-            dependencies: vec![],
-        };
-        let assigned_issue = Artifact::Issue {
-            issue_type: IssueType::Task,
-            description: "assigned issue".to_string(),
-            status: IssueStatus::Open,
-            assignee: Some("owner-1".to_string()),
-            dependencies: vec![],
-        };
-        let closed_issue = Artifact::Issue {
-            issue_type: IssueType::Task,
-            description: "retire old endpoint".to_string(),
-            status: IssueStatus::Closed,
-            assignee: None,
-            dependencies: vec![],
-        };
-        let filtered_patch = Artifact::Patch {
+        let filtered_patch = Patch {
             title: "login retry patch".to_string(),
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
             reviews: Vec::new(),
         };
 
-        for artifact in [
-            patch.clone(),
-            issue.clone(),
-            feature_issue.clone(),
-            assigned_issue.clone(),
-            closed_issue.clone(),
-            filtered_patch.clone(),
-        ] {
+        for patch in [patch.clone(), filtered_patch.clone()] {
             let response = client
-                .post(format!("{}/v1/artifacts", server.base_url()))
-                .json(&UpsertArtifactRequest {
-                    artifact,
+                .post(format!("{}/v1/patches", server.base_url()))
+                .json(&UpsertPatchRequest {
+                    patch,
                     job_id: None,
                 })
                 .send()
@@ -1509,21 +1480,9 @@ mod tests {
             assert!(response.status().is_success());
         }
 
-        let all: ListArtifactsResponse = client
-            .get(format!("{}/v1/artifacts", server.base_url()))
-            .send()
-            .await?
-            .json()
-            .await?;
-        assert_eq!(all.artifacts.len(), 6);
-
-        let filtered: ListArtifactsResponse = client
-            .get(format!("{}/v1/artifacts", server.base_url()))
-            .query(&SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Patch),
-                issue_type: None,
-                status: None,
-                assignee: None,
+        let patch_results: ListPatchesResponse = client
+            .get(format!("{}/v1/patches", server.base_url()))
+            .query(&SearchPatchesQuery {
                 q: Some("login".to_string()),
             })
             .send()
@@ -1531,13 +1490,46 @@ mod tests {
             .json()
             .await?;
 
-        assert_eq!(filtered.artifacts.len(), 1);
-        assert_eq!(filtered.artifacts[0].artifact, filtered_patch);
+        assert_eq!(patch_results.patches.len(), 1);
+        assert_eq!(patch_results.patches[0].patch, filtered_patch);
 
-        let filtered_issues: ListArtifactsResponse = client
-            .get(format!("{}/v1/artifacts", server.base_url()))
-            .query(&SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Issue),
+        let issue = Issue {
+            issue_type: IssueType::Bug,
+            description: "login fails for guests".to_string(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: vec![],
+        };
+        let assigned_issue = Issue {
+            issue_type: IssueType::Task,
+            description: "assigned issue".to_string(),
+            status: IssueStatus::Open,
+            assignee: Some("owner-1".to_string()),
+            dependencies: vec![],
+        };
+        let closed_issue = Issue {
+            issue_type: IssueType::Task,
+            description: "retire old endpoint".to_string(),
+            status: IssueStatus::Closed,
+            assignee: None,
+            dependencies: vec![],
+        };
+
+        for issue in [issue.clone(), assigned_issue.clone(), closed_issue.clone()] {
+            let response = client
+                .post(format!("{}/v1/issues", server.base_url()))
+                .json(&UpsertIssueRequest {
+                    issue,
+                    job_id: None,
+                })
+                .send()
+                .await?;
+            assert!(response.status().is_success());
+        }
+
+        let filtered_issues: ListIssuesResponse = client
+            .get(format!("{}/v1/issues", server.base_url()))
+            .query(&SearchIssuesQuery {
                 issue_type: Some(IssueType::Bug),
                 status: None,
                 assignee: None,
@@ -1548,13 +1540,12 @@ mod tests {
             .json()
             .await?;
 
-        assert_eq!(filtered_issues.artifacts.len(), 1);
-        assert_eq!(filtered_issues.artifacts[0].artifact, issue);
+        assert_eq!(filtered_issues.issues.len(), 1);
+        assert_eq!(filtered_issues.issues[0].issue, issue);
 
-        let filtered_by_assignee: ListArtifactsResponse = client
-            .get(format!("{}/v1/artifacts", server.base_url()))
-            .query(&SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Issue),
+        let filtered_by_assignee: ListIssuesResponse = client
+            .get(format!("{}/v1/issues", server.base_url()))
+            .query(&SearchIssuesQuery {
                 issue_type: None,
                 status: None,
                 assignee: Some("OWNER-1".to_string()),
@@ -1565,13 +1556,12 @@ mod tests {
             .json()
             .await?;
 
-        assert_eq!(filtered_by_assignee.artifacts.len(), 1);
-        assert_eq!(filtered_by_assignee.artifacts[0].artifact, assigned_issue);
+        assert_eq!(filtered_by_assignee.issues.len(), 1);
+        assert_eq!(filtered_by_assignee.issues[0].issue, assigned_issue);
 
-        let filtered_by_status: ListArtifactsResponse = client
-            .get(format!("{}/v1/artifacts", server.base_url()))
-            .query(&SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Issue),
+        let filtered_by_status: ListIssuesResponse = client
+            .get(format!("{}/v1/issues", server.base_url()))
+            .query(&SearchIssuesQuery {
                 issue_type: None,
                 status: Some(IssueStatus::Closed),
                 assignee: None,
@@ -1582,24 +1572,25 @@ mod tests {
             .json()
             .await?;
 
-        assert_eq!(filtered_by_status.artifacts.len(), 1);
-        assert_eq!(filtered_by_status.artifacts[0].artifact, closed_issue);
+        assert_eq!(filtered_by_status.issues.len(), 1);
+        assert_eq!(filtered_by_status.issues[0].issue, closed_issue);
         Ok(())
     }
 
     #[tokio::test]
-    async fn update_artifact_replaces_existing_value() -> anyhow::Result<()> {
+    async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
 
-        let created: UpsertArtifactResponse = client
-            .post(format!("{}/v1/artifacts", server.base_url()))
-            .json(&UpsertArtifactRequest {
-                artifact: Artifact::Patch {
-                    title: "old patch".to_string(),
-                    diff: "old diff".to_string(),
-                    description: "old patch".to_string(),
-                    reviews: Vec::new(),
+        let created: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "original details".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
                 },
                 job_id: None,
             })
@@ -1608,14 +1599,14 @@ mod tests {
             .json()
             .await?;
 
-        let updated: UpsertArtifactResponse = client
+        let updated: UpsertIssueResponse = client
             .put(format!(
-                "{}/v1/artifacts/{}",
+                "{}/v1/issues/{}",
                 server.base_url(),
-                created.artifact_id
+                created.issue_id
             ))
-            .json(&UpsertArtifactRequest {
-                artifact: Artifact::Issue {
+            .json(&UpsertIssueRequest {
+                issue: Issue {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
                     status: IssueStatus::InProgress,
@@ -1629,13 +1620,13 @@ mod tests {
             .json()
             .await?;
 
-        assert_eq!(updated.artifact_id, created.artifact_id);
+        assert_eq!(updated.issue_id, created.issue_id);
 
-        let fetched: ArtifactRecord = client
+        let fetched: IssueRecord = client
             .get(format!(
-                "{}/v1/artifacts/{}",
+                "{}/v1/issues/{}",
                 server.base_url(),
-                created.artifact_id
+                created.issue_id
             ))
             .send()
             .await?
@@ -1643,8 +1634,8 @@ mod tests {
             .await?;
 
         assert_eq!(
-            fetched.artifact,
-            Artifact::Issue {
+            fetched.issue,
+            Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
                 status: IssueStatus::InProgress,

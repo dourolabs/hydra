@@ -129,52 +129,6 @@ pub struct IssueDependency {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum Artifact {
-    Patch {
-        #[serde(default)]
-        title: String,
-        description: String,
-        diff: String,
-        #[serde(default)]
-        reviews: Vec<Review>,
-    },
-    Issue {
-        #[serde(rename = "type")]
-        issue_type: IssueType,
-        description: String,
-        #[serde(default)]
-        status: IssueStatus,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        assignee: Option<String>,
-        #[serde(default)]
-        dependencies: Vec<IssueDependency>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactKind {
-    Patch,
-    Issue,
-}
-
-impl From<&Artifact> for ArtifactKind {
-    fn from(artifact: &Artifact) -> Self {
-        match artifact {
-            Artifact::Patch { .. } => ArtifactKind::Patch,
-            Artifact::Issue { .. } => ArtifactKind::Issue,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArtifactRecord {
-    pub id: String,
-    pub artifact: Artifact,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
     pub contents: String,
     pub is_approved: bool,
@@ -182,21 +136,66 @@ pub struct Review {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertArtifactRequest {
-    pub artifact: Artifact,
+pub struct Patch {
+    #[serde(default)]
+    pub title: String,
+    pub description: String,
+    pub diff: String,
+    #[serde(default)]
+    pub reviews: Vec<Review>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Issue {
+    #[serde(rename = "type")]
+    pub issue_type: IssueType,
+    pub description: String,
+    #[serde(default)]
+    pub status: IssueStatus,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub dependencies: Vec<IssueDependency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchRecord {
+    pub id: MetisId,
+    pub patch: Patch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueRecord {
+    pub id: MetisId,
+    pub issue: Issue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpsertPatchRequest {
+    pub patch: Patch,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<MetisId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertArtifactResponse {
-    pub artifact_id: String,
+pub struct UpsertIssueRequest {
+    pub issue: Issue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<MetisId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpsertPatchResponse {
+    pub patch_id: MetisId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpsertIssueResponse {
+    pub issue_id: MetisId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchArtifactsQuery {
-    #[serde(default, rename = "type")]
-    pub artifact_type: Option<ArtifactKind>,
+pub struct SearchIssuesQuery {
     #[serde(default)]
     pub issue_type: Option<IssueType>,
     #[serde(default)]
@@ -207,7 +206,18 @@ pub struct SearchArtifactsQuery {
     pub q: Option<String>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchPatchesQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListArtifactsResponse {
-    pub artifacts: Vec<ArtifactRecord>,
+pub struct ListIssuesResponse {
+    pub issues: Vec<IssueRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListPatchesResponse {
+    pub patches: Vec<PatchRecord>,
 }

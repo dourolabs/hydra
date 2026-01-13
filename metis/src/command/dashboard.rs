@@ -16,8 +16,8 @@ use crossterm::{
 use futures::StreamExt;
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
-        SearchArtifactsQuery,
+        IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
+        PatchRecord as ApiPatchRecord, SearchIssuesQuery, SearchPatchesQuery,
     },
     jobs::JobSummary,
     task_status::{Status, TaskError, TaskStatusLog},
@@ -557,18 +557,12 @@ async fn fetch_issue_id(
 
 async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueRecord>> {
     let response = client
-        .list_artifacts(&SearchArtifactsQuery {
-            artifact_type: Some(ArtifactKind::Issue),
-            issue_type: None,
-            status: None,
-            assignee: None,
-            q: None,
-        })
+        .list_issues(&SearchIssuesQuery::default())
         .await
-        .context("failed to fetch issue artifacts")?;
+        .context("failed to fetch issues")?;
 
     let issues = response
-        .artifacts
+        .issues
         .into_iter()
         .filter_map(issue_to_record)
         .collect();
@@ -578,18 +572,12 @@ async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueReco
 
 async fn fetch_patches(client: &dyn MetisClientInterface) -> Result<Vec<PatchRecord>> {
     let response = client
-        .list_artifacts(&SearchArtifactsQuery {
-            artifact_type: Some(ArtifactKind::Patch),
-            issue_type: None,
-            status: None,
-            assignee: None,
-            q: None,
-        })
+        .list_patches(&SearchPatchesQuery::default())
         .await
-        .context("failed to fetch patch artifacts")?;
+        .context("failed to fetch patches")?;
 
     let patches = response
-        .artifacts
+        .patches
         .into_iter()
         .filter_map(patch_to_record)
         .collect();
@@ -597,42 +585,28 @@ async fn fetch_patches(client: &dyn MetisClientInterface) -> Result<Vec<PatchRec
     Ok(patches)
 }
 
-fn issue_to_record(record: ArtifactRecord) -> Option<IssueRecord> {
-    match record.artifact {
-        Artifact::Issue {
-            description,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } => Some(IssueRecord {
-            id: record.id,
-            description,
-            status,
-            assignee,
-            dependencies,
-        }),
-        _ => None,
-    }
+fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
+    let issue = record.issue;
+    Some(IssueRecord {
+        id: record.id,
+        description: issue.description,
+        status: issue.status,
+        assignee: issue.assignee,
+        dependencies: issue.dependencies,
+    })
 }
 
-fn patch_to_record(record: ArtifactRecord) -> Option<PatchRecord> {
-    match record.artifact {
-        Artifact::Patch {
-            title, description, ..
-        } => {
-            let summary = if title.trim().is_empty() {
-                description
-            } else {
-                title
-            };
-            Some(PatchRecord {
-                id: record.id,
-                summary,
-            })
-        }
-        _ => None,
-    }
+fn patch_to_record(record: ApiPatchRecord) -> Option<PatchRecord> {
+    let patch = record.patch;
+    let summary = if patch.title.trim().is_empty() {
+        patch.description
+    } else {
+        patch.title
+    };
+    Some(PatchRecord {
+        id: record.id,
+        summary,
+    })
 }
 
 fn update_views(state: &mut DashboardState) -> bool {
