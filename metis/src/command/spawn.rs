@@ -30,7 +30,6 @@ pub async fn run(
     context_dir: Option<PathBuf>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
-    after: Vec<TaskId>,
     cli_vars: Vec<String>,
     program: String,
     prompt_parts: Vec<String>,
@@ -51,7 +50,6 @@ pub async fn run(
 
     let program = load_program(&program)?;
 
-    let parent_ids = after;
     let mut variables = parse_cli_variables(&cli_vars)?;
     variables.insert("PROMPT".to_string(), prompt.clone());
 
@@ -71,7 +69,6 @@ pub async fn run(
         params,
         image,
         context,
-        parent_ids,
         variables,
     };
     let response = client.create_job(&request).await?;
@@ -488,7 +485,6 @@ mod tests {
             true,
             false,
             vec![],
-            vec![],
             program_file.to_string_lossy().to_string(),
             vec!["test prompt".into()],
         )
@@ -500,7 +496,6 @@ mod tests {
         let request = &requests[0];
         assert_eq!(request.program, program_content);
         assert_eq!(request.params, vec!["test prompt".to_string()]);
-        assert!(request.parent_ids.is_empty());
         assert_eq!(
             request.variables.get("PROMPT"),
             Some(&"test prompt".to_string())
@@ -530,7 +525,6 @@ mod tests {
             None,
             false,
             false,
-            vec![],
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -567,7 +561,6 @@ mod tests {
             false,
             false,
             vec![],
-            vec![],
             "0".into(),
             vec!["test prompt".into()],
         )
@@ -601,7 +594,6 @@ mod tests {
             None,
             false,
             false,
-            vec![],
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -637,7 +629,6 @@ mod tests {
             false,
             false,
             vec![],
-            vec![],
             "0".into(),
             vec!["test prompt".into()],
         )
@@ -672,7 +663,6 @@ mod tests {
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
-            vec![],
             vec![],
             "0".into(),
             vec!["custom image".into()],
@@ -711,7 +701,6 @@ mod tests {
             Some(tmp_dir.path().to_path_buf()),
             false,
             false,
-            vec![],
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
             "0".into(),
             vec!["variable prompt".into()],
@@ -743,7 +732,6 @@ mod tests {
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
-            vec![],
             vec![],
             "let x = 1 + 2;".into(),
             vec!["test prompt".into()],
@@ -778,7 +766,6 @@ mod tests {
             true,
             false,
             vec![],
-            vec![],
             program_path.to_string_lossy().into_owned(),
             vec!["file prompt".into()],
         )
@@ -811,7 +798,6 @@ mod tests {
             Some(tmp_dir.path().to_path_buf()),
             true,
             false,
-            vec![],
             vec![],
             "let =".into(),
             vec!["bad prompt".into()],

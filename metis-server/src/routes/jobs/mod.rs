@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     state::ResolvedBundle,
-    store::{Edge, Store, StoreError, Task, TaskError},
+    store::{Store, StoreError, Task, TaskError},
 };
 use axum::{
     Json, async_trait,
@@ -32,15 +32,6 @@ pub async fn create_job(
     info!("create_job invoked");
     let fallback_image = state.config.metis.worker_image.clone();
 
-    let parent_ids: Vec<TaskId> = payload.parent_ids;
-    let parent_edges: Vec<Edge> = parent_ids
-        .iter()
-        .map(|id| Edge {
-            id: id.clone(),
-            name: None,
-        })
-        .collect();
-
     // Generate a unique ID for the job
     let job_id = TaskId::new();
 
@@ -67,27 +58,16 @@ pub async fn create_job(
             env_vars,
         };
         store
-            .add_task_with_id(job_id.clone(), task, parent_edges.clone(), Utc::now())
+            .add_task_with_id(job_id.clone(), task, Utc::now())
             .await
-            .map_err(|err| match err {
-                StoreError::InvalidDependency(msg) => {
-                    error!(
-                        error = %msg,
-                        job_id = %job_id,
-                        "failed to store task due to invalid parent dependency"
-                    );
-                    ApiError::bad_request(msg)
-                }
-                err => {
-                    error!(error = %err, job_id = %job_id, "failed to store task");
-                    ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
-                }
+            .map_err(|err| {
+                error!(error = %err, job_id = %job_id, "failed to store task");
+                ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
             })?;
     }
 
     info!(
         job_id = %job_id,
-        parent_count = parent_ids.len(),
         "task stored, will be started by background thread"
     );
 

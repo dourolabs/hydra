@@ -183,7 +183,7 @@ async fn existing_issue_tasks_for_agent(
                 // Only consider tasks that are still actionable (not completed or failed).
                 if matches!(
                     store.get_status(&task_id).await?,
-                    Status::Pending | Status::Running | Status::Blocked
+                    Status::Pending | Status::Running
                 ) {
                     issue_ids.insert(issue_id);
                 }
@@ -318,7 +318,6 @@ mod tests {
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;

@@ -176,7 +176,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Edge, Status, Task, TaskError},
+        store::{Status, Task, TaskError},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -262,60 +262,6 @@ mod tests {
 
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Pending);
-        let parents = store_read.get_parents(&body.job_id).await?;
-        assert!(parents.is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_job_respects_parent_dependencies() -> anyhow::Result<()> {
-        let state = test_state();
-        let default_image = state.config.metis.worker_image.clone();
-        let store = state.store.clone();
-        let server = spawn_test_server_with_state(state).await?;
-        let parent_id = task_id("t-parent");
-
-        // Seed a parent task that is still pending.
-        {
-            let mut store_write = store.write().await;
-            store_write
-                .add_task_with_id(
-                    parent_id.clone(),
-                    Task::Spawn {
-                        program: "0".to_string(),
-                        params: vec![],
-                        context: Bundle::None,
-                        image: default_image.clone(),
-                        env_vars: HashMap::new(),
-                    },
-                    vec![],
-                    Utc::now(),
-                )
-                .await?;
-        }
-
-        let client = test_client();
-        let response = client
-            .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "program": "0", "parent_ids": [parent_id.as_ref()] }))
-            .send()
-            .await?;
-
-        assert!(response.status().is_success());
-        let body: CreateJobResponse = response.json().await?;
-        assert!(!body.job_id.as_ref().trim().is_empty());
-
-        let store_read = store.read().await;
-        let parents = store_read.get_parents(&body.job_id).await?;
-        assert_eq!(
-            parents,
-            vec![Edge {
-                id: parent_id,
-                name: None
-            }]
-        );
-        let status = store_read.get_status(&body.job_id).await?;
-        assert_eq!(status, Status::Blocked);
         Ok(())
     }
 
@@ -582,7 +528,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     now - Duration::seconds(30),
                 )
                 .await?;
@@ -596,7 +541,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     now - Duration::seconds(20),
                 )
                 .await?;
@@ -610,7 +554,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     now - Duration::seconds(10),
                 )
                 .await?;
@@ -655,7 +598,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     now - Duration::seconds(20),
                 )
                 .await?;
@@ -719,7 +661,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     now - Duration::seconds(30),
                 )
                 .await?;
@@ -970,7 +911,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1035,7 +975,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1087,7 +1026,6 @@ mod tests {
                         image: default_image(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1136,7 +1074,6 @@ mod tests {
                         image: default_image(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1184,7 +1121,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1305,7 +1241,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1337,10 +1272,6 @@ mod tests {
                         image: default_image.clone(),
                         env_vars: HashMap::new(),
                     },
-                    vec![Edge {
-                        id: parent_job_id,
-                        name: None,
-                    }],
                     Utc::now(),
                 )
                 .await?;
@@ -1384,7 +1315,6 @@ mod tests {
                             "keep-me-safe".to_string(),
                         )]),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;
@@ -1465,7 +1395,6 @@ mod tests {
                         image: default_image,
                         env_vars: HashMap::new(),
                     },
-                    vec![],
                     Utc::now(),
                 )
                 .await?;

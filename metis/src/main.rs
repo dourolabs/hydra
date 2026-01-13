@@ -76,10 +76,6 @@ enum Commands {
         #[arg(long = "encode-git-bundle")]
         encode_git_bundle: bool,
 
-        /// Create the job after the given Metis job ID (repeatable).
-        #[arg(long = "after", value_name = "JOB_ID")]
-        after: Vec<TaskId>,
-
         /// Override or set job variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
@@ -195,7 +191,6 @@ async fn main() -> Result<()> {
             context_dir,
             encode_directory,
             encode_git_bundle,
-            after,
             var,
             program,
             prompt,
@@ -209,7 +204,6 @@ async fn main() -> Result<()> {
                 context_dir,
                 encode_directory,
                 encode_git_bundle,
-                after,
                 var,
                 program,
                 prompt,

@@ -28,7 +28,7 @@ pub async fn run_spawners(state: AppState) {
 
                     let mut store = state.store.write().await;
                     for task in tasks {
-                        match store.add_task(task, vec![], Utc::now()).await {
+                        match store.add_task(task, Utc::now()).await {
                             Ok(metis_id) => {
                                 info!(
                                     spawner = spawner.name(),
