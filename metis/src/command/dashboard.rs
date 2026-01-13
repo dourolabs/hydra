@@ -96,11 +96,18 @@ struct IssueLine {
     id: String,
     summary: String,
     status: IssueStatus,
+    readiness: IssueReadiness,
     assignee: Option<String>,
-    blocked_on: Vec<String>,
     patch_count: usize,
     task: Option<TaskIndicator>,
     depth: usize,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum IssueReadiness {
+    Ready,
+    Blocked(Vec<String>),
+    Waiting,
 }
 
 #[derive(Clone)]
@@ -310,9 +317,11 @@ fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
             .map(|line| {
                 let mut spans = Vec::new();
                 spans.push(Span::raw("  ".repeat(line.depth)));
+                let (issue_status_label, issue_status_style) =
+                    issue_status_display(line.status, &line.readiness);
                 spans.push(Span::styled(
-                    format!("[{}]", issue_status_label(line.status)),
-                    issue_status_style(line.status),
+                    format!("[{issue_status_label}]"),
+                    issue_status_style,
                 ));
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
@@ -341,13 +350,6 @@ fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
                     spans.push(Span::styled(
                         format!("@{assignee}"),
                         Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                if !line.blocked_on.is_empty() {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("blocked: {}", line.blocked_on.join(", ")),
-                        Style::default().fg(Color::Magenta),
                     ));
                 }
                 spans.push(Span::raw(" — "));
@@ -762,14 +764,14 @@ fn append_issue(
         return;
     };
 
-    let blocked_on = active_blockers(node, nodes);
+    let readiness = issue_readiness(node, nodes);
 
     rows.push(IssueLine {
         id: node.record.id.to_string(),
         summary: node.record.description.clone(),
         status: node.record.status,
+        readiness,
         assignee: node.record.assignee.clone(),
-        blocked_on,
         patch_count: node.patch_count,
         task: node.task.clone(),
         depth,
@@ -795,6 +797,28 @@ fn active_blockers(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> Vec
         })
         .map(|dep| dep.issue_id.to_string())
         .collect()
+}
+
+fn has_open_children(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> bool {
+    node.children.iter().any(|child_id| {
+        nodes
+            .get(child_id)
+            .map(|child| child.record.status != IssueStatus::Closed)
+            .unwrap_or(true)
+    })
+}
+
+fn issue_readiness(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> IssueReadiness {
+    let blockers = active_blockers(node, nodes);
+    if !blockers.is_empty() {
+        return IssueReadiness::Blocked(blockers);
+    }
+
+    if node.record.status == IssueStatus::InProgress && has_open_children(node, nodes) {
+        return IssueReadiness::Waiting;
+    }
+
+    IssueReadiness::Ready
 }
 
 fn compare_issue_nodes(nodes: &HashMap<IssueId, IssueNode>, a: &IssueId, b: &IssueId) -> Ordering {
@@ -935,19 +959,32 @@ fn status_style(status: Status) -> Style {
     }
 }
 
-fn issue_status_label(status: IssueStatus) -> &'static str {
-    match status {
-        IssueStatus::Open => "open",
-        IssueStatus::InProgress => "in-progress",
-        IssueStatus::Closed => "closed",
-    }
-}
-
 fn issue_status_style(status: IssueStatus) -> Style {
     match status {
         IssueStatus::Open => Style::default().fg(Color::Blue),
         IssueStatus::InProgress => Style::default().fg(Color::Yellow),
         IssueStatus::Closed => Style::default().fg(Color::Green),
+    }
+}
+
+fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (String, Style) {
+    match (status, readiness) {
+        (IssueStatus::Open, IssueReadiness::Blocked(blockers)) => (
+            format!("blocked: {}", blockers.join(", ")),
+            Style::default().fg(Color::Magenta),
+        ),
+        (IssueStatus::InProgress, IssueReadiness::Waiting) => {
+            ("waiting".to_string(), Style::default().fg(Color::Magenta))
+        }
+        (IssueStatus::Closed, _) => (
+            "closed".to_string(),
+            issue_status_style(IssueStatus::Closed),
+        ),
+        (IssueStatus::InProgress, _) => (
+            "in-progress".to_string(),
+            issue_status_style(IssueStatus::InProgress),
+        ),
+        (IssueStatus::Open, _) => ("open".to_string(), issue_status_style(IssueStatus::Open)),
     }
 }
 
@@ -1132,10 +1169,12 @@ mod tests {
             .iter()
             .find(|line| line.id == issue_id("i-1").to_string())
             .expect("issue line missing");
-        assert_eq!(
-            blocked_line.blocked_on,
-            vec![issue_id("i-open").to_string()]
-        );
+        match &blocked_line.readiness {
+            IssueReadiness::Blocked(blockers) => {
+                assert_eq!(blockers, &[issue_id("i-open").to_string()])
+            }
+            other => panic!("unexpected readiness: {other:?}"),
+        }
     }
 
     #[test]
@@ -1161,5 +1200,38 @@ mod tests {
         let task = line.task.as_ref().expect("task indicator missing");
         assert_eq!(task.status, Status::Running);
         assert_eq!(task.runtime.as_deref(), Some("3s"));
+    }
+
+    #[test]
+    fn in_progress_issues_show_waiting_when_children_open() {
+        let issues = vec![
+            issue(
+                "i-parent",
+                IssueStatus::InProgress,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+            issue(
+                "i-root",
+                IssueStatus::InProgress,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-grand"),
+                }],
+            ),
+            issue("i-grand", IssueStatus::Open, vec![]),
+        ];
+
+        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+
+        let line = lines
+            .rows
+            .iter()
+            .find(|line| line.id == issue_id("i-root").to_string())
+            .expect("issue line missing");
+        assert_eq!(line.status, IssueStatus::InProgress);
+        assert!(matches!(line.readiness, IssueReadiness::Waiting));
     }
 }
