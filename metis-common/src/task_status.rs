@@ -35,6 +35,8 @@ pub enum Event {
     },
     Completed {
         at: DateTime<Utc>,
+        #[serde(default)]
+        last_message: Option<String>,
     },
     Failed {
         at: DateTime<Utc>,

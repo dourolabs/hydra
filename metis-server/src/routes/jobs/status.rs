@@ -23,10 +23,13 @@ pub async fn set_job_status(
             ApiError::not_found(format!("Job '{job_id}' not found in store"))
         })?;
 
-        let result = status.to_result();
-
         store
-            .mark_task_complete(&job_id, result, Utc::now())
+            .mark_task_complete(
+                &job_id,
+                status.to_result(),
+                status.last_message(),
+                Utc::now(),
+            )
             .await
             .map_err(|err| {
                 error!(error = %err, job_id = %job_id, "failed to update task status");

@@ -940,6 +940,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "diff".to_string(),
                     description: "done".to_string(),
+                    reviews: Vec::new(),
                 })
                 .await?;
             store_write
@@ -966,6 +967,59 @@ mod tests {
         assert!(matches!(result, Some(Ok(()))));
         let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
         assert_eq!(status_log.emitted_artifacts(), Some(vec![artifact_id]));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_job_status_records_last_message() -> anyhow::Result<()> {
+        let state = test_state();
+        let default_image = default_image();
+        let job_id = "job-with-last-message".to_string();
+        {
+            let mut store_write = state.store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task::Spawn {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: Bundle::None,
+                        image: default_image.clone(),
+                        env_vars: HashMap::new(),
+                    },
+                    vec![],
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+        }
+        let server = spawn_test_server_with_state(state.clone()).await?;
+        let client = test_client();
+
+        let response = client
+            .post(format!(
+                "{}/v1/jobs/{}/status",
+                server.base_url(),
+                job_id.as_str()
+            ))
+            .json(&json!({
+                "status": "complete",
+                "last_message": "all done"
+            }))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+
+        let store_read = state.store.read().await;
+        let status_log = store_read.get_status_log(&job_id).await?;
+        match status_log.events.last() {
+            Some(Event::Completed { last_message, .. }) => {
+                assert_eq!(last_message.as_deref(), Some("all done"))
+            }
+            other => panic!("expected completed event, got {other:?}"),
+        }
 
         Ok(())
     }
@@ -1039,7 +1093,7 @@ mod tests {
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .mark_task_complete(&job_id, Ok(()), None, Utc::now())
                 .await?;
         }
 
@@ -1091,13 +1145,14 @@ mod tests {
                     title: "all good".to_string(),
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
+                    reviews: Vec::new(),
                 })
                 .await?;
             store_write
                 .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
                 .await?;
             store_write
-                .mark_task_complete(&job_id, Ok(()), Utc::now())
+                .mark_task_complete(&job_id, Ok(()), None, Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -1133,6 +1188,7 @@ mod tests {
                 title,
                 diff,
                 description,
+                ..
             } => {
                 assert_eq!(title, "all good");
                 assert_eq!(diff, "diff");
@@ -1206,6 +1262,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
+                    reviews: Vec::new(),
                 })
                 .await?;
             store_write
@@ -1216,7 +1273,7 @@ mod tests {
                 )
                 .await?;
             store_write
-                .mark_task_complete(&"parent-job".to_string(), Ok(()), Utc::now())
+                .mark_task_complete(&"parent-job".to_string(), Ok(()), None, Utc::now())
                 .await?;
             store_write
                 .add_task_with_id(
@@ -1301,6 +1358,7 @@ mod tests {
             title: "Initial patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
+            reviews: Vec::new(),
         };
 
         let response = client
@@ -1366,6 +1424,7 @@ mod tests {
                     title: "artifact for emit".to_string(),
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
+                    reviews: Vec::new(),
                 },
                 job_id: Some(job_id.clone()),
             })
@@ -1394,6 +1453,7 @@ mod tests {
             title: "refactor logging".to_string(),
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
+            reviews: Vec::new(),
         };
         let issue = Artifact::Issue {
             issue_type: IssueType::Bug,
@@ -1427,6 +1487,7 @@ mod tests {
             title: "login retry patch".to_string(),
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
+            reviews: Vec::new(),
         };
 
         for artifact in [
@@ -1538,6 +1599,7 @@ mod tests {
                     title: "old patch".to_string(),
                     diff: "old diff".to_string(),
                     description: "old patch".to_string(),
+                    reviews: Vec::new(),
                 },
                 job_id: None,
             })

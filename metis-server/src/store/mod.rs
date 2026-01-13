@@ -86,6 +86,15 @@ pub trait Store: Send + Sync {
     /// A vector of (MetisId, Artifact) tuples representing all stored artifacts
     async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError>;
 
+    /// Lists all issues that declare the provided issue as a parent via `child-of`.
+    async fn get_issue_children(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
+
+    /// Lists all issues that are blocked on the provided issue.
+    async fn get_issue_blocked_on(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError>;
+
+    /// Returns whether the issue is ready to be worked on based on its status and dependencies.
+    async fn is_issue_ready(&self, issue_id: &MetisId) -> Result<bool, StoreError>;
+
     /// Adds a task to the store with its parent dependencies.
     ///
     /// The parent tasks must complete before this task can start.
@@ -289,6 +298,7 @@ pub trait Store: Send + Sync {
     /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
     ///              If Err, the task is marked as Failed with the error as the failure reason.
     /// * `end_time` - The timestamp when the task completed or failed
+    /// * `last_message` - Optional final worker message to store with the completion event
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if:
@@ -298,6 +308,7 @@ pub trait Store: Send + Sync {
         &mut self,
         id: &MetisId,
         result: Result<(), TaskError>,
+        last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }

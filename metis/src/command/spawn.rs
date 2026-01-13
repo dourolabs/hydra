@@ -109,10 +109,7 @@ pub(crate) async fn stream_job_logs_via_server(
 
     while let Some(line) = log_stream.next().await {
         let line = line?;
-        print!("{line}");
-        if !line.ends_with('\n') {
-            println!();
-        }
+        io::stdout().write_all(line.as_bytes())?;
         io::stdout().flush()?;
     }
 
@@ -465,6 +462,7 @@ mod tests {
                         Event::Started { at: start_time },
                         Event::Completed {
                             at: start_time + ChronoDuration::seconds(1),
+                            last_message: None,
                         },
                     ],
                 },

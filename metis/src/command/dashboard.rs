@@ -98,7 +98,7 @@ struct IssueLine {
     assignee: Option<String>,
     blocked_on: Vec<String>,
     patch_count: usize,
-    task_status: Option<Status>,
+    task: Option<TaskIndicator>,
     depth: usize,
 }
 
@@ -108,7 +108,13 @@ struct IssueNode {
     parent: Option<String>,
     children: Vec<String>,
     patch_count: usize,
-    task_status: Option<Status>,
+    task: Option<TaskIndicator>,
+}
+
+#[derive(Clone, PartialEq)]
+struct TaskIndicator {
+    status: Status,
+    runtime: Option<String>,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -312,12 +318,15 @@ fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
                     line.id.clone(),
                     Style::default().add_modifier(Modifier::BOLD),
                 ));
-                if let Some(task_status) = line.task_status {
+                if let Some(task) = &line.task {
                     spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("[task:{}]", status_label(task_status)),
-                        status_style(task_status),
-                    ));
+                    let mut task_label = format!("[task:{}", status_label(task.status));
+                    if let Some(runtime) = &task.runtime {
+                        task_label.push(' ');
+                        task_label.push_str(runtime);
+                    }
+                    task_label.push(']');
+                    spans.push(Span::styled(task_label, status_style(task.status)));
                 }
                 if line.patch_count > 0 {
                     spans.push(Span::raw(" "));
@@ -669,15 +678,15 @@ fn build_issue_lines(
     patches: &[PatchRecord],
 ) -> (IssueLines, HashSet<String>) {
     let issue_ids: HashSet<String> = issues.iter().map(|issue| issue.id.clone()).collect();
-    let mut task_status_by_issue: HashMap<String, Vec<Status>> = HashMap::new();
+    let mut tasks_by_issue: HashMap<String, Vec<JobDisplay>> = HashMap::new();
     let mut emitted_artifacts_by_issue: HashMap<String, HashSet<String>> = HashMap::new();
 
     for job in jobs {
         if let Some(issue_id) = &job.issue_id {
-            task_status_by_issue
+            tasks_by_issue
                 .entry(issue_id.clone())
                 .or_default()
-                .push(job.display.status);
+                .push(job.display.clone());
 
             let emitted = emitted_artifacts_by_issue
                 .entry(issue_id.clone())
@@ -709,9 +718,9 @@ fn build_issue_lines(
     let mut nodes: HashMap<String, IssueNode> = issues
         .iter()
         .map(|issue| {
-            let task_status = task_status_by_issue
+            let task = tasks_by_issue
                 .get(&issue.id)
-                .and_then(|statuses| best_task_status(statuses));
+                .and_then(|tasks| best_task_indicator(tasks));
             let patch_count = patch_ids_by_issue
                 .get(&issue.id)
                 .map(|set| set.len())
@@ -723,7 +732,7 @@ fn build_issue_lines(
                     parent: None,
                     children: Vec::new(),
                     patch_count,
-                    task_status,
+                    task,
                 },
             )
         })
@@ -795,7 +804,7 @@ fn append_issue(
         assignee: node.record.assignee.clone(),
         blocked_on,
         patch_count: node.patch_count,
-        task_status: node.task_status,
+        task: node.task.clone(),
         depth,
     });
 
@@ -819,14 +828,31 @@ fn compare_issue_nodes(nodes: &HashMap<String, IssueNode>, a: &str, b: &str) -> 
         .then_with(|| left.record.id.cmp(&right.record.id))
 }
 
-fn best_task_status(statuses: &[Status]) -> Option<Status> {
-    statuses.iter().cloned().min_by_key(|status| match status {
+fn best_task_indicator(tasks: &[JobDisplay]) -> Option<TaskIndicator> {
+    tasks
+        .iter()
+        .min_by(|a, b| {
+            task_status_order(a.status)
+                .cmp(&task_status_order(b.status))
+                .then_with(|| compare_recent(a.last_change, b.last_change))
+        })
+        .map(|job| TaskIndicator {
+            status: job.status,
+            runtime: match job.status {
+                Status::Running | Status::Complete => job.runtime.clone(),
+                _ => None,
+            },
+        })
+}
+
+fn task_status_order(status: Status) -> usize {
+    match status {
         Status::Running => 0,
         Status::Pending => 1,
         Status::Blocked => 2,
         Status::Failed => 3,
         Status::Complete => 4,
-    })
+    }
 }
 
 fn issue_status_order(status: IssueStatus) -> usize {
@@ -968,7 +994,10 @@ mod tests {
             Status::Running => log.events.push(Event::Started { at: now }),
             Status::Complete => {
                 log.events.push(Event::Started { at: now });
-                log.events.push(Event::Completed { at: now });
+                log.events.push(Event::Completed {
+                    at: now,
+                    last_message: None,
+                });
             }
             Status::Failed => {
                 log.events.push(Event::Started { at: now });
@@ -1006,12 +1035,13 @@ mod tests {
         status: Status,
         issue_id: Option<&str>,
         emitted_artifacts: Vec<&str>,
+        runtime: Option<&str>,
     ) -> JobDetails {
         JobDetails {
             display: JobDisplay {
                 id: id.to_string(),
                 status,
-                runtime: None,
+                runtime: runtime.map(|value| value.to_string()),
                 note: "-".to_string(),
                 last_change: Some(Utc::now()),
             },
@@ -1103,6 +1133,7 @@ mod tests {
             Status::Running,
             Some("ISSUE-1"),
             vec!["patch-1"],
+            Some("3s"),
         )];
 
         let (lines, associated_patches) = build_issue_lines(&issues, &jobs, &patches);
@@ -1110,6 +1141,8 @@ mod tests {
         assert!(associated_patches.contains("patch-1"));
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.patch_count, 1);
-        assert_eq!(line.task_status, Some(Status::Running));
+        let task = line.task.as_ref().expect("task indicator missing");
+        assert_eq!(task.status, Status::Running);
+        assert_eq!(task.runtime.as_deref(), Some("3s"));
     }
 }

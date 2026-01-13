@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     routes::jobs::ApiError,
-    store::{Status, StoreError},
+    store::{Status, Store, StoreError},
 };
 use anyhow::anyhow;
 use axum::{
@@ -11,8 +11,8 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueStatus, IssueType, ListArtifactsResponse,
-    SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueStatus, IssueType,
+    ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
 };
 use tracing::{error, info};
 
@@ -125,6 +125,32 @@ pub async fn list_artifacts(
     }))
 }
 
+async fn validate_issue_dependencies(
+    store: &mut dyn Store,
+    dependencies: &[IssueDependency],
+) -> Result<(), ApiError> {
+    for dependency in dependencies {
+        let target_id = &dependency.issue_id;
+        let target = store
+            .get_artifact(target_id)
+            .await
+            .map_err(|err| match err {
+                StoreError::ArtifactNotFound(id) => {
+                    ApiError::bad_request(format!("issue dependency '{id}' not found"))
+                }
+                other => map_store_error(other, Some(target_id)),
+            })?;
+
+        if !matches!(target, Artifact::Issue { .. }) {
+            return Err(ApiError::bad_request(format!(
+                "artifact '{target_id}' is not an issue"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 async fn upsert_artifact_internal(
     state: AppState,
     artifact_id: Option<String>,
@@ -133,6 +159,9 @@ async fn upsert_artifact_internal(
     let UpsertArtifactRequest { artifact, job_id } = payload;
 
     let mut store = state.store.write().await;
+    if let Artifact::Issue { dependencies, .. } = &artifact {
+        validate_issue_dependencies(store.as_mut(), dependencies).await?;
+    }
     let artifact_id = match artifact_id {
         Some(id) => {
             if job_id.is_some() {
@@ -255,6 +284,7 @@ fn artifact_matches(
                 title,
                 diff,
                 description,
+                ..
             } => {
                 title.to_lowercase().contains(term)
                     || diff.to_lowercase().contains(term)
@@ -294,6 +324,10 @@ fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {
         StoreError::ArtifactNotFound(id) => {
             error!(artifact_id = %id, "artifact not found");
             ApiError::not_found(format!("artifact '{id}' not found"))
+        }
+        StoreError::InvalidDependency(message) => {
+            error!(artifact_id = artifact_id.unwrap_or_default(), %message, "invalid artifact dependency");
+            ApiError::bad_request(message)
         }
         other => {
             error!(

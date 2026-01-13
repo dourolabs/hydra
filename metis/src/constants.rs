@@ -16,10 +16,6 @@ pub const OUTPUT_DIR: &str = "output";
 /// containing the last message output from a job execution.
 pub const OUTPUT_TXT_FILE: &str = "output.txt";
 
-/// The patch file name (`changes.patch`) stored in the output directory,
-/// containing the git diff of changes made during job execution.
-pub const CHANGES_PATCH_FILE: &str = "changes.patch";
-
 /// The default configuration file name (`config.toml`) used when no config
 /// file is explicitly specified via the `--config` flag.
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
