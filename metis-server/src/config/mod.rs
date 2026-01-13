@@ -117,6 +117,8 @@ pub struct AgentQueueConfig {
     pub context: BundleSpec,
     #[serde(default)]
     pub image: Option<String>,
+    #[serde(default = "default_agent_max_tries")]
+    pub max_tries: u32,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
 }
@@ -145,10 +147,16 @@ fn default_worker_image() -> String {
     "metis-worker:latest".to_string()
 }
 
+pub const DEFAULT_AGENT_MAX_TRIES: u32 = 3;
+
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
 }
 
 fn default_bundle_spec() -> BundleSpec {
     BundleSpec::None
+}
+
+const fn default_agent_max_tries() -> u32 {
+    DEFAULT_AGENT_MAX_TRIES
 }
