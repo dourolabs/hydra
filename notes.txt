@@ -32,6 +32,8 @@ kind delete cluster --name local-dev
 
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
+For a quick pre-flight before heavier builds, run `cargo check --workspace` from the repo root.
+
 
 ## Task system
 
