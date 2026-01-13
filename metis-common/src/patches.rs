@@ -14,6 +14,9 @@ pub struct Patch {
     pub title: String,
     pub description: String,
     pub diff: String,
+    /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
+    #[serde(default)]
+    pub is_automatic_backup: bool,
     #[serde(default)]
     pub reviews: Vec<Review>,
 }

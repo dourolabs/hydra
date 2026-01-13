@@ -952,6 +952,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "diff".to_string(),
                     description: "done".to_string(),
+                    is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
                 .await?;
@@ -1157,6 +1158,7 @@ mod tests {
                     title: "all good".to_string(),
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
+                    is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
                 .await?;
@@ -1270,6 +1272,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
+                    is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
                 .await?;
@@ -1362,6 +1365,7 @@ mod tests {
             title: "Initial patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
+            is_automatic_backup: false,
             reviews: Vec::new(),
         };
 
@@ -1428,6 +1432,7 @@ mod tests {
                     title: "artifact for emit".to_string(),
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
+                    is_automatic_backup: false,
                     reviews: Vec::new(),
                 },
                 job_id: Some(job_id.clone()),
@@ -1458,12 +1463,14 @@ mod tests {
             title: "refactor logging".to_string(),
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
+            is_automatic_backup: false,
             reviews: Vec::new(),
         };
         let filtered_patch = Patch {
             title: "login retry patch".to_string(),
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
+            is_automatic_backup: false,
             reviews: Vec::new(),
         };
 

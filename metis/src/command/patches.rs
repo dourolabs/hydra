@@ -167,6 +167,7 @@ async fn create_patch(
         .filter(|value| !value.is_empty());
 
     let repo_root = git_repository_root()?;
+    let is_automatic_backup = false;
     let response = create_patch_artifact_from_repo(
         client,
         &repo_root,
@@ -174,6 +175,7 @@ async fn create_patch(
         description,
         job_id,
         create_github_pr,
+        is_automatic_backup,
     )
     .await?
     .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
@@ -196,6 +198,7 @@ pub async fn create_patch_artifact_from_repo(
     description: String,
     job_id: Option<MetisId>,
     create_github_pr: bool,
+    is_automatic_backup: bool,
 ) -> Result<Option<UpsertPatchResponse>> {
     let patch = create_patch_from_repo(repo_root)?;
     if patch.trim().is_empty() {
@@ -221,6 +224,7 @@ pub async fn create_patch_artifact_from_repo(
                 title: title.clone(),
                 diff: patch,
                 description: description.clone(),
+                is_automatic_backup,
                 reviews: Vec::new(),
             },
             job_id: job_id.clone(),
@@ -755,6 +759,10 @@ mod tests {
         let generated_title = &patch.title;
         let generated_patch = &patch.diff;
         let generated_description = &patch.description;
+        assert!(
+            !patch.is_automatic_backup,
+            "manual patch creation should not be marked as an automatic backup"
+        );
         assert_eq!(
             generated_title, &patch_title,
             "expected provided title to be applied"
@@ -882,6 +890,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let client = MockMetisClient::default();
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-automatic".to_string(),
+        });
+
+        create_patch_artifact_from_repo(
+            &client,
+            &repo_path,
+            "backup patch".to_string(),
+            "backup description".to_string(),
+            Some("job-automatic".to_string()),
+            false,
+            true,
+        )
+        .await?
+        .expect("patch should be created for repository changes");
+
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
+        let (_, request) = &requests[0];
+        assert!(request.patch.is_automatic_backup);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn review_patch_appends_review() -> Result<()> {
         let client = MockMetisClient::default();
         let existing_review = Review {
@@ -895,6 +930,7 @@ mod tests {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
                 diff: "diff --git a/file b/file\n+example".to_string(),
+                is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
             },
         });

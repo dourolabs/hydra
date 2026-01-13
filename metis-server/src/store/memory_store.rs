@@ -656,6 +656,7 @@ mod tests {
             title: "sample patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
+            is_automatic_backup: false,
             reviews: Vec::new(),
         }
     }
@@ -706,6 +707,7 @@ mod tests {
             title: "new title".to_string(),
             diff: "noop".to_string(),
             description: "updated patch".to_string(),
+            is_automatic_backup: false,
             reviews: Vec::new(),
         };
 
@@ -726,6 +728,7 @@ mod tests {
                     title: "noop patch".to_string(),
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
+                    is_automatic_backup: false,
                     reviews: Vec::new(),
                 },
             )

@@ -272,13 +272,16 @@ async fn submit_patch_artifact_if_present(
     }
 
     let (title, description) = patch_metadata(job, last_message);
+    let create_github_pr = false;
+    let is_automatic_backup = true;
     match create_patch_artifact_from_repo(
         client,
         dest,
         title,
         description,
         Some(job.to_string()),
-        false,
+        create_github_pr,
+        is_automatic_backup,
     )
     .await?
     {
@@ -771,6 +774,10 @@ mod tests {
         assert_eq!(request.job_id.as_deref(), Some("job-123"));
         assert_eq!(request.patch.title, "final output line");
         assert_eq!(request.patch.description, "final output line");
+        assert!(
+            request.patch.is_automatic_backup,
+            "worker-run patches should be marked as automatic backups"
+        );
         assert!(
             request.patch.diff.contains("updated content"),
             "patch should include modifications made by the worker"
