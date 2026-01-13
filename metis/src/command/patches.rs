@@ -8,8 +8,8 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
-    artifacts::{Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest},
     constants::ENV_METIS_ID,
+    patches::{Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest},
     MetisId,
 };
 
@@ -23,13 +23,13 @@ const RESET: &str = "\x1b[0m";
 
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
-    /// List or search patch artifacts.
+    /// List or search patches.
     List {
-        /// Patch artifact id to retrieve.
+        /// Patch id to retrieve.
         #[arg(long = "id", value_name = "PATCH_ID")]
         id: Option<MetisId>,
 
-        /// Query string to filter patch artifacts.
+        /// Query string to filter patches.
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
 
@@ -38,13 +38,13 @@ pub enum PatchesCommand {
         pretty: bool,
     },
 
-    /// Create a patch artifact from the current git repository.
+    /// Create a patch from the current git repository.
     Create {
-        /// Title for the patch artifact.
+        /// Title for the patch.
         #[arg(long = "title", value_name = "TITLE", required = true)]
         title: String,
 
-        /// Description for the patch artifact.
+        /// Description for the patch.
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
 
@@ -62,16 +62,16 @@ pub enum PatchesCommand {
         github: bool,
     },
 
-    /// Apply a patch artifact to the current git repository.
+    /// Apply a patch to the current git repository.
     Apply {
-        /// Patch artifact id to apply.
+        /// Patch id to apply.
         #[arg(value_name = "PATCH_ID")]
         id: MetisId,
     },
 
-    /// Add a review to an existing patch artifact.
+    /// Add a review to an existing patch.
     Review {
-        /// Patch artifact id to review.
+        /// Patch id to review.
         #[arg(value_name = "PATCH_ID")]
         id: MetisId,
 
@@ -98,7 +98,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             job,
             github,
         } => create_patch(client, title, description, job, github).await,
-        PatchesCommand::Apply { id } => apply_patch_artifact(client, id).await,
+        PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
         PatchesCommand::Review {
             id,
             author,
@@ -119,14 +119,14 @@ async fn list_patches(
             bail!("--id and --query cannot be combined");
         }
 
-        let artifact = client
+        let patch_record = client
             .get_patch(&id)
             .await
             .with_context(|| format!("failed to fetch patch '{id}'"))?;
         if pretty {
-            print_patch_artifact(&artifact)?;
+            print_patch_record(&patch_record)?;
         } else {
-            println!("{}", serde_json::to_string(&artifact)?);
+            println!("{}", serde_json::to_string(&patch_record)?);
         }
         return Ok(());
     }
@@ -141,11 +141,11 @@ async fn list_patches(
         return Ok(());
     }
 
-    for artifact in response.patches {
+    for patch_record in response.patches {
         if pretty {
-            print_patch_artifact(&artifact)?;
+            print_patch_record(&patch_record)?;
         } else {
-            println!("{}", serde_json::to_string(&artifact)?);
+            println!("{}", serde_json::to_string(&patch_record)?);
         }
     }
 
@@ -176,7 +176,7 @@ async fn create_patch(
     let repo_root = git_repository_root()?;
     let patch = create_patch_from_repo(&repo_root)?;
     if patch.trim().is_empty() {
-        bail!("No changes detected. Make edits before creating a patch artifact.");
+        bail!("No changes detected. Make edits before creating a patch.");
     }
 
     let response = client
@@ -237,7 +237,7 @@ fn extract_patch_description(record: &PatchRecord) -> &str {
     &record.patch.description
 }
 
-fn print_patch_artifact(record: &PatchRecord) -> Result<()> {
+fn print_patch_record(record: &PatchRecord) -> Result<()> {
     let diff = extract_patch_diff(record);
     let title = extract_patch_title(record);
     let description = extract_patch_description(record);
@@ -267,12 +267,12 @@ fn pretty_print_patch(patch: &str) {
     }
 }
 
-async fn apply_patch_artifact(client: &dyn MetisClientInterface, id: MetisId) -> Result<()> {
-    let artifact = client
+async fn apply_patch_record(client: &dyn MetisClientInterface, id: MetisId) -> Result<()> {
+    let patch_record = client
         .get_patch(&id)
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
-    let diff = extract_patch_diff(&artifact);
+    let diff = extract_patch_diff(&patch_record);
     let repo_root = git_repository_root()?;
 
     apply_patch_to_repo(diff, &repo_root)?;
@@ -575,7 +575,7 @@ mod tests {
     use super::*;
     use crate::{client::MockMetisClient, constants};
     use anyhow::anyhow;
-    use metis_common::artifacts::{
+    use metis_common::patches::{
         ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
     };
     use std::{env, fs, path::PathBuf, process::Command};

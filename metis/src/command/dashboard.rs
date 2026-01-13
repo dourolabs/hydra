@@ -15,11 +15,12 @@ use crossterm::{
 };
 use futures::StreamExt;
 use metis_common::{
-    artifacts::{
+    issues::{
         IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
-        PatchRecord as ApiPatchRecord, SearchIssuesQuery, SearchPatchesQuery,
+        SearchIssuesQuery,
     },
     jobs::JobSummary,
+    patches::{PatchRecord as ApiPatchRecord, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
     MetisId,
 };
@@ -35,10 +36,10 @@ use ratatui::{
 use crate::{client::MetisClientInterface, command::jobs};
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-const ARTIFACT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_RUNNING_JOBS: usize = 10;
 const MAX_FINISHED_JOBS: usize = 12;
-const MAX_ARTIFACT_ROWS: usize = 12;
+const MAX_PATCH_ROWS: usize = 12;
 const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 
@@ -65,7 +66,7 @@ struct JobDisplay {
 }
 
 #[derive(Clone, PartialEq)]
-struct ArtifactDisplay {
+struct PatchDisplay {
     id: String,
     summary: String,
 }
@@ -124,9 +125,9 @@ struct DashboardState {
     patches: Vec<PatchRecord>,
     issue_lines: IssueLines,
     unassociated_jobs: JobSections,
-    unassociated_patches: Vec<ArtifactDisplay>,
+    unassociated_patches: Vec<PatchDisplay>,
     jobs_error: Option<String>,
-    artifacts_error: Option<String>,
+    records_error: Option<String>,
 }
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
@@ -151,10 +152,10 @@ async fn run_dashboard_loop(
         }
     }
 
-    match refresh_artifacts(client, &mut state).await {
+    match refresh_records(client, &mut state).await {
         Ok(changed) => needs_draw |= changed,
         Err(err) => {
-            state.artifacts_error = Some(format!("Failed to load artifacts: {err}"));
+            state.records_error = Some(format!("Failed to load issues and patches: {err}"));
             needs_draw = true;
         }
     }
@@ -166,7 +167,7 @@ async fn run_dashboard_loop(
 
     let mut events = EventStream::new();
     let mut jobs_tick = tokio::time::interval(JOB_REFRESH_INTERVAL);
-    let mut artifacts_tick = tokio::time::interval(ARTIFACT_REFRESH_INTERVAL);
+    let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
 
     loop {
         tokio::select! {
@@ -182,14 +183,14 @@ async fn run_dashboard_loop(
                     }
                 }
             }
-            _ = artifacts_tick.tick() => {
-                match refresh_artifacts(client, &mut state).await {
+            _ = records_tick.tick() => {
+                match refresh_records(client, &mut state).await {
                     Ok(changed) => {
-                        state.artifacts_error = None;
+                        state.records_error = None;
                         needs_draw |= changed;
                     }
                     Err(err) => {
-                        state.artifacts_error = Some(format!("Failed to refresh artifacts: {err}"));
+                        state.records_error = Some(format!("Failed to refresh issues and patches: {err}"));
                         needs_draw = true;
                     }
                 }
@@ -279,9 +280,9 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
         )));
     }
 
-    if let Some(error) = &state.artifacts_error {
+    if let Some(error) = &state.records_error {
         lines.push(Line::from(Span::styled(
-            format!("Artifacts: {error}"),
+            format!("Issues/Patches: {error}"),
             Style::default().fg(Color::Red),
         )));
     }
@@ -452,18 +453,18 @@ fn render_unassociated_patches(
 ) {
     let items: Vec<ListItem> = if state.unassociated_patches.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
-            "No records",
+            "No patches",
             Style::default().fg(Color::DarkGray),
         )))]
     } else {
         state
             .unassociated_patches
             .iter()
-            .map(|artifact| {
+            .map(|patch| {
                 ListItem::new(Line::from(vec![
-                    Span::styled(&artifact.id, Style::default().fg(Color::Cyan)),
+                    Span::styled(&patch.id, Style::default().fg(Color::Cyan)),
                     Span::raw(" — "),
-                    Span::raw(truncate_message(&artifact.summary, MAX_MESSAGE_WIDTH)),
+                    Span::raw(truncate_message(&patch.summary, MAX_MESSAGE_WIDTH)),
                 ]))
             })
             .collect()
@@ -512,7 +513,7 @@ async fn refresh_jobs(
     Ok(jobs_changed || derived_changed)
 }
 
-async fn refresh_artifacts(
+async fn refresh_records(
     client: &dyn MetisClientInterface,
     state: &mut DashboardState,
 ) -> Result<bool> {
@@ -626,16 +627,16 @@ fn update_views(state: &mut DashboardState) -> bool {
             .collect(),
     );
 
-    let mut unassociated_patches: Vec<ArtifactDisplay> = state
+    let mut unassociated_patches: Vec<PatchDisplay> = state
         .patches
         .iter()
         .filter(|patch| !associated_patch_ids.contains(&patch.id))
-        .map(|patch| ArtifactDisplay {
+        .map(|patch| PatchDisplay {
             id: patch.id.clone(),
             summary: patch.summary.clone(),
         })
         .collect();
-    unassociated_patches.truncate(MAX_ARTIFACT_ROWS);
+    unassociated_patches.truncate(MAX_PATCH_ROWS);
 
     state.issue_lines = issue_lines;
     state.unassociated_jobs = unassociated_jobs;

@@ -58,19 +58,19 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         .route("/health", get(health_check))
         .route(
             "/v1/issues",
-            get(routes::artifacts::list_issues).post(routes::artifacts::create_issue),
+            get(routes::issues::list_issues).post(routes::issues::create_issue),
         )
         .route(
             "/v1/issues/:issue_id",
-            get(routes::artifacts::get_issue).put(routes::artifacts::update_issue),
+            get(routes::issues::get_issue).put(routes::issues::update_issue),
         )
         .route(
             "/v1/patches",
-            get(routes::artifacts::list_patches).post(routes::artifacts::create_patch),
+            get(routes::patches::list_patches).post(routes::patches::create_patch),
         )
         .route(
             "/v1/patches/:patch_id",
-            get(routes::artifacts::get_patch).put(routes::artifacts::update_patch),
+            get(routes::patches::get_patch).put(routes::patches::update_patch),
         )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route(
@@ -184,14 +184,17 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        artifacts::{
-            Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, ListPatchesResponse,
-            Patch, PatchRecord, SearchIssuesQuery, SearchPatchesQuery, UpsertIssueRequest,
-            UpsertIssueResponse, UpsertPatchRequest, UpsertPatchResponse,
-        },
         constants::ENV_GH_TOKEN,
+        issues::{
+            Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery,
+            UpsertIssueRequest, UpsertIssueResponse,
+        },
         job_status::GetJobStatusResponse,
         jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
+        patches::{
+            ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+            UpsertPatchResponse,
+        },
         task_status::Event,
     };
     use serde_json::json;
@@ -925,7 +928,7 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
-        let artifact_id;
+        let patch_id;
         {
             let mut store_write = store.write().await;
             let job_id = "spawn-job".to_string();
@@ -944,7 +947,7 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
-            artifact_id = store_write
+            patch_id = store_write
                 .add_patch(Patch {
                     title: "done".to_string(),
                     diff: "diff".to_string(),
@@ -953,7 +956,7 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
+                .emit_task_artifacts(&job_id, vec![patch_id.clone()], Utc::now())
                 .await?;
         }
         let server = spawn_test_server_with_state(state).await?;
@@ -975,7 +978,7 @@ mod tests {
         let result = store_read.get_result(&"spawn-job".to_string());
         assert!(matches!(result, Some(Ok(()))));
         let status_log = store_read.get_status_log(&"spawn-job".to_string()).await?;
-        assert_eq!(status_log.emitted_artifacts(), Some(vec![artifact_id]));
+        assert_eq!(status_log.emitted_artifacts(), Some(vec![patch_id]));
 
         Ok(())
     }
@@ -1126,12 +1129,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn job_output_can_be_retrieved_via_events_and_artifacts() -> anyhow::Result<()> {
+    async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
         let job_id = "with-output".to_string();
-        let artifact_id;
+        let patch_id;
         {
             let mut store_write = store.write().await;
             store_write
@@ -1149,7 +1152,7 @@ mod tests {
                 )
                 .await?;
             store_write.mark_task_running(&job_id, Utc::now()).await?;
-            artifact_id = store_write
+            patch_id = store_write
                 .add_patch(Patch {
                     title: "all good".to_string(),
                     diff: "diff".to_string(),
@@ -1158,7 +1161,7 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(&job_id, vec![artifact_id.clone()], Utc::now())
+                .emit_task_artifacts(&job_id, vec![patch_id.clone()], Utc::now())
                 .await?;
             store_write
                 .mark_task_complete(&job_id, Ok(()), None, Utc::now())
@@ -1183,21 +1186,21 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(emitted_ids, vec![artifact_id.clone()]);
+        assert_eq!(emitted_ids, vec![patch_id.clone()]);
 
-        let artifact_response = client
-            .get(format!("{}/v1/patches/{artifact_id}", server.base_url()))
+        let patch_response = client
+            .get(format!("{}/v1/patches/{patch_id}", server.base_url()))
             .send()
             .await?;
-        assert!(artifact_response.status().is_success());
-        let artifact: PatchRecord = artifact_response.json().await?;
-        assert_eq!(artifact.id, artifact_id);
+        assert!(patch_response.status().is_success());
+        let patch_record: PatchRecord = patch_response.json().await?;
+        assert_eq!(patch_record.id, patch_id);
         let Patch {
             title,
             diff,
             description,
             ..
-        } = artifact.patch;
+        } = patch_record.patch;
         assert_eq!(title, "all good");
         assert_eq!(diff, "diff");
         assert_eq!(description, "all good");
@@ -1262,7 +1265,7 @@ mod tests {
             store_write
                 .mark_task_running(&"parent-job".to_string(), Utc::now())
                 .await?;
-            let parent_artifact_id = store_write
+            let parent_patch_id = store_write
                 .add_patch(Patch {
                     title: "done".to_string(),
                     diff: "patch-content".to_string(),
@@ -1271,11 +1274,7 @@ mod tests {
                 })
                 .await?;
             store_write
-                .emit_task_artifacts(
-                    &"parent-job".to_string(),
-                    vec![parent_artifact_id],
-                    Utc::now(),
-                )
+                .emit_task_artifacts(&"parent-job".to_string(), vec![parent_patch_id], Utc::now())
                 .await?;
             store_write
                 .mark_task_complete(&"parent-job".to_string(), Ok(()), None, Utc::now())

@@ -19,8 +19,8 @@ current workspace and should use the `metis` CLI as your primary tool. Helpful c
 - `metis logs <JOB_ID> [--watch]` streams job logs.
 - `metis spawn ...` launches new jobs (confirm with the user before running destructive work).
 - `metis kill <JOB_ID>` stops jobs.
-- `metis issues <subcommand>` manages issue artifacts.
-- `metis patches <subcommand>` inspects or applies patch artifacts.
+- `metis issues <subcommand>` manages issues.
+- `metis patches <subcommand>` inspects or applies patches.
 - `metis worker-run <JOB_ID> <PATH>` fetches a job context locally.
 - `metis run <SCRIPT>` executes Rhai automation helpers.
 

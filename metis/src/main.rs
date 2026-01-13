@@ -124,14 +124,14 @@ enum Commands {
         #[arg(value_name = "JOB_ID")]
         job: String,
     },
-    /// Manage patch artifacts.
+    /// Manage patches.
     Patches {
         #[command(subcommand)]
         command: command::patches::PatchesCommand,
     },
     /// Launch a live dashboard for jobs, issues, and patches.
     Dashboard,
-    /// List or create issue artifacts.
+    /// List or create issues.
     Issues {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
