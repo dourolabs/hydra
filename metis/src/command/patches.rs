@@ -5,10 +5,12 @@ use std::{
     process::Command,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{builder::NonEmptyStringValueParser, Subcommand};
 use metis_common::{
-    artifacts::{Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest},
+    artifacts::{
+        Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+    },
     constants::ENV_METIS_ID,
     MetisId,
 };
@@ -159,6 +161,47 @@ async fn create_patch(
     job_id: Option<MetisId>,
     create_github_pr: bool,
 ) -> Result<()> {
+    let job_id = job_id
+        .or_else(|| env::var(ENV_METIS_ID).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let repo_root = git_repository_root()?;
+    let response = create_patch_artifact_from_repo(
+        client,
+        &repo_root,
+        title,
+        description,
+        job_id,
+        create_github_pr,
+    )
+    .await?
+    .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
+
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "patch_id": response.patch_id,
+            "type": "patch"
+        }))?
+    );
+
+    Ok(())
+}
+
+pub async fn create_patch_artifact_from_repo(
+    client: &dyn MetisClientInterface,
+    repo_root: &Path,
+    title: String,
+    description: String,
+    job_id: Option<MetisId>,
+    create_github_pr: bool,
+) -> Result<Option<UpsertPatchResponse>> {
+    let patch = create_patch_from_repo(repo_root)?;
+    if patch.trim().is_empty() {
+        return Ok(None);
+    }
+
     let title = title.trim().to_string();
     let description = description.trim().to_string();
     if title.is_empty() {
@@ -169,15 +212,8 @@ async fn create_patch(
     }
 
     let job_id = job_id
-        .or_else(|| env::var(ENV_METIS_ID).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-
-    let repo_root = git_repository_root()?;
-    let patch = create_patch_from_repo(&repo_root)?;
-    if patch.trim().is_empty() {
-        bail!("No changes detected. Make edits before creating a patch artifact.");
-    }
 
     let response = client
         .create_patch(&UpsertPatchRequest {
@@ -193,18 +229,10 @@ async fn create_patch(
         .context("failed to create patch")?;
 
     if create_github_pr {
-        create_github_pull_request(&repo_root, &title, &description, job_id.as_deref())?;
+        create_github_pull_request(repo_root, &title, &description, job_id.as_deref())?;
     }
 
-    println!(
-        "{}",
-        serde_json::to_string(&serde_json::json!({
-            "patch_id": response.patch_id,
-            "type": "patch"
-        }))?
-    );
-
-    Ok(())
+    Ok(Some(response))
 }
 
 fn git_repository_root() -> Result<PathBuf> {

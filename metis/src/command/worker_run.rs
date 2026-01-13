@@ -18,6 +18,7 @@ use metis_common::{
 use tar::Archive;
 
 use crate::client::MetisClientInterface;
+use crate::command::patches::create_patch_artifact_from_repo;
 use crate::constants;
 use crate::exec::eval_with_closure_unwrapping;
 
@@ -60,8 +61,10 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
         .await
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
+    let last_message = read_last_message(&dest)?;
+    submit_patch_artifact_if_present(client, &job_id, &dest, &last_message).await?;
     // Submit job status (merge of worker-submit functionality)
-    submit_job_status(client, &job_id, &dest).await?;
+    submit_job_status(client, &job_id, &last_message).await?;
 
     Ok(())
 }
@@ -232,26 +235,20 @@ fn create_output_directory(dest: &Path) -> Result<()> {
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &MetisId,
-    dest: &Path,
+    last_message: &str,
 ) -> Result<()> {
+    let job = job.trim();
     if job.is_empty() {
         bail!("Job ID must not be empty.");
     }
 
-    let last_message_file = last_message_path(dest);
-    let last_message = fs::read_to_string(&last_message_file).with_context(|| {
-        format!(
-            "failed to read last message output at '{}'",
-            last_message_file.display()
-        )
-    })?;
-
+    let job_id = job.to_string();
     println!("Updating status for job '{job}' via metis-server…");
     let response = client
         .set_job_status(
-            job,
+            &job_id,
             &JobStatusUpdate::Complete {
-                last_message: Some(last_message.clone()),
+                last_message: Some(last_message.to_string()),
             },
         )
         .await?;
@@ -263,9 +260,70 @@ async fn submit_job_status(
     Ok(())
 }
 
+async fn submit_patch_artifact_if_present(
+    client: &dyn MetisClientInterface,
+    job: &MetisId,
+    dest: &Path,
+    last_message: &str,
+) -> Result<()> {
+    let job = job.trim();
+    if job.is_empty() {
+        bail!("Job ID must not be empty.");
+    }
+
+    let (title, description) = patch_metadata(job, last_message);
+    match create_patch_artifact_from_repo(
+        client,
+        dest,
+        title,
+        description,
+        Some(job.to_string()),
+        false,
+    )
+    .await?
+    {
+        Some(response) => {
+            println!("Submitted patch '{}' for job '{}'.", response.patch_id, job);
+        }
+        None => {
+            println!("No changes detected; skipping patch submission for job '{job}'.");
+        }
+    }
+
+    Ok(())
+}
+
 fn last_message_path(dest: &Path) -> PathBuf {
     let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
     output_dir.join(constants::OUTPUT_TXT_FILE)
+}
+
+fn read_last_message(dest: &Path) -> Result<String> {
+    let last_message_file = last_message_path(dest);
+    fs::read_to_string(&last_message_file).with_context(|| {
+        format!(
+            "failed to read last message output at '{}'",
+            last_message_file.display()
+        )
+    })
+}
+
+fn patch_metadata(job: &str, last_message: &str) -> (String, String) {
+    let trimmed_message = last_message.trim();
+    let title = trimmed_message
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Patch for job {job}"));
+    let description = if trimmed_message.is_empty() {
+        format!("Patch generated for Metis job {job}")
+    } else {
+        trimmed_message.to_string()
+    };
+
+    (title, description)
 }
 
 /// Create a unified diff from the repository at `dest`, staging all changes (including
@@ -337,6 +395,8 @@ fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::MockMetisClient;
+    use metis_common::artifacts::UpsertPatchResponse;
     use std::process::Command;
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
@@ -668,6 +728,71 @@ mod tests {
         assert!(
             patch_content.is_empty(),
             "patch should be empty when directory has no changes, but got: {patch_content:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submit_patch_artifact_if_present_creates_patch() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        setup_git_repo_with_initial_commit(repo_path)?;
+        std::fs::write(repo_path.join("README.md"), "updated content\n")
+            .context("failed to update README.md")?;
+
+        let output_dir = repo_path
+            .join(constants::METIS_DIR)
+            .join(constants::OUTPUT_DIR);
+        std::fs::create_dir_all(&output_dir)
+            .context("failed to create .metis/output for test repo")?;
+        std::fs::write(
+            output_dir.join(constants::OUTPUT_TXT_FILE),
+            "final output line",
+        )
+        .context("failed to write output.txt for test repo")?;
+
+        let client = MockMetisClient::default();
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: "patch-123".to_string(),
+        });
+
+        submit_patch_artifact_if_present(
+            &client,
+            &"job-123".to_string(),
+            repo_path,
+            "final output line",
+        )
+        .await?;
+
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected a single patch submission");
+        let (_, request) = &requests[0];
+        assert_eq!(request.job_id.as_deref(), Some("job-123"));
+        assert_eq!(request.patch.title, "final output line");
+        assert_eq!(request.patch.description, "final output line");
+        assert!(
+            request.patch.diff.contains("updated content"),
+            "patch should include modifications made by the worker"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submit_patch_artifact_if_present_skips_without_changes() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        setup_git_repo_with_initial_commit(repo_path)?;
+
+        let client = MockMetisClient::default();
+        submit_patch_artifact_if_present(&client, &"job-456".to_string(), repo_path, "done")
+            .await?;
+
+        let requests = client.recorded_patch_upserts();
+        assert!(
+            requests.is_empty(),
+            "no patch should be submitted when the repository has no changes"
         );
 
         Ok(())
