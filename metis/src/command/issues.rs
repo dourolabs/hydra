@@ -779,9 +779,7 @@ mod tests {
         assert!(rendered.contains("Assignee: owner-a"));
         assert!(rendered.contains("Description:\n  First issue\n  with context"));
         assert!(rendered.contains(&format!("Dependencies:\n  - blocked-on {dependency_id}")));
-        assert!(rendered.contains(&format!(
-            "Issue {second_issue} (feature, in-progress)"
-        )));
+        assert!(rendered.contains(&format!("Issue {second_issue} (feature, in-progress)")));
         assert!(rendered.contains("Assignee: -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
