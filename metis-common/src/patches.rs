@@ -1,4 +1,4 @@
-use crate::MetisId;
+use crate::{PatchId, TaskId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ pub struct Patch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchRecord {
-    pub id: MetisId,
+    pub id: PatchId,
     pub patch: Patch,
 }
 
@@ -31,12 +31,12 @@ pub struct PatchRecord {
 pub struct UpsertPatchRequest {
     pub patch: Patch,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<MetisId>,
+    pub job_id: Option<TaskId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertPatchResponse {
-    pub patch_id: MetisId,
+    pub patch_id: PatchId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

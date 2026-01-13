@@ -3,16 +3,17 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{builder::NonEmptyStringValueParser, Subcommand};
+use clap::Subcommand;
 use metis_common::{
     constants::ENV_METIS_ID,
     patches::{
         Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
     },
-    MetisId,
+    PatchId, TaskId,
 };
 
 use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
@@ -29,7 +30,7 @@ pub enum PatchesCommand {
     List {
         /// Patch id to retrieve.
         #[arg(long = "id", value_name = "PATCH_ID")]
-        id: Option<MetisId>,
+        id: Option<PatchId>,
 
         /// Query string to filter patches.
         #[arg(long = "query", value_name = "QUERY")]
@@ -51,13 +52,8 @@ pub enum PatchesCommand {
         description: String,
 
         /// Associate the patch with a Metis job.
-        #[arg(
-            long = "job",
-            value_name = "METIS_ID",
-            env = "METIS_ID",
-            value_parser = NonEmptyStringValueParser::new()
-        )]
-        job: Option<MetisId>,
+        #[arg(long = "job", value_name = "METIS_ID", env = "METIS_ID")]
+        job: Option<TaskId>,
 
         /// Create a GitHub pull request with the patch contents.
         #[arg(long = "github")]
@@ -68,14 +64,14 @@ pub enum PatchesCommand {
     Apply {
         /// Patch id to apply.
         #[arg(value_name = "PATCH_ID")]
-        id: MetisId,
+        id: PatchId,
     },
 
     /// Add a review to an existing patch.
     Review {
         /// Patch id to review.
         #[arg(value_name = "PATCH_ID")]
-        id: MetisId,
+        id: PatchId,
 
         /// Name of the reviewer.
         #[arg(long = "author", value_name = "AUTHOR", required = true)]
@@ -112,7 +108,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
 
 async fn list_patches(
     client: &dyn MetisClientInterface,
-    id: Option<MetisId>,
+    id: Option<PatchId>,
     query: Option<String>,
     pretty: bool,
 ) -> Result<()> {
@@ -158,14 +154,10 @@ async fn create_patch(
     client: &dyn MetisClientInterface,
     title: String,
     description: String,
-    job_id: Option<MetisId>,
+    job_id: Option<TaskId>,
     create_github_pr: bool,
 ) -> Result<()> {
-    let job_id = job_id
-        .or_else(|| env::var(ENV_METIS_ID).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
+    let job_id = resolve_job_id(job_id)?;
     let repo_root = git_repository_root()?;
     let is_automatic_backup = false;
     let response = create_patch_artifact_from_repo(
@@ -173,7 +165,7 @@ async fn create_patch(
         &repo_root,
         title,
         description,
-        job_id,
+        job_id.clone(),
         create_github_pr,
         is_automatic_backup,
     )
@@ -191,12 +183,31 @@ async fn create_patch(
     Ok(())
 }
 
+fn resolve_job_id(job_id: Option<TaskId>) -> Result<Option<TaskId>> {
+    if job_id.is_some() {
+        return Ok(job_id);
+    }
+
+    let env_value = match env::var(ENV_METIS_ID) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let trimmed = env_value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let task_id = TaskId::from_str(trimmed)
+        .with_context(|| format!("invalid {ENV_METIS_ID} value '{trimmed}'"))?;
+    Ok(Some(task_id))
+}
+
 pub async fn create_patch_artifact_from_repo(
     client: &dyn MetisClientInterface,
     repo_root: &Path,
     title: String,
     description: String,
-    job_id: Option<MetisId>,
+    job_id: Option<TaskId>,
     create_github_pr: bool,
     is_automatic_backup: bool,
 ) -> Result<Option<UpsertPatchResponse>> {
@@ -214,10 +225,6 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch description must not be empty.");
     }
 
-    let job_id = job_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
     let response = client
         .create_patch(&UpsertPatchRequest {
             patch: Patch {
@@ -233,7 +240,12 @@ pub async fn create_patch_artifact_from_repo(
         .context("failed to create patch")?;
 
     if create_github_pr {
-        create_github_pull_request(repo_root, &title, &description, job_id.as_deref())?;
+        create_github_pull_request(
+            repo_root,
+            &title,
+            &description,
+            job_id.as_ref().map(|id| id.as_ref()),
+        )?;
     }
 
     Ok(Some(response))
@@ -299,7 +311,7 @@ fn pretty_print_patch(patch: &str) {
     }
 }
 
-async fn apply_patch_record(client: &dyn MetisClientInterface, id: MetisId) -> Result<()> {
+async fn apply_patch_record(client: &dyn MetisClientInterface, id: PatchId) -> Result<()> {
     let patch_record = client
         .get_patch(&id)
         .await
@@ -366,17 +378,11 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
 
 async fn review_patch(
     client: &dyn MetisClientInterface,
-    id: MetisId,
+    id: PatchId,
     author: String,
     contents: String,
     approve: bool,
 ) -> Result<()> {
-    let trimmed_id = id.trim();
-    if trimmed_id.is_empty() {
-        bail!("Patch id must not be empty.");
-    }
-    let patch_id = trimmed_id.to_string();
-
     let author = author.trim().to_string();
     if author.is_empty() {
         bail!("Author must not be empty.");
@@ -387,9 +393,9 @@ async fn review_patch(
     }
 
     let mut record = client
-        .get_patch(&patch_id)
+        .get_patch(&id)
         .await
-        .with_context(|| format!("failed to fetch patch '{patch_id}'"))?;
+        .with_context(|| format!("failed to fetch patch '{id}'"))?;
 
     record.patch.reviews.push(Review {
         contents,
@@ -399,14 +405,14 @@ async fn review_patch(
 
     let response = client
         .update_patch(
-            &patch_id,
+            &id,
             &UpsertPatchRequest {
                 patch: record.patch,
                 job_id: None,
             },
         )
         .await
-        .with_context(|| format!("failed to update patch '{patch_id}' with review"))?;
+        .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
     println!("{}", response.patch_id);
     Ok(())
@@ -605,7 +611,11 @@ fn open_pull_request(repo_root: &Path, title: &str, description: &str, branch: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{client::MockMetisClient, constants};
+    use crate::{
+        client::MockMetisClient,
+        constants,
+        test_utils::ids::{patch_id, task_id},
+    };
     use anyhow::anyhow;
     use metis_common::patches::{
         ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
@@ -738,7 +748,7 @@ mod tests {
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-1".to_string(),
+            patch_id: patch_id("p-1"),
         });
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
@@ -826,11 +836,11 @@ mod tests {
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-2".to_string(),
+            patch_id: patch_id("p-2"),
         });
 
         let title = "patch with job title".to_string();
-        let job_id = Some("job-1234".to_string());
+        let job_id = Some(task_id("t-job-1234"));
         let description = "patch with job id".to_string();
 
         create_patch(
@@ -861,11 +871,13 @@ mod tests {
     async fn create_patch_reads_job_id_from_environment() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
         let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
-        let _guard = EnvVarGuard::set(ENV_METIS_ID, "job-from-env");
+        let env_job_id = task_id("t-job-from-env");
+        let env_job_value = env_job_id.to_string();
+        let _guard = EnvVarGuard::set(ENV_METIS_ID, &env_job_value);
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-3".to_string(),
+            patch_id: patch_id("p-3"),
         });
 
         let title = "patch with env title".to_string();
@@ -877,11 +889,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
 
         let (_, request) = &requests[0];
-        assert_eq!(
-            request.job_id.as_deref(),
-            Some("job-from-env"),
-            "job id should default from the METIS_ID environment variable"
-        );
+        assert_eq!(request.job_id, Some(env_job_id.clone()));
 
         assert_eq!(request.patch.title, title);
         assert_eq!(request.patch.description, description);
@@ -894,7 +902,7 @@ mod tests {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-automatic".to_string(),
+            patch_id: patch_id("p-automatic"),
         });
 
         create_patch_artifact_from_repo(
@@ -902,7 +910,7 @@ mod tests {
             &repo_path,
             "backup patch".to_string(),
             "backup description".to_string(),
-            Some("job-automatic".to_string()),
+            Some(task_id("t-job-automatic")),
             false,
             true,
         )
@@ -925,7 +933,7 @@ mod tests {
             author: "bob".to_string(),
         };
         client.push_get_patch_response(PatchRecord {
-            id: "patch-123".to_string(),
+            id: patch_id("p-123"),
             patch: Patch {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
@@ -935,12 +943,12 @@ mod tests {
             },
         });
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-123".to_string(),
+            patch_id: patch_id("p-123"),
         });
 
         review_patch(
             &client,
-            "patch-123".to_string(),
+            patch_id("p-123"),
             "alice".to_string(),
             "looks good now".to_string(),
             true,
@@ -949,13 +957,13 @@ mod tests {
 
         assert_eq!(
             client.recorded_get_patch_requests(),
-            vec!["patch-123".to_string()]
+            vec![patch_id("p-123")]
         );
         let updates = client.recorded_patch_upserts();
         assert_eq!(updates.len(), 1, "expected one patch update");
 
-        let (patch_id, request) = &updates[0];
-        assert_eq!(patch_id.as_deref(), Some("patch-123"));
+        let (patch_id_opt, request) = &updates[0];
+        assert_eq!(patch_id_opt, &Some(patch_id("p-123")));
         let reviews = &request.patch.reviews;
         assert_eq!(reviews.len(), 2);
         assert_eq!(reviews[0], existing_review);

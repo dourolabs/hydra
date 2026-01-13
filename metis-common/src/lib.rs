@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
-/// Identifier used for jobs, tasks, and other records within Metis.
-pub type MetisId = String;
+pub mod ids;
+pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 
 pub mod constants;
 pub mod issues;

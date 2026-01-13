@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{
-    MetisId,
+    TaskId,
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
@@ -32,15 +32,7 @@ pub async fn create_job(
     info!("create_job invoked");
     let fallback_image = state.config.metis.worker_image.clone();
 
-    let parent_ids: Vec<MetisId> = payload
-        .parent_ids
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .collect();
-    if parent_ids.iter().any(|id| id.is_empty()) {
-        error!("create_job received an empty parent_id");
-        return Err(ApiError::bad_request("parent_ids must not be empty"));
-    }
+    let parent_ids: Vec<TaskId> = payload.parent_ids;
     let parent_edges: Vec<Edge> = parent_ids
         .iter()
         .map(|id| Edge {
@@ -50,7 +42,7 @@ pub async fn create_job(
         .collect();
 
     // Generate a unique ID for the job
-    let job_id: MetisId = uuid::Uuid::new_v4().hyphenated().to_string();
+    let job_id = TaskId::new();
 
     let ResolvedBundle {
         bundle: context,
@@ -61,7 +53,7 @@ pub async fn create_job(
     if let Some(token) = github_token {
         env_vars.entry(ENV_GH_TOKEN.to_string()).or_insert(token);
     }
-    env_vars.insert(ENV_METIS_ID.to_string(), job_id.clone());
+    env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
     let image = resolve_image(payload.image, default_image, &fallback_image)?;
 
     // Store the task with context (status will be Pending)
@@ -254,7 +246,7 @@ impl IntoResponse for ApiError {
 }
 
 #[derive(Debug, Clone)]
-pub struct JobIdPath(pub MetisId);
+pub struct JobIdPath(pub TaskId);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for JobIdPath
@@ -264,21 +256,16 @@ where
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(job_id) = Path::<MetisId>::from_request_parts(parts, state)
+        let Path(job_id) = Path::<TaskId>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        let trimmed = job_id.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request("job_id must not be empty"));
-        }
-
-        Ok(Self(trimmed.to_string()))
+        Ok(Self(job_id))
     }
 }
 
 async fn job_summary_with_time(
-    job_id: &MetisId,
+    job_id: &TaskId,
     store: &dyn Store,
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let status_log = store.get_status_log(job_id).await?;
@@ -303,7 +290,7 @@ async fn job_summary_with_time(
     ))
 }
 
-async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<String> {
+async fn job_notes_from_store(job_id: &TaskId, store: &dyn Store) -> Option<String> {
     let status_log = store.get_status_log(job_id).await.ok()?;
     if let Err(err) = status_log.result()? {
         return format_error_note(&err);
@@ -311,15 +298,19 @@ async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<Str
 
     let artifact_ids = status_log.emitted_artifacts()?;
     for artifact_id in artifact_ids {
-        if let Ok(patch) = store.get_patch(&artifact_id).await {
-            if let Some(note) = note_from_patch(&patch) {
-                return Some(note);
+        if let Some(patch_id) = artifact_id.as_patch_id() {
+            if let Ok(patch) = store.get_patch(&patch_id).await {
+                if let Some(note) = note_from_patch(&patch) {
+                    return Some(note);
+                }
             }
         }
 
-        if let Ok(issue) = store.get_issue(&artifact_id).await {
-            if let Some(note) = note_from_issue(&issue) {
-                return Some(note);
+        if let Some(issue_id) = artifact_id.as_issue_id() {
+            if let Ok(issue) = store.get_issue(&issue_id).await {
+                if let Some(note) = note_from_issue(&issue) {
+                    return Some(note);
+                }
             }
         }
     }

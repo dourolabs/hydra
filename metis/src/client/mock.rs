@@ -16,7 +16,7 @@ use metis_common::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    MetisId,
+    IssueId, PatchId, TaskId,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -26,17 +26,17 @@ pub struct MockMetisClient {
     pub create_job_responses: Mutex<VecDeque<CreateJobResponse>>,
     pub list_jobs_responses: Mutex<VecDeque<ListJobsResponse>>,
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
-    pub log_requests: Mutex<Vec<MetisId>>,
+    pub log_requests: Mutex<Vec<TaskId>>,
     pub issue_upsert_responses: Mutex<VecDeque<UpsertIssueResponse>>,
     pub patch_upsert_responses: Mutex<VecDeque<UpsertPatchResponse>>,
     pub get_issue_responses: Mutex<VecDeque<IssueRecord>>,
     pub get_patch_responses: Mutex<VecDeque<PatchRecord>>,
     pub list_issue_responses: Mutex<VecDeque<ListIssuesResponse>>,
     pub list_patch_responses: Mutex<VecDeque<ListPatchesResponse>>,
-    pub issue_upsert_requests: Mutex<Vec<(Option<MetisId>, UpsertIssueRequest)>>,
-    pub patch_upsert_requests: Mutex<Vec<(Option<MetisId>, UpsertPatchRequest)>>,
-    pub issue_get_requests: Mutex<Vec<MetisId>>,
-    pub patch_get_requests: Mutex<Vec<MetisId>>,
+    pub issue_upsert_requests: Mutex<Vec<(Option<IssueId>, UpsertIssueRequest)>>,
+    pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
+    pub issue_get_requests: Mutex<Vec<IssueId>>,
+    pub patch_get_requests: Mutex<Vec<PatchId>>,
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
@@ -67,7 +67,7 @@ impl MockMetisClient {
         self.recorded_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_log_requests(&self) -> Vec<MetisId> {
+    pub fn recorded_log_requests(&self) -> Vec<TaskId> {
         self.log_requests.lock().unwrap().clone()
     }
 
@@ -107,19 +107,19 @@ impl MockMetisClient {
             .push_back(response);
     }
 
-    pub fn recorded_issue_upserts(&self) -> Vec<(Option<MetisId>, UpsertIssueRequest)> {
+    pub fn recorded_issue_upserts(&self) -> Vec<(Option<IssueId>, UpsertIssueRequest)> {
         self.issue_upsert_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_patch_upserts(&self) -> Vec<(Option<MetisId>, UpsertPatchRequest)> {
+    pub fn recorded_patch_upserts(&self) -> Vec<(Option<PatchId>, UpsertPatchRequest)> {
         self.patch_upsert_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_get_issue_requests(&self) -> Vec<MetisId> {
+    pub fn recorded_get_issue_requests(&self) -> Vec<IssueId> {
         self.issue_get_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_get_patch_requests(&self) -> Vec<MetisId> {
+    pub fn recorded_get_patch_requests(&self) -> Vec<PatchId> {
         self.patch_get_requests.lock().unwrap().clone()
     }
 
@@ -151,16 +151,16 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
     }
 
-    async fn get_job(&self, _job_id: &MetisId) -> Result<JobSummary> {
+    async fn get_job(&self, _job_id: &TaskId) -> Result<JobSummary> {
         Err(anyhow!("get_job not implemented in MockMetisClient"))
     }
 
-    async fn kill_job(&self, _job_id: &MetisId) -> Result<KillJobResponse> {
+    async fn kill_job(&self, _job_id: &TaskId) -> Result<KillJobResponse> {
         Err(anyhow!("kill_job not implemented in MockMetisClient"))
     }
 
-    async fn get_job_logs(&self, job_id: &MetisId, _query: &LogsQuery) -> Result<LogStream> {
-        self.log_requests.lock().unwrap().push(job_id.to_string());
+    async fn get_job_logs(&self, job_id: &TaskId, _query: &LogsQuery) -> Result<LogStream> {
+        self.log_requests.lock().unwrap().push(job_id.clone());
         let lines = self
             .log_responses
             .lock()
@@ -173,17 +173,17 @@ impl MetisClientInterface for MockMetisClient {
 
     async fn set_job_status(
         &self,
-        _job_id: &MetisId,
+        _job_id: &TaskId,
         _status: &JobStatusUpdate,
     ) -> Result<SetJobStatusResponse> {
         Err(anyhow!("set_job_status not implemented in MockMetisClient"))
     }
 
-    async fn get_job_status(&self, _job_id: &MetisId) -> Result<GetJobStatusResponse> {
+    async fn get_job_status(&self, _job_id: &TaskId) -> Result<GetJobStatusResponse> {
         Err(anyhow!("get_job_status not implemented in MockMetisClient"))
     }
 
-    async fn get_job_context(&self, _job_id: &MetisId) -> Result<WorkerContext> {
+    async fn get_job_context(&self, _job_id: &TaskId) -> Result<WorkerContext> {
         Err(anyhow!(
             "get_job_context not implemented in MockMetisClient"
         ))
@@ -203,7 +203,7 @@ impl MetisClientInterface for MockMetisClient {
 
     async fn update_issue(
         &self,
-        issue_id: &MetisId,
+        issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse> {
         self.issue_upsert_requests
@@ -217,7 +217,7 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for update_issue"))
     }
 
-    async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord> {
+    async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
         self.issue_get_requests
             .lock()
             .unwrap()
@@ -252,7 +252,7 @@ impl MetisClientInterface for MockMetisClient {
 
     async fn update_patch(
         &self,
-        patch_id: &MetisId,
+        patch_id: &PatchId,
         request: &UpsertPatchRequest,
     ) -> Result<UpsertPatchResponse> {
         self.patch_upsert_requests
@@ -266,7 +266,7 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for update_patch"))
     }
 
-    async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord> {
+    async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
         self.patch_get_requests
             .lock()
             .unwrap()

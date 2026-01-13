@@ -10,11 +10,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use flate2::read::GzDecoder;
-use metis_common::job_status::JobStatusUpdate;
-use metis_common::MetisId;
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
+    job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
+    TaskId,
 };
 use tar::Archive;
 
@@ -23,19 +23,14 @@ use crate::command::patches::create_patch_artifact_from_repo;
 use crate::constants;
 use crate::exec::eval_with_closure_unwrapping;
 
-pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf) -> Result<()> {
-    let job_id = job.trim().to_string();
-    if job_id.is_empty() {
-        bail!("job ID must not be empty");
-    }
-
+pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
     let WorkerContext {
         request_context,
         variables,
         program,
         params,
         ..
-    } = client.get_job_context(&job_id).await?;
+    } = client.get_job_context(&job).await?;
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
@@ -65,9 +60,9 @@ pub async fn run(client: &dyn MetisClientInterface, job: MetisId, dest: PathBuf)
         .with_context(|| "failed to execute Rhai program from worker context")?;
 
     let last_message = read_last_message(&dest)?;
-    submit_patch_artifact_if_present(client, &job_id, &dest, &last_message).await?;
+    submit_patch_artifact_if_present(client, &job, &dest, &last_message).await?;
     // Submit job status (merge of worker-submit functionality)
-    submit_job_status(client, &job_id, &last_message).await?;
+    submit_job_status(client, &job, &last_message).await?;
 
     Ok(())
 }
@@ -248,19 +243,13 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
 
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
-    job: &MetisId,
+    job: &TaskId,
     last_message: &str,
 ) -> Result<()> {
-    let job = job.trim();
-    if job.is_empty() {
-        bail!("Job ID must not be empty.");
-    }
-
-    let job_id = job.to_string();
     println!("Updating status for job '{job}' via metis-server…");
     let response = client
         .set_job_status(
-            &job_id,
+            job,
             &JobStatusUpdate::Complete {
                 last_message: Some(last_message.to_string()),
             },
@@ -276,15 +265,10 @@ async fn submit_job_status(
 
 async fn submit_patch_artifact_if_present(
     client: &dyn MetisClientInterface,
-    job: &MetisId,
+    job: &TaskId,
     dest: &Path,
     last_message: &str,
 ) -> Result<()> {
-    let job = job.trim();
-    if job.is_empty() {
-        bail!("Job ID must not be empty.");
-    }
-
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
     let is_automatic_backup = true;
@@ -293,7 +277,7 @@ async fn submit_patch_artifact_if_present(
         dest,
         title,
         description,
-        Some(job.to_string()),
+        Some(job.clone()),
         create_github_pr,
         is_automatic_backup,
     )
@@ -325,7 +309,8 @@ fn read_last_message(dest: &Path) -> Result<String> {
     })
 }
 
-fn patch_metadata(job: &str, last_message: &str) -> (String, String) {
+fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
+    let job_display = job.to_string();
     let trimmed_message = last_message.trim();
     let title = trimmed_message
         .lines()
@@ -333,9 +318,9 @@ fn patch_metadata(job: &str, last_message: &str) -> (String, String) {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| format!("Patch for job {job}"));
+        .unwrap_or_else(|| format!("Patch for job {job_display}"));
     let description = if trimmed_message.is_empty() {
-        format!("Patch generated for Metis job {job}")
+        format!("Patch generated for Metis job {job_display}")
     } else {
         trimmed_message.to_string()
     };
@@ -412,7 +397,10 @@ fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::{
+        client::MockMetisClient,
+        test_utils::ids::{patch_id, task_id},
+    };
     use metis_common::patches::UpsertPatchResponse;
     use std::collections::HashMap;
     use std::process::Command;
@@ -799,21 +787,16 @@ mod tests {
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: "patch-123".to_string(),
+            patch_id: patch_id("p-123"),
         });
+        let job_id = task_id("t-job-123");
 
-        submit_patch_artifact_if_present(
-            &client,
-            &"job-123".to_string(),
-            repo_path,
-            "final output line",
-        )
-        .await?;
+        submit_patch_artifact_if_present(&client, &job_id, repo_path, "final output line").await?;
 
         let requests = client.recorded_patch_upserts();
         assert_eq!(requests.len(), 1, "expected a single patch submission");
         let (_, request) = &requests[0];
-        assert_eq!(request.job_id.as_deref(), Some("job-123"));
+        assert_eq!(request.job_id, Some(job_id));
         assert_eq!(request.patch.title, "final output line");
         assert_eq!(request.patch.description, "final output line");
         assert!(
@@ -835,8 +818,8 @@ mod tests {
         setup_git_repo_with_initial_commit(repo_path)?;
 
         let client = MockMetisClient::default();
-        submit_patch_artifact_if_present(&client, &"job-456".to_string(), repo_path, "done")
-            .await?;
+        let job_id = task_id("t-job-456");
+        submit_patch_artifact_if_present(&client, &job_id, repo_path, "done").await?;
 
         let requests = client.recorded_patch_upserts();
         assert!(

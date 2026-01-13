@@ -7,7 +7,7 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest},
     logs::LogsQuery,
     task_status::Status,
-    MetisId,
+    TaskId,
 };
 use rhai::Engine as RhaiEngine;
 use std::{
@@ -30,7 +30,7 @@ pub async fn run(
     context_dir: Option<PathBuf>,
     force_encode_directory: bool,
     force_encode_git_bundle: bool,
-    after: Vec<String>,
+    after: Vec<TaskId>,
     cli_vars: Vec<String>,
     program: String,
     prompt_parts: Vec<String>,
@@ -51,11 +51,7 @@ pub async fn run(
 
     let program = load_program(&program)?;
 
-    let parent_ids: Vec<MetisId> = after.into_iter().map(|id| id.trim().to_string()).collect();
-    if parent_ids.iter().any(|id| id.is_empty()) {
-        bail!("--after values must not be empty");
-    }
-
+    let parent_ids = after;
     let mut variables = parse_cli_variables(&cli_vars)?;
     variables.insert("PROMPT".to_string(), prompt.clone());
 
@@ -94,7 +90,7 @@ pub async fn run(
 
 pub(crate) async fn stream_job_logs_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &MetisId,
+    job_id: &TaskId,
     watch: bool,
 ) -> Result<()> {
     let query = LogsQuery {
@@ -118,11 +114,15 @@ pub(crate) async fn stream_job_logs_via_server(
 
 async fn wait_for_job_completion_via_server(
     client: &dyn MetisClientInterface,
-    job_id: &MetisId,
+    job_id: &TaskId,
 ) -> Result<()> {
     loop {
         let response = client.list_jobs().await?;
-        if let Some(job) = response.jobs.iter().find(|job| job.id == job_id.as_str()) {
+        if let Some(job) = response
+            .jobs
+            .iter()
+            .find(|job| job.id.as_ref() == job_id.as_ref())
+        {
             match job.status_log.current_status() {
                 Status::Complete => {
                     println!("Job '{job_id}' completed successfully.");
@@ -412,6 +412,7 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
+    use crate::test_utils::ids;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
@@ -420,19 +421,23 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn task_id(value: &str) -> TaskId {
+        ids::task_id(value)
+    }
+
     #[tokio::test]
     async fn spawn_uses_injected_client_and_waits_for_completion() {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
 
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-123".into(),
+            job_id: task_id("t-job-123"),
         });
         client.push_log_lines(["first log line\n", "second log line\n"]);
         let start_time = Utc::now();
         client.push_list_jobs_response(ListJobsResponse {
             jobs: vec![JobSummary {
-                id: "job-123".into(),
+                id: task_id("t-job-123"),
                 notes: None,
                 program: "0".to_string(),
                 params: vec![],
@@ -449,7 +454,7 @@ mod tests {
         });
         client.push_list_jobs_response(ListJobsResponse {
             jobs: vec![JobSummary {
-                id: "job-123".into(),
+                id: task_id("t-job-123"),
                 notes: None,
                 program: "0".to_string(),
                 params: vec![],
@@ -513,7 +518,7 @@ mod tests {
     async fn spawn_accepts_service_repository_context() {
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-service".into(),
+            job_id: task_id("t-job-service"),
         });
 
         run(
@@ -549,7 +554,7 @@ mod tests {
     async fn spawn_defaults_rev_to_main_for_service_repositories() {
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-service-default-rev".into(),
+            job_id: task_id("t-job-service-default-rev"),
         });
 
         run(
@@ -584,7 +589,7 @@ mod tests {
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-git".into(),
+            job_id: task_id("t-job-git"),
         });
 
         run(
@@ -619,7 +624,7 @@ mod tests {
     async fn spawn_defaults_rev_to_main_for_git_urls() {
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-git-default-rev".into(),
+            job_id: task_id("t-job-git-default-rev"),
         });
 
         run(
@@ -655,7 +660,7 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-image".into(),
+            job_id: task_id("t-job-image"),
         });
 
         run(
@@ -694,7 +699,7 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-with-vars".into(),
+            job_id: task_id("t-job-with-vars"),
         });
 
         run(
@@ -726,7 +731,7 @@ mod tests {
         let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-inline-program".into(),
+            job_id: task_id("t-job-inline-program"),
         });
 
         run(
@@ -760,7 +765,7 @@ mod tests {
 
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
-            job_id: "job-file-program".into(),
+            job_id: task_id("t-job-file-program"),
         });
 
         run(

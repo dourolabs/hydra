@@ -1,4 +1,5 @@
-use crate::MetisId;
+pub use crate::IssueId;
+use crate::TaskId;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -125,7 +126,7 @@ impl FromStr for IssueDependencyType {
 pub struct IssueDependency {
     #[serde(rename = "type")]
     pub dependency_type: IssueDependencyType,
-    pub issue_id: MetisId,
+    pub issue_id: IssueId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +144,7 @@ pub struct Issue {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRecord {
-    pub id: MetisId,
+    pub id: IssueId,
     pub issue: Issue,
 }
 
@@ -151,12 +152,12 @@ pub struct IssueRecord {
 pub struct UpsertIssueRequest {
     pub issue: Issue,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<MetisId>,
+    pub job_id: Option<TaskId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertIssueResponse {
-    pub issue_id: MetisId,
+    pub issue_id: IssueId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

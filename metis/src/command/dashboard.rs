@@ -22,7 +22,7 @@ use metis_common::{
     jobs::JobSummary,
     patches::{PatchRecord as ApiPatchRecord, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
-    MetisId,
+    IssueId, MetisId, PatchId, TaskId,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -52,13 +52,13 @@ struct JobSections {
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
-    issue_id: Option<String>,
-    emitted_artifacts: Vec<String>,
+    issue_id: Option<IssueId>,
+    emitted_artifacts: Vec<MetisId>,
 }
 
 #[derive(Clone, PartialEq)]
 struct JobDisplay {
-    id: String,
+    id: TaskId,
     status: Status,
     runtime: Option<String>,
     note: String,
@@ -73,7 +73,7 @@ struct PatchDisplay {
 
 #[derive(Clone, PartialEq)]
 struct IssueRecord {
-    id: String,
+    id: IssueId,
     description: String,
     status: IssueStatus,
     assignee: Option<String>,
@@ -82,7 +82,7 @@ struct IssueRecord {
 
 #[derive(Clone, PartialEq)]
 struct PatchRecord {
-    id: String,
+    id: PatchId,
     summary: String,
 }
 
@@ -106,8 +106,8 @@ struct IssueLine {
 #[derive(Clone)]
 struct IssueNode {
     record: IssueRecord,
-    parent: Option<String>,
-    children: Vec<String>,
+    parent: Option<IssueId>,
+    children: Vec<IssueId>,
     patch_count: usize,
     task: Option<TaskIndicator>,
 }
@@ -432,7 +432,7 @@ fn job_table<'a>(title: &'a str, jobs: &'a [JobDisplay], widths: &'a [Constraint
         jobs.iter()
             .map(|job| {
                 Row::new(vec![
-                    Cell::from(job.id.clone()),
+                    Cell::from(job.id.to_string()),
                     Cell::from(status_label(job.status)).style(status_style(job.status)),
                     Cell::from(job.runtime.clone().unwrap_or_else(|| "-".into())),
                     Cell::from(truncate_message(&job.note, MAX_MESSAGE_WIDTH)),
@@ -490,12 +490,7 @@ async fn refresh_jobs(
             Some(id) => id,
             None => fetch_issue_id(client, &summary.id).await?,
         };
-        let emitted_artifacts = summary
-            .status_log
-            .emitted_artifacts()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let emitted_artifacts = summary.status_log.emitted_artifacts().unwrap_or_default();
         let display = summarize_job(summary, now);
         jobs.push(JobDetails {
             display,
@@ -530,17 +525,17 @@ async fn refresh_records(
     Ok(changed || derived_changed)
 }
 
-fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &str) -> Option<Option<String>> {
+fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
     previous_jobs
         .iter()
-        .find(|job| job.display.id == job_id)
+        .find(|job| job.display.id == *job_id)
         .map(|job| job.issue_id.clone())
 }
 
 async fn fetch_issue_id(
     client: &dyn MetisClientInterface,
-    job_id: &MetisId,
-) -> Result<Option<String>> {
+    job_id: &TaskId,
+) -> Result<Option<IssueId>> {
     let context = client
         .get_job_context(job_id)
         .await
@@ -551,7 +546,7 @@ async fn fetch_issue_id(
         .get(ISSUE_ID_VAR)
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
+        .and_then(|value| value.parse::<IssueId>().ok());
 
     Ok(issue_id)
 }
@@ -631,8 +626,9 @@ fn update_views(state: &mut DashboardState) -> bool {
         .patches
         .iter()
         .filter(|patch| !associated_patch_ids.contains(&patch.id))
+        .take(MAX_PATCH_ROWS)
         .map(|patch| PatchDisplay {
-            id: patch.id.clone(),
+            id: patch.id.to_string(),
             summary: patch.summary.clone(),
         })
         .collect();
@@ -651,10 +647,10 @@ fn build_issue_lines(
     issues: &[IssueRecord],
     jobs: &[JobDetails],
     patches: &[PatchRecord],
-) -> (IssueLines, HashSet<String>) {
-    let issue_ids: HashSet<String> = issues.iter().map(|issue| issue.id.clone()).collect();
-    let mut tasks_by_issue: HashMap<String, Vec<JobDisplay>> = HashMap::new();
-    let mut emitted_artifacts_by_issue: HashMap<String, HashSet<String>> = HashMap::new();
+) -> (IssueLines, HashSet<PatchId>) {
+    let issue_ids: HashSet<IssueId> = issues.iter().map(|issue| issue.id.clone()).collect();
+    let mut tasks_by_issue: HashMap<IssueId, Vec<JobDisplay>> = HashMap::new();
+    let mut emitted_artifacts_by_issue: HashMap<IssueId, HashSet<MetisId>> = HashMap::new();
 
     for job in jobs {
         if let Some(issue_id) = &job.issue_id {
@@ -672,25 +668,27 @@ fn build_issue_lines(
         }
     }
 
-    let patch_lookup: HashSet<String> = patches.iter().map(|patch| patch.id.clone()).collect();
-    let mut patch_ids_by_issue: HashMap<String, HashSet<String>> = HashMap::new();
+    let patch_lookup: HashSet<PatchId> = patches.iter().map(|patch| patch.id.clone()).collect();
+    let mut patch_ids_by_issue: HashMap<IssueId, HashSet<PatchId>> = HashMap::new();
     let mut associated_patch_ids = HashSet::new();
     for (issue_id, artifact_ids) in &emitted_artifacts_by_issue {
         if !issue_ids.contains(issue_id) {
             continue;
         }
         for artifact_id in artifact_ids {
-            if patch_lookup.contains(artifact_id) {
-                patch_ids_by_issue
-                    .entry(issue_id.clone())
-                    .or_default()
-                    .insert(artifact_id.clone());
-                associated_patch_ids.insert(artifact_id.clone());
+            if let Some(patch_id) = artifact_id.as_patch_id() {
+                if patch_lookup.contains(&patch_id) {
+                    patch_ids_by_issue
+                        .entry(issue_id.clone())
+                        .or_default()
+                        .insert(patch_id.clone());
+                    associated_patch_ids.insert(patch_id);
+                }
             }
         }
     }
 
-    let mut nodes: HashMap<String, IssueNode> = issues
+    let mut nodes: HashMap<IssueId, IssueNode> = issues
         .iter()
         .map(|issue| {
             let task = tasks_by_issue
@@ -713,7 +711,7 @@ fn build_issue_lines(
         })
         .collect();
 
-    let ids: Vec<String> = nodes.keys().cloned().collect();
+    let ids: Vec<IssueId> = nodes.keys().cloned().collect();
     for id in &ids {
         let parent = nodes.get(id).and_then(|node| {
             node.record
@@ -733,7 +731,7 @@ fn build_issue_lines(
         }
     }
 
-    let mut roots: Vec<String> = nodes
+    let mut roots: Vec<IssueId> = nodes
         .iter()
         .filter(|(_, node)| node.parent.is_none())
         .map(|(id, _)| id.clone())
@@ -741,7 +739,7 @@ fn build_issue_lines(
     roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
 
     let mut rows = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited: HashSet<IssueId> = HashSet::new();
     for root in roots {
         append_issue(&root, 0, &mut rows, &mut visited, &nodes);
     }
@@ -750,13 +748,13 @@ fn build_issue_lines(
 }
 
 fn append_issue(
-    id: &str,
+    id: &IssueId,
     depth: usize,
     rows: &mut Vec<IssueLine>,
-    visited: &mut HashSet<String>,
-    nodes: &HashMap<String, IssueNode>,
+    visited: &mut HashSet<IssueId>,
+    nodes: &HashMap<IssueId, IssueNode>,
 ) {
-    if !visited.insert(id.to_string()) {
+    if !visited.insert(id.clone()) {
         return;
     }
 
@@ -769,11 +767,11 @@ fn append_issue(
         .dependencies
         .iter()
         .filter(|dep| dep.dependency_type == IssueDependencyType::BlockedOn)
-        .map(|dep| dep.issue_id.clone())
+        .map(|dep| dep.issue_id.to_string())
         .collect();
 
     rows.push(IssueLine {
-        id: node.record.id.clone(),
+        id: node.record.id.to_string(),
         summary: node.record.description.clone(),
         status: node.record.status,
         assignee: node.record.assignee.clone(),
@@ -790,7 +788,7 @@ fn append_issue(
     }
 }
 
-fn compare_issue_nodes(nodes: &HashMap<String, IssueNode>, a: &str, b: &str) -> Ordering {
+fn compare_issue_nodes(nodes: &HashMap<IssueId, IssueNode>, a: &IssueId, b: &IssueId) -> Ordering {
     let Some(left) = nodes.get(a) else {
         return Ordering::Less;
     };
@@ -959,6 +957,7 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::ids::{issue_id, patch_id, task_id};
     use chrono::Duration as ChronoDuration;
     use metis_common::task_status::Event;
 
@@ -987,7 +986,7 @@ mod tests {
         }
 
         JobSummary {
-            id: id.to_string(),
+            id: task_id(id),
             notes: None,
             program: "0".into(),
             params: vec![],
@@ -997,7 +996,7 @@ mod tests {
 
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
         IssueRecord {
-            id: id.to_string(),
+            id: issue_id(id),
             description: id.to_string(),
             status,
             assignee: None,
@@ -1008,22 +1007,22 @@ mod tests {
     fn job_details_with_issue(
         id: &str,
         status: Status,
-        issue_id: Option<&str>,
+        linked_issue: Option<&str>,
         emitted_artifacts: Vec<&str>,
         runtime: Option<&str>,
     ) -> JobDetails {
         JobDetails {
             display: JobDisplay {
-                id: id.to_string(),
+                id: task_id(id),
                 status,
                 runtime: runtime.map(|value| value.to_string()),
                 note: "-".to_string(),
                 last_change: Some(Utc::now()),
             },
-            issue_id: issue_id.map(|value| value.to_string()),
+            issue_id: linked_issue.map(issue_id),
             emitted_artifacts: emitted_artifacts
                 .into_iter()
-                .map(|value| value.to_string())
+                .map(|value| MetisId::from(patch_id(value)))
                 .collect(),
         }
     }
@@ -1032,29 +1031,29 @@ mod tests {
     fn categorize_jobs_splits_running_and_finished() {
         let now = Utc::now();
         let jobs = vec![
-            summarize_job(job_with_status("job-running", Status::Running, 0), now),
-            summarize_job(job_with_status("job-complete", Status::Complete, 1), now),
-            summarize_job(job_with_status("job-failed", Status::Failed, 2), now),
+            summarize_job(job_with_status("t-job-running", Status::Running, 0), now),
+            summarize_job(job_with_status("t-job-complete", Status::Complete, 1), now),
+            summarize_job(job_with_status("t-job-failed", Status::Failed, 2), now),
         ];
 
         let categorized = categorize_jobs(jobs);
 
         assert_eq!(categorized.running.len(), 1);
         assert_eq!(categorized.finished.len(), 2);
-        assert_eq!(categorized.running[0].id, "job-running");
+        assert_eq!(categorized.running[0].id, task_id("t-job-running"));
         assert!(categorized
             .finished
             .iter()
-            .any(|job| job.id == "job-complete"));
+            .any(|job| job.id == task_id("t-job-complete")));
         assert!(categorized
             .finished
             .iter()
-            .any(|job| job.id == "job-failed"));
+            .any(|job| job.id == task_id("t-job-failed")));
     }
 
     #[test]
     fn note_or_error_prefers_error_reason() {
-        let mut job = job_with_status("job-failed", Status::Failed, 0);
+        let mut job = job_with_status("t-job-failed", Status::Failed, 0);
         job.notes = Some("note that should be ignored".into());
 
         let message = note_or_error(&job);
@@ -1075,45 +1074,45 @@ mod tests {
     #[test]
     fn issue_lines_sorted_by_status_and_nested() {
         let issues = vec![
-            issue("ISSUE-1", IssueStatus::Open, vec![]),
+            issue("i-1", IssueStatus::Open, vec![]),
             issue(
-                "ISSUE-3",
+                "i-3",
                 IssueStatus::Closed,
                 vec![IssueDependency {
                     dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: "ISSUE-1".into(),
+                    issue_id: issue_id("i-1"),
                 }],
             ),
-            issue("ISSUE-2", IssueStatus::InProgress, vec![]),
+            issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
         let (lines, _) = build_issue_lines(&issues, &[], &[]);
 
         assert_eq!(lines.rows.len(), 3);
-        assert_eq!(lines.rows[0].id, "ISSUE-2");
-        assert_eq!(lines.rows[1].id, "ISSUE-1");
-        assert_eq!(lines.rows[2].id, "ISSUE-3");
+        assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
+        assert_eq!(lines.rows[1].id, issue_id("i-1").to_string());
+        assert_eq!(lines.rows[2].id, issue_id("i-3").to_string());
         assert_eq!(lines.rows[2].depth, 1);
     }
 
     #[test]
     fn issue_lines_include_task_and_patch_indicators() {
-        let issues = vec![issue("ISSUE-1", IssueStatus::Open, vec![])];
+        let issues = vec![issue("i-1", IssueStatus::Open, vec![])];
         let patches = vec![PatchRecord {
-            id: "patch-1".to_string(),
+            id: patch_id("p-1"),
             summary: "fix".to_string(),
         }];
         let jobs = vec![job_details_with_issue(
-            "job-1",
+            "t-job-1",
             Status::Running,
-            Some("ISSUE-1"),
-            vec!["patch-1"],
+            Some("i-1"),
+            vec!["p-1"],
             Some("3s"),
         )];
 
         let (lines, associated_patches) = build_issue_lines(&issues, &jobs, &patches);
 
-        assert!(associated_patches.contains("patch-1"));
+        assert!(associated_patches.contains(&patch_id("p-1")));
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.patch_count, 1);
         let task = line.task.as_ref().expect("task indicator missing");

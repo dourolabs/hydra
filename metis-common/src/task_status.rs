@@ -126,6 +126,7 @@ impl TaskStatusLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{IssueId, PatchId};
     use chrono::Utc;
 
     #[test]
@@ -133,9 +134,11 @@ mod tests {
         let now = Utc::now();
         let mut log = TaskStatusLog::new(Status::Pending, now);
         log.events.push(Event::Started { at: now });
+        let artifact_1: MetisId = IssueId::new().into();
+        let artifact_2: MetisId = PatchId::new().into();
         log.events.push(Event::Emitted {
             at: now,
-            artifact_ids: vec!["artifact-1".into(), "artifact-2".into()],
+            artifact_ids: vec![artifact_1.clone(), artifact_2.clone()],
         });
 
         assert_eq!(log.current_status(), Status::Running);
@@ -154,22 +157,21 @@ mod tests {
         let now = Utc::now();
         let mut log = TaskStatusLog::new(Status::Pending, now);
         log.events.push(Event::Started { at: now });
+        let artifact_1: MetisId = IssueId::new().into();
+        let artifact_2: MetisId = PatchId::new().into();
+        let artifact_3: MetisId = IssueId::new().into();
         log.events.push(Event::Emitted {
             at: now,
-            artifact_ids: vec!["artifact-1".into()],
+            artifact_ids: vec![artifact_1.clone()],
         });
         log.events.push(Event::Emitted {
             at: now,
-            artifact_ids: vec!["artifact-2".into(), "artifact-3".into()],
+            artifact_ids: vec![artifact_2.clone(), artifact_3.clone()],
         });
 
         assert_eq!(
             log.emitted_artifacts(),
-            Some(vec![
-                "artifact-1".into(),
-                "artifact-2".into(),
-                "artifact-3".into()
-            ])
+            Some(vec![artifact_1, artifact_2, artifact_3])
         );
     }
 }

@@ -1,12 +1,9 @@
 use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
-use metis_common::{
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-        SearchIssuesQuery, UpsertIssueRequest,
-    },
-    MetisId,
+use metis_common::issues::{
+    Issue, IssueDependency, IssueDependencyType, IssueId, IssueRecord, IssueStatus, IssueType,
+    SearchIssuesQuery, UpsertIssueRequest,
 };
 use std::io::{self, Write};
 use std::str::FromStr;
@@ -17,7 +14,7 @@ pub enum IssueCommands {
     List {
         /// Filter by issue ID.
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
-        id: Option<MetisId>,
+        id: Option<IssueId>,
 
         /// Pretty-print issues instead of emitting JSONL.
         #[arg(long)]
@@ -49,7 +46,7 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
         status: IssueStatus,
 
-        /// Issue dependencies in the format dependency-type:ISSUE_ID where dependency-type is child-of or blocked-on (e.g. child-of:ISSUE-123).
+        /// Issue dependencies in the format dependency-type:ISSUE_ID where dependency-type is child-of or blocked-on (e.g. child-of:i-abcd).
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
         dependencies: Vec<IssueDependency>,
 
@@ -65,7 +62,7 @@ pub enum IssueCommands {
     Update {
         /// Issue ID to update.
         #[arg(value_name = "ISSUE_ID")]
-        id: MetisId,
+        id: IssueId,
 
         /// New issue type.
         #[arg(long, value_name = "ISSUE_TYPE")]
@@ -87,7 +84,7 @@ pub enum IssueCommands {
         #[arg(long, value_name = "DESCRIPTION")]
         description: Option<String>,
 
-        /// Replace dependencies with the provided set in the format TYPE:ISSUE_ID (e.g. child-of:ISSUE-123).
+        /// Replace dependencies with the provided set in the format TYPE:ISSUE_ID (e.g. child-of:i-abcd).
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency, conflicts_with = "clear_dependencies")]
         dependencies: Vec<IssueDependency>,
 
@@ -151,19 +148,13 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
 
 async fn fetch_issues(
     client: &dyn MetisClientInterface,
-    id: Option<MetisId>,
+    id: Option<IssueId>,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
     assignee: Option<String>,
     query: Option<String>,
 ) -> Result<Vec<IssueRecord>> {
-    if let Some(id) = id {
-        let issue_id = id.trim();
-        if issue_id.is_empty() {
-            bail!("Issue ID must not be empty.");
-        }
-        let issue_id: MetisId = issue_id.to_string();
-
+    if let Some(issue_id) = id {
         let record = client
             .get_issue(&issue_id)
             .await
@@ -291,7 +282,7 @@ async fn create_issue(
 
 async fn update_issue(
     client: &dyn MetisClientInterface,
-    id: MetisId,
+    id: IssueId,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
     assignee: Option<String>,
@@ -300,11 +291,7 @@ async fn update_issue(
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
 ) -> Result<()> {
-    let issue_id = id.trim();
-    if issue_id.is_empty() {
-        bail!("Issue ID must not be empty.");
-    }
-    let issue_id = issue_id.to_string();
+    let issue_id = id;
 
     let description = match description {
         Some(value) => {
@@ -381,14 +368,13 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
 
     let dependency_type =
         IssueDependencyType::from_str(dependency_type).map_err(|err| err.to_string())?;
-    let issue_id = issue_id.trim();
-    if issue_id.is_empty() {
-        return Err("dependency issue id must not be empty".to_string());
-    }
-
+    let issue_id = issue_id
+        .trim()
+        .parse::<IssueId>()
+        .map_err(|err| err.to_string())?;
     Ok(IssueDependency {
         dependency_type,
-        issue_id: issue_id.to_string(),
+        issue_id,
     })
 }
 
@@ -447,6 +433,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
+    use crate::test_utils::ids::issue_id;
     use metis_common::issues::{
         Issue, IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
         UpsertIssueResponse,
@@ -457,7 +444,7 @@ mod tests {
         let client = MockMetisClient::default();
         client.push_list_issues_response(ListIssuesResponse {
             issues: vec![IssueRecord {
-                id: "issue-1".into(),
+                id: issue_id("i-1"),
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
@@ -492,15 +479,17 @@ mod tests {
         let mut output = Vec::new();
         print_issues_jsonl(&issues, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\"id\":\"issue-1\""));
-        assert!(!output.contains("\"id\":\"issue-2\""));
+        let first_id = issue_id("i-1").to_string();
+        let second_id = issue_id("i-2").to_string();
+        assert!(output.contains(&format!("\"id\":\"{first_id}\"")));
+        assert!(!output.contains(&format!("\"id\":\"{second_id}\"")));
     }
 
     #[tokio::test]
     async fn list_issues_by_id_returns_single_issue() {
         let client = MockMetisClient::default();
         client.push_get_issue_response(IssueRecord {
-            id: "issue-123".into(),
+            id: issue_id("i-123"),
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
@@ -512,7 +501,7 @@ mod tests {
 
         let issues = fetch_issues(
             &client,
-            Some("issue-123".into()),
+            Some(issue_id("i-123")),
             Some(IssueType::Task),
             Some(IssueStatus::InProgress),
             None,
@@ -521,9 +510,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(client.recorded_get_issue_requests(), vec!["issue-123"]);
+        assert_eq!(
+            client.recorded_get_issue_requests(),
+            vec![issue_id("i-123")]
+        );
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].id, "issue-123");
+        assert_eq!(issues[0].id, issue_id("i-123"));
     }
 
     #[tokio::test]
@@ -531,7 +523,7 @@ mod tests {
         let client = MockMetisClient::default();
         client.push_list_issues_response(ListIssuesResponse {
             issues: vec![IssueRecord {
-                id: "issue-7".into(),
+                id: issue_id("i-7"),
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
@@ -556,19 +548,19 @@ mod tests {
             }]
         );
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].id, "issue-7");
+        assert_eq!(issues[0].id, issue_id("i-7"));
     }
 
     #[tokio::test]
     async fn create_issue_submits_issue_record() {
         let client = MockMetisClient::default();
         client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: "issue-456".into(),
+            issue_id: issue_id("i-456"),
         });
 
         let dependencies = vec![IssueDependency {
             dependency_type: IssueDependencyType::ChildOf,
-            issue_id: "issue-1".into(),
+            issue_id: issue_id("i-1"),
         }];
 
         create_issue(
@@ -632,16 +624,16 @@ mod tests {
 
     #[test]
     fn parse_issue_dependency_parses_type_and_id() {
-        let dependency = parse_issue_dependency("child-of:ISSUE-42").unwrap();
+        let dependency = parse_issue_dependency("child-of:i-abcd").unwrap();
         assert_eq!(dependency.dependency_type, IssueDependencyType::ChildOf);
-        assert_eq!(dependency.issue_id, "ISSUE-42");
+        assert_eq!(dependency.issue_id, issue_id("i-abcd"));
     }
 
     #[tokio::test]
     async fn update_issue_modifies_requested_fields() {
         let client = MockMetisClient::default();
         client.push_get_issue_response(IssueRecord {
-            id: "issue-9".into(),
+            id: issue_id("i-9"),
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
@@ -649,17 +641,17 @@ mod tests {
                 assignee: Some("owner-a".into()),
                 dependencies: vec![IssueDependency {
                     dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: "issue-1".into(),
+                    issue_id: issue_id("i-1"),
                 }],
             },
         });
         client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: "issue-9".into(),
+            issue_id: issue_id("i-9"),
         });
 
         update_issue(
             &client,
-            "issue-9".into(),
+            issue_id("i-9"),
             Some(IssueType::Bug),
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
@@ -667,18 +659,18 @@ mod tests {
             Some("Updated issue description".into()),
             vec![IssueDependency {
                 dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: "issue-2".into(),
+                issue_id: issue_id("i-2"),
             }],
             false,
         )
         .await
         .unwrap();
 
-        assert_eq!(client.recorded_get_issue_requests(), vec!["issue-9"]);
+        assert_eq!(client.recorded_get_issue_requests(), vec![issue_id("i-9")]);
         assert_eq!(
             client.recorded_issue_upserts(),
             vec![(
-                Some("issue-9".into()),
+                Some(issue_id("i-9")),
                 UpsertIssueRequest {
                     issue: Issue {
                         issue_type: IssueType::Bug,
@@ -687,7 +679,7 @@ mod tests {
                         assignee: Some("owner-b".into()),
                         dependencies: vec![IssueDependency {
                             dependency_type: IssueDependencyType::BlockedOn,
-                            issue_id: "issue-2".into(),
+                            issue_id: issue_id("i-2"),
                         }],
                     },
                     job_id: None,
@@ -700,7 +692,7 @@ mod tests {
     async fn update_issue_allows_clearing_assignee_and_dependencies() {
         let client = MockMetisClient::default();
         client.push_get_issue_response(IssueRecord {
-            id: "issue-10".into(),
+            id: issue_id("i-10"),
             issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
@@ -708,17 +700,17 @@ mod tests {
                 assignee: Some("owner-a".into()),
                 dependencies: vec![IssueDependency {
                     dependency_type: IssueDependencyType::BlockedOn,
-                    issue_id: "issue-5".into(),
+                    issue_id: issue_id("i-5"),
                 }],
             },
         });
         client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: "issue-10".into(),
+            issue_id: issue_id("i-10"),
         });
 
         update_issue(
             &client,
-            "issue-10".into(),
+            issue_id("i-10"),
             None,
             None,
             None,
@@ -733,7 +725,7 @@ mod tests {
         assert_eq!(
             client.recorded_issue_upserts(),
             vec![(
-                Some("issue-10".into()),
+                Some(issue_id("i-10")),
                 UpsertIssueRequest {
                     issue: Issue {
                         issue_type: IssueType::Feature,
@@ -752,7 +744,7 @@ mod tests {
     fn pretty_prints_human_readable_issues() {
         let issues = vec![
             IssueRecord {
-                id: "issue-1".into(),
+                id: issue_id("i-1"),
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
@@ -760,12 +752,12 @@ mod tests {
                     assignee: Some("owner-a".into()),
                     dependencies: vec![IssueDependency {
                         dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: "issue-99".into(),
+                        issue_id: issue_id("i-99"),
                     }],
                 },
             },
             IssueRecord {
-                id: "issue-2".into(),
+                id: issue_id("i-2"),
                 issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
@@ -779,12 +771,17 @@ mod tests {
         let mut output = Vec::new();
         print_issues_pretty(&issues, &mut output).unwrap();
         let rendered = String::from_utf8(output).unwrap();
+        let first_issue = issue_id("i-1").to_string();
+        let dependency_id = issue_id("i-99").to_string();
+        let second_issue = issue_id("i-2").to_string();
 
-        assert!(rendered.contains("Issue issue-1 (bug, open)"));
+        assert!(rendered.contains(&format!("Issue {first_issue} (bug, open)")));
         assert!(rendered.contains("Assignee: owner-a"));
         assert!(rendered.contains("Description:\n  First issue\n  with context"));
-        assert!(rendered.contains("Dependencies:\n  - blocked-on issue-99"));
-        assert!(rendered.contains("Issue issue-2 (feature, in-progress)"));
+        assert!(rendered.contains(&format!("Dependencies:\n  - blocked-on {dependency_id}")));
+        assert!(rendered.contains(&format!(
+            "Issue {second_issue} (feature, in-progress)"
+        )));
         assert!(rendered.contains("Assignee: -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));

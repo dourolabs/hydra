@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
-use metis_common::MetisId;
 use metis_common::task_status::Event;
+use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus},
     patches::Patch,
@@ -17,21 +16,21 @@ use metis_common::{
 /// It is not thread-safe and should only be used in single-threaded contexts.
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
-    tasks: HashMap<MetisId, Task>,
+    tasks: HashMap<TaskId, Task>,
     /// Maps issue IDs to their Issue data
-    issues: HashMap<MetisId, Issue>,
+    issues: HashMap<IssueId, Issue>,
     /// Maps patch IDs to their Patch data
-    patches: HashMap<MetisId, Patch>,
+    patches: HashMap<PatchId, Patch>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
-    issue_children: HashMap<MetisId, Vec<MetisId>>,
+    issue_children: HashMap<IssueId, Vec<IssueId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
-    issue_blocked_on: HashMap<MetisId, Vec<MetisId>>,
+    issue_blocked_on: HashMap<IssueId, Vec<IssueId>>,
     /// Maps task IDs to their parent task edges (dependencies)
-    parents: HashMap<MetisId, Vec<Edge>>,
+    parents: HashMap<TaskId, Vec<Edge>>,
     /// Maps task IDs to their child task IDs (dependents)
-    children: HashMap<MetisId, Vec<MetisId>>,
+    children: HashMap<TaskId, Vec<TaskId>>,
     /// Maps task IDs to their TaskStatusLog
-    status_logs: HashMap<MetisId, TaskStatusLog>,
+    status_logs: HashMap<TaskId, TaskStatusLog>,
 }
 
 impl MemoryStore {
@@ -50,7 +49,7 @@ impl MemoryStore {
     }
 
     /// Checks if all parents of a task are complete (Complete or Failed).
-    fn all_parents_complete(&self, id: &MetisId) -> bool {
+    fn all_parents_complete(&self, id: &TaskId) -> bool {
         let parent_edges = self.parents.get(id).cloned().unwrap_or_default();
         parent_edges.iter().all(|edge| {
             self.status_logs
@@ -68,7 +67,7 @@ impl MemoryStore {
     /// Updates issue adjacency indexes to match the provided dependency list.
     fn apply_issue_dependency_delta(
         &mut self,
-        issue_id: &MetisId,
+        issue_id: &IssueId,
         previous: &[IssueDependency],
         updated: &[IssueDependency],
     ) {
@@ -126,8 +125,8 @@ impl Default for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn add_issue(&mut self, issue: Issue) -> Result<MetisId, StoreError> {
-        let id = Uuid::new_v4().hyphenated().to_string();
+    async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
+        let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
 
         self.issues.insert(id.clone(), issue);
@@ -138,14 +137,14 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &MetisId) -> Result<Issue, StoreError> {
+    async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError> {
         self.issues
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
-    async fn update_issue(&mut self, id: &MetisId, issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&mut self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         if !self.issues.contains_key(id) {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
@@ -165,7 +164,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_issues(&self) -> Result<Vec<(MetisId, Issue)>, StoreError> {
+    async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
         Ok(self
             .issues
             .iter()
@@ -173,20 +172,20 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn add_patch(&mut self, patch: Patch) -> Result<MetisId, StoreError> {
-        let id = Uuid::new_v4().hyphenated().to_string();
+    async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {
+        let id = PatchId::new();
         self.patches.insert(id.clone(), patch);
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &MetisId) -> Result<Patch, StoreError> {
+    async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError> {
         self.patches
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
-    async fn update_patch(&mut self, id: &MetisId, patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&mut self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
         if !self.patches.contains_key(id) {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
@@ -194,7 +193,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_patches(&self) -> Result<Vec<(MetisId, Patch)>, StoreError> {
+    async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
         Ok(self
             .patches
             .iter()
@@ -202,7 +201,7 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn get_issue_children(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
+    async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         match self.issues.get(issue_id) {
             Some(_) => Ok(self
                 .issue_children
@@ -213,7 +212,7 @@ impl Store for MemoryStore {
         }
     }
 
-    async fn get_issue_blocked_on(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
+    async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         match self.issues.get(issue_id) {
             Some(_) => Ok(self
                 .issue_blocked_on
@@ -224,7 +223,7 @@ impl Store for MemoryStore {
         }
     }
 
-    async fn is_issue_ready(&self, issue_id: &MetisId) -> Result<bool, StoreError> {
+    async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let issue = self
             .issues
             .get(issue_id)
@@ -241,13 +240,6 @@ impl Store for MemoryStore {
                         let blocker_status = match self.issues.get(&dependency.issue_id) {
                             Some(blocker) => &blocker.status,
                             None => {
-                                if self.patches.contains_key(&dependency.issue_id) {
-                                    return Err(StoreError::InvalidDependency(format!(
-                                        "record '{}' is not an issue",
-                                        dependency.issue_id
-                                    )));
-                                }
-
                                 return Err(StoreError::IssueNotFound(dependency.issue_id.clone()));
                             }
                         };
@@ -270,11 +262,6 @@ impl Store for MemoryStore {
                     let child_status = match self.issues.get(&child_id) {
                         Some(child) => &child.status,
                         None => {
-                            if self.patches.contains_key(&child_id) {
-                                return Err(StoreError::InvalidDependency(format!(
-                                    "record '{child_id}' is not an issue"
-                                )));
-                            }
                             return Err(StoreError::IssueNotFound(child_id));
                         }
                     };
@@ -294,9 +281,9 @@ impl Store for MemoryStore {
         task: Task,
         parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
-    ) -> Result<MetisId, StoreError> {
+    ) -> Result<TaskId, StoreError> {
         // Generate a unique ID for the new task
-        let id = Uuid::new_v4().hyphenated().to_string();
+        let id = TaskId::new();
 
         // Verify all parent tasks exist
         for parent_edge in &parent_edges {
@@ -357,7 +344,7 @@ impl Store for MemoryStore {
 
     async fn add_task_with_id(
         &mut self,
-        metis_id: MetisId,
+        metis_id: TaskId,
         task: Task,
         parent_edges: Vec<Edge>,
         creation_time: DateTime<Utc>,
@@ -426,7 +413,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn update_task(&mut self, metis_id: &MetisId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(&mut self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
         if !self.tasks.contains_key(metis_id) {
             return Err(StoreError::TaskNotFound(metis_id.clone()));
         }
@@ -436,14 +423,14 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn get_task(&self, id: &MetisId) -> Result<Task, StoreError> {
+    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError> {
         self.tasks
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn get_parents(&self, id: &MetisId) -> Result<Vec<Edge>, StoreError> {
+    async fn get_parents(&self, id: &TaskId) -> Result<Vec<Edge>, StoreError> {
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
@@ -451,7 +438,7 @@ impl Store for MemoryStore {
         Ok(self.parents.get(id).cloned().unwrap_or_default())
     }
 
-    async fn get_children(&self, id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
+    async fn get_children(&self, id: &TaskId) -> Result<Vec<TaskId>, StoreError> {
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
@@ -459,7 +446,7 @@ impl Store for MemoryStore {
         Ok(self.children.get(id).cloned().unwrap_or_default())
     }
 
-    async fn remove_task(&mut self, id: &MetisId) -> Result<(), StoreError> {
+    async fn remove_task(&mut self, id: &TaskId) -> Result<(), StoreError> {
         if !self.tasks.contains_key(id) {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
@@ -491,11 +478,11 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_tasks(&self) -> Result<Vec<MetisId>, StoreError> {
+    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         Ok(self.tasks.keys().cloned().collect())
     }
 
-    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<MetisId>, StoreError> {
+    async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         Ok(self
             .status_logs
             .iter()
@@ -504,27 +491,27 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn get_status(&self, id: &MetisId) -> Result<Status, StoreError> {
+    async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
         self.status_logs
             .get(id)
             .map(|status_log| status_log.current_status())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn get_status_log(&self, id: &MetisId) -> Result<TaskStatusLog, StoreError> {
+    async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         self.status_logs
             .get(id)
             .cloned()
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    fn get_result(&self, id: &MetisId) -> Option<Result<(), TaskError>> {
+    fn get_result(&self, id: &TaskId) -> Option<Result<(), TaskError>> {
         self.status_logs.get(id).and_then(TaskStatusLog::result)
     }
 
     async fn mark_task_running(
         &mut self,
-        id: &MetisId,
+        id: &TaskId,
         start_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         // Verify task exists
@@ -549,7 +536,7 @@ impl Store for MemoryStore {
 
     async fn emit_task_artifacts(
         &mut self,
-        id: &MetisId,
+        id: &TaskId,
         artifact_ids: Vec<MetisId>,
         at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
@@ -573,7 +560,7 @@ impl Store for MemoryStore {
 
     async fn mark_task_complete(
         &mut self,
-        id: &MetisId,
+        id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
         end_time: DateTime<Utc>,
@@ -681,9 +668,9 @@ mod tests {
         }
     }
 
-    fn edge(id: &str) -> Edge {
+    fn edge(id: &TaskId) -> Edge {
         Edge {
-            id: id.to_string(),
+            id: id.clone(),
             name: None,
         }
     }
@@ -719,7 +706,7 @@ mod tests {
     #[tokio::test]
     async fn update_missing_patch_returns_error() {
         let mut store = MemoryStore::new();
-        let missing = "missing".to_string();
+        let missing: PatchId = "p-miss".parse().unwrap();
 
         let err = store
             .update_patch(
@@ -976,14 +963,17 @@ mod tests {
     #[tokio::test]
     async fn add_task_with_missing_parent_fails() {
         let mut store = MemoryStore::new();
-        let missing_parent = "missing".to_string();
+        let missing_parent: TaskId = "t-miss".parse().unwrap();
 
         let task = spawn_task();
         let err = store
             .add_task(task, vec![edge(&missing_parent)], Utc::now())
             .await
             .unwrap_err();
-        assert!(matches!(err, StoreError::InvalidDependency(msg) if msg.contains(&missing_parent)));
+        assert!(matches!(
+            err,
+            StoreError::InvalidDependency(msg) if msg.contains(missing_parent.as_ref())
+        ));
 
         assert!(store.list_tasks().await.unwrap().is_empty());
     }
@@ -1026,7 +1016,7 @@ mod tests {
     #[tokio::test]
     async fn removing_unknown_task_returns_error() {
         let mut store = MemoryStore::new();
-        let missing = "does-not-exist".to_string();
+        let missing: TaskId = "t-absent".parse().unwrap();
 
         let err = store.remove_task(&missing).await.unwrap_err();
         assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing));
