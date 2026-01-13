@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     MetisId,
-    artifacts::Artifact,
+    artifacts::{Issue, Patch},
     constants::{ENV_GH_TOKEN, ENV_METIS_ID},
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
 };
@@ -310,8 +310,14 @@ async fn job_notes_from_store(job_id: &MetisId, store: &dyn Store) -> Option<Str
 
     let artifact_ids = status_log.emitted_artifacts()?;
     for artifact_id in artifact_ids {
-        if let Ok(artifact) = store.get_artifact(&artifact_id).await {
-            if let Some(note) = note_from_artifact(&artifact) {
+        if let Ok(patch) = store.get_patch(&artifact_id).await {
+            if let Some(note) = note_from_patch(&patch) {
+                return Some(note);
+            }
+        }
+
+        if let Ok(issue) = store.get_issue(&artifact_id).await {
+            if let Some(note) = note_from_issue(&issue) {
                 return Some(note);
             }
         }
@@ -337,11 +343,10 @@ fn format_error_note(error: &TaskError) -> Option<String> {
     }
 }
 
-fn note_from_artifact(artifact: &Artifact) -> Option<String> {
-    match artifact {
-        Artifact::Patch {
-            title, description, ..
-        } => sanitize_note(title).or_else(|| sanitize_note(description)),
-        Artifact::Issue { description, .. } => sanitize_note(description),
-    }
+fn note_from_patch(patch: &Patch) -> Option<String> {
+    sanitize_note(&patch.title).or_else(|| sanitize_note(&patch.description))
+}
+
+fn note_from_issue(issue: &Issue) -> Option<String> {
+    sanitize_note(&issue.description)
 }

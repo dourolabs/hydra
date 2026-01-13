@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{Edge, Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::MetisId;
-use metis_common::artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus};
+use metis_common::artifacts::{Issue, IssueDependency, IssueDependencyType, IssueStatus, Patch};
 use metis_common::task_status::Event;
 
 /// An in-memory implementation of the Store trait.
@@ -15,8 +15,10 @@ use metis_common::task_status::Event;
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
     tasks: HashMap<MetisId, Task>,
-    /// Maps artifact IDs to their Artifact data
-    artifacts: HashMap<MetisId, Artifact>,
+    /// Maps issue IDs to their Issue data
+    issues: HashMap<MetisId, Issue>,
+    /// Maps patch IDs to their Patch data
+    patches: HashMap<MetisId, Patch>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
     issue_children: HashMap<MetisId, Vec<MetisId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
@@ -34,7 +36,8 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
-            artifacts: HashMap::new(),
+            issues: HashMap::new(),
+            patches: HashMap::new(),
             issue_children: HashMap::new(),
             issue_blocked_on: HashMap::new(),
             parents: HashMap::new(),
@@ -120,14 +123,11 @@ impl Default for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn add_artifact(&mut self, artifact: Artifact) -> Result<MetisId, StoreError> {
+    async fn add_issue(&mut self, issue: Issue) -> Result<MetisId, StoreError> {
         let id = Uuid::new_v4().hyphenated().to_string();
-        let new_dependencies = match &artifact {
-            Artifact::Issue { dependencies, .. } => dependencies.clone(),
-            _ => Vec::new(),
-        };
+        let new_dependencies = issue.dependencies.clone();
 
-        self.artifacts.insert(id.clone(), artifact);
+        self.issues.insert(id.clone(), issue);
 
         if !new_dependencies.is_empty() {
             self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
@@ -135,32 +135,26 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_artifact(&self, id: &MetisId) -> Result<Artifact, StoreError> {
-        self.artifacts
+    async fn get_issue(&self, id: &MetisId) -> Result<Issue, StoreError> {
+        self.issues
             .get(id)
             .cloned()
-            .ok_or_else(|| StoreError::ArtifactNotFound(id.clone()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
-    async fn update_artifact(
-        &mut self,
-        id: &MetisId,
-        artifact: Artifact,
-    ) -> Result<(), StoreError> {
-        if !self.artifacts.contains_key(id) {
-            return Err(StoreError::ArtifactNotFound(id.clone()));
+    async fn update_issue(&mut self, id: &MetisId, issue: Issue) -> Result<(), StoreError> {
+        if !self.issues.contains_key(id) {
+            return Err(StoreError::IssueNotFound(id.clone()));
         }
 
-        let previous_dependencies = match self.artifacts.get(id) {
-            Some(Artifact::Issue { dependencies, .. }) => dependencies.clone(),
-            _ => Vec::new(),
-        };
-        let updated_dependencies = match &artifact {
-            Artifact::Issue { dependencies, .. } => dependencies.clone(),
-            _ => Vec::new(),
-        };
+        let previous_dependencies = self
+            .issues
+            .get(id)
+            .map(|issue| issue.dependencies.clone())
+            .unwrap_or_default();
+        let updated_dependencies = issue.dependencies.clone();
 
-        self.artifacts.insert(id.clone(), artifact);
+        self.issues.insert(id.clone(), issue);
 
         if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
             self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
@@ -168,78 +162,90 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_artifacts(&self) -> Result<Vec<(MetisId, Artifact)>, StoreError> {
+    async fn list_issues(&self) -> Result<Vec<(MetisId, Issue)>, StoreError> {
         Ok(self
-            .artifacts
+            .issues
             .iter()
-            .map(|(id, artifact)| (id.clone(), artifact.clone()))
+            .map(|(id, issue)| (id.clone(), issue.clone()))
+            .collect())
+    }
+
+    async fn add_patch(&mut self, patch: Patch) -> Result<MetisId, StoreError> {
+        let id = Uuid::new_v4().hyphenated().to_string();
+        self.patches.insert(id.clone(), patch);
+        Ok(id)
+    }
+
+    async fn get_patch(&self, id: &MetisId) -> Result<Patch, StoreError> {
+        self.patches
+            .get(id)
+            .cloned()
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+    }
+
+    async fn update_patch(&mut self, id: &MetisId, patch: Patch) -> Result<(), StoreError> {
+        if !self.patches.contains_key(id) {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+        self.patches.insert(id.clone(), patch);
+        Ok(())
+    }
+
+    async fn list_patches(&self) -> Result<Vec<(MetisId, Patch)>, StoreError> {
+        Ok(self
+            .patches
+            .iter()
+            .map(|(id, patch)| (id.clone(), patch.clone()))
             .collect())
     }
 
     async fn get_issue_children(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
-        match self.artifacts.get(issue_id) {
-            Some(Artifact::Issue { .. }) => Ok(self
+        match self.issues.get(issue_id) {
+            Some(_) => Ok(self
                 .issue_children
                 .get(issue_id)
                 .cloned()
                 .unwrap_or_default()),
-            Some(_) => Err(StoreError::InvalidDependency(format!(
-                "artifact '{issue_id}' is not an issue"
-            ))),
-            None => Err(StoreError::ArtifactNotFound(issue_id.clone())),
+            None => Err(StoreError::IssueNotFound(issue_id.clone())),
         }
     }
 
     async fn get_issue_blocked_on(&self, issue_id: &MetisId) -> Result<Vec<MetisId>, StoreError> {
-        match self.artifacts.get(issue_id) {
-            Some(Artifact::Issue { .. }) => Ok(self
+        match self.issues.get(issue_id) {
+            Some(_) => Ok(self
                 .issue_blocked_on
                 .get(issue_id)
                 .cloned()
                 .unwrap_or_default()),
-            Some(_) => Err(StoreError::InvalidDependency(format!(
-                "artifact '{issue_id}' is not an issue"
-            ))),
-            None => Err(StoreError::ArtifactNotFound(issue_id.clone())),
+            None => Err(StoreError::IssueNotFound(issue_id.clone())),
         }
     }
 
     async fn is_issue_ready(&self, issue_id: &MetisId) -> Result<bool, StoreError> {
-        let artifact = self
-            .artifacts
+        let issue = self
+            .issues
             .get(issue_id)
-            .ok_or_else(|| StoreError::ArtifactNotFound(issue_id.clone()))?;
+            .ok_or_else(|| StoreError::IssueNotFound(issue_id.clone()))?;
 
-        let (status, dependencies) = match artifact {
-            Artifact::Issue {
-                status,
-                dependencies,
-                ..
-            } => (status, dependencies.as_slice()),
-            _ => {
-                return Err(StoreError::InvalidDependency(format!(
-                    "artifact '{issue_id}' is not an issue"
-                )));
-            }
-        };
+        let status = &issue.status;
+        let dependencies = issue.dependencies.as_slice();
 
         match status {
             IssueStatus::Closed => Ok(false),
             IssueStatus::Open => {
                 for dependency in dependencies {
                     if dependency.dependency_type == IssueDependencyType::BlockedOn {
-                        let blocker_status = match self.artifacts.get(&dependency.issue_id) {
-                            Some(Artifact::Issue { status, .. }) => status,
-                            Some(_) => {
-                                return Err(StoreError::InvalidDependency(format!(
-                                    "artifact '{}' is not an issue",
-                                    dependency.issue_id
-                                )));
-                            }
+                        let blocker_status = match self.issues.get(&dependency.issue_id) {
+                            Some(blocker) => &blocker.status,
                             None => {
-                                return Err(StoreError::ArtifactNotFound(
-                                    dependency.issue_id.clone(),
-                                ));
+                                if self.patches.contains_key(&dependency.issue_id) {
+                                    return Err(StoreError::InvalidDependency(format!(
+                                        "record '{}' is not an issue",
+                                        dependency.issue_id
+                                    )));
+                                }
+
+                                return Err(StoreError::IssueNotFound(dependency.issue_id.clone()));
                             }
                         };
 
@@ -258,14 +264,16 @@ impl Store for MemoryStore {
                     .cloned()
                     .unwrap_or_default();
                 for child_id in children {
-                    let child_status = match self.artifacts.get(&child_id) {
-                        Some(Artifact::Issue { status, .. }) => status,
-                        Some(_) => {
-                            return Err(StoreError::InvalidDependency(format!(
-                                "artifact '{child_id}' is not an issue"
-                            )));
+                    let child_status = match self.issues.get(&child_id) {
+                        Some(child) => &child.status,
+                        None => {
+                            if self.patches.contains_key(&child_id) {
+                                return Err(StoreError::InvalidDependency(format!(
+                                    "record '{child_id}' is not an issue"
+                                )));
+                            }
+                            return Err(StoreError::IssueNotFound(child_id));
                         }
-                        None => return Err(StoreError::ArtifactNotFound(child_id)),
                     };
 
                     if !matches!(child_status, IssueStatus::Closed) {
@@ -624,7 +632,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
-        artifacts::{Artifact, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+        artifacts::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, Patch},
         jobs::Bundle,
     };
     use std::collections::HashSet;
@@ -639,8 +647,8 @@ mod tests {
         }
     }
 
-    fn sample_artifact() -> Artifact {
-        Artifact::Patch {
+    fn sample_patch() -> Patch {
+        Patch {
             title: "sample patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
@@ -648,8 +656,8 @@ mod tests {
         }
     }
 
-    fn sample_issue(dependencies: Vec<IssueDependency>) -> Artifact {
-        Artifact::Issue {
+    fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
+        Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
             status: IssueStatus::Open,
@@ -658,8 +666,8 @@ mod tests {
         }
     }
 
-    fn issue_with_status(status: IssueStatus, dependencies: Vec<IssueDependency>) -> Artifact {
-        Artifact::Issue {
+    fn issue_with_status(status: IssueStatus, dependencies: Vec<IssueDependency>) -> Issue {
+        Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
             status,
@@ -676,42 +684,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_and_get_artifact_assigns_id() {
+    async fn add_and_get_patch_assigns_id() {
         let mut store = MemoryStore::new();
 
-        let artifact = sample_artifact();
-        let id = store.add_artifact(artifact.clone()).await.unwrap();
+        let patch = sample_patch();
+        let id = store.add_patch(patch.clone()).await.unwrap();
 
-        assert_eq!(store.get_artifact(&id).await.unwrap(), artifact);
+        assert_eq!(store.get_patch(&id).await.unwrap(), patch);
     }
 
     #[tokio::test]
-    async fn update_artifact_overwrites_existing_value() {
+    async fn update_patch_overwrites_existing_value() {
         let mut store = MemoryStore::new();
 
-        let id = store.add_artifact(sample_artifact()).await.unwrap();
-        let updated = Artifact::Issue {
-            issue_type: IssueType::Task,
-            description: "issue details".to_string(),
-            status: IssueStatus::Open,
-            assignee: None,
-            dependencies: vec![],
+        let id = store.add_patch(sample_patch()).await.unwrap();
+        let updated = Patch {
+            title: "new title".to_string(),
+            diff: "noop".to_string(),
+            description: "updated patch".to_string(),
+            reviews: Vec::new(),
         };
 
-        store.update_artifact(&id, updated.clone()).await.unwrap();
+        store.update_patch(&id, updated.clone()).await.unwrap();
 
-        assert_eq!(store.get_artifact(&id).await.unwrap(), updated);
+        assert_eq!(store.get_patch(&id).await.unwrap(), updated);
     }
 
     #[tokio::test]
-    async fn update_missing_artifact_returns_error() {
+    async fn update_missing_patch_returns_error() {
         let mut store = MemoryStore::new();
         let missing = "missing".to_string();
 
         let err = store
-            .update_artifact(
+            .update_patch(
                 &missing,
-                Artifact::Patch {
+                Patch {
                     title: "noop patch".to_string(),
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
@@ -721,18 +728,18 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, StoreError::ArtifactNotFound(id) if id == missing));
+        assert!(matches!(err, StoreError::PatchNotFound(id) if id == missing));
     }
 
     #[tokio::test]
     async fn issue_dependency_indexes_populated_on_create() {
         let mut store = MemoryStore::new();
 
-        let parent_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
-        let blocker_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
+        let parent_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let blocker_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let child_id = store
-            .add_artifact(sample_issue(vec![
+            .add_issue(sample_issue(vec![
                 IssueDependency {
                     dependency_type: IssueDependencyType::ChildOf,
                     issue_id: parent_id.clone(),
@@ -759,13 +766,13 @@ mod tests {
     async fn issue_dependency_indexes_updated_on_update_and_removal() {
         let mut store = MemoryStore::new();
 
-        let original_parent = store.add_artifact(sample_issue(vec![])).await.unwrap();
-        let new_parent = store.add_artifact(sample_issue(vec![])).await.unwrap();
-        let original_blocker = store.add_artifact(sample_issue(vec![])).await.unwrap();
-        let new_blocker = store.add_artifact(sample_issue(vec![])).await.unwrap();
+        let original_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let original_blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let new_blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let issue_id = store
-            .add_artifact(sample_issue(vec![
+            .add_issue(sample_issue(vec![
                 IssueDependency {
                     dependency_type: IssueDependencyType::ChildOf,
                     issue_id: original_parent.clone(),
@@ -788,7 +795,7 @@ mod tests {
         );
 
         store
-            .update_artifact(
+            .update_issue(
                 &issue_id,
                 sample_issue(vec![
                     IssueDependency {
@@ -828,7 +835,7 @@ mod tests {
         );
 
         store
-            .update_artifact(&issue_id, sample_issue(vec![]))
+            .update_issue(&issue_id, sample_issue(vec![]))
             .await
             .unwrap();
 
@@ -852,7 +859,7 @@ mod tests {
     async fn open_issue_ready_when_not_blocked() {
         let mut store = MemoryStore::new();
 
-        let issue_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         assert!(store.is_issue_ready(&issue_id).await.unwrap());
     }
@@ -861,9 +868,9 @@ mod tests {
     async fn open_issue_not_ready_when_blocked_on_open_issue() {
         let mut store = MemoryStore::new();
 
-        let blocker_id = store.add_artifact(sample_issue(vec![])).await.unwrap();
+        let blocker_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let blocked_issue_id = store
-            .add_artifact(sample_issue(vec![IssueDependency {
+            .add_issue(sample_issue(vec![IssueDependency {
                 dependency_type: IssueDependencyType::BlockedOn,
                 issue_id: blocker_id.clone(),
             }]))
@@ -873,7 +880,7 @@ mod tests {
         assert!(!store.is_issue_ready(&blocked_issue_id).await.unwrap());
 
         store
-            .update_artifact(&blocker_id, issue_with_status(IssueStatus::Closed, vec![]))
+            .update_issue(&blocker_id, issue_with_status(IssueStatus::Closed, vec![]))
             .await
             .unwrap();
 
@@ -885,7 +892,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let parent_id = store
-            .add_artifact(issue_with_status(IssueStatus::InProgress, vec![]))
+            .add_issue(issue_with_status(IssueStatus::InProgress, vec![]))
             .await
             .unwrap();
         let child_dependencies = vec![IssueDependency {
@@ -893,7 +900,7 @@ mod tests {
             issue_id: parent_id.clone(),
         }];
         let child_id = store
-            .add_artifact(issue_with_status(
+            .add_issue(issue_with_status(
                 IssueStatus::Open,
                 child_dependencies.clone(),
             ))
@@ -903,7 +910,7 @@ mod tests {
         assert!(!store.is_issue_ready(&parent_id).await.unwrap());
 
         store
-            .update_artifact(
+            .update_issue(
                 &child_id,
                 issue_with_status(IssueStatus::Closed, child_dependencies),
             )
@@ -918,7 +925,7 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let issue_id = store
-            .add_artifact(issue_with_status(IssueStatus::Closed, vec![]))
+            .add_issue(issue_with_status(IssueStatus::Closed, vec![]))
             .await
             .unwrap();
 

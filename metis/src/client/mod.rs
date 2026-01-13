@@ -4,8 +4,9 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     artifacts::{
-        ArtifactRecord, ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest,
-        UpsertArtifactResponse,
+        IssueRecord, ListIssuesResponse, ListPatchesResponse, PatchRecord, SearchIssuesQuery,
+        SearchPatchesQuery, UpsertIssueRequest, UpsertIssueResponse, UpsertPatchRequest,
+        UpsertPatchResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
@@ -48,18 +49,24 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_job_status(&self, job_id: &MetisId) -> Result<GetJobStatusResponse>;
 
     async fn get_job_context(&self, job_id: &MetisId) -> Result<WorkerContext>;
-    async fn create_artifact(
-        &self,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse>;
+    async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
     #[allow(dead_code)]
-    async fn update_artifact(
+    async fn update_issue(
         &self,
-        artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse>;
-    async fn get_artifact(&self, artifact_id: &MetisId) -> Result<ArtifactRecord>;
-    async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse>;
+        issue_id: &MetisId,
+        request: &UpsertIssueRequest,
+    ) -> Result<UpsertIssueResponse>;
+    async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord>;
+    async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
+    async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
+    #[allow(dead_code)]
+    async fn update_patch(
+        &self,
+        patch_id: &MetisId,
+        request: &UpsertPatchRequest,
+    ) -> Result<UpsertPatchResponse>;
+    async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord>;
+    async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
 }
 
 impl MetisClient {
@@ -321,40 +328,37 @@ impl MetisClient {
             .context("failed to decode job context response")
     }
 
-    /// Call `POST /v1/artifacts` to create a new artifact.
-    pub async fn create_artifact(
-        &self,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse> {
-        let url = self.endpoint("/v1/artifacts")?;
+    /// Call `POST /v1/issues` to create a new issue.
+    pub async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
+        let url = self.endpoint("/v1/issues")?;
         let response = self
             .http
             .post(url)
             .json(request)
             .send()
             .await
-            .context("failed to submit create artifact request")?
+            .context("failed to submit create issue request")?
             .error_for_status()
-            .context("metis-server rejected create artifact request")?;
+            .context("metis-server rejected create issue request")?;
 
         response
-            .json::<UpsertArtifactResponse>()
+            .json::<UpsertIssueResponse>()
             .await
-            .context("failed to decode create artifact response")
+            .context("failed to decode create issue response")
     }
 
-    /// Call `PUT /v1/artifacts/:artifact_id` to update an existing artifact.
-    pub async fn update_artifact(
+    /// Call `PUT /v1/issues/:issue_id` to update an existing issue.
+    pub async fn update_issue(
         &self,
-        artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse> {
-        let artifact_id = artifact_id.trim();
-        if artifact_id.is_empty() {
-            return Err(anyhow!("artifact_id must not be empty"));
+        issue_id: &MetisId,
+        request: &UpsertIssueRequest,
+    ) -> Result<UpsertIssueResponse> {
+        let issue_id = issue_id.trim();
+        if issue_id.is_empty() {
+            return Err(anyhow!("issue_id must not be empty"));
         }
 
-        let path = format!("/v1/artifacts/{artifact_id}");
+        let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .http
@@ -362,60 +366,148 @@ impl MetisClient {
             .json(request)
             .send()
             .await
-            .context("failed to submit update artifact request")?
+            .context("failed to submit update issue request")?
             .error_for_status()
-            .context("metis-server returned an error while updating artifact")?;
+            .context("metis-server returned an error while updating issue")?;
 
         response
-            .json::<UpsertArtifactResponse>()
+            .json::<UpsertIssueResponse>()
             .await
-            .context("failed to decode update artifact response")
+            .context("failed to decode update issue response")
     }
 
-    /// Call `GET /v1/artifacts/:artifact_id` to fetch an artifact.
-    pub async fn get_artifact(&self, artifact_id: &MetisId) -> Result<ArtifactRecord> {
-        let artifact_id = artifact_id.trim();
-        if artifact_id.is_empty() {
-            return Err(anyhow!("artifact_id must not be empty"));
+    /// Call `GET /v1/issues/:issue_id` to fetch an issue.
+    pub async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord> {
+        let issue_id = issue_id.trim();
+        if issue_id.is_empty() {
+            return Err(anyhow!("issue_id must not be empty"));
         }
 
-        let path = format!("/v1/artifacts/{artifact_id}");
+        let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
             .http
             .get(url)
             .send()
             .await
-            .context("failed to fetch artifact")?
+            .context("failed to fetch issue")?
             .error_for_status()
-            .context("metis-server returned an error while fetching artifact")?;
+            .context("metis-server returned an error while fetching issue")?;
 
         response
-            .json::<ArtifactRecord>()
+            .json::<IssueRecord>()
             .await
-            .context("failed to decode get artifact response")
+            .context("failed to decode get issue response")
     }
 
-    /// Call `GET /v1/artifacts` to list artifacts with optional filters.
-    pub async fn list_artifacts(
-        &self,
-        query: &SearchArtifactsQuery,
-    ) -> Result<ListArtifactsResponse> {
-        let url = self.endpoint("/v1/artifacts")?;
+    /// Call `GET /v1/issues` to list issues with optional filters.
+    pub async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse> {
+        let url = self.endpoint("/v1/issues")?;
         let response = self
             .http
             .get(url)
             .query(query)
             .send()
             .await
-            .context("failed to fetch artifacts list")?
+            .context("failed to fetch issues list")?
             .error_for_status()
-            .context("metis-server returned an error while listing artifacts")?;
+            .context("metis-server returned an error while listing issues")?;
 
         response
-            .json::<ListArtifactsResponse>()
+            .json::<ListIssuesResponse>()
             .await
-            .context("failed to decode list artifacts response")
+            .context("failed to decode list issues response")
+    }
+
+    /// Call `POST /v1/patches` to create a new patch.
+    pub async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse> {
+        let url = self.endpoint("/v1/patches")?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create patch request")?
+            .error_for_status()
+            .context("metis-server rejected create patch request")?;
+
+        response
+            .json::<UpsertPatchResponse>()
+            .await
+            .context("failed to decode create patch response")
+    }
+
+    /// Call `PUT /v1/patches/:patch_id` to update an existing patch.
+    pub async fn update_patch(
+        &self,
+        patch_id: &MetisId,
+        request: &UpsertPatchRequest,
+    ) -> Result<UpsertPatchResponse> {
+        let patch_id = patch_id.trim();
+        if patch_id.is_empty() {
+            return Err(anyhow!("patch_id must not be empty"));
+        }
+
+        let path = format!("/v1/patches/{patch_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .put(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update patch request")?
+            .error_for_status()
+            .context("metis-server returned an error while updating patch")?;
+
+        response
+            .json::<UpsertPatchResponse>()
+            .await
+            .context("failed to decode update patch response")
+    }
+
+    /// Call `GET /v1/patches/:patch_id` to fetch a patch.
+    pub async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord> {
+        let patch_id = patch_id.trim();
+        if patch_id.is_empty() {
+            return Err(anyhow!("patch_id must not be empty"));
+        }
+
+        let path = format!("/v1/patches/{patch_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch patch")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching patch")?;
+
+        response
+            .json::<PatchRecord>()
+            .await
+            .context("failed to decode get patch response")
+    }
+
+    /// Call `GET /v1/patches` to list patches with optional filters.
+    pub async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
+        let url = self.endpoint("/v1/patches")?;
+        let response = self
+            .http
+            .get(url)
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch patches list")?
+            .error_for_status()
+            .context("metis-server returned an error while listing patches")?;
+
+        response
+            .json::<ListPatchesResponse>()
+            .await
+            .context("failed to decode list patches response")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -563,27 +655,44 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_context(self, job_id).await
     }
 
-    async fn create_artifact(
+    async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
+        MetisClient::create_issue(self, request).await
+    }
+
+    async fn update_issue(
         &self,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse> {
-        MetisClient::create_artifact(self, request).await
+        issue_id: &MetisId,
+        request: &UpsertIssueRequest,
+    ) -> Result<UpsertIssueResponse> {
+        MetisClient::update_issue(self, issue_id, request).await
     }
 
-    async fn update_artifact(
+    async fn get_issue(&self, issue_id: &MetisId) -> Result<IssueRecord> {
+        MetisClient::get_issue(self, issue_id).await
+    }
+
+    async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse> {
+        MetisClient::list_issues(self, query).await
+    }
+
+    async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse> {
+        MetisClient::create_patch(self, request).await
+    }
+
+    async fn update_patch(
         &self,
-        artifact_id: &MetisId,
-        request: &UpsertArtifactRequest,
-    ) -> Result<UpsertArtifactResponse> {
-        MetisClient::update_artifact(self, artifact_id, request).await
+        patch_id: &MetisId,
+        request: &UpsertPatchRequest,
+    ) -> Result<UpsertPatchResponse> {
+        MetisClient::update_patch(self, patch_id, request).await
     }
 
-    async fn get_artifact(&self, artifact_id: &MetisId) -> Result<ArtifactRecord> {
-        MetisClient::get_artifact(self, artifact_id).await
+    async fn get_patch(&self, patch_id: &MetisId) -> Result<PatchRecord> {
+        MetisClient::get_patch(self, patch_id).await
     }
 
-    async fn list_artifacts(&self, query: &SearchArtifactsQuery) -> Result<ListArtifactsResponse> {
-        MetisClient::list_artifacts(self, query).await
+    async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
+        MetisClient::list_patches(self, query).await
     }
 }
 

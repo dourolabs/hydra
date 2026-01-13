@@ -11,80 +11,104 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::artifacts::{
-    Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueStatus, IssueType,
-    ListArtifactsResponse, SearchArtifactsQuery, UpsertArtifactRequest, UpsertArtifactResponse,
+    Issue, IssueDependency, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
+    ListPatchesResponse, Patch, PatchRecord, SearchIssuesQuery, SearchPatchesQuery,
+    UpsertIssueRequest, UpsertIssueResponse, UpsertPatchRequest, UpsertPatchResponse,
 };
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
-pub struct ArtifactIdPath(pub String);
+pub struct IssueIdPath(pub String);
+
+#[derive(Debug, Clone)]
+pub struct PatchIdPath(pub String);
 
 #[async_trait]
-impl<S> FromRequestParts<S> for ArtifactIdPath
+impl<S> FromRequestParts<S> for IssueIdPath
 where
     S: Send + Sync,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Path(artifact_id) = Path::<String>::from_request_parts(parts, state)
+        let Path(issue_id) = Path::<String>::from_request_parts(parts, state)
             .await
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
-        let trimmed = artifact_id.trim();
+        let trimmed = issue_id.trim();
         if trimmed.is_empty() {
-            return Err(ApiError::bad_request("artifact_id must not be empty"));
+            return Err(ApiError::bad_request("issue_id must not be empty"));
         }
 
         Ok(Self(trimmed.to_string()))
     }
 }
 
-pub async fn create_artifact(
-    State(state): State<AppState>,
-    Json(payload): Json<UpsertArtifactRequest>,
-) -> Result<Json<UpsertArtifactResponse>, ApiError> {
-    info!("create_artifact invoked");
-    upsert_artifact_internal(state, None, payload).await
+#[async_trait]
+impl<S> FromRequestParts<S> for PatchIdPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path(patch_id) = Path::<String>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        let trimmed = patch_id.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request("patch_id must not be empty"));
+        }
+
+        Ok(Self(trimmed.to_string()))
+    }
 }
 
-pub async fn update_artifact(
+pub async fn create_issue(
     State(state): State<AppState>,
-    ArtifactIdPath(artifact_id): ArtifactIdPath,
-    Json(payload): Json<UpsertArtifactRequest>,
-) -> Result<Json<UpsertArtifactResponse>, ApiError> {
-    info!(artifact_id = %artifact_id, "update_artifact invoked");
-    upsert_artifact_internal(state, Some(artifact_id), payload).await
+    Json(payload): Json<UpsertIssueRequest>,
+) -> Result<Json<UpsertIssueResponse>, ApiError> {
+    info!("create_issue invoked");
+    upsert_issue_internal(state, None, payload).await
 }
 
-pub async fn get_artifact(
+pub async fn update_issue(
     State(state): State<AppState>,
-    ArtifactIdPath(artifact_id): ArtifactIdPath,
-) -> Result<Json<ArtifactRecord>, ApiError> {
-    info!(artifact_id = %artifact_id, "get_artifact invoked");
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(payload): Json<UpsertIssueRequest>,
+) -> Result<Json<UpsertIssueResponse>, ApiError> {
+    info!(issue_id = %issue_id, "update_issue invoked");
+    upsert_issue_internal(state, Some(issue_id), payload).await
+}
+
+pub async fn get_issue(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+) -> Result<Json<IssueRecord>, ApiError> {
+    info!(issue_id = %issue_id, "get_issue invoked");
     let store_read = state.store.read().await;
-    let artifact = store_read
-        .get_artifact(&artifact_id)
+    let issue = store_read
+        .get_issue(&issue_id)
         .await
-        .map_err(|err| map_store_error(err, Some(&artifact_id)))?;
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
-    Ok(Json(ArtifactRecord {
-        id: artifact_id,
-        artifact,
+    Ok(Json(IssueRecord {
+        id: issue_id,
+        issue,
     }))
 }
 
-pub async fn list_artifacts(
+pub async fn list_issues(
     State(state): State<AppState>,
-    Query(query): Query<SearchArtifactsQuery>,
-) -> Result<Json<ListArtifactsResponse>, ApiError> {
+    Query(query): Query<SearchIssuesQuery>,
+) -> Result<Json<ListIssuesResponse>, ApiError> {
     info!(
-        artifact_type = ?query.artifact_type,
         issue_type = ?query.issue_type,
         status = ?query.status,
         assignee = ?query.assignee,
         query = ?query.q,
-        "list_artifacts invoked"
+        "list_issues invoked"
     );
 
     let search_term = query
@@ -99,30 +123,88 @@ pub async fn list_artifacts(
         .filter(|value| !value.is_empty());
 
     let store_read = state.store.read().await;
-    let artifacts = store_read
-        .list_artifacts()
+    let issues = store_read
+        .list_issues()
         .await
-        .map_err(|err| map_store_error(err, None))?;
+        .map_err(|err| map_issue_error(err, None))?;
 
-    let filtered = artifacts
+    let filtered = issues
         .into_iter()
-        .filter(|(id, artifact)| {
-            artifact_matches(
-                &query.artifact_type,
+        .filter(|(id, issue)| {
+            issue_matches(
                 query.issue_type,
                 query.status,
                 search_term.as_deref(),
                 assignee_filter,
                 id,
-                artifact,
+                issue,
             )
         })
-        .map(|(id, artifact)| ArtifactRecord { id, artifact })
+        .map(|(id, issue)| IssueRecord { id, issue })
         .collect();
 
-    Ok(Json(ListArtifactsResponse {
-        artifacts: filtered,
+    Ok(Json(ListIssuesResponse { issues: filtered }))
+}
+
+pub async fn create_patch(
+    State(state): State<AppState>,
+    Json(payload): Json<UpsertPatchRequest>,
+) -> Result<Json<UpsertPatchResponse>, ApiError> {
+    info!("create_patch invoked");
+    upsert_patch_internal(state, None, payload).await
+}
+
+pub async fn update_patch(
+    State(state): State<AppState>,
+    PatchIdPath(patch_id): PatchIdPath,
+    Json(payload): Json<UpsertPatchRequest>,
+) -> Result<Json<UpsertPatchResponse>, ApiError> {
+    info!(patch_id = %patch_id, "update_patch invoked");
+    upsert_patch_internal(state, Some(patch_id), payload).await
+}
+
+pub async fn get_patch(
+    State(state): State<AppState>,
+    PatchIdPath(patch_id): PatchIdPath,
+) -> Result<Json<PatchRecord>, ApiError> {
+    info!(patch_id = %patch_id, "get_patch invoked");
+    let store_read = state.store.read().await;
+    let patch = store_read
+        .get_patch(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    Ok(Json(PatchRecord {
+        id: patch_id,
+        patch,
     }))
+}
+
+pub async fn list_patches(
+    State(state): State<AppState>,
+    Query(query): Query<SearchPatchesQuery>,
+) -> Result<Json<ListPatchesResponse>, ApiError> {
+    info!(query = ?query.q, "list_patches invoked");
+
+    let search_term = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+
+    let store_read = state.store.read().await;
+    let patches = store_read
+        .list_patches()
+        .await
+        .map_err(|err| map_patch_error(err, None))?;
+
+    let filtered = patches
+        .into_iter()
+        .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, patch))
+        .map(|(id, patch)| PatchRecord { id, patch })
+        .collect();
+
+    Ok(Json(ListPatchesResponse { patches: filtered }))
 }
 
 async fn validate_issue_dependencies(
@@ -131,47 +213,38 @@ async fn validate_issue_dependencies(
 ) -> Result<(), ApiError> {
     for dependency in dependencies {
         let target_id = &dependency.issue_id;
-        let target = store
-            .get_artifact(target_id)
-            .await
-            .map_err(|err| match err {
-                StoreError::ArtifactNotFound(id) => {
-                    ApiError::bad_request(format!("issue dependency '{id}' not found"))
-                }
-                other => map_store_error(other, Some(target_id)),
-            })?;
-
-        if !matches!(target, Artifact::Issue { .. }) {
-            return Err(ApiError::bad_request(format!(
-                "artifact '{target_id}' is not an issue"
-            )));
-        }
+        store.get_issue(target_id).await.map_err(|err| match err {
+            StoreError::IssueNotFound(id) => {
+                ApiError::bad_request(format!("issue dependency '{id}' not found"))
+            }
+            other => map_issue_error(other, Some(target_id)),
+        })?;
     }
 
     Ok(())
 }
 
-async fn upsert_artifact_internal(
+async fn upsert_issue_internal(
     state: AppState,
-    artifact_id: Option<String>,
-    payload: UpsertArtifactRequest,
-) -> Result<Json<UpsertArtifactResponse>, ApiError> {
-    let UpsertArtifactRequest { artifact, job_id } = payload;
+    issue_id: Option<String>,
+    payload: UpsertIssueRequest,
+) -> Result<Json<UpsertIssueResponse>, ApiError> {
+    let UpsertIssueRequest { issue, job_id } = payload;
 
     let mut store = state.store.write().await;
-    if let Artifact::Issue { dependencies, .. } = &artifact {
-        validate_issue_dependencies(store.as_mut(), dependencies).await?;
-    }
-    let artifact_id = match artifact_id {
+    validate_issue_dependencies(store.as_mut(), &issue.dependencies).await?;
+
+    let issue_id = match issue_id {
         Some(id) => {
             if job_id.is_some() {
                 return Err(ApiError::bad_request(
-                    "job_id may only be provided when creating an artifact",
+                    "job_id may only be provided when creating an issue",
                 ));
             }
-            match store.update_artifact(&id, artifact).await {
+
+            match store.update_issue(&id, issue).await {
                 Ok(()) => id,
-                Err(err) => return Err(map_store_error(err, Some(&id))),
+                Err(err) => return Err(map_issue_error(err, Some(&id))),
             }
         }
         None => {
@@ -187,7 +260,7 @@ async fn upsert_artifact_internal(
 
                 let status = store.get_status(job_id).await.map_err(|err| match err {
                     StoreError::TaskNotFound(id) => {
-                        error!(job_id = %id, "job not found when creating artifact");
+                        error!(job_id = %id, "job not found when creating issue");
                         ApiError::not_found(format!("job '{id}' not found"))
                     }
                     other => {
@@ -206,9 +279,9 @@ async fn upsert_artifact_internal(
             }
 
             let id = store
-                .add_artifact(artifact)
+                .add_issue(issue)
                 .await
-                .map_err(|err| map_store_error(err, None))?;
+                .map_err(|err| map_issue_error(err, None))?;
 
             if let Some(job_id) = job_id {
                 store
@@ -221,121 +294,179 @@ async fn upsert_artifact_internal(
         }
     };
 
-    info!(artifact_id = %artifact_id, "artifact stored successfully");
+    info!(issue_id = %issue_id, "issue stored successfully");
 
-    Ok(Json(UpsertArtifactResponse { artifact_id }))
+    Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
-fn artifact_matches(
-    kind_filter: &Option<ArtifactKind>,
+async fn upsert_patch_internal(
+    state: AppState,
+    patch_id: Option<String>,
+    payload: UpsertPatchRequest,
+) -> Result<Json<UpsertPatchResponse>, ApiError> {
+    let UpsertPatchRequest { patch, job_id } = payload;
+
+    let mut store = state.store.write().await;
+    let patch_id = match patch_id {
+        Some(id) => {
+            if job_id.is_some() {
+                return Err(ApiError::bad_request(
+                    "job_id may only be provided when creating a patch",
+                ));
+            }
+
+            match store.update_patch(&id, patch).await {
+                Ok(()) => id,
+                Err(err) => return Err(map_patch_error(err, Some(&id))),
+            }
+        }
+        None => {
+            let job_id = job_id
+                .as_ref()
+                .map(|value| value.trim())
+                .map(|value| value.to_string());
+
+            if let Some(ref job_id) = job_id {
+                if job_id.is_empty() {
+                    return Err(ApiError::bad_request("job_id must not be empty"));
+                }
+
+                let status = store.get_status(job_id).await.map_err(|err| match err {
+                    StoreError::TaskNotFound(id) => {
+                        error!(job_id = %id, "job not found when creating patch");
+                        ApiError::not_found(format!("job '{id}' not found"))
+                    }
+                    other => {
+                        error!(job_id = %job_id, error = %other, "failed to validate job status");
+                        ApiError::internal(anyhow!(
+                            "failed to validate job status for '{job_id}': {other}"
+                        ))
+                    }
+                })?;
+
+                if status != Status::Running {
+                    return Err(ApiError::bad_request(
+                        "job_id must reference a running job to record emitted artifacts",
+                    ));
+                }
+            }
+
+            let id = store
+                .add_patch(patch)
+                .await
+                .map_err(|err| map_patch_error(err, None))?;
+
+            if let Some(job_id) = job_id {
+                store
+                    .emit_task_artifacts(&job_id, vec![id.clone()], Utc::now())
+                    .await
+                    .map_err(|err| map_emit_error(err, &job_id))?;
+            }
+
+            id
+        }
+    };
+
+    info!(patch_id = %patch_id, "patch stored successfully");
+
+    Ok(Json(UpsertPatchResponse { patch_id }))
+}
+
+fn issue_matches(
     issue_type_filter: Option<IssueType>,
     status_filter: Option<IssueStatus>,
     search_term: Option<&str>,
     assignee_filter: Option<&str>,
-    artifact_id: &str,
-    artifact: &Artifact,
+    issue_id: &str,
+    issue: &Issue,
 ) -> bool {
-    if let Some(kind) = kind_filter {
-        let artifact_kind = ArtifactKind::from(artifact);
-        if &artifact_kind != kind {
+    if let Some(issue_type) = issue_type_filter {
+        if issue.issue_type != issue_type {
             return false;
         }
     }
 
-    if let Some(issue_type) = issue_type_filter {
-        match artifact {
-            Artifact::Issue {
-                issue_type: current,
-                ..
-            } if current == &issue_type => {}
-            Artifact::Issue { .. } => return false,
-            _ => return false,
-        }
-    }
-
     if let Some(status) = status_filter {
-        match artifact {
-            Artifact::Issue {
-                status: current, ..
-            } if current == &status => {}
-            Artifact::Issue { .. } => return false,
-            _ => return false,
+        if issue.status != status {
+            return false;
         }
     }
 
     if let Some(expected_assignee) = assignee_filter {
-        match artifact {
-            Artifact::Issue { assignee, .. } => match assignee.as_ref() {
-                Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
-                _ => return false,
-            },
+        match issue.assignee.as_ref() {
+            Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
             _ => return false,
         }
     }
 
     if let Some(term) = search_term {
-        let lower_id = artifact_id.to_lowercase();
+        let lower_id = issue_id.to_lowercase();
         if lower_id.contains(term) {
             return true;
         }
 
-        return match artifact {
-            Artifact::Patch {
-                title,
-                diff,
-                description,
-                ..
-            } => {
-                title.to_lowercase().contains(term)
-                    || diff.to_lowercase().contains(term)
-                    || description.to_lowercase().contains(term)
-            }
-            Artifact::Issue {
-                description,
-                issue_type,
-                status,
-                assignee,
-                ..
-            } => {
-                description.to_lowercase().contains(term)
-                    || issue_type_matches(term, issue_type)
-                    || issue_status_matches(term, status)
-                    || assignee
-                        .as_deref()
-                        .map(|value| value.to_lowercase().contains(term))
-                        .unwrap_or(false)
-            }
-        };
+        return issue.description.to_lowercase().contains(term)
+            || issue.issue_type.as_str() == term
+            || issue.status.as_str() == term
+            || issue
+                .assignee
+                .as_deref()
+                .map(|value| value.to_lowercase().contains(term))
+                .unwrap_or(false);
     }
 
     true
 }
 
-fn issue_type_matches(search_term: &str, issue_type: &IssueType) -> bool {
-    issue_type.as_str() == search_term
+fn patch_matches(search_term: Option<&str>, patch_id: &str, patch: &Patch) -> bool {
+    if let Some(term) = search_term {
+        let lower_id = patch_id.to_lowercase();
+        if lower_id.contains(term) {
+            return true;
+        }
+
+        return patch.title.to_lowercase().contains(term)
+            || patch.diff.to_lowercase().contains(term)
+            || patch.description.to_lowercase().contains(term);
+    }
+
+    true
 }
 
-fn issue_status_matches(search_term: &str, status: &IssueStatus) -> bool {
-    status.as_str() == search_term
-}
-
-fn map_store_error(err: StoreError, artifact_id: Option<&str>) -> ApiError {
+fn map_issue_error(err: StoreError, issue_id: Option<&str>) -> ApiError {
     match err {
-        StoreError::ArtifactNotFound(id) => {
-            error!(artifact_id = %id, "artifact not found");
-            ApiError::not_found(format!("artifact '{id}' not found"))
+        StoreError::IssueNotFound(id) => {
+            error!(issue_id = %id, "issue not found");
+            ApiError::not_found(format!("issue '{id}' not found"))
         }
         StoreError::InvalidDependency(message) => {
-            error!(artifact_id = artifact_id.unwrap_or_default(), %message, "invalid artifact dependency");
+            error!(issue_id = issue_id.unwrap_or_default(), %message, "invalid issue dependency");
             ApiError::bad_request(message)
         }
         other => {
             error!(
-                artifact_id = artifact_id.unwrap_or_default(),
+                issue_id = issue_id.unwrap_or_default(),
                 error = %other,
-                "artifact store operation failed"
+                "issue store operation failed"
             );
-            ApiError::internal(anyhow!("artifact store error: {other}"))
+            ApiError::internal(anyhow!("issue store error: {other}"))
+        }
+    }
+}
+
+fn map_patch_error(err: StoreError, patch_id: Option<&str>) -> ApiError {
+    match err {
+        StoreError::PatchNotFound(id) => {
+            error!(patch_id = %id, "patch not found");
+            ApiError::not_found(format!("patch '{id}' not found"))
+        }
+        other => {
+            error!(
+                patch_id = patch_id.unwrap_or_default(),
+                error = %other,
+                "patch store operation failed"
+            );
+            ApiError::internal(anyhow!("patch store error: {other}"))
         }
     }
 }

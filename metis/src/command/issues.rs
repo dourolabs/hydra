@@ -1,10 +1,10 @@
 use crate::client::MetisClientInterface;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
     artifacts::{
-        Artifact, ArtifactKind, ArtifactRecord, IssueDependency, IssueDependencyType, IssueStatus,
-        IssueType, SearchArtifactsQuery, UpsertArtifactRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
+        SearchIssuesQuery, UpsertIssueRequest,
     },
     MetisId,
 };
@@ -107,12 +107,12 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             assignee,
             query,
         } => {
-            let artifacts = fetch_issues(client, id, r#type, status, assignee, query).await?;
+            let issues = fetch_issues(client, id, r#type, status, assignee, query).await?;
             let mut stdout = io::stdout().lock();
             if pretty {
-                print_issues_pretty(&artifacts, &mut stdout)?;
+                print_issues_pretty(&issues, &mut stdout)?;
             } else {
-                print_artifacts_jsonl(&artifacts, &mut stdout)?;
+                print_issues_jsonl(&issues, &mut stdout)?;
             }
             Ok(())
         }
@@ -156,7 +156,7 @@ async fn fetch_issues(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     query: Option<String>,
-) -> Result<Vec<ArtifactRecord>> {
+) -> Result<Vec<IssueRecord>> {
     if let Some(id) = id {
         let issue_id = id.trim();
         if issue_id.is_empty() {
@@ -164,26 +164,32 @@ async fn fetch_issues(
         }
         let issue_id: MetisId = issue_id.to_string();
 
-        let artifact = client
-            .get_artifact(&issue_id)
+        let record = client
+            .get_issue(&issue_id)
             .await
-            .with_context(|| format!("failed to fetch artifact '{issue_id}'"))?;
+            .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-        ensure_issue(&artifact)?;
         if let Some(expected_type) = issue_type {
-            ensure_issue_type(&artifact, expected_type)?;
+            if record.issue.issue_type != expected_type {
+                bail!("Issue '{issue_id}' does not match the requested type.");
+            }
         }
         if let Some(expected_status) = status {
-            ensure_issue_status(&artifact, expected_status)?;
+            if record.issue.status != expected_status {
+                bail!("Issue '{issue_id}' does not match the requested status.");
+            }
         }
         if let Some(expected_assignee) = assignee {
             let trimmed_assignee = expected_assignee.trim();
             if trimmed_assignee.is_empty() {
                 bail!("Assignee filter must not be empty.");
             }
-            ensure_issue_assignee(&artifact, trimmed_assignee)?;
+            match record.issue.assignee.as_deref() {
+                Some(current) if current.eq_ignore_ascii_case(trimmed_assignee) => {}
+                _ => bail!("Issue '{issue_id}' is not assigned to {trimmed_assignee}."),
+            }
         }
-        return Ok(vec![artifact]);
+        return Ok(vec![record]);
     }
 
     let trimmed_assignee = match assignee {
@@ -206,9 +212,8 @@ async fn fetch_issues(
         }
     });
 
-    let artifacts = client
-        .list_artifacts(&SearchArtifactsQuery {
-            artifact_type: Some(ArtifactKind::Issue),
+    let issues = client
+        .list_issues(&SearchIssuesQuery {
             issue_type,
             status,
             assignee: trimmed_assignee.clone(),
@@ -216,22 +221,28 @@ async fn fetch_issues(
         })
         .await
         .context("failed to list issues")?
-        .artifacts;
+        .issues;
 
-    for artifact in &artifacts {
-        ensure_issue(artifact)?;
+    for issue in &issues {
         if let Some(expected_type) = issue_type {
-            ensure_issue_type(artifact, expected_type)?;
+            if issue.issue.issue_type != expected_type {
+                bail!("Issue {} does not match the requested type.", issue.id);
+            }
         }
         if let Some(expected_status) = status {
-            ensure_issue_status(artifact, expected_status)?;
+            if issue.issue.status != expected_status {
+                bail!("Issue {} does not match the requested status.", issue.id);
+            }
         }
         if let Some(ref expected_assignee) = trimmed_assignee {
-            ensure_issue_assignee(artifact, expected_assignee)?;
+            match issue.issue.assignee.as_deref() {
+                Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
+                _ => bail!("Issue {} is not assigned to {expected_assignee}", issue.id),
+            }
         }
     }
 
-    Ok(artifacts)
+    Ok(issues)
 }
 
 async fn create_issue(
@@ -258,8 +269,8 @@ async fn create_issue(
         None => None,
     };
 
-    let request = UpsertArtifactRequest {
-        artifact: Artifact::Issue {
+    let request = UpsertIssueRequest {
+        issue: Issue {
             issue_type,
             description: description.to_string(),
             status,
@@ -270,11 +281,11 @@ async fn create_issue(
     };
 
     let response = client
-        .create_artifact(&request)
+        .create_issue(&request)
         .await
         .context("failed to create issue")?;
 
-    println!("{}", response.artifact_id);
+    println!("{}", response.issue_id);
     Ok(())
 }
 
@@ -335,88 +346,32 @@ async fn update_issue(
         bail!("At least one field must be provided to update.");
     }
 
-    let artifact = client
-        .get_artifact(&issue_id)
+    let current = client
+        .get_issue(&issue_id)
         .await
-        .with_context(|| format!("failed to fetch artifact '{issue_id}'"))?;
-    ensure_issue(&artifact)?;
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-    let updated_artifact = match artifact.artifact {
-        Artifact::Issue {
-            issue_type: current_type,
-            description: current_description,
-            status: current_status,
-            assignee: current_assignee,
-            dependencies: current_dependencies,
-        } => Artifact::Issue {
-            issue_type: issue_type.unwrap_or(current_type),
-            description: description.unwrap_or(current_description),
-            status: status.unwrap_or(current_status),
-            assignee: assignee.unwrap_or(current_assignee),
-            dependencies: dependencies_update.unwrap_or(current_dependencies),
-        },
-        _ => unreachable!("non-issue artifacts rejected earlier"),
+    let updated_issue = Issue {
+        issue_type: issue_type.unwrap_or(current.issue.issue_type),
+        description: description.unwrap_or(current.issue.description),
+        status: status.unwrap_or(current.issue.status),
+        assignee: assignee.unwrap_or(current.issue.assignee),
+        dependencies: dependencies_update.unwrap_or(current.issue.dependencies),
     };
 
     let response = client
-        .update_artifact(
+        .update_issue(
             &issue_id,
-            &UpsertArtifactRequest {
-                artifact: updated_artifact,
+            &UpsertIssueRequest {
+                issue: updated_issue,
                 job_id: None,
             },
         )
         .await
         .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
-    println!("{}", response.artifact_id);
+    println!("{}", response.issue_id);
     Ok(())
-}
-
-fn ensure_issue(record: &ArtifactRecord) -> Result<()> {
-    match record.artifact {
-        Artifact::Issue { .. } => Ok(()),
-        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
-    }
-}
-
-fn ensure_issue_type(record: &ArtifactRecord, expected: IssueType) -> Result<()> {
-    match record.artifact {
-        Artifact::Issue { issue_type, .. } if issue_type == expected => Ok(()),
-        Artifact::Issue { issue_type, .. } => Err(anyhow!(
-            "artifact '{}' has type '{issue_type}' (expected '{expected}')",
-            record.id
-        )),
-        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
-    }
-}
-
-fn ensure_issue_status(record: &ArtifactRecord, expected: IssueStatus) -> Result<()> {
-    match record.artifact {
-        Artifact::Issue { status, .. } if status == expected => Ok(()),
-        Artifact::Issue { status, .. } => Err(anyhow!(
-            "artifact '{}' has status '{status}' (expected '{expected}')",
-            record.id
-        )),
-        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
-    }
-}
-
-fn ensure_issue_assignee(record: &ArtifactRecord, expected: &str) -> Result<()> {
-    match record.artifact {
-        Artifact::Issue { ref assignee, .. } => match assignee {
-            Some(current) if current.eq_ignore_ascii_case(expected) => Ok(()),
-            Some(current) => Err(anyhow!(
-                "artifact '{}' has assignee '{current}' (expected '{expected}')",
-                record.id
-            )),
-            None => Err(anyhow!(
-                "artifact '{}' is missing an assignee (expected '{expected}')",
-                record.id
-            )),
-        },
-        _ => Err(anyhow!("artifact '{}' is not an issue", record.id)),
-    }
 }
 
 fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
@@ -437,29 +392,26 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     })
 }
 
-fn print_artifacts_jsonl(artifacts: &[ArtifactRecord], writer: &mut impl Write) -> Result<()> {
-    for artifact in artifacts {
-        serde_json::to_writer(&mut *writer, artifact)?;
+fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
+    for issue in issues {
+        serde_json::to_writer(&mut *writer, issue)?;
         writer.write_all(b"\n")?;
     }
     writer.flush()?;
     Ok(())
 }
 
-fn print_issues_pretty(artifacts: &[ArtifactRecord], writer: &mut impl Write) -> Result<()> {
-    for (index, artifact) in artifacts.iter().enumerate() {
-        let Artifact::Issue {
+fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
+    for (index, issue_record) in issues.iter().enumerate() {
+        let Issue {
             issue_type,
             description,
             status,
             assignee,
             dependencies,
-        } = &artifact.artifact
-        else {
-            bail!("artifact '{}' is not an issue", artifact.id);
-        };
+        } = &issue_record.issue;
 
-        writeln!(writer, "Issue {} ({issue_type}, {status})", artifact.id)?;
+        writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -483,7 +435,7 @@ fn print_issues_pretty(artifacts: &[ArtifactRecord], writer: &mut impl Write) ->
             }
         }
 
-        if index + 1 < artifacts.len() {
+        if index + 1 < issues.len() {
             writeln!(writer)?;
         }
     }
@@ -496,16 +448,17 @@ mod tests {
     use super::*;
     use crate::client::MockMetisClient;
     use metis_common::artifacts::{
-        ListArtifactsResponse, UpsertArtifactRequest, UpsertArtifactResponse,
+        Issue, IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let client = MockMetisClient::default();
-        client.push_list_artifacts_response(ListArtifactsResponse {
-            artifacts: vec![ArtifactRecord {
+        client.push_list_issues_response(ListIssuesResponse {
+            issues: vec![IssueRecord {
                 id: "issue-1".into(),
-                artifact: Artifact::Issue {
+                issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
                     status: IssueStatus::Open,
@@ -527,9 +480,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            client.recorded_list_artifacts_queries(),
-            vec![SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Issue),
+            client.recorded_list_issue_queries(),
+            vec![SearchIssuesQuery {
                 issue_type: Some(IssueType::Bug),
                 status: Some(IssueStatus::Open),
                 assignee: None,
@@ -538,7 +490,7 @@ mod tests {
         );
 
         let mut output = Vec::new();
-        print_artifacts_jsonl(&artifacts, &mut output).unwrap();
+        print_issues_jsonl(&artifacts, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\"id\":\"issue-1\""));
         assert!(!output.contains("\"id\":\"issue-2\""));
@@ -547,9 +499,9 @@ mod tests {
     #[tokio::test]
     async fn list_issues_by_id_returns_single_issue() {
         let client = MockMetisClient::default();
-        client.push_get_artifact_response(ArtifactRecord {
+        client.push_get_issue_response(IssueRecord {
             id: "issue-123".into(),
-            artifact: Artifact::Issue {
+            issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
                 status: IssueStatus::InProgress,
@@ -569,7 +521,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(client.recorded_get_artifact_requests(), vec!["issue-123"]);
+        assert_eq!(client.recorded_get_issue_requests(), vec!["issue-123"]);
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].id, "issue-123");
     }
@@ -577,10 +529,10 @@ mod tests {
     #[tokio::test]
     async fn list_issues_filters_by_assignee() {
         let client = MockMetisClient::default();
-        client.push_list_artifacts_response(ListArtifactsResponse {
-            artifacts: vec![ArtifactRecord {
+        client.push_list_issues_response(ListIssuesResponse {
+            issues: vec![IssueRecord {
                 id: "issue-7".into(),
-                artifact: Artifact::Issue {
+                issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
                     status: IssueStatus::Open,
@@ -595,9 +547,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            client.recorded_list_artifacts_queries(),
-            vec![SearchArtifactsQuery {
-                artifact_type: Some(ArtifactKind::Issue),
+            client.recorded_list_issue_queries(),
+            vec![SearchIssuesQuery {
                 issue_type: None,
                 status: None,
                 assignee: Some("OWNER-A".into()),
@@ -611,8 +562,8 @@ mod tests {
     #[tokio::test]
     async fn create_issue_submits_issue_artifact() {
         let client = MockMetisClient::default();
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "issue-456".into(),
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: "issue-456".into(),
         });
 
         let dependencies = vec![IssueDependency {
@@ -632,11 +583,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            client.recorded_artifact_upserts(),
+            client.recorded_issue_upserts(),
             vec![(
                 None,
-                UpsertArtifactRequest {
-                    artifact: Artifact::Issue {
+                UpsertIssueRequest {
+                    issue: Issue {
                         issue_type: IssueType::MergeRequest,
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
@@ -689,9 +640,9 @@ mod tests {
     #[tokio::test]
     async fn update_issue_modifies_requested_fields() {
         let client = MockMetisClient::default();
-        client.push_get_artifact_response(ArtifactRecord {
+        client.push_get_issue_response(IssueRecord {
             id: "issue-9".into(),
-            artifact: Artifact::Issue {
+            issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
                 status: IssueStatus::Open,
@@ -702,8 +653,8 @@ mod tests {
                 }],
             },
         });
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "issue-9".into(),
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: "issue-9".into(),
         });
 
         update_issue(
@@ -723,13 +674,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(client.recorded_get_artifact_requests(), vec!["issue-9"]);
+        assert_eq!(client.recorded_get_issue_requests(), vec!["issue-9"]);
         assert_eq!(
-            client.recorded_artifact_upserts(),
+            client.recorded_issue_upserts(),
             vec![(
                 Some("issue-9".into()),
-                UpsertArtifactRequest {
-                    artifact: Artifact::Issue {
+                UpsertIssueRequest {
+                    issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Updated issue description".into(),
                         status: IssueStatus::Closed,
@@ -748,9 +699,9 @@ mod tests {
     #[tokio::test]
     async fn update_issue_allows_clearing_assignee_and_dependencies() {
         let client = MockMetisClient::default();
-        client.push_get_artifact_response(ArtifactRecord {
+        client.push_get_issue_response(IssueRecord {
             id: "issue-10".into(),
-            artifact: Artifact::Issue {
+            issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
                 status: IssueStatus::InProgress,
@@ -761,8 +712,8 @@ mod tests {
                 }],
             },
         });
-        client.push_upsert_artifact_response(UpsertArtifactResponse {
-            artifact_id: "issue-10".into(),
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: "issue-10".into(),
         });
 
         update_issue(
@@ -780,11 +731,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            client.recorded_artifact_upserts(),
+            client.recorded_issue_upserts(),
             vec![(
                 Some("issue-10".into()),
-                UpsertArtifactRequest {
-                    artifact: Artifact::Issue {
+                UpsertIssueRequest {
+                    issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Existing issue".into(),
                         status: IssueStatus::InProgress,
@@ -800,9 +751,9 @@ mod tests {
     #[test]
     fn pretty_prints_human_readable_issues() {
         let artifacts = vec![
-            ArtifactRecord {
+            IssueRecord {
                 id: "issue-1".into(),
-                artifact: Artifact::Issue {
+                issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
                     status: IssueStatus::Open,
@@ -813,9 +764,9 @@ mod tests {
                     }],
                 },
             },
-            ArtifactRecord {
+            IssueRecord {
                 id: "issue-2".into(),
-                artifact: Artifact::Issue {
+                issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
                     status: IssueStatus::InProgress,
