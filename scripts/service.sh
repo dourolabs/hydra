@@ -90,7 +90,7 @@ Please perform the following steps:
 1. Fetch information about the current issue: "metis issues list --id \$METIS_ISSUE_ID"
 2. Update the status tracker to mark the task as in-progress: "metis issues update \$METIS_ISSUE_ID --status in-progress
 3. Implement a patch to address the issue.
-4. Submit the patch as a pull request by running "metis patches create --github --title <title> --description <description>"
+4. Submit the patch as a pull request and assign to jayant by running "metis patches create --github --title <title> --description <description> --assignee jayant"
 
 IMPORTANT: please make sure to update the issue tracker as you go with the status of the task.
 Once you start working on the issue, please mark it as in-progress.
