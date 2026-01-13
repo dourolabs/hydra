@@ -692,12 +692,15 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn get_job_trims_job_id_path() -> anyhow::Result<()> {
+    async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
@@ -731,9 +734,12 @@ mod tests {
             .send()
             .await?;
 
-        assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
-        assert_eq!(summary.id, job_id);
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "error": format!("id ' {job_id} ' is missing a supported prefix") })
+        );
         Ok(())
     }
 
@@ -767,7 +773,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -856,7 +865,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -915,7 +927,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
@@ -923,8 +938,9 @@ mod tests {
     async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
+        let missing_id = task_id("t-missing");
         let response = client
-            .post(format!("{}/v1/jobs/missing/status", server.base_url()))
+            .post(format!("{}/v1/jobs/{missing_id}/status", server.base_url()))
             .json(&json!({ "status": "complete" }))
             .send()
             .await?;
@@ -1240,7 +1256,10 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "job_id must not be empty" }));
+        assert_eq!(
+            body,
+            json!({ "error": "id ' ' is missing a supported prefix" })
+        );
         Ok(())
     }
 
