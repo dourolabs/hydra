@@ -85,6 +85,7 @@ impl AgentQueue {
             program: DEFAULT_AGENT_PROGRAM.to_string(),
             params: vec![self.prompt.clone()],
             context: resolved.bundle,
+            spawned_from: Some(issue_id.clone()),
             image,
             env_vars,
         })
@@ -318,12 +319,14 @@ mod tests {
         assert_eq!(tasks.len(), 2);
 
         let mut issue_ids = HashSet::new();
+        let mut spawned_from_issue_ids = HashSet::new();
         for task in tasks {
             let Task {
                 program,
                 params,
                 context,
                 image,
+                spawned_from,
                 env_vars,
             } = task;
 
@@ -331,6 +334,7 @@ mod tests {
             assert_eq!(params, &["Fix the issue".to_string()]);
             assert_eq!(context, Bundle::None);
             assert_eq!(image, "metis-worker:latest");
+            spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
                 env_vars.get(AGENT_NAME_ENV_VAR),
@@ -343,6 +347,10 @@ mod tests {
             Some(in_progress_issue_id.to_string()),
         ]);
         assert_eq!(issue_ids, expected);
+        assert_eq!(
+            spawned_from_issue_ids,
+            HashSet::from([Some(assigned_issue_id), Some(in_progress_issue_id),])
+        );
 
         Ok(())
     }
@@ -373,6 +381,7 @@ mod tests {
                         program: DEFAULT_AGENT_PROGRAM.to_string(),
                         params: vec!["Fix the issue".to_string()],
                         context: Bundle::None,
+                        spawned_from: Some(issue_id.clone()),
                         image: "metis-worker:latest".to_string(),
                         env_vars: HashMap::from([
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),

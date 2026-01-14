@@ -450,6 +450,7 @@ mod tests {
             program: "0".to_string(),
             params: vec![],
             context: Bundle::None,
+            spawned_from: None,
             image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
         }
