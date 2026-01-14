@@ -81,7 +81,7 @@ impl AgentQueue {
         )
         .context("failed to resolve queue image")?;
 
-        Ok(Task::Spawn {
+        Ok(Task {
             program: DEFAULT_AGENT_PROGRAM.to_string(),
             params: vec![self.prompt.clone()],
             context: resolved.bundle,
@@ -205,7 +205,7 @@ async fn existing_issue_tasks_for_agent(
     let task_ids = store.list_tasks().await?;
 
     for task_id in task_ids {
-        if let Ok(Task::Spawn { env_vars, .. }) = store.get_task(&task_id).await {
+        if let Ok(Task { env_vars, .. }) = store.get_task(&task_id).await {
             if !matches!(
                 env_vars.get(AGENT_NAME_ENV_VAR),
                 Some(current) if current == agent_name
@@ -319,25 +319,23 @@ mod tests {
 
         let mut issue_ids = HashSet::new();
         for task in tasks {
-            match task {
-                Task::Spawn {
-                    program,
-                    params,
-                    context,
-                    image,
-                    env_vars,
-                } => {
-                    assert_eq!(program, DEFAULT_AGENT_PROGRAM);
-                    assert_eq!(params, &["Fix the issue".to_string()]);
-                    assert_eq!(context, Bundle::None);
-                    assert_eq!(image, "metis-worker:latest");
-                    issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
-                    assert_eq!(
-                        env_vars.get(AGENT_NAME_ENV_VAR),
-                        Some(&"agent-a".to_string())
-                    );
-                }
-            }
+            let Task {
+                program,
+                params,
+                context,
+                image,
+                env_vars,
+            } = task;
+
+            assert_eq!(program, DEFAULT_AGENT_PROGRAM);
+            assert_eq!(params, &["Fix the issue".to_string()]);
+            assert_eq!(context, Bundle::None);
+            assert_eq!(image, "metis-worker:latest");
+            issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
+            assert_eq!(
+                env_vars.get(AGENT_NAME_ENV_VAR),
+                Some(&"agent-a".to_string())
+            );
         }
 
         let expected = HashSet::from([
@@ -371,7 +369,7 @@ mod tests {
             let mut store = state.store.write().await;
             store
                 .add_task(
-                    Task::Spawn {
+                    Task {
                         program: DEFAULT_AGENT_PROGRAM.to_string(),
                         params: vec!["Fix the issue".to_string()],
                         context: Bundle::None,
@@ -573,28 +571,25 @@ mod tests {
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
 
-        match &tasks[0] {
-            Task::Spawn {
-                context,
-                image,
-                env_vars,
-                ..
-            } => {
-                assert_eq!(
-                    context,
-                    &Bundle::GitRepository {
-                        url: "https://github.com/dourolabs/metis.git".to_string(),
-                        rev: "main".to_string(),
-                    }
-                );
-                assert_eq!(image, "repo-image");
-                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token".to_string()));
-                assert_eq!(
-                    env_vars.get(ISSUE_ID_ENV_VAR).map(|value| value.as_str()),
-                    Some(issue_id.as_ref())
-                );
+        let Task {
+            context,
+            image,
+            env_vars,
+            ..
+        } = &tasks[0];
+        assert_eq!(
+            context,
+            &Bundle::GitRepository {
+                url: "https://github.com/dourolabs/metis.git".to_string(),
+                rev: "main".to_string(),
             }
-        }
+        );
+        assert_eq!(image, "repo-image");
+        assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token".to_string()));
+        assert_eq!(
+            env_vars.get(ISSUE_ID_ENV_VAR).map(|value| value.as_str()),
+            Some(issue_id.as_ref())
+        );
 
         Ok(())
     }
