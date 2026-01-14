@@ -113,7 +113,19 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             github,
             assignee,
             issue_id,
-        } => create_patch(client, title, description, job, github, assignee, issue_id).await,
+        } => {
+            create_patch(
+                client,
+                title,
+                description,
+                job,
+                github,
+                assignee,
+                issue_id,
+                None,
+            )
+            .await
+        }
         PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
         PatchesCommand::Review {
             id,
@@ -176,10 +188,14 @@ async fn create_patch(
     create_github_pr: bool,
     assignee: Option<String>,
     issue_id: Option<IssueId>,
+    repo_root: Option<&Path>,
 ) -> Result<()> {
     let job_id = resolve_job_id(job_id)?;
     let issue_id = resolve_issue_id(issue_id)?;
-    let repo_root = git_repository_root()?;
+    let repo_root = match repo_root {
+        Some(path) => path.to_path_buf(),
+        None => git_repository_root()?,
+    };
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -746,7 +762,7 @@ mod tests {
     use metis_common::patches::{
         ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
     };
-    use std::{env, fs, path::PathBuf, process::Command};
+    use std::{env, fs, process::Command};
 
     fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
@@ -832,28 +848,6 @@ mod tests {
         }
     }
 
-    struct WorkingDirGuard {
-        original_dir: PathBuf,
-    }
-
-    impl WorkingDirGuard {
-        fn change_to(path: &Path) -> Result<Self> {
-            let original_dir =
-                env::current_dir().context("failed to capture current working directory")?;
-            env::set_current_dir(path)
-                .with_context(|| format!("failed to change to {}", path.display()))?;
-            Ok(Self { original_dir })
-        }
-    }
-
-    impl Drop for WorkingDirGuard {
-        fn drop(&mut self) {
-            if let Err(error) = env::set_current_dir(&self.original_dir) {
-                eprintln!("failed to restore working directory: {error}");
-            }
-        }
-    }
-
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let client = MockMetisClient::default();
@@ -870,7 +864,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -886,6 +879,7 @@ mod tests {
             false,
             None,
             None,
+            Some(&repo_path),
         )
         .await?;
 
@@ -960,7 +954,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_uses_provided_job_id() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -979,6 +972,7 @@ mod tests {
             false,
             None,
             None,
+            Some(&repo_path),
         )
         .await?;
 
@@ -1000,7 +994,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_reads_job_id_from_environment() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
         let env_job_id = task_id("t-job-from-env");
         let env_job_value = env_job_id.to_string();
         let _guard = EnvVarGuard::set(ENV_METIS_ID, &env_job_value);
@@ -1021,6 +1014,7 @@ mod tests {
             false,
             None,
             None,
+            Some(&repo_path),
         )
         .await?;
 
@@ -1039,7 +1033,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
 
         let client = MockMetisClient::default();
         let created_patch_id = patch_id("p-merge");
@@ -1073,6 +1066,7 @@ mod tests {
             false,
             Some("owner-a".to_string()),
             Some(parent_issue.clone()),
+            Some(&repo_path),
         )
         .await?;
 
@@ -1110,7 +1104,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-automatic"),
