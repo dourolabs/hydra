@@ -1480,6 +1480,7 @@ mod tests {
         let issue = Issue {
             issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
             dependencies: vec![],
@@ -1488,6 +1489,7 @@ mod tests {
         let assigned_issue = Issue {
             issue_type: IssueType::Task,
             description: "assigned issue".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: Some("owner-1".to_string()),
             dependencies: vec![],
@@ -1496,6 +1498,7 @@ mod tests {
         let closed_issue = Issue {
             issue_type: IssueType::Task,
             description: "retire old endpoint".to_string(),
+            progress: String::new(),
             status: IssueStatus::Closed,
             assignee: None,
             dependencies: vec![],
@@ -1578,6 +1581,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "original details".to_string(),
+                    progress: "Initial progress".to_string(),
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
@@ -1600,6 +1604,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
+                    progress: "Updated progress".to_string(),
                     status: IssueStatus::InProgress,
                     assignee: None,
                     dependencies: vec![],
@@ -1630,6 +1635,7 @@ mod tests {
             Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
+                progress: "Updated progress".to_string(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![],

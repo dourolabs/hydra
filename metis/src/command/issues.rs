@@ -66,6 +66,10 @@ pub enum IssueCommands {
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
+
+        /// Progress notes for the issue.
+        #[arg(long, value_name = "PROGRESS")]
+        progress: Option<String>,
     },
     /// Update an existing issue.
     Update {
@@ -100,6 +104,14 @@ pub enum IssueCommands {
         /// Remove all dependencies from the issue.
         #[arg(long)]
         clear_dependencies: bool,
+
+        /// Updated progress notes.
+        #[arg(long, value_name = "PROGRESS", conflicts_with = "clear_progress")]
+        progress: Option<String>,
+
+        /// Remove all progress notes from the issue.
+        #[arg(long)]
+        clear_progress: bool,
     },
 }
 
@@ -130,7 +142,19 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             dependencies,
             assignee,
             description,
-        } => create_issue(client, r#type, status, dependencies, assignee, description).await,
+            progress,
+        } => {
+            create_issue(
+                client,
+                r#type,
+                status,
+                dependencies,
+                assignee,
+                description,
+                progress,
+            )
+            .await
+        }
         IssueCommands::Update {
             id,
             r#type,
@@ -140,6 +164,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             description,
             dependencies,
             clear_dependencies,
+            progress,
+            clear_progress,
         } => {
             update_issue(
                 client,
@@ -151,6 +177,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 description,
                 dependencies,
                 clear_dependencies,
+                progress,
+                clear_progress,
             )
             .await
         }
@@ -256,11 +284,16 @@ async fn create_issue(
     dependencies: Vec<IssueDependency>,
     assignee: Option<String>,
     description: String,
+    progress: Option<String>,
 ) -> Result<()> {
     let description = description.trim();
     if description.is_empty() {
         bail!("Issue description must not be empty.");
     }
+
+    let progress = progress
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
 
     let assignee = match assignee {
         Some(value) => {
@@ -277,6 +310,7 @@ async fn create_issue(
         issue: Issue {
             issue_type,
             description: description.to_string(),
+            progress,
             status,
             assignee,
             dependencies,
@@ -304,6 +338,8 @@ async fn update_issue(
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
+    progress: Option<String>,
+    clear_progress: bool,
 ) -> Result<()> {
     let issue_id = id;
 
@@ -338,11 +374,18 @@ async fn update_issue(
         Some(dependencies)
     };
 
+    let progress_update = if clear_progress {
+        Some(String::new())
+    } else {
+        progress.map(|value| value.trim().to_string())
+    };
+
     let no_changes = issue_type.is_none()
         && status.is_none()
         && assignee.is_none()
         && description.is_none()
-        && dependencies_update.is_none();
+        && dependencies_update.is_none()
+        && progress_update.is_none();
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -355,6 +398,7 @@ async fn update_issue(
     let updated_issue = Issue {
         issue_type: issue_type.unwrap_or(current.issue.issue_type),
         description: description.unwrap_or(current.issue.description),
+        progress: progress_update.unwrap_or(current.issue.progress),
         status: status.unwrap_or(current.issue.status),
         assignee: assignee.unwrap_or(current.issue.assignee),
         dependencies: dependencies_update.unwrap_or(current.issue.dependencies),
@@ -411,6 +455,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         let Issue {
             issue_type,
             description,
+            progress,
             status,
             assignee,
             dependencies,
@@ -424,6 +469,15 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
             writeln!(writer, "  -")?;
         } else {
             for line in description.lines() {
+                writeln!(writer, "  {line}")?;
+            }
+        }
+
+        writeln!(writer, "Progress:")?;
+        if progress.trim().is_empty() {
+            writeln!(writer, "  -")?;
+        } else {
+            for line in progress.lines() {
                 writeln!(writer, "  {line}")?;
             }
         }
@@ -468,6 +522,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
@@ -516,6 +571,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
+                progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![],
@@ -552,6 +608,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
                     dependencies: vec![],
@@ -630,6 +687,7 @@ mod tests {
             dependencies.clone(),
             Some("team-a".into()),
             "New issue description".into(),
+            Some("Initial notes".into()),
         )
         .await
         .unwrap();
@@ -643,6 +701,7 @@ mod tests {
                         issue_type: IssueType::MergeRequest,
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
+                        progress: "Initial notes".into(),
                         assignee: Some("team-a".into()),
                         dependencies,
                         patches: Vec::new(),
@@ -662,7 +721,8 @@ mod tests {
             IssueStatus::Open,
             vec![],
             None,
-            "   ".into()
+            "   ".into(),
+            None,
         )
         .await
         .is_err());
@@ -677,7 +737,8 @@ mod tests {
             IssueStatus::Open,
             vec![],
             Some("   ".into()),
-            "Valid description".into()
+            "Valid description".into(),
+            None,
         )
         .await
         .is_err());
@@ -713,6 +774,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
+                progress: "Initial note".into(),
                 status: IssueStatus::Open,
                 assignee: Some("owner-a".into()),
                 dependencies: vec![IssueDependency {
@@ -739,6 +801,8 @@ mod tests {
                 issue_id: issue_id("i-2"),
             }],
             false,
+            Some("New progress".into()),
+            false,
         )
         .await
         .unwrap();
@@ -752,6 +816,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Updated issue description".into(),
+                        progress: "New progress".into(),
                         status: IssueStatus::Closed,
                         assignee: Some("owner-b".into()),
                         dependencies: vec![IssueDependency {
@@ -774,6 +839,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
+                progress: "Started work".into(),
                 status: IssueStatus::InProgress,
                 assignee: Some("owner-a".into()),
                 dependencies: vec![IssueDependency {
@@ -797,6 +863,8 @@ mod tests {
             None,
             vec![],
             true,
+            None,
+            true,
         )
         .await
         .unwrap();
@@ -809,6 +877,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Existing issue".into(),
+                        progress: String::new(),
                         status: IssueStatus::InProgress,
                         assignee: None,
                         dependencies: vec![],
@@ -828,6 +897,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
+                    progress: "Working on repro".into(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
                     dependencies: vec![IssueDependency {
@@ -842,6 +912,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
+                    progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: None,
                     dependencies: vec![],
@@ -860,9 +931,11 @@ mod tests {
         assert!(rendered.contains(&format!("Issue {first_issue} (bug, open)")));
         assert!(rendered.contains("Assignee: owner-a"));
         assert!(rendered.contains("Description:\n  First issue\n  with context"));
+        assert!(rendered.contains("Progress:\n  Working on repro"));
         assert!(rendered.contains(&format!("Dependencies:\n  - blocked-on {dependency_id}")));
         assert!(rendered.contains(&format!("Issue {second_issue} (feature, in-progress)")));
         assert!(rendered.contains("Assignee: -"));
+        assert!(rendered.contains("Progress:\n  -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
     }

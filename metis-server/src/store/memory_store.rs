@@ -469,6 +469,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
             dependencies,
@@ -480,6 +481,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            progress: String::new(),
             status,
             assignee: None,
             dependencies,

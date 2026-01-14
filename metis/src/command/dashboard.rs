@@ -75,6 +75,7 @@ struct PatchDisplay {
 struct IssueRecord {
     id: IssueId,
     description: String,
+    progress: String,
     status: IssueStatus,
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
@@ -588,6 +589,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     Some(IssueRecord {
         id: record.id,
         description: issue.description,
+        progress: issue.progress,
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
@@ -768,7 +770,7 @@ fn append_issue(
 
     rows.push(IssueLine {
         id: node.record.id.to_string(),
-        summary: node.record.description.clone(),
+        summary: issue_summary(&node.record.description, &node.record.progress),
         status: node.record.status,
         readiness,
         assignee: node.record.assignee.clone(),
@@ -781,6 +783,18 @@ fn append_issue(
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
         append_issue(&child, depth + 1, rows, visited, nodes);
+    }
+}
+
+fn issue_summary(description: &str, progress: &str) -> String {
+    let description = description.trim();
+    let progress = progress.trim();
+
+    match (description.is_empty(), progress.is_empty()) {
+        (false, false) => format!("{description} | {progress}"),
+        (false, true) => description.to_string(),
+        (true, false) => progress.to_string(),
+        (true, true) => "-".to_string(),
     }
 }
 
@@ -1042,6 +1056,7 @@ mod tests {
         IssueRecord {
             id: issue_id(id),
             description: id.to_string(),
+            progress: String::new(),
             status,
             assignee: None,
             dependencies,
