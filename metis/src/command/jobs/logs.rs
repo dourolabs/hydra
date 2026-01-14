@@ -1,4 +1,5 @@
-use crate::{client::MetisClientInterface, command::spawn::stream_job_logs_via_server};
+use super::create::stream_job_logs_via_server;
+use crate::client::MetisClientInterface;
 use anyhow::Result;
 use metis_common::TaskId;
 
