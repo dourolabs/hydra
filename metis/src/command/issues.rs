@@ -3,14 +3,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
-        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueDescription, IssueGraphFilter,
+        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
+        IssueWithPatches, SearchIssuesQuery, UpsertIssueRequest,
     },
     patches::PatchRecord,
     PatchId,
 };
-use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
@@ -226,19 +225,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         }
         IssueCommands::Describe { id, pretty } => describe_issue(client, id, pretty).await,
     }
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-struct IssueWithPatches {
-    issue: IssueRecord,
-    patches: Vec<PatchRecord>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-struct IssueDescription {
-    issue: IssueWithPatches,
-    parents: Vec<IssueWithPatches>,
-    children: Vec<IssueWithPatches>,
 }
 
 async fn describe_issue(

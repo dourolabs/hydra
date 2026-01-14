@@ -65,6 +65,10 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::issues::get_issue).put(routes::issues::update_issue),
         )
         .route(
+            "/v1/issues/:issue_id/describe",
+            get(routes::issues::describe_issue),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )
@@ -185,13 +189,14 @@ mod tests {
         TaskId,
         constants::ENV_GH_TOKEN,
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-            ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+            Issue, IssueDependency, IssueDependencyType, IssueDescription, IssueRecord,
+            IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+            UpsertIssueResponse,
         },
         job_status::GetJobStatusResponse,
         jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+            ListPatchesResponse, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
         },
         task_status::Event,
@@ -1916,6 +1921,134 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn describe_issue_includes_patch_reviews() -> anyhow::Result<()> {
+        let state = test_state();
+        let parent_review_time = Utc::now();
+        let root_review_time = parent_review_time + Duration::minutes(1);
+        let parent_patch_review = Review {
+            contents: "needs changes".to_string(),
+            is_approved: false,
+            author: "sam".to_string(),
+            submitted_at: Some(parent_review_time),
+        };
+        let root_patch_review = Review {
+            contents: "looks good".to_string(),
+            is_approved: true,
+            author: "alex".to_string(),
+            submitted_at: Some(root_review_time),
+        };
+
+        let parent_issue_id;
+        let root_issue_id;
+        let child_issue_id;
+        {
+            let mut store = state.store.write().await;
+            let parent_patch_id = store
+                .add_patch(Patch {
+                    title: "parent patch".to_string(),
+                    diff: "diff --git a/file b/file".to_string(),
+                    description: "parent".to_string(),
+                    status: PatchStatus::Open,
+                    is_automatic_backup: false,
+                    reviews: vec![parent_patch_review.clone()],
+                })
+                .await?;
+            let root_patch_id = store
+                .add_patch(Patch {
+                    title: "root patch".to_string(),
+                    diff: "diff --git a/root b/root".to_string(),
+                    description: "root".to_string(),
+                    status: PatchStatus::Open,
+                    is_automatic_backup: false,
+                    reviews: vec![root_patch_review.clone()],
+                })
+                .await?;
+            let child_patch_id = store
+                .add_patch(Patch {
+                    title: "child patch".to_string(),
+                    diff: "diff --git a/child b/child".to_string(),
+                    description: "child".to_string(),
+                    status: PatchStatus::Open,
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                })
+                .await?;
+
+            parent_issue_id = store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Parent issue".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: vec![parent_patch_id],
+                })
+                .await?;
+
+            root_issue_id = store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Root issue".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("owner".to_string()),
+                    dependencies: vec![IssueDependency {
+                        dependency_type: IssueDependencyType::ChildOf,
+                        issue_id: parent_issue_id.clone(),
+                    }],
+                    patches: vec![root_patch_id],
+                })
+                .await?;
+
+            child_issue_id = store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Child issue".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![IssueDependency {
+                        dependency_type: IssueDependencyType::ChildOf,
+                        issue_id: root_issue_id.clone(),
+                    }],
+                    patches: vec![child_patch_id],
+                })
+                .await?;
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+        let client = test_client();
+        let response = client
+            .get(format!(
+                "{}/v1/issues/{}/describe",
+                server.base_url(),
+                root_issue_id.as_ref()
+            ))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let description: IssueDescription = response.json().await?;
+        assert_eq!(description.issue.issue.id, root_issue_id);
+        assert_eq!(description.issue.patches.len(), 1);
+        assert_eq!(
+            description.issue.patches[0].patch.reviews,
+            vec![root_patch_review]
+        );
+        assert_eq!(description.parents.len(), 1);
+        assert_eq!(description.parents[0].issue.id, parent_issue_id);
+        assert_eq!(
+            description.parents[0].patches[0].patch.reviews,
+            vec![parent_patch_review]
+        );
+        assert_eq!(description.children.len(), 1);
+        assert_eq!(description.children[0].issue.id, child_issue_id);
+
         Ok(())
     }
 }

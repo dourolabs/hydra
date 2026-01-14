@@ -12,12 +12,14 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::{
-    MetisId,
+    MetisId, PatchId,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
-        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
-        SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+        Issue, IssueDependency, IssueDependencyType, IssueDescription, IssueGraphFilter,
+        IssueGraphFilterSide, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
+        IssueWithPatches, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+        UpsertIssueResponse,
     },
+    patches::PatchRecord,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{error, info};
@@ -73,6 +75,31 @@ pub async fn get_issue(
         id: issue_id,
         issue,
     }))
+}
+
+pub async fn describe_issue(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+) -> Result<Json<IssueDescription>, ApiError> {
+    info!(issue_id = %issue_id, "describe_issue invoked");
+    let store_read = state.store.read().await;
+    let store = store_read.as_ref();
+
+    let issue = store
+        .get_issue(&issue_id)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let mut patch_cache = HashMap::new();
+    let parents = fetch_parent_issue_descriptions(store, &issue, &mut patch_cache).await?;
+    let issue = issue_with_patches(store, issue_id.clone(), issue, &mut patch_cache).await?;
+    let description = IssueDescription {
+        issue,
+        parents,
+        children: fetch_child_issue_descriptions(store, &issue_id, &mut patch_cache).await?,
+    };
+
+    Ok(Json(description))
 }
 
 pub async fn list_issues(
@@ -134,6 +161,115 @@ pub async fn list_issues(
         .collect();
 
     Ok(Json(ListIssuesResponse { issues: filtered }))
+}
+
+async fn fetch_parent_issue_descriptions(
+    store: &dyn Store,
+    issue: &Issue,
+    cache: &mut HashMap<PatchId, PatchRecord>,
+) -> Result<Vec<IssueWithPatches>, ApiError> {
+    let mut parents = Vec::new();
+    let mut seen = HashSet::new();
+
+    for dependency in &issue.dependencies {
+        if dependency.dependency_type != IssueDependencyType::ChildOf {
+            continue;
+        }
+        if !seen.insert(dependency.issue_id.clone()) {
+            continue;
+        }
+
+        let parent_issue = store
+            .get_issue(&dependency.issue_id)
+            .await
+            .map_err(|err| map_issue_error(err, Some(&dependency.issue_id)))?;
+
+        parents.push(
+            issue_with_patches(store, dependency.issue_id.clone(), parent_issue, cache).await?,
+        );
+    }
+
+    Ok(parents)
+}
+
+async fn fetch_child_issue_descriptions(
+    store: &dyn Store,
+    issue_id: &IssueId,
+    cache: &mut HashMap<PatchId, PatchRecord>,
+) -> Result<Vec<IssueWithPatches>, ApiError> {
+    let mut queue = VecDeque::new();
+    let mut seen = HashSet::new();
+    let mut children = Vec::new();
+
+    queue.push_back(issue_id.clone());
+    seen.insert(issue_id.clone());
+
+    while let Some(current_issue) = queue.pop_front() {
+        let descendants = store
+            .get_issue_children(&current_issue)
+            .await
+            .map_err(|err| map_issue_error(err, Some(&current_issue)))?;
+
+        for descendant in descendants {
+            if !seen.insert(descendant.clone()) {
+                continue;
+            }
+
+            let issue = store
+                .get_issue(&descendant)
+                .await
+                .map_err(|err| map_issue_error(err, Some(&descendant)))?;
+            queue.push_back(descendant.clone());
+            children.push(issue_with_patches(store, descendant, issue, cache).await?);
+        }
+    }
+
+    Ok(children)
+}
+
+async fn issue_with_patches(
+    store: &dyn Store,
+    issue_id: IssueId,
+    issue: Issue,
+    cache: &mut HashMap<PatchId, PatchRecord>,
+) -> Result<IssueWithPatches, ApiError> {
+    let patches = fetch_patch_records(store, &issue.patches, cache, &issue_id).await?;
+    Ok(IssueWithPatches {
+        issue: IssueRecord {
+            id: issue_id,
+            issue,
+        },
+        patches,
+    })
+}
+
+async fn fetch_patch_records(
+    store: &dyn Store,
+    patch_ids: &[PatchId],
+    cache: &mut HashMap<PatchId, PatchRecord>,
+    issue_id: &IssueId,
+) -> Result<Vec<PatchRecord>, ApiError> {
+    let mut patches = Vec::with_capacity(patch_ids.len());
+
+    for patch_id in patch_ids {
+        if let Some(record) = cache.get(patch_id) {
+            patches.push(record.clone());
+            continue;
+        }
+
+        let patch = store
+            .get_patch(patch_id)
+            .await
+            .map_err(|err| map_patch_error(err, patch_id, issue_id))?;
+        let record = PatchRecord {
+            id: patch_id.clone(),
+            patch,
+        };
+        cache.insert(patch_id.clone(), record.clone());
+        patches.push(record);
+    }
+
+    Ok(patches)
 }
 
 async fn validate_issue_dependencies(
@@ -423,6 +559,28 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
                 "issue store operation failed"
             );
             ApiError::internal(anyhow!("issue store error: {other}"))
+        }
+    }
+}
+
+fn map_patch_error(err: StoreError, patch_id: &PatchId, issue_id: &IssueId) -> ApiError {
+    match err {
+        StoreError::PatchNotFound(id) => {
+            error!(patch_id = %id, issue_id = %issue_id, "patch not found");
+            ApiError::not_found(format!(
+                "patch '{id}' referenced by issue '{issue_id}' not found"
+            ))
+        }
+        other => {
+            error!(
+                patch_id = %patch_id,
+                issue_id = %issue_id,
+                error = %other,
+                "failed to load patch for issue description"
+            );
+            ApiError::internal(anyhow!(
+                "failed to load patch '{patch_id}' for issue '{issue_id}': {other}"
+            ))
         }
     }
 }

@@ -1,5 +1,5 @@
 pub use crate::IssueId;
-use crate::{PatchId, TaskId};
+use crate::{PatchId, TaskId, patches::PatchRecord};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -374,6 +374,19 @@ pub struct SearchIssuesQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueWithPatches {
+    pub issue: IssueRecord,
+    pub patches: Vec<PatchRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueDescription {
+    pub issue: IssueWithPatches,
+    pub parents: Vec<IssueWithPatches>,
+    pub children: Vec<IssueWithPatches>,
 }
 
 #[cfg(test)]
