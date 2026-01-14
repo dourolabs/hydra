@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::store::TaskExt;
 use crate::{
     AppState,
     config::AgentQueueConfig,

@@ -8,8 +8,8 @@ use metis_common::{
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
-        CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
-        WorkerContext,
+        CreateJobRequest, CreateJobResponse, JobRecord, KillJobResponse, ListJobsResponse,
+        SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
     patches::{
@@ -37,6 +37,7 @@ pub struct MockMetisClient {
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
     pub patch_get_requests: Mutex<Vec<PatchId>>,
+    pub list_job_queries: Mutex<Vec<SearchJobsQuery>>,
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
@@ -143,7 +144,8 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for create_job"))
     }
 
-    async fn list_jobs(&self) -> Result<ListJobsResponse> {
+    async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
+        self.list_job_queries.lock().unwrap().push(query.clone());
         self.list_jobs_responses
             .lock()
             .unwrap()
@@ -151,7 +153,7 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for list_jobs"))
     }
 
-    async fn get_job(&self, _job_id: &TaskId) -> Result<JobSummary> {
+    async fn get_job(&self, _job_id: &TaskId) -> Result<JobRecord> {
         Err(anyhow!("get_job not implemented in MockMetisClient"))
     }
 

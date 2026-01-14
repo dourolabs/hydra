@@ -2,7 +2,7 @@ use crate::{client::MetisClientInterface, constants};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
-    jobs::{BundleSpec, CreateJobRequest},
+    jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     task_status::Status,
     TaskId,
@@ -100,7 +100,7 @@ async fn wait_for_job_completion_via_server(
     job_id: &TaskId,
 ) -> Result<()> {
     loop {
-        let response = client.list_jobs().await?;
+        let response = client.list_jobs(&SearchJobsQuery::default()).await?;
         if let Some(job) = response
             .jobs
             .iter()
@@ -255,9 +255,10 @@ mod tests {
     use crate::test_utils::ids;
     use chrono::{Duration as ChronoDuration, Utc};
     use metis_common::{
-        jobs::{BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse},
+        jobs::{BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, Task},
         task_status::{Event, Status, TaskStatusLog},
     };
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::tempdir;
 
@@ -276,11 +277,17 @@ mod tests {
         client.push_log_lines(["first log line\n", "second log line\n"]);
         let start_time = Utc::now();
         client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobSummary {
+            jobs: vec![JobRecord {
                 id: task_id("t-job-123"),
+                task: Task {
+                    program: "0".to_string(),
+                    params: vec![],
+                    context: BundleSpec::None,
+                    spawned_from: None,
+                    image: None,
+                    env_vars: HashMap::new(),
+                },
                 notes: None,
-                program: "0".to_string(),
-                params: vec![],
                 status_log: TaskStatusLog {
                     events: vec![
                         Event::Created {
@@ -293,11 +300,17 @@ mod tests {
             }],
         });
         client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobSummary {
+            jobs: vec![JobRecord {
                 id: task_id("t-job-123"),
+                task: Task {
+                    program: "0".to_string(),
+                    params: vec![],
+                    context: BundleSpec::None,
+                    spawned_from: None,
+                    image: None,
+                    env_vars: HashMap::new(),
+                },
                 notes: None,
-                program: "0".to_string(),
-                params: vec![],
                 status_log: TaskStatusLog {
                     events: vec![
                         Event::Created {

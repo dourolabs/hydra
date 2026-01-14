@@ -2,7 +2,7 @@ use crate::{client::MetisClientInterface, util::truncate_lines};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
-    jobs::JobSummary,
+    jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskStatusLog},
 };
 use owo_colors::OwoColorize;
@@ -17,7 +17,7 @@ const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
 pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> {
-    let response = client.list_jobs().await?;
+    let response = client.list_jobs(&SearchJobsQuery::default()).await?;
     let terminal_width = current_terminal_width();
     let now = Utc::now();
 
@@ -60,7 +60,7 @@ pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> 
     Ok(())
 }
 
-pub(crate) fn truncate_jobs(jobs: Vec<JobSummary>, limit: usize) -> (Vec<JobSummary>, bool) {
+pub(crate) fn truncate_jobs(jobs: Vec<JobRecord>, limit: usize) -> (Vec<JobRecord>, bool) {
     if jobs.len() <= limit {
         return (jobs, false);
     }
@@ -209,7 +209,7 @@ pub(crate) fn format_duration(duration: ChronoDuration) -> String {
     }
 }
 
-fn job_note(job: &JobSummary) -> Option<String> {
+fn job_note(job: &JobRecord) -> Option<String> {
     job.notes.clone()
 }
 
@@ -217,13 +217,21 @@ fn job_note(job: &JobSummary) -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_utils::ids::task_id;
+    use metis_common::jobs::{BundleSpec, Task};
+    use std::collections::HashMap;
 
-    fn sample_job(id: &str) -> JobSummary {
-        JobSummary {
+    fn sample_job(id: &str) -> JobRecord {
+        JobRecord {
             id: task_id(id),
+            task: Task {
+                program: "0".to_string(),
+                params: vec![],
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: None,
+                env_vars: HashMap::new(),
+            },
             notes: None,
-            program: "0".to_string(),
-            params: vec![],
             status_log: TaskStatusLog::new(Status::Pending, Utc::now()),
         }
     }
@@ -246,7 +254,7 @@ mod tests {
 
     #[test]
     fn truncate_jobs_limits_to_requested_count() {
-        let jobs: Vec<JobSummary> = (0..12)
+        let jobs: Vec<JobRecord> = (0..12)
             .map(|idx| sample_job(&format!("t-job-{idx}")))
             .collect();
 

@@ -3,26 +3,17 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::constants::ENV_GH_TOKEN;
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
-use metis_common::{issues::Issue, jobs::BundleSpec, patches::Patch};
+use metis_common::{issues::Issue, patches::Patch};
 use std::collections::HashMap;
 
 mod memory_store;
 
+pub use metis_common::jobs::Task;
 pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
-
-/// Represents a task in the Metis system.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Task {
-    pub program: String,
-    pub params: Vec<String>,
-    pub context: BundleSpec,
-    pub spawned_from: Option<IssueId>,
-    pub image: Option<String>,
-    pub env_vars: HashMap<String, String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTask {
+    #[allow(dead_code)]
     pub context: ResolvedBundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,
@@ -38,15 +29,36 @@ pub enum TaskResolutionError {
     MissingDefaultImage,
 }
 
-impl Task {
-    pub fn resolve_context(
+pub trait TaskExt {
+    fn resolve_context(
+        &self,
+        service_state: &ServiceState,
+    ) -> Result<ResolvedBundle, BundleResolutionError>;
+
+    fn resolve_image(
+        &self,
+        resolved: &ResolvedBundle,
+        fallback_image: &str,
+    ) -> Result<String, TaskResolutionError>;
+
+    fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String>;
+
+    fn resolve(
+        &self,
+        service_state: &ServiceState,
+        fallback_image: &str,
+    ) -> Result<ResolvedTask, TaskResolutionError>;
+}
+
+impl TaskExt for Task {
+    fn resolve_context(
         &self,
         service_state: &ServiceState,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
         service_state.resolve_bundle_spec(self.context.clone())
     }
 
-    pub fn resolve_image(
+    fn resolve_image(
         &self,
         resolved: &ResolvedBundle,
         fallback_image: &str,
@@ -74,7 +86,7 @@ impl Task {
         Ok(trimmed.to_string())
     }
 
-    pub fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String> {
+    fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String> {
         let mut env_vars = self.env_vars.clone();
         if let Some(token) = &resolved.github_token {
             env_vars
@@ -84,7 +96,7 @@ impl Task {
         env_vars
     }
 
-    pub fn resolve(
+    fn resolve(
         &self,
         service_state: &ServiceState,
         fallback_image: &str,

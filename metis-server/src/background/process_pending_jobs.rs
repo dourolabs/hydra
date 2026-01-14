@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status, TaskError},
+    store::{Status, TaskError, TaskExt},
 };
 use chrono::Utc;
 use std::time::Duration;

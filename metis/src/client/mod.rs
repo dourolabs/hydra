@@ -8,8 +8,8 @@ use metis_common::{
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
-        CreateJobRequest, CreateJobResponse, JobSummary, KillJobResponse, ListJobsResponse,
-        WorkerContext,
+        CreateJobRequest, CreateJobResponse, JobRecord, KillJobResponse, ListJobsResponse,
+        SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
     patches::{
@@ -37,9 +37,9 @@ type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
-    async fn list_jobs(&self) -> Result<ListJobsResponse>;
+    async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
     #[allow(dead_code)]
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary>;
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord>;
     async fn kill_job(&self, job_id: &TaskId) -> Result<KillJobResponse>;
     async fn get_job_logs(&self, job_id: &TaskId, query: &LogsQuery) -> Result<LogStream>;
     async fn set_job_status(
@@ -153,11 +153,12 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/` to list existing jobs.
-    pub async fn list_jobs(&self) -> Result<ListJobsResponse> {
+    pub async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
         let url = self.endpoint("/v1/jobs/")?;
         let response = self
             .http
             .get(url)
+            .query(query)
             .send()
             .await
             .context("failed to fetch jobs list")?
@@ -171,7 +172,7 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
-    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary> {
+    pub async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord> {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -184,7 +185,7 @@ impl MetisClient {
             .context("metis-server returned an error while fetching job")?;
 
         response
-            .json::<JobSummary>()
+            .json::<JobRecord>()
             .await
             .context("failed to decode job response")
     }
@@ -576,11 +577,11 @@ impl MetisClientInterface for MetisClient {
         MetisClient::create_job(self, request).await
     }
 
-    async fn list_jobs(&self) -> Result<ListJobsResponse> {
-        MetisClient::list_jobs(self).await
+    async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
+        MetisClient::list_jobs(self, query).await
     }
 
-    async fn get_job(&self, job_id: &TaskId) -> Result<JobSummary> {
+    async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord> {
         MetisClient::get_job(self, job_id).await
     }
 

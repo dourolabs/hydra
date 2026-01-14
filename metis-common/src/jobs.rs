@@ -1,7 +1,21 @@
-use crate::TaskId;
 use crate::task_status::TaskStatusLog;
+use crate::{IssueId, TaskId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Task {
+    pub program: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
+    pub context: BundleSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env_vars: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJobRequest {
@@ -81,22 +95,59 @@ pub struct CreateJobResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListJobsResponse {
-    pub jobs: Vec<JobSummary>,
+    pub jobs: Vec<JobRecord>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JobSummary {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobRecord {
     pub id: TaskId,
+    pub task: Task,
     #[serde(default)]
     pub notes: Option<String>,
-    pub program: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
     pub status_log: TaskStatusLog,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchJobsQuery {
+    #[serde(default)]
+    pub q: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KillJobResponse {
     pub job_id: TaskId,
     pub status: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchJobsQuery;
+
+    #[test]
+    fn search_jobs_query_serializes_with_reqwest() {
+        let query = SearchJobsQuery {
+            q: Some("test query".to_string()),
+        };
+
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/jobs")
+            .query(&query)
+            .build();
+
+        result.expect("Failed to serialize SearchJobsQuery with reqwest");
+    }
+
+    #[test]
+    fn search_jobs_query_serializes_empty_query() {
+        let query = SearchJobsQuery::default();
+
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/jobs")
+            .query(&query)
+            .build();
+
+        result.expect("Failed to serialize empty SearchJobsQuery");
+    }
 }
