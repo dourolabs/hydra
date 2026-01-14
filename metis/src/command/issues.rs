@@ -655,6 +655,7 @@ fn write_issue_details_pretty(
         assignee,
         dependencies,
         patches,
+        ..
     } = &issue_record.issue;
 
     writeln!(
@@ -715,7 +716,7 @@ mod tests {
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::Patch;
+    use metis_common::patches::{Patch, PatchStatus};
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
@@ -883,6 +884,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Parent issue".into(),
+                progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 dependencies: vec![],
@@ -890,6 +892,7 @@ mod tests {
                     title: "parent patch".into(),
                     description: "desc".into(),
                     diff: "diff".into(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 }],
@@ -901,6 +904,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Root issue".into(),
+                progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some("owner".into()),
                 dependencies: vec![IssueDependency {
@@ -911,6 +915,7 @@ mod tests {
                     title: "root patch".into(),
                     description: "desc".into(),
                     diff: "diff".into(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 }],
@@ -922,6 +927,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Bug,
                 description: "Child issue".into(),
+                progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![IssueDependency {
@@ -932,6 +938,7 @@ mod tests {
                     title: "child patch".into(),
                     description: "desc".into(),
                     diff: "diff".into(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 }],
@@ -1249,6 +1256,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Main issue".into(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("owner".into()),
                     dependencies: vec![],
@@ -1256,6 +1264,7 @@ mod tests {
                         title: "main patch".into(),
                         description: "desc".into(),
                         diff: "diff".into(),
+                        status: PatchStatus::Open,
                         is_automatic_backup: false,
                         reviews: Vec::new(),
                     }],
@@ -1266,6 +1275,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Parent".into(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
