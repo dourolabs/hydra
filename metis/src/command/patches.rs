@@ -266,11 +266,6 @@ async fn create_merge_request_issue(
         });
     }
 
-    let patch_record = client
-        .get_patch(&patch_id)
-        .await
-        .with_context(|| format!("failed to fetch patch '{patch_id}' for merge-request issue"))?;
-
     let summary = patch_title.trim();
     let title = if summary.is_empty() {
         patch_description
@@ -295,7 +290,7 @@ async fn create_merge_request_issue(
                 status: IssueStatus::Open,
                 assignee: Some(assignee),
                 dependencies,
-                patches: vec![patch_record.patch],
+                patches: vec![patch_id],
             },
             job_id: None,
         })
@@ -1057,20 +1052,8 @@ mod tests {
 
         let client = MockMetisClient::default();
         let created_patch_id = patch_id("p-merge");
-        let recorded_patch = Patch {
-            title: "merge patch".to_string(),
-            description: "merge description".to_string(),
-            diff: "diff --git a/file b/file\n+change".to_string(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            reviews: Vec::new(),
-        };
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: created_patch_id.clone(),
-        });
-        client.push_get_patch_response(PatchRecord {
-            id: created_patch_id.clone(),
-            patch: recorded_patch.clone(),
         });
         client.push_upsert_issue_response(UpsertIssueResponse {
             issue_id: issue_id("i-merge"),
@@ -1092,10 +1075,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(
-            client.recorded_get_patch_requests(),
-            vec![created_patch_id.clone()]
-        );
+        assert!(client.recorded_get_patch_requests().is_empty());
 
         let issue_requests = client.recorded_issue_upserts();
         assert_eq!(issue_requests.len(), 1);
@@ -1111,7 +1091,7 @@ mod tests {
                 issue_id: parent_issue.clone()
             }]
         );
-        assert_eq!(request.issue.patches, vec![recorded_patch]);
+        assert_eq!(request.issue.patches, vec![created_patch_id.clone()]);
         assert!(
             request
                 .issue
