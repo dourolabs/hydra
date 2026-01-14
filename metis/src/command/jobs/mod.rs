@@ -1,7 +1,7 @@
 use crate::{client::MetisClientInterface, constants};
 use anyhow::Result;
 use clap::Subcommand;
-use metis_common::TaskId;
+use metis_common::{IssueId, TaskId};
 
 pub mod create;
 pub mod kill;
@@ -61,6 +61,9 @@ pub enum JobsCommand {
             default_value_t = DEFAULT_JOB_LIMIT,
         )]
         limit: usize,
+        /// Filter jobs that were spawned from a specific issue.
+        #[arg(long = "from", value_name = "ISSUE_ID")]
+        spawned_from: Option<IssueId>,
     },
     /// Show logs for an existing Metis job.
     Logs {
@@ -91,7 +94,10 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             program,
             prompt,
         } => create::run(client, wait, repo, rev, image, var, program, prompt).await?,
-        JobsCommand::List { limit } => list::run(client, limit).await?,
+        JobsCommand::List {
+            limit,
+            spawned_from,
+        } => list::run(client, limit, spawned_from).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
         JobsCommand::Kill { job } => kill::run(client, job).await?,
     }

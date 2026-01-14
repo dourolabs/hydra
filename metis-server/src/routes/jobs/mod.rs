@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{
-    TaskId,
+    IssueId, TaskId,
     constants::ENV_METIS_ID,
     issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
@@ -72,7 +72,11 @@ pub async fn list_jobs(
     State(state): State<AppState>,
     Query(query): Query<SearchJobsQuery>,
 ) -> Result<Json<ListJobsResponse>, ApiError> {
-    info!(query = ?query.q, "list_jobs invoked");
+    info!(
+        query = ?query.q,
+        spawned_from = ?query.spawned_from,
+        "list_jobs invoked"
+    );
     let config = state.config;
     let namespace = config.metis.namespace.clone();
 
@@ -84,6 +88,7 @@ pub async fn list_jobs(
         .as_ref()
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
+    let spawned_from_filter = query.spawned_from.as_ref();
 
     // Get all tasks with all statuses
     let task_ids = store.list_tasks().await.map_err(|err| {
@@ -96,7 +101,9 @@ pub async fn list_jobs(
     for task_id in task_ids {
         match job_record_with_time(&task_id, store).await {
             Ok(summary) => {
-                if job_matches(search_term.as_deref(), &summary.0) {
+                if spawned_from_matches(spawned_from_filter, &summary.0)
+                    && job_matches(search_term.as_deref(), &summary.0)
+                {
                     summaries_with_times.push(summary);
                 }
             }
@@ -258,6 +265,13 @@ async fn job_record_with_time(
         },
         reference_time,
     ))
+}
+
+fn spawned_from_matches(expected: Option<&IssueId>, job: &JobRecord) -> bool {
+    match expected {
+        Some(issue_id) => job.task.spawned_from.as_ref() == Some(issue_id),
+        None => true,
+    }
 }
 
 fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
