@@ -748,6 +748,7 @@ fn write_issue_details_pretty(
         status,
         assignee,
         dependencies,
+        patches,
         ..
     } = &issue_record.issue;
 
@@ -809,7 +810,7 @@ mod tests {
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchRecord};
+    use metis_common::patches::{Patch, PatchStatus, PatchRecord};
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {

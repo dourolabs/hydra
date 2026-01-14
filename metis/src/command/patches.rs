@@ -102,6 +102,33 @@ pub enum PatchesCommand {
         #[arg(long = "approve")]
         approve: bool,
     },
+
+    /// Update an existing patch.
+    Update {
+        /// Patch id to update.
+        #[arg(value_name = "PATCH_ID")]
+        id: PatchId,
+
+        /// Updated title for the patch.
+        #[arg(long = "title", value_name = "TITLE")]
+        title: Option<String>,
+
+        /// Updated description for the patch.
+        #[arg(long = "description", value_name = "DESCRIPTION")]
+        description: Option<String>,
+
+        /// Updated status for the patch.
+        #[arg(long = "status", value_name = "STATUS")]
+        status: Option<PatchStatus>,
+
+        /// Updated diff contents for the patch.
+        #[arg(long = "diff", value_name = "DIFF", conflicts_with = "diff_file")]
+        diff: Option<String>,
+
+        /// Path to a file containing the updated patch diff.
+        #[arg(long = "diff-file", value_name = "PATH", conflicts_with = "diff")]
+        diff_file: Option<PathBuf>,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
@@ -134,6 +161,14 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             contents,
             approve,
         } => review_patch(client, id, author, contents, approve).await,
+        PatchesCommand::Update {
+            id,
+            title,
+            description,
+            status,
+            diff,
+            diff_file,
+        } => update_patch(client, id, title, description, status, diff, diff_file).await,
     }
 }
 
@@ -241,6 +276,96 @@ async fn create_patch(
     }
 
     println!("{}", serde_json::to_string(&output)?);
+
+    Ok(())
+}
+
+async fn update_patch(
+    client: &dyn MetisClientInterface,
+    patch_id: PatchId,
+    title: Option<String>,
+    description: Option<String>,
+    status: Option<PatchStatus>,
+    diff: Option<String>,
+    diff_file: Option<PathBuf>,
+) -> Result<()> {
+    let description = match description {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Patch description must not be empty.");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+
+    let title = match title {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Patch title must not be empty.");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+
+    let diff = match (diff, diff_file) {
+        (Some(inline), None) => {
+            if inline.trim().is_empty() {
+                bail!("Patch diff must not be empty.");
+            }
+            Some(inline)
+        }
+        (None, Some(path)) => {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read diff from '{}'", path.display()))?;
+            if contents.trim().is_empty() {
+                bail!("Patch diff must not be empty.");
+            }
+            Some(contents)
+        }
+        (None, None) => None,
+        _ => unreachable!("clap should enforce diff/diff-file exclusivity"),
+    };
+
+    let no_changes = title.is_none() && description.is_none() && status.is_none() && diff.is_none();
+    if no_changes {
+        bail!("At least one field must be provided to update.");
+    }
+
+    let current = client
+        .get_patch(&patch_id)
+        .await
+        .with_context(|| format!("failed to fetch patch '{patch_id}'"))?;
+
+    let mut updated_patch = current.patch;
+    if let Some(title) = title {
+        updated_patch.title = title;
+    }
+    if let Some(description) = description {
+        updated_patch.description = description;
+    }
+    if let Some(status) = status {
+        updated_patch.status = status;
+    }
+    if let Some(diff) = diff {
+        updated_patch.diff = diff;
+    }
+
+    let response = client
+        .update_patch(
+            &patch_id,
+            &UpsertPatchRequest {
+                patch: updated_patch,
+                job_id: None,
+            },
+        )
+        .await
+        .with_context(|| format!("failed to update patch '{patch_id}'"))?;
+
+    println!("{}", response.patch_id);
 
     Ok(())
 }
@@ -1184,6 +1309,124 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_patch_modifies_requested_fields() -> Result<()> {
+        let client = MockMetisClient::default();
+        client.push_get_patch_response(PatchRecord {
+            id: patch_id("p-update"),
+            patch: Patch {
+                title: "Initial title".to_string(),
+                description: "Initial description".to_string(),
+                diff: "diff --git a/file b/file\n+old".to_string(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                reviews: vec![Review {
+                    contents: "looks ok".to_string(),
+                    is_approved: false,
+                    author: "sam".to_string(),
+                }],
+            },
+        });
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: patch_id("p-update"),
+        });
+
+        update_patch(
+            &client,
+            patch_id("p-update"),
+            Some("Updated title".to_string()),
+            Some("Updated description".to_string()),
+            Some(PatchStatus::Closed),
+            Some("diff --git a/file b/file\n+new".to_string()),
+            None,
+        )
+        .await?;
+
+        assert_eq!(
+            client.recorded_get_patch_requests(),
+            vec![patch_id("p-update")]
+        );
+        assert_eq!(
+            client.recorded_patch_upserts(),
+            vec![(
+                Some(patch_id("p-update")),
+                UpsertPatchRequest {
+                    patch: Patch {
+                        title: "Updated title".to_string(),
+                        description: "Updated description".to_string(),
+                        diff: "diff --git a/file b/file\n+new".to_string(),
+                        status: PatchStatus::Closed,
+                        is_automatic_backup: false,
+                        reviews: vec![Review {
+                            contents: "looks ok".to_string(),
+                            is_approved: false,
+                            author: "sam".to_string(),
+                        }],
+                    },
+                    job_id: None,
+                }
+            )]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_patch_reads_diff_from_file() -> Result<()> {
+        let client = MockMetisClient::default();
+        client.push_get_patch_response(PatchRecord {
+            id: patch_id("p-file"),
+            patch: Patch {
+                title: "Title".to_string(),
+                description: "Description".to_string(),
+                diff: "diff --git a/file b/file\n+old".to_string(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                reviews: vec![],
+            },
+        });
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: patch_id("p-file"),
+        });
+
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for diff file")?;
+        let diff_path = tempdir.path().join("patch.diff");
+        let updated_diff = "diff --git a/file b/file\n+from file";
+        fs::write(&diff_path, updated_diff).context("failed to write diff file")?;
+
+        update_patch(
+            &client,
+            patch_id("p-file"),
+            None,
+            None,
+            Some(PatchStatus::Merged),
+            None,
+            Some(diff_path.clone()),
+        )
+        .await?;
+
+        let upserts = client.recorded_patch_upserts();
+        assert_eq!(upserts.len(), 1, "expected one patch update");
+        let (id, request) = &upserts[0];
+        assert_eq!(id, &Some(patch_id("p-file")));
+        assert_eq!(request.patch.diff, updated_diff);
+        assert_eq!(request.patch.status, PatchStatus::Merged);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_patch_rejects_empty_updates() {
+        let client = MockMetisClient::default();
+        let result = update_patch(&client, patch_id("p-empty"), None, None, None, None, None).await;
+
+        assert!(result.is_err(), "expected update to reject empty payload");
+        assert!(
+            client.recorded_get_patch_requests().is_empty(),
+            "patch should not be fetched when no fields provided"
+        );
     }
 
     #[test]

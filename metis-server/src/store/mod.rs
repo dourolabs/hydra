@@ -10,15 +10,12 @@ pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 
 /// Represents a task in the Metis system.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Task {
-    /// A spawn task that creates a new job.
-    Spawn {
-        program: String,
-        params: Vec<String>,
-        context: Bundle,
-        image: String,
-        env_vars: HashMap<String, String>,
-    },
+pub struct Task {
+    pub program: String,
+    pub params: Vec<String>,
+    pub context: Bundle,
+    pub image: String,
+    pub env_vars: HashMap<String, String>,
 }
 
 /// Error type for store operations.

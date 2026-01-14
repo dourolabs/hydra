@@ -50,7 +50,7 @@ pub async fn create_job(
     // Store the task with context (status will be Pending)
     {
         let mut store = state.store.write().await;
-        let task = Task::Spawn {
+        let task = Task {
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,
@@ -249,11 +249,9 @@ async fn job_summary_with_time(
     store: &dyn Store,
 ) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
     let status_log = store.get_status_log(job_id).await?;
-    let (program, params) = match store.get_task(job_id).await? {
-        Task::Spawn {
-            program, params, ..
-        } => (program, params),
-    };
+    let Task {
+        program, params, ..
+    } = store.get_task(job_id).await?;
     let notes = job_notes_from_store(job_id, store).await;
 
     let reference_time = status_log.start_time().or(status_log.creation_time());

@@ -19,18 +19,18 @@ pub async fn get_job_context(
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
-    match task {
-        Task::Spawn {
-            program,
-            params,
-            context,
-            env_vars,
-            ..
-        } => Ok(Json(WorkerContext {
-            request_context: context.clone(),
-            program: program.clone(),
-            params: params.clone(),
-            variables: env_vars.clone(),
-        })),
-    }
+    let Task {
+        program,
+        params,
+        context,
+        env_vars,
+        ..
+    } = task;
+
+    Ok(Json(WorkerContext {
+        request_context: context,
+        program,
+        params,
+        variables: env_vars,
+    }))
 }
