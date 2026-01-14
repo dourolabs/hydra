@@ -15,7 +15,8 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{
-        Patch, PatchRecord, Review, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+        Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
+        UpsertPatchResponse,
     },
     PatchId, TaskId,
 };
@@ -370,6 +371,7 @@ pub async fn create_patch_artifact_from_repo(
                 title: title.clone(),
                 diff: patch,
                 description: description.clone(),
+                status: PatchStatus::Open,
                 is_automatic_backup,
                 reviews: Vec::new(),
             },
@@ -412,6 +414,10 @@ fn extract_patch_title(record: &PatchRecord) -> &str {
     &record.patch.title
 }
 
+fn extract_patch_status(record: &PatchRecord) -> PatchStatus {
+    record.patch.status
+}
+
 fn extract_patch_diff(record: &PatchRecord) -> &str {
     &record.patch.diff
 }
@@ -420,11 +426,25 @@ fn extract_patch_description(record: &PatchRecord) -> &str {
     &record.patch.description
 }
 
+fn format_patch_status(status: PatchStatus) -> &'static str {
+    match status {
+        PatchStatus::Open => "open",
+        PatchStatus::Closed => "closed",
+        PatchStatus::Merged => "merged",
+    }
+}
+
 fn print_patch_record(record: &PatchRecord) -> Result<()> {
     let diff = extract_patch_diff(record);
     let title = extract_patch_title(record);
+    let status = extract_patch_status(record);
     let description = extract_patch_description(record);
-    println!("Patch {}: {}", record.id, title);
+    println!(
+        "Patch {} [{}]: {}",
+        record.id,
+        format_patch_status(status),
+        title
+    );
     if !description.trim().is_empty() {
         println!("{description}");
     }
@@ -1040,6 +1060,7 @@ mod tests {
             title: "merge patch".to_string(),
             description: "merge description".to_string(),
             diff: "diff --git a/file b/file\n+change".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         };
@@ -1142,6 +1163,7 @@ mod tests {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
                 diff: "diff --git a/file b/file\n+example".to_string(),
+                status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
             },

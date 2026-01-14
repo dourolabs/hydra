@@ -141,8 +141,7 @@ impl Spawner for AgentQueue {
             }
 
             // Do not spawn tasks for closed issues.
-            // TODO: this should be == Closed, but keeping it here temporarily to fix up problems in saving state across agent runs.
-            if status != IssueStatus::Open {
+            if status == IssueStatus::Closed {
                 continue;
             }
 
