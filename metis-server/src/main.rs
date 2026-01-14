@@ -191,7 +191,9 @@ mod tests {
             UpsertIssueRequest, UpsertIssueResponse,
         },
         job_status::GetJobStatusResponse,
-        jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
+        jobs::{
+            Bundle, BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
+        },
         patches::{
             ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
@@ -229,6 +231,7 @@ mod tests {
     async fn create_job_enqueues_task() -> anyhow::Result<()> {
         let state = test_state();
         let default_image = state.config.metis.worker_image.clone();
+        let service_state = state.service_state.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -245,18 +248,19 @@ mod tests {
 
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
+        let resolved = task.resolve(service_state.as_ref(), &default_image)?;
         let Task {
             context,
             program,
             params,
-            image,
             ..
         } = task;
 
         assert_eq!(program, "0");
         assert!(params.is_empty());
-        assert_eq!(context, Bundle::None);
-        assert_eq!(image, default_image);
+        assert_eq!(context, BundleSpec::None);
+        assert_eq!(resolved.context.bundle, Bundle::None);
+        assert_eq!(resolved.image, default_image);
 
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Pending);
@@ -276,6 +280,8 @@ mod tests {
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
         });
+        let service_state = state.service_state.clone();
+        let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -293,21 +299,27 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        let Task {
-            context,
-            env_vars,
-            image,
-            ..
-        } = task;
+        let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+        let Task { context, .. } = task;
         assert_eq!(
             context,
+            BundleSpec::ServiceRepository {
+                name: "private-repo".to_string(),
+                rev: None
+            }
+        );
+        assert_eq!(
+            resolved.context.bundle,
             Bundle::GitRepository {
                 url: repo.remote_url.clone(),
                 rev: "develop".to_string()
             }
         );
-        assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
-        assert_eq!(image, "ghcr.io/example/repo:main");
+        assert_eq!(
+            resolved.env_vars.get(ENV_GH_TOKEN),
+            Some(&"token-123".to_string())
+        );
+        assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
         Ok(())
     }
@@ -315,6 +327,8 @@ mod tests {
     #[tokio::test]
     async fn create_job_respects_image_override() -> anyhow::Result<()> {
         let state = test_state();
+        let service_state = state.service_state.clone();
+        let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -332,8 +346,9 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        let Task { image, .. } = task;
-        assert_eq!(image, "ghcr.io/example/custom:dev");
+        let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+        assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
+        assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
 
         Ok(())
     }
@@ -351,6 +366,8 @@ mod tests {
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
         });
+        let service_state = state.service_state.clone();
+        let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -369,11 +386,12 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        let Task {
-            image, env_vars, ..
-        } = task;
-        assert_eq!(image, "ghcr.io/example/override:main");
-        assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
+        let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+        assert_eq!(
+            resolved.env_vars.get(ENV_GH_TOKEN),
+            Some(&"token-123".to_string())
+        );
+        assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
         Ok(())
     }
@@ -418,6 +436,8 @@ mod tests {
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
         });
+        let service_state = state.service_state.clone();
+        let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
         let server = spawn_test_server_with_state(state).await?;
 
@@ -436,19 +456,17 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        let Task {
-            env_vars, image, ..
-        } = task;
+        let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
         assert_eq!(
-            env_vars.get(ENV_GH_TOKEN),
+            resolved.env_vars.get(ENV_GH_TOKEN),
             Some(&"user-supplied".to_string())
         );
         assert_eq!(
-            env_vars.get("PROMPT"),
+            resolved.env_vars.get("PROMPT"),
             None,
             "server should not inject prompt automatically"
         );
-        assert_eq!(image, "ghcr.io/example/repo:main");
+        assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
         Ok(())
     }
@@ -507,9 +525,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     now - Duration::seconds(30),
@@ -521,9 +539,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     now - Duration::seconds(20),
@@ -535,9 +553,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     now - Duration::seconds(10),
@@ -580,9 +598,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     now - Duration::seconds(20),
@@ -644,9 +662,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     now - Duration::seconds(30),
@@ -895,9 +913,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -961,9 +979,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1013,9 +1031,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image(),
+                        image: Some(default_image()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1062,9 +1080,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image(),
+                        image: Some(default_image()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1110,9 +1128,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1218,7 +1236,7 @@ mod tests {
         let state = test_state();
         let default_image = default_image();
         let store = state.store.clone();
-        let context = Bundle::GitRepository {
+        let context_spec = BundleSpec::GitRepository {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         };
@@ -1232,9 +1250,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1265,9 +1283,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: context.clone(),
+                        context: context_spec.clone(),
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),
@@ -1287,7 +1305,13 @@ mod tests {
 
         assert!(response.status().is_success());
         let body: WorkerContext = response.json().await?;
-        assert_eq!(body.request_context, context);
+        assert_eq!(
+            body.request_context,
+            Bundle::GitRepository {
+                url: "https://example.com/repo.git".to_string(),
+                rev: "main".to_string(),
+            }
+        );
         assert!(body.params.is_empty());
         Ok(())
     }
@@ -1306,9 +1330,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image.clone(),
+                        image: Some(default_image.clone()),
                         env_vars: HashMap::from([(
                             "SECRET_VALUE".to_string(),
                             "keep-me-safe".to_string(),
@@ -1391,9 +1415,9 @@ mod tests {
                     Task {
                         program: "0".to_string(),
                         params: vec![],
-                        context: Bundle::None,
+                        context: BundleSpec::None,
                         spawned_from: None,
-                        image: default_image,
+                        image: Some(default_image),
                         env_vars: HashMap::new(),
                     },
                     Utc::now(),

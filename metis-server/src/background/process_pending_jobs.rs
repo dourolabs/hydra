@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    store::{Status, Task, TaskError},
+    store::{Status, TaskError},
 };
 use chrono::Utc;
 use std::time::Duration;
@@ -14,6 +14,9 @@ use tracing::{error, info, warn};
 /// 1. Setting their status to Running
 /// 2. Creating the Kubernetes job via the job engine
 pub async fn process_pending_jobs(state: AppState) {
+    let fallback_image = state.config.metis.worker_image.clone();
+    let service_state = state.service_state.clone();
+
     loop {
         // Check every 2 seconds
         sleep(Duration::from_secs(2)).await;
@@ -38,12 +41,16 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
-            let (image, env_vars) = {
+            let resolved = {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
-                    Ok(Task {
-                        image, env_vars, ..
-                    }) => (image, env_vars),
+                    Ok(task) => match task.resolve(service_state.as_ref(), &fallback_image) {
+                        Ok(resolved) => resolved,
+                        Err(err) => {
+                            warn!(metis_id = %metis_id, error = %err, "failed to resolve task for spawning");
+                            continue;
+                        }
+                    },
                     Err(err) => {
                         warn!(metis_id = %metis_id, error = %err, "failed to load task for spawning");
                         continue;
@@ -54,7 +61,7 @@ pub async fn process_pending_jobs(state: AppState) {
             // Spawn the job
             match state
                 .job_engine
-                .create_job(&metis_id, &image, &env_vars)
+                .create_job(&metis_id, &resolved.image, &resolved.env_vars)
                 .await
             {
                 Ok(()) => {

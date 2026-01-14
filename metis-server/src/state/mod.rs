@@ -1,7 +1,7 @@
 use crate::config::{ServiceSection, non_empty};
-use crate::routes::jobs::ApiError;
 use metis_common::jobs::{Bundle, BundleSpec};
 use std::collections::HashMap;
+use thiserror::Error;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
@@ -24,6 +24,12 @@ pub struct GitRepository {
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
     pub repositories: HashMap<String, GitRepository>,
+}
+
+#[derive(Debug, Error)]
+pub enum BundleResolutionError {
+    #[error("unknown repository '{0}'")]
+    UnknownRepository(String),
 }
 
 impl ServiceState {
@@ -65,7 +71,10 @@ impl ServiceState {
 
     /// Resolve a BundleSpec into a concrete Bundle using server state.
     /// Returns the instantiated bundle and an optional GitHub token to surface to the worker.
-    pub fn resolve_bundle_spec(&self, spec: BundleSpec) -> Result<ResolvedBundle, ApiError> {
+    pub fn resolve_bundle_spec(
+        &self,
+        spec: BundleSpec,
+    ) -> Result<ResolvedBundle, BundleResolutionError> {
         match spec {
             BundleSpec::None => Ok(ResolvedBundle {
                 bundle: Bundle::None,
@@ -91,7 +100,7 @@ impl ServiceState {
                 let repo = self
                     .repositories
                     .get(&name)
-                    .ok_or_else(|| ApiError::bad_request(format!("unknown repository '{name}'")))?;
+                    .ok_or_else(|| BundleResolutionError::UnknownRepository(name.clone()))?;
 
                 let resolved_rev = rev
                     .or_else(|| repo.default_branch.clone())

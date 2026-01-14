@@ -1,7 +1,7 @@
 use crate::{
     AppState,
-    state::ResolvedBundle,
-    store::{Store, StoreError, Task, TaskError},
+    state::BundleResolutionError,
+    store::{Store, StoreError, Task, TaskError, TaskResolutionError},
 };
 use axum::{
     Json, async_trait,
@@ -12,7 +12,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     TaskId,
-    constants::{ENV_GH_TOKEN, ENV_METIS_ID},
+    constants::ENV_METIS_ID,
     issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
     patches::Patch,
@@ -30,42 +30,35 @@ pub async fn create_job(
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<CreateJobResponse>, ApiError> {
     info!("create_job invoked");
+    let job_id = TaskId::new();
     let fallback_image = state.config.metis.worker_image.clone();
 
-    // Generate a unique ID for the job
-    let job_id = TaskId::new();
-
-    let ResolvedBundle {
-        bundle: context,
-        github_token,
-        default_image,
-    } = state.service_state.resolve_bundle_spec(payload.context)?;
     let mut env_vars = payload.variables;
-    if let Some(token) = github_token {
-        env_vars.entry(ENV_GH_TOKEN.to_string()).or_insert(token);
-    }
     env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
-    let image = resolve_image(payload.image, default_image, &fallback_image)?;
 
-    // Store the task with context (status will be Pending)
-    {
-        let mut store = state.store.write().await;
-        let task = Task {
-            program: payload.program.clone(),
-            params: payload.params.clone(),
-            context,
-            spawned_from: None,
-            image,
-            env_vars,
-        };
-        store
-            .add_task_with_id(job_id.clone(), task, Utc::now())
-            .await
-            .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to store task");
-                ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
-            })?;
-    }
+    let task = Task {
+        program: payload.program.clone(),
+        params: payload.params.clone(),
+        context: payload.context.clone(),
+        spawned_from: None,
+        image: payload.image,
+        env_vars,
+    };
+
+    let resolved_context = task
+        .resolve_context(state.service_state.as_ref())
+        .map_err(ApiError::from)?;
+    task.resolve_image(&resolved_context, &fallback_image)
+        .map_err(ApiError::from)?;
+
+    let mut store = state.store.write().await;
+    store
+        .add_task_with_id(job_id.clone(), task, Utc::now())
+        .await
+        .map_err(|err| {
+            error!(error = %err, job_id = %job_id, "failed to store task");
+            ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
+        })?;
 
     info!(
         job_id = %job_id,
@@ -73,36 +66,6 @@ pub async fn create_job(
     );
 
     Ok(Json(CreateJobResponse { job_id }))
-}
-
-fn resolve_image(
-    user_supplied: Option<String>,
-    repo_default: Option<String>,
-    fallback: &str,
-) -> Result<String, ApiError> {
-    if let Some(image) = user_supplied {
-        let trimmed = image.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request("image must not be empty"));
-        }
-        return Ok(trimmed.to_string());
-    }
-
-    if let Some(default_image) = repo_default {
-        let trimmed = default_image.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-
-    let trimmed = fallback.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::internal(anyhow::anyhow!(
-            "default worker image must not be empty"
-        )));
-    }
-
-    Ok(trimmed.to_string())
 }
 
 pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
@@ -215,6 +178,24 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: err.to_string(),
+        }
+    }
+}
+
+impl From<BundleResolutionError> for ApiError {
+    fn from(error: BundleResolutionError) -> Self {
+        match error {
+            BundleResolutionError::UnknownRepository(_) => ApiError::bad_request(error.to_string()),
+        }
+    }
+}
+
+impl From<TaskResolutionError> for ApiError {
+    fn from(error: TaskResolutionError) -> Self {
+        match error {
+            TaskResolutionError::EmptyImage => ApiError::bad_request(error.to_string()),
+            TaskResolutionError::Bundle(err) => ApiError::from(err),
+            TaskResolutionError::MissingDefaultImage => ApiError::internal(error),
         }
     }
 }
