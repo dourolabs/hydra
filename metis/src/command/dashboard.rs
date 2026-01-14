@@ -20,7 +20,7 @@ use metis_common::{
         SearchIssuesQuery,
     },
     jobs::JobSummary,
-    patches::{PatchRecord as ApiPatchRecord, SearchPatchesQuery},
+    patches::{PatchRecord as ApiPatchRecord, PatchStatus, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
     IssueId, MetisId, PatchId, TaskId,
 };
@@ -69,12 +69,14 @@ struct JobDisplay {
 struct PatchDisplay {
     id: String,
     summary: String,
+    status: PatchStatus,
 }
 
 #[derive(Clone, PartialEq)]
 struct IssueRecord {
     id: IssueId,
     description: String,
+    progress: String,
     status: IssueStatus,
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
@@ -84,6 +86,7 @@ struct IssueRecord {
 struct PatchRecord {
     id: PatchId,
     summary: String,
+    status: PatchStatus,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -464,6 +467,11 @@ fn render_unassociated_patches(
             .iter()
             .map(|patch| {
                 ListItem::new(Line::from(vec![
+                    Span::styled(
+                        patch_status_label(patch.status),
+                        patch_status_style(patch.status),
+                    ),
+                    Span::raw(" "),
                     Span::styled(&patch.id, Style::default().fg(Color::Cyan)),
                     Span::raw(" — "),
                     Span::raw(truncate_message(&patch.summary, MAX_MESSAGE_WIDTH)),
@@ -588,6 +596,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     Some(IssueRecord {
         id: record.id,
         description: issue.description,
+        progress: issue.progress,
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
@@ -604,6 +613,7 @@ fn patch_to_record(record: ApiPatchRecord) -> Option<PatchRecord> {
     Some(PatchRecord {
         id: record.id,
         summary,
+        status: patch.status,
     })
 }
 
@@ -632,6 +642,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         .map(|patch| PatchDisplay {
             id: patch.id.to_string(),
             summary: patch.summary.clone(),
+            status: patch.status,
         })
         .collect();
     unassociated_patches.truncate(MAX_PATCH_ROWS);
@@ -768,7 +779,7 @@ fn append_issue(
 
     rows.push(IssueLine {
         id: node.record.id.to_string(),
-        summary: node.record.description.clone(),
+        summary: issue_summary(&node.record.description, &node.record.progress),
         status: node.record.status,
         readiness,
         assignee: node.record.assignee.clone(),
@@ -781,6 +792,18 @@ fn append_issue(
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
         append_issue(&child, depth + 1, rows, visited, nodes);
+    }
+}
+
+fn issue_summary(description: &str, progress: &str) -> String {
+    let description = description.trim();
+    let progress = progress.trim();
+
+    match (description.is_empty(), progress.is_empty()) {
+        (false, false) => format!("{description} | {progress}"),
+        (false, true) => description.to_string(),
+        (true, false) => progress.to_string(),
+        (true, true) => "-".to_string(),
     }
 }
 
@@ -986,6 +1009,22 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
     }
 }
 
+fn patch_status_label(status: PatchStatus) -> &'static str {
+    match status {
+        PatchStatus::Open => "open",
+        PatchStatus::Closed => "closed",
+        PatchStatus::Merged => "merged",
+    }
+}
+
+fn patch_status_style(status: PatchStatus) -> Style {
+    match status {
+        PatchStatus::Open => Style::default().fg(Color::Blue),
+        PatchStatus::Closed => Style::default().fg(Color::Red),
+        PatchStatus::Merged => Style::default().fg(Color::Green),
+    }
+}
+
 fn truncate_message(message: &str, max_chars: usize) -> String {
     if message.chars().count() <= max_chars {
         return message.to_string();
@@ -1042,6 +1081,7 @@ mod tests {
         IssueRecord {
             id: issue_id(id),
             description: id.to_string(),
+            progress: String::new(),
             status,
             assignee: None,
             dependencies,
@@ -1181,6 +1221,7 @@ mod tests {
         let patches = vec![PatchRecord {
             id: patch_id("p-1"),
             summary: "fix".to_string(),
+            status: PatchStatus::Open,
         }];
         let jobs = vec![job_details_with_issue(
             "t-job-1",

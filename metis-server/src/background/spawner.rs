@@ -140,7 +140,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            // Skip closed issues; open and in-progress items can keep running.
+            // Do not spawn tasks for closed issues.
             if status == IssueStatus::Closed {
                 continue;
             }
@@ -275,6 +275,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Fix login page".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -289,6 +290,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "In-progress but ready".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -303,6 +305,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Ignore closed".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Closed,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -355,6 +358,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Already queued".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -397,6 +401,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Blocker".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
@@ -411,6 +416,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Blocked issue".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![IssueDependency {
@@ -440,6 +446,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Retry limited".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -474,6 +481,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "State change reset".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],
@@ -540,6 +548,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Assigned".to_string(),
+                    progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     dependencies: vec![],

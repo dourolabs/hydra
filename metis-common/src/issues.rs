@@ -295,6 +295,8 @@ pub struct Issue {
     pub issue_type: IssueType,
     pub description: String,
     #[serde(default)]
+    pub progress: String,
+    #[serde(default)]
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,

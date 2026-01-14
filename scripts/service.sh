@@ -88,6 +88,8 @@ You have access to several tools that enable you to do your job.
 
 You will be run multiple times on the same issue. Whenever you perform an asynchronous action (such as requesting a pull request),
 you should save any current state to the issue tracker as the note:
+Store running notes about your work in the issue's progress field so future runs know what to do.
+If you are re-invoked, you will be provided with the current progress value to remind you where you left off.
 
 Please perform the following steps to gather context about the issue:
 1. Fetch information about the current issue: "metis issues list --id \$METIS_ISSUE_ID"

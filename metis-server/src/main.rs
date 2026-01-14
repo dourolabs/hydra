@@ -193,8 +193,8 @@ mod tests {
         job_status::GetJobStatusResponse,
         jobs::{Bundle, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext},
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-            UpsertPatchResponse,
+            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+            UpsertPatchRequest, UpsertPatchResponse,
         },
         task_status::Event,
     };
@@ -920,6 +920,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "diff".to_string(),
                     description: "done".to_string(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
@@ -1130,6 +1131,7 @@ mod tests {
                     title: "all good".to_string(),
                     diff: "diff".to_string(),
                     description: "all good".to_string(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
@@ -1252,6 +1254,7 @@ mod tests {
                     title: "done".to_string(),
                     diff: "patch-content".to_string(),
                     description: "done".to_string(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 })
@@ -1344,6 +1347,7 @@ mod tests {
             title: "Initial patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         };
@@ -1410,6 +1414,7 @@ mod tests {
                     title: "artifact for emit".to_string(),
                     diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 },
@@ -1441,6 +1446,7 @@ mod tests {
             title: "refactor logging".to_string(),
             diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         };
@@ -1448,6 +1454,7 @@ mod tests {
             title: "login retry patch".to_string(),
             diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         };
@@ -1480,6 +1487,7 @@ mod tests {
         let issue = Issue {
             issue_type: IssueType::Bug,
             description: "login fails for guests".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
             dependencies: vec![],
@@ -1488,6 +1496,7 @@ mod tests {
         let assigned_issue = Issue {
             issue_type: IssueType::Task,
             description: "assigned issue".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: Some("owner-1".to_string()),
             dependencies: vec![],
@@ -1496,6 +1505,7 @@ mod tests {
         let closed_issue = Issue {
             issue_type: IssueType::Task,
             description: "retire old endpoint".to_string(),
+            progress: String::new(),
             status: IssueStatus::Closed,
             assignee: None,
             dependencies: vec![],
@@ -1578,6 +1588,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "original details".to_string(),
+                    progress: "Initial progress".to_string(),
                     status: IssueStatus::Open,
                     assignee: None,
                     dependencies: vec![],
@@ -1600,6 +1611,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "updated details".to_string(),
+                    progress: "Updated progress".to_string(),
                     status: IssueStatus::InProgress,
                     assignee: None,
                     dependencies: vec![],
@@ -1630,6 +1642,7 @@ mod tests {
             Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
+                progress: "Updated progress".to_string(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 dependencies: vec![],

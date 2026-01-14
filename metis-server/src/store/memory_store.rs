@@ -441,7 +441,7 @@ mod tests {
     use metis_common::{
         issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
         jobs::Bundle,
-        patches::Patch,
+        patches::{Patch, PatchStatus},
     };
     use std::collections::HashSet;
 
@@ -460,6 +460,7 @@ mod tests {
             title: "sample patch".to_string(),
             diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         }
@@ -469,6 +470,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
             dependencies,
@@ -480,6 +482,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
+            progress: String::new(),
             status,
             assignee: None,
             dependencies,
@@ -506,6 +509,7 @@ mod tests {
             title: "new title".to_string(),
             diff: "noop".to_string(),
             description: "updated patch".to_string(),
+            status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
         };
@@ -527,6 +531,7 @@ mod tests {
                     title: "noop patch".to_string(),
                     diff: "noop".to_string(),
                     description: "noop patch".to_string(),
+                    status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
                 },
