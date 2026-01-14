@@ -88,6 +88,12 @@ async fn run_interactive(
         cmd.arg("--model");
         cmd.arg(model);
     }
+    // enable network access for the metis command.
+    // TODO: this sandboxing lets codex also mess with files in the current dir, which is weird.
+    cmd.arg("-c");
+    cmd.arg("sandbox_workspace_write.network_access=true");
+    cmd.arg("--sandbox");
+    cmd.arg("workspace-write");
     cmd.arg(prompt);
     cmd.stdin(Stdio::inherit());
     cmd.stdout(Stdio::inherit());
@@ -127,6 +133,12 @@ async fn run_noninteractive(
         cmd.arg("--model");
         cmd.arg(model);
     }
+    // enable network access for the metis command.
+    // TODO: this sandboxing lets codex also mess with files in the current dir, which is weird.
+    cmd.arg("-c");
+    cmd.arg("sandbox_workspace_write.network_access=true");
+    cmd.arg("--sandbox");
+    cmd.arg("workspace-write");
     cmd.arg("-");
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::inherit());
