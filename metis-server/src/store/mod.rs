@@ -124,6 +124,8 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(String),
+    #[error("Invalid issue status: {0}")]
+    InvalidIssueStatus(String),
     #[error("Internal error: {0}")]
     Internal(String),
     #[error("Invalid status transition: task is not in Pending state")]
@@ -131,6 +133,10 @@ pub enum StoreError {
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
+///
+/// Implementations must enforce issue lifecycle invariants: an issue cannot be
+/// closed while any blockers remain open or while it has open child issues.
+/// Violations should return `StoreError::InvalidIssueStatus`.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new issue to the store and assigns it an IssueId.

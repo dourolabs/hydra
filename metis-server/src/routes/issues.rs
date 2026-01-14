@@ -406,6 +406,15 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
             error!(issue_id = %issue_id, %message, "invalid issue dependency");
             ApiError::bad_request(message)
         }
+        StoreError::InvalidIssueStatus(message) => {
+            let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
+            error!(
+                issue_id = %issue_id,
+                %message,
+                "invalid issue status transition"
+            );
+            ApiError::bad_request(message)
+        }
         other => {
             let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
             error!(

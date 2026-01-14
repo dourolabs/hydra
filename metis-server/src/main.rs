@@ -185,8 +185,8 @@ mod tests {
         TaskId,
         constants::ENV_GH_TOKEN,
         issues::{
-            Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery,
-            UpsertIssueRequest, UpsertIssueResponse,
+            Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
+            ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
         },
         job_status::GetJobStatusResponse,
         jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
@@ -1666,6 +1666,256 @@ mod tests {
                 patches: Vec::new(),
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+
+        let blocker: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "blocker".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let blocked_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: blocker.issue_id.clone(),
+        }];
+        let blocked: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "blocked".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: blocked_dependencies.clone(),
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let response = client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                blocked.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "blocked".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: blocked_dependencies.clone(),
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "error": format!(
+                "blocked issues cannot close until blockers are closed: {}",
+                blocker.issue_id
+            )})
+        );
+
+        client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                blocker.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "blocker".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let response = client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                blocked.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "blocked".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: blocked_dependencies,
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+
+        let parent: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "parent".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let child_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent.issue_id.clone(),
+        }];
+        let child: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "child".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: child_dependencies.clone(),
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let response = client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                parent.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "parent".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?;
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await?;
+        assert_eq!(
+            body,
+            json!({ "error": format!(
+                "cannot close issue with open child issues: {}",
+                child.issue_id
+            )})
+        );
+
+        client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                child.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "child".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: child_dependencies,
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let response = client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                parent.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "parent".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Closed,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
         Ok(())
     }
 }
