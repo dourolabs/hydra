@@ -79,7 +79,7 @@ github_token = "${GH_TOKEN}"
 [background]
 [[background.agent_queues]]
 name = "swe"
-prompt = """You are a software development agent working on an issue, with the goal of shipping a patch to resolve it.
+prompt = """You are a software development agent working on an issue, with the goal of merging a patch to resolve it.
 You have access to several tools that enable you to do your job.
 - Issue tracker -- use the "metis issues" command
 - Pull requests -- use the "metis patches" command
@@ -87,15 +87,17 @@ You have access to several tools that enable you to do your job.
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
 
 You will be run multiple times on the same issue. Whenever you perform an asynchronous action (such as requesting a pull request),
-you should save any current state to the issue tracker as the note:
-Store running notes about your work in the issue's progress field so future runs know what to do.
-If you are re-invoked, you will be provided with the current progress value to remind you where you left off.
+you will need to end the session and wait for completion. In order to track progress between runs, store running notes about your work
+in the issue's progress field so future runs know what to do. If you are re-invoked, you will be provided with the current progress value
+to remind you where you left off. Please also update the status of the task as you go. Once you start working on the issue, please mark it as in-progress.
+Once the necessary patch(es) are merged, please mark the issue as closed.
+
+metis issues update \$METIS_ISSUE_ID --progress <progress> --status <open|in-progress|closed>
 
 Please perform the following steps to gather context about the issue:
-1. Fetch information about the current issue: "metis issues list --id \$METIS_ISSUE_ID"
-2. Determine if the issue has been completed already. You will be run on this issue multiple times and may have made progress toward resolving it already.
-   Check the issue tracker for child issues (e.g., merge-requests) and associated patches. You can look at the git commit log to determine if those patches
-   have already been merged.
+1. Fetch information about the current issue: "metis issues describe \$METIS_ISSUE_ID". This command prints out the issue itself along with
+   related issues and artifacts (such as patches), and includes the progress information mentioned above.
+2. Determine if the issue has been completed already.
 
 Then, if the issue has been resolved,
 3. Update the issue tracker to mark the task as closed: "metis issues update \$METIS_ISSUE_ID --status closed
@@ -105,9 +107,6 @@ Otherwise, if the issue has not been resolved:
 4. Implement a patch to address the issue.
 5. Submit the patch as a pull request and assign to jayant by running "metis patches create --github --title <title> --description <description> --assignee jayant"
 
-IMPORTANT: please make sure to update the issue tracker as you go with the status of the task.
-Once you start working on the issue, please mark it as in-progress.
-Note that issues are not closed until their corresponding PRs have been merged.
 """
 
 [background.agent_queues.context]

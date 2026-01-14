@@ -31,6 +31,8 @@ pub async fn run_codex(
     command
         .args([
             "exec",
+            "--color",
+            "always",
             "-o",
             output_path
                 .to_str()
