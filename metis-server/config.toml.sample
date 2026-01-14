@@ -9,6 +9,13 @@ worker_image = "sha256:36ac58f5eb66885ea504f908fa3637fc807d35ad1d843e8adec412106
 # Optional fallback if the OPENAI_API_KEY environment variable is unset.
 OPENAI_API_KEY = ""
 
+[store]
+# Persist issues, patches, and tasks between process restarts.
+# backend can be "file" (default) or "memory"
+backend = "file"
+# Path to the backing file (created automatically when missing)
+path = "data/store.json"
+
 [service.repositories]
 # Example repository configuration; add additional tables per repository name.
 [service.repositories.example]

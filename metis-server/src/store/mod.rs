@@ -6,8 +6,10 @@ use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{issues::Issue, patches::Patch};
 use std::collections::HashMap;
 
+mod file_store;
 mod memory_store;
 
+pub use file_store::FileStore;
 pub use metis_common::jobs::Task;
 pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
@@ -14,6 +15,8 @@ use metis_common::{
 ///
 /// This store keeps tasks, issues, and patches in HashMaps for fast lookups.
 /// It is not thread-safe and should only be used in single-threaded contexts.
+#[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
     tasks: HashMap<TaskId, Task>,
@@ -91,6 +94,22 @@ impl MemoryStore {
                     }
                 }
             }
+        }
+    }
+
+    /// Rebuilds issue adjacency indexes from the current dependency graph.
+    pub(crate) fn rebuild_issue_indexes(&mut self) {
+        self.issue_children.clear();
+        self.issue_blocked_on.clear();
+
+        let dependencies: Vec<_> = self
+            .issues
+            .iter()
+            .map(|(issue_id, issue)| (issue_id.clone(), issue.dependencies.clone()))
+            .collect();
+
+        for (issue_id, dependency_list) in dependencies {
+            self.apply_issue_dependency_delta(&issue_id, &[], &dependency_list);
         }
     }
 

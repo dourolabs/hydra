@@ -12,10 +12,10 @@ mod test;
 use crate::background::{
     AgentQueue, Spawner, monitor_running_jobs, process_pending_jobs, run_spawners,
 };
-use crate::config::{AppConfig, build_kube_client};
+use crate::config::{AppConfig, StoreBackend, build_kube_client, expand_path};
 use crate::job_engine::{JobEngine, KubernetesJobEngine};
 use crate::state::ServiceState;
-use crate::store::{MemoryStore, Store};
+use crate::store::{FileStore, MemoryStore, Store};
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -132,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
         client: kube_client,
     };
 
-    let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
+    let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(build_store(&app_config).await?));
 
     let spawners = build_spawners(&app_config);
 
@@ -160,6 +160,19 @@ fn config_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
 }
 
+async fn build_store(config: &AppConfig) -> anyhow::Result<Box<dyn Store>> {
+    match config.store.backend {
+        StoreBackend::Memory => Ok(Box::new(MemoryStore::new())),
+        StoreBackend::File => {
+            let path = expand_path(&config.store.path);
+            let store = FileStore::open(path)
+                .await
+                .map_err(|err| anyhow::anyhow!("failed to initialize file store: {err}"))?;
+            Ok(Box::new(store))
+        }
+    }
+}
+
 fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
     config
         .background
@@ -172,12 +185,13 @@ fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        background::monitor_running_jobs::monitor_running_jobs_once,
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Status, Task, TaskError, TaskExt},
+        store::{FileStore, Status, Store, Task, TaskError, TaskExt},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
-            test_state_with_engine,
+            test_state_with_engine, test_state_with_file_store,
         },
     };
     use chrono::{Duration, Utc};
@@ -198,6 +212,7 @@ mod tests {
     };
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+    use tempfile::tempdir;
 
     fn default_image() -> String {
         crate::config::MetisSection::default().worker_image
@@ -1916,6 +1931,107 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn file_store_persists_state_across_restart() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let store_path = temp_dir.path().join("store.json");
+
+        let initial_state =
+            test_state_with_file_store(Arc::new(MockJobEngine::new()), &store_path).await?;
+        let server = spawn_test_server_with_state(initial_state).await?;
+        let client = test_client();
+
+        let issue_response = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&json!({
+                "issue": {
+                    "type": "task",
+                    "description": "persist me",
+                    "progress": "",
+                    "status": "open",
+                    "assignee": null,
+                    "dependencies": [],
+                    "patches": []
+                }
+            }))
+            .send()
+            .await?;
+        assert!(issue_response.status().is_success());
+        let issue_id = issue_response.json::<UpsertIssueResponse>().await?.issue_id;
+
+        let job_response = client
+            .post(format!("{}/v1/jobs", server.base_url()))
+            .json(&json!({ "program": "0" }))
+            .send()
+            .await?;
+        assert!(job_response.status().is_success());
+        let CreateJobResponse { job_id } = job_response.json().await?;
+
+        drop(server);
+
+        let restarted_state =
+            test_state_with_file_store(Arc::new(MockJobEngine::new()), &store_path).await?;
+        let restarted = spawn_test_server_with_state(restarted_state).await?;
+        let client = test_client();
+
+        let fetched_issue = client
+            .get(format!("{}/v1/issues/{}", restarted.base_url(), issue_id))
+            .send()
+            .await?;
+        assert!(fetched_issue.status().is_success());
+        let issue_record: IssueRecord = fetched_issue.json().await?;
+        assert_eq!(issue_record.id, issue_id);
+        assert_eq!(issue_record.issue.description, "persist me");
+
+        let fetched_job = client
+            .get(format!("{}/v1/jobs/{job_id}", restarted.base_url()))
+            .send()
+            .await?;
+        assert!(fetched_job.status().is_success());
+        let job_record: JobRecord = fetched_job.json().await?;
+        assert_eq!(job_record.id, job_id);
+        assert_eq!(job_record.status_log.current_status(), Status::Pending);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn job_reconciliation_uses_restored_store_state() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let store_path = temp_dir.path().join("store.json");
+        let job_id = task_id("t-reconcile");
+
+        {
+            let mut store = FileStore::open(&store_path).await?;
+            store
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task {
+                        program: "0".to_string(),
+                        params: vec![],
+                        context: BundleSpec::None,
+                        spawned_from: None,
+                        image: Some(default_image()),
+                        env_vars: HashMap::new(),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+            store.mark_task_running(&job_id, Utc::now()).await?;
+        }
+
+        let engine = Arc::new(MockJobEngine::new());
+        engine.insert_job(&job_id, JobStatus::Failed).await;
+
+        let state = test_state_with_file_store(engine, &store_path).await?;
+        monitor_running_jobs_once(&state).await;
+
+        let store_read = state.store.read().await;
+        let status = store_read.get_status(&job_id).await?;
+        assert_eq!(status, Status::Failed);
         Ok(())
     }
 }

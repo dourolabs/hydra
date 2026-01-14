@@ -20,6 +20,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub service: ServiceSection,
     #[serde(default)]
+    pub store: StoreSection,
+    #[serde(default)]
     pub background: BackgroundSection,
 }
 
@@ -56,6 +58,31 @@ impl Default for MetisSection {
             worker_image: default_worker_image(),
             server_hostname: String::new(),
             openai_api_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreBackend {
+    #[default]
+    File,
+    Memory,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StoreSection {
+    #[serde(default)]
+    pub backend: StoreBackend,
+    #[serde(default = "default_store_path")]
+    pub path: String,
+}
+
+impl Default for StoreSection {
+    fn default() -> Self {
+        Self {
+            backend: StoreBackend::default(),
+            path: default_store_path(),
         }
     }
 }
@@ -159,4 +186,8 @@ fn default_bundle_spec() -> BundleSpec {
 
 const fn default_agent_max_tries() -> u32 {
     DEFAULT_AGENT_MAX_TRIES
+}
+
+fn default_store_path() -> String {
+    "data/store.json".to_string()
 }

@@ -1,13 +1,16 @@
 use crate::{
     AppState,
-    config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
+    config::{
+        AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection, StoreSection,
+    },
     job_engine::{JobEngine, MockJobEngine},
     run_with_state,
     state::ServiceState,
-    store::MemoryStore,
+    store::{FileStore, MemoryStore},
 };
 use reqwest::Client;
 use std::{
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -35,6 +38,7 @@ pub(crate) fn test_app_config() -> AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
         service: ServiceSection::default(),
+        store: StoreSection::default(),
         background: BackgroundSection::default(),
     }
 }
@@ -51,6 +55,21 @@ pub(crate) fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState
 
 pub(crate) fn test_state() -> AppState {
     test_state_with_engine(Arc::new(MockJobEngine::new()))
+}
+
+pub(crate) async fn test_state_with_file_store(
+    job_engine: Arc<dyn JobEngine>,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<AppState> {
+    let store = FileStore::open(path).await.map_err(anyhow::Error::new)?;
+
+    Ok(AppState {
+        config: Arc::new(test_app_config()),
+        service_state: Arc::new(ServiceState::default()),
+        store: Arc::new(RwLock::new(Box::new(store))),
+        job_engine,
+        spawners: Vec::new(),
+    })
 }
 
 pub(crate) fn test_client() -> Client {
