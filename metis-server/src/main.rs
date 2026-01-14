@@ -161,13 +161,11 @@ fn config_path() -> PathBuf {
 }
 
 fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
-    let default_image = config.metis.worker_image.clone();
-
     config
         .background
         .agent_queues
         .iter()
-        .map(|queue| Arc::new(AgentQueue::from_config(queue, &default_image)) as Arc<dyn Spawner>)
+        .map(|queue| Arc::new(AgentQueue::from_config(queue)) as Arc<dyn Spawner>)
         .collect()
 }
 
