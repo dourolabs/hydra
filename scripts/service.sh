@@ -86,6 +86,9 @@ You have access to several tools that enable you to do your job.
 
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
 
+You will be run multiple times on the same issue. Whenever you perform an asynchronous action (such as requesting a pull request),
+you should save any current state to the issue tracker as the note:
+
 Please perform the following steps to gather context about the issue:
 1. Fetch information about the current issue: "metis issues list --id \$METIS_ISSUE_ID"
 2. Determine if the issue has been completed already. You will be run on this issue multiple times and may have made progress toward resolving it already.
