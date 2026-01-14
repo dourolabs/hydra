@@ -1,5 +1,6 @@
 use crate::{PatchId, TaskId};
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatchStatus {
@@ -11,6 +12,36 @@ pub enum PatchStatus {
 impl Default for PatchStatus {
     fn default() -> Self {
         Self::Open
+    }
+}
+
+impl PatchStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PatchStatus::Open => "open",
+            PatchStatus::Closed => "closed",
+            PatchStatus::Merged => "merged",
+        }
+    }
+}
+
+impl fmt::Display for PatchStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for PatchStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let normalized = s.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "open" => Ok(PatchStatus::Open),
+            "closed" => Ok(PatchStatus::Closed),
+            "merged" => Ok(PatchStatus::Merged),
+            other => Err(format!("unsupported patch status '{other}'")),
+        }
     }
 }
 
@@ -95,5 +126,19 @@ mod tests {
             .query(&query)
             .build();
         result.expect("Failed to serialize empty SearchPatchesQuery");
+    }
+
+    #[test]
+    fn patch_status_parses_from_strings() {
+        assert_eq!(PatchStatus::from_str("open").unwrap(), PatchStatus::Open);
+        assert_eq!(
+            PatchStatus::from_str("CLOSED").unwrap(),
+            PatchStatus::Closed
+        );
+        assert_eq!(
+            PatchStatus::from_str(" merged ").unwrap(),
+            PatchStatus::Merged
+        );
+        assert!(PatchStatus::from_str("pending").is_err());
     }
 }
