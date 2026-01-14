@@ -10,6 +10,7 @@ pub enum IssueStatus {
     Open,
     InProgress,
     Closed,
+    Dropped,
 }
 
 impl IssueStatus {
@@ -18,6 +19,7 @@ impl IssueStatus {
             IssueStatus::Open => "open",
             IssueStatus::InProgress => "in-progress",
             IssueStatus::Closed => "closed",
+            IssueStatus::Dropped => "dropped",
         }
     }
 }
@@ -37,6 +39,7 @@ impl FromStr for IssueStatus {
             "open" => Ok(IssueStatus::Open),
             "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
             "closed" => Ok(IssueStatus::Closed),
+            "dropped" => Ok(IssueStatus::Dropped),
             other => Err(format!("unsupported issue status '{other}'")),
         }
     }

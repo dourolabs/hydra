@@ -1,5 +1,6 @@
 use crate::{
     AppState,
+    job_engine::JobEngineError,
     routes::jobs::ApiError,
     routes::map_emit_error,
     store::{Status, Store, StoreError},
@@ -12,7 +13,7 @@ use axum::{
 };
 use chrono::Utc;
 use metis_common::{
-    MetisId,
+    MetisId, TaskId,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
         IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
@@ -153,12 +154,34 @@ async fn validate_issue_dependencies(
     Ok(())
 }
 
+async fn active_tasks_for_issue(
+    store: &mut dyn Store,
+    issue_id: &IssueId,
+) -> Result<Vec<TaskId>, StoreError> {
+    let mut task_ids = Vec::new();
+
+    for task_id in store.list_tasks().await? {
+        let task = store.get_task(&task_id).await?;
+        if task.spawned_from.as_ref() != Some(issue_id) {
+            continue;
+        }
+
+        let status = store.get_status(&task_id).await?;
+        if matches!(status, Status::Pending | Status::Running) {
+            task_ids.push(task_id);
+        }
+    }
+
+    Ok(task_ids)
+}
+
 async fn upsert_issue_internal(
     state: AppState,
     issue_id: Option<IssueId>,
     payload: UpsertIssueRequest,
 ) -> Result<Json<UpsertIssueResponse>, ApiError> {
     let UpsertIssueRequest { issue, job_id } = payload;
+    let mut tasks_to_kill = Vec::new();
 
     let mut store = state.store.write().await;
     validate_issue_dependencies(store.as_mut(), &issue.dependencies).await?;
@@ -171,8 +194,17 @@ async fn upsert_issue_internal(
                 ));
             }
 
+            let updated_issue = issue.clone();
+
             match store.update_issue(&id, issue).await {
-                Ok(()) => id,
+                Ok(()) => {
+                    if updated_issue.status == IssueStatus::Dropped {
+                        tasks_to_kill = active_tasks_for_issue(store.as_mut(), &id)
+                            .await
+                            .map_err(|err| map_issue_error(err, Some(&id)))?;
+                    }
+                    id
+                }
                 Err(err) => return Err(map_issue_error(err, Some(&id))),
             }
         }
@@ -213,6 +245,28 @@ async fn upsert_issue_internal(
             id
         }
     };
+
+    drop(store);
+
+    for job_id in tasks_to_kill {
+        match state.job_engine.kill_job(&job_id).await {
+            Ok(()) => info!(
+                issue_id = %issue_id,
+                job_id = %job_id,
+                "killed task for dropped issue"
+            ),
+            Err(JobEngineError::NotFound(_)) => info!(
+                issue_id = %issue_id,
+                job_id = %job_id,
+                "task already missing while dropping issue"
+            ),
+            Err(err) => {
+                return Err(ApiError::internal(anyhow!(
+                    "failed to kill task '{job_id}' for dropped issue '{issue_id}': {err}"
+                )));
+            }
+        }
+    }
 
     info!(issue_id = %issue_id, "issue stored successfully");
 

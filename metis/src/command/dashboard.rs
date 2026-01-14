@@ -111,6 +111,7 @@ enum IssueReadiness {
     Ready,
     Blocked(Vec<String>),
     Waiting,
+    Dropped,
 }
 
 #[derive(Clone)]
@@ -832,6 +833,10 @@ fn has_open_children(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> b
 }
 
 fn issue_readiness(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> IssueReadiness {
+    if node.record.status == IssueStatus::Dropped {
+        return IssueReadiness::Dropped;
+    }
+
     let blockers = active_blockers(node, nodes);
     if !blockers.is_empty() {
         return IssueReadiness::Blocked(blockers);
@@ -887,7 +892,8 @@ fn issue_status_order(status: IssueStatus) -> usize {
     match status {
         IssueStatus::InProgress => 0,
         IssueStatus::Open => 1,
-        IssueStatus::Closed => 2,
+        IssueStatus::Dropped => 2,
+        IssueStatus::Closed => 3,
     }
 }
 
@@ -985,11 +991,16 @@ fn issue_status_style(status: IssueStatus) -> Style {
         IssueStatus::Open => Style::default().fg(Color::Blue),
         IssueStatus::InProgress => Style::default().fg(Color::Yellow),
         IssueStatus::Closed => Style::default().fg(Color::Green),
+        IssueStatus::Dropped => Style::default().fg(Color::Rgb(139, 0, 0)),
     }
 }
 
 fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (String, Style) {
     match (status, readiness) {
+        (IssueStatus::Dropped, _) => (
+            "dropped".to_string(),
+            issue_status_style(IssueStatus::Dropped),
+        ),
         (IssueStatus::Open, IssueReadiness::Blocked(blockers)) => (
             format!("blocked: {}", blockers.join(", ")),
             Style::default().fg(Color::Magenta),
@@ -1220,6 +1231,19 @@ mod tests {
             }
             other => panic!("unexpected readiness: {other:?}"),
         }
+    }
+
+    #[test]
+    fn dropped_issues_render_as_dropped() {
+        let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
+        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+
+        let line = lines.rows.first().expect("missing issue line");
+        assert_eq!(line.readiness, IssueReadiness::Dropped);
+
+        let (label, style) = issue_status_display(line.status, &line.readiness);
+        assert_eq!(label, "dropped");
+        assert_eq!(style, issue_status_style(IssueStatus::Dropped));
     }
 
     #[test]

@@ -2,11 +2,12 @@
 
 Every task to be executed by the system is represented by an issue. An issue is a item for work that may span one or more tasks. 
 
-Issues have 3 explicitly indicated statuses: Open, InProgress, Closed. 
+Issues have 4 explicitly indicated statuses: Open, InProgress, Dropped, Closed. 
 Issues also have 2 inferred states: Ready, NotReady, that indicate whether or not the issue is ready to be worked on.
-Open issues are Ready unless they have a blocked-on edge to an issue that isn't Closed
+Open issues are Ready unless they have a blocked-on edge to an issue that isn't Closed (dropped issues do not unblock their downstream dependencies)
 InProgress issues are Ready if all of their children are Closed
-Whenever an issue is Ready, an agent may be spawned to work on it. 
+Dropped issues are never Ready; they remain blocking for downstream work until users intervene.
+Whenever an issue is Ready, an agent may be spawned to work on it. When an issue is marked Dropped via the metis-server API, any tasks spawned from it are terminated immediately.
 
 The workflow to process an issue is as follows
 - the Issue is created. 

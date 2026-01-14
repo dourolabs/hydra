@@ -172,7 +172,7 @@ fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        job_engine::{JobStatus, MockJobEngine},
+        job_engine::{JobEngine, JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
         store::{Status, Task, TaskError, TaskExt},
         test::{
@@ -1898,6 +1898,77 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
+        let engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(engine.clone());
+        let server = spawn_test_server_with_state(state.clone()).await?;
+        let client = test_client();
+
+        let base_issue = Issue {
+            issue_type: IssueType::Task,
+            description: "dropped issue".to_string(),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: vec![],
+            patches: Vec::new(),
+        };
+
+        let created: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: base_issue.clone(),
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let task_id = TaskId::new();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_task_with_id(
+                    task_id.clone(),
+                    Task {
+                        prompt: "do work".to_string(),
+                        context: BundleSpec::None,
+                        spawned_from: Some(created.issue_id.clone()),
+                        image: Some(default_image()),
+                        env_vars: HashMap::new(),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+            store.mark_task_running(&task_id, Utc::now()).await?;
+        }
+        engine.insert_job(&task_id, JobStatus::Running).await;
+
+        client
+            .put(format!(
+                "{}/v1/issues/{}",
+                server.base_url(),
+                created.issue_id
+            ))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    status: IssueStatus::Dropped,
+                    ..base_issue
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let job = engine.find_job_by_metis_id(&task_id).await?;
+        assert_eq!(job.status, JobStatus::Failed);
+
         Ok(())
     }
 }

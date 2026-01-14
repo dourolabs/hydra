@@ -278,6 +278,7 @@ impl Store for MemoryStore {
 
         match status {
             IssueStatus::Closed => Ok(false),
+            IssueStatus::Dropped => Ok(false),
             IssueStatus::Open => {
                 for dependency in dependencies {
                     if dependency.dependency_type == IssueDependencyType::BlockedOn {
@@ -795,6 +796,38 @@ mod tests {
             .unwrap();
 
         assert!(store.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropped_issue_is_not_ready() {
+        let mut store = MemoryStore::new();
+
+        let issue_id = store
+            .add_issue(issue_with_status(IssueStatus::Dropped, vec![]))
+            .await
+            .unwrap();
+
+        assert!(!store.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropped_blocker_keeps_issue_blocked() {
+        let mut store = MemoryStore::new();
+
+        let blocker_id = store
+            .add_issue(issue_with_status(IssueStatus::Dropped, vec![]))
+            .await
+            .unwrap();
+        let blocked_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: blocker_id.clone(),
+        }];
+        let blocked_issue_id = store
+            .add_issue(issue_with_status(IssueStatus::Open, blocked_dependencies))
+            .await
+            .unwrap();
+
+        assert!(!store.is_issue_ready(&blocked_issue_id).await.unwrap());
     }
 
     #[tokio::test]
