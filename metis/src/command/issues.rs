@@ -788,12 +788,21 @@ fn write_issue_details_pretty(
     } else {
         writeln!(writer, "{indent}Patches:")?;
         for patch in patch_records {
+            let status = patch.patch.status;
             let title = if patch.patch.title.is_empty() {
                 "(untitled)"
             } else {
                 patch.patch.title.as_str()
             };
-            writeln!(writer, "{indent}  - {title} ({})", patch.id)?;
+            writeln!(writer, "{indent}  - {title} ({}) [{status}]", patch.id)?;
+            writeln!(writer, "{indent}    Description:")?;
+            if patch.patch.description.trim().is_empty() {
+                writeln!(writer, "{indent}      -")?;
+            } else {
+                for line in patch.patch.description.lines() {
+                    writeln!(writer, "{indent}      {line}")?;
+                }
+            }
         }
     }
 
@@ -1448,7 +1457,8 @@ mod tests {
         assert!(rendered.contains("Issue"));
         assert!(rendered.contains("Parents:"));
         assert!(rendered.contains("Children (transitive):"));
-        assert!(rendered.contains("main patch"));
+        assert!(rendered.contains("main patch (p-main) [open]"));
+        assert!(rendered.contains("      Description:\n        desc"));
         assert!(rendered.contains("none"));
     }
 }
