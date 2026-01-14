@@ -42,44 +42,37 @@ pub struct AgentQueue {
     pub prompt: String,
     pub context_spec: BundleSpec,
     pub image: Option<String>,
-    pub fallback_image: String,
     pub env_vars: HashMap<String, String>,
     pub max_tries: u32,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
 impl AgentQueue {
-    pub fn from_config(config: &AgentQueueConfig, default_image: &str) -> Self {
+    pub fn from_config(config: &AgentQueueConfig) -> Self {
         Self {
             name: config.name.clone(),
             prompt: config.prompt.clone(),
             context_spec: config.context.clone(),
             image: config.image.clone(),
-            fallback_image: default_image.to_string(),
             env_vars: config.env_vars.clone(),
             max_tries: config.max_tries,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
-    fn build_task(&self, state: &AppState, issue_id: &IssueId) -> anyhow::Result<Task> {
+    fn build_task(&self, _store: &dyn Store, issue_id: &IssueId) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
-        Ok(Task {
+        Task {
             program: DEFAULT_AGENT_PROGRAM.to_string(),
             params: vec![self.prompt.clone()],
             context: self.context_spec.clone(),
             spawned_from: Some(issue_id.clone()),
             image: self.image.clone(),
             env_vars,
-        })
-        .and_then(|task| {
-            task.resolve(state.service_state.as_ref(), &self.fallback_image)
-                .context("failed to resolve queue task")?;
-            Ok(task)
-        })
+        }
     }
 
     async fn register_spawn_attempt(&self, issue_id: &IssueId, status: IssueStatus) -> bool {
@@ -153,7 +146,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(state, &issue_id)?;
+            let task = self.build_task(store.as_ref(), &issue_id);
             tasks.push(task);
         }
 
@@ -212,7 +205,6 @@ mod tests {
             prompt: "Fix the issue".to_string(),
             context_spec: BundleSpec::None,
             image: None,
-            fallback_image: "metis-worker:latest".to_string(),
             env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             spawn_attempts: RwLock::new(HashMap::new()),
@@ -284,7 +276,6 @@ mod tests {
         let mut issue_ids = HashSet::new();
         let mut spawned_from_issue_ids = HashSet::new();
         for task in tasks {
-            let resolved = task.resolve(state.service_state.as_ref(), &queue.fallback_image)?;
             let Task {
                 program,
                 params,
@@ -297,8 +288,6 @@ mod tests {
             assert_eq!(program, DEFAULT_AGENT_PROGRAM);
             assert_eq!(params, &["Fix the issue".to_string()]);
             assert_eq!(context, BundleSpec::None);
-            assert_eq!(resolved.context.bundle, Bundle::None);
-            assert_eq!(resolved.image, queue.fallback_image);
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -490,12 +479,11 @@ mod tests {
             env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
         };
 
-        let queue = AgentQueue::from_config(&config, "default-image");
+        let queue = AgentQueue::from_config(&config);
 
         assert_eq!(queue.name, "agent-config");
         assert_eq!(queue.prompt, "Handle issues");
         assert_eq!(queue.image, None);
-        assert_eq!(queue.fallback_image, "default-image");
         assert_eq!(queue.env_vars.get("CUSTOM"), Some(&"1".to_string()));
     }
 
@@ -536,7 +524,6 @@ mod tests {
                 rev: None,
             },
             image: None,
-            fallback_image: "default-image".to_string(),
             env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             spawn_attempts: RwLock::new(HashMap::new()),
@@ -545,7 +532,8 @@ mod tests {
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
 
-        let resolved = tasks[0].resolve(state.service_state.as_ref(), &queue.fallback_image)?;
+        let fallback_image = state.config.metis.worker_image.clone();
+        let resolved = tasks[0].resolve(state.service_state.as_ref(), &fallback_image)?;
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {
