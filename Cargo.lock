@@ -1411,6 +1411,7 @@ dependencies = [
  "chrono",
  "indexmap",
  "rand",
+ "reqwest",
  "serde",
  "serde_yaml",
 ]

@@ -322,6 +322,34 @@ pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
 }
 
+fn serialize_graph_filters<S>(
+    filters: &[IssueGraphFilter],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = filters
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&s)
+}
+
+fn deserialize_graph_filters<'de, D>(deserializer: D) -> Result<Vec<IssueGraphFilter>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| part.parse().map_err(de::Error::custom))
+        .collect()
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchIssuesQuery {
     #[serde(default)]
@@ -332,7 +360,12 @@ pub struct SearchIssuesQuery {
     pub assignee: Option<String>,
     #[serde(default)]
     pub q: Option<String>,
-    #[serde(default, rename = "graph")]
+    #[serde(
+        default,
+        rename = "graph",
+        serialize_with = "serialize_graph_filters",
+        deserialize_with = "deserialize_graph_filters"
+    )]
     pub graph_filters: Vec<IssueGraphFilter>,
 }
 
@@ -385,5 +418,58 @@ mod tests {
     fn graph_filter_formats_to_string() {
         let filter: IssueGraphFilter = "*:child-of:i-qrst".parse().unwrap();
         assert_eq!(filter.to_string(), "*:child-of:i-qrst");
+    }
+
+    #[test]
+    fn search_issues_query_serializes_with_reqwest() {
+        let query = SearchIssuesQuery {
+            issue_type: Some(IssueType::Bug),
+            status: Some(IssueStatus::Open),
+            assignee: Some("alice".to_string()),
+            q: Some("test query".to_string()),
+            graph_filters: vec![],
+        };
+
+        // Test that reqwest can serialize the query when building the request
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/issues")
+            .query(&query)
+            .build();
+        result.expect("Failed to serialize SearchIssuesQuery with reqwest");
+    }
+
+    #[test]
+    fn search_issues_query_serializes_with_graph_filters() {
+        let filter1: IssueGraphFilter = "*:child-of:i-abcd".parse().unwrap();
+        let filter2: IssueGraphFilter = "i-efgh:blocked-on:**".parse().unwrap();
+        let query = SearchIssuesQuery {
+            issue_type: None,
+            status: None,
+            assignee: None,
+            q: None,
+            graph_filters: vec![filter1, filter2],
+        };
+
+        // Test that reqwest can serialize the query with graph_filters when building the request
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/issues")
+            .query(&query)
+            .build();
+        result.expect("Failed to serialize SearchIssuesQuery with graph_filters");
+    }
+
+    #[test]
+    fn search_issues_query_serializes_empty_query() {
+        let query = SearchIssuesQuery::default();
+
+        // Test that reqwest can serialize an empty query when building the request
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/issues")
+            .query(&query)
+            .build();
+        result.expect("Failed to serialize empty SearchIssuesQuery");
     }
 }

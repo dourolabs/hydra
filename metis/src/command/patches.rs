@@ -1110,6 +1110,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let _working_dir_guard = WorkingDirGuard::change_to(&repo_path)?;
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-automatic"),

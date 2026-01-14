@@ -49,3 +49,36 @@ pub struct SearchPatchesQuery {
 pub struct ListPatchesResponse {
     pub patches: Vec<PatchRecord>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_patches_query_serializes_with_reqwest() {
+        let query = SearchPatchesQuery {
+            q: Some("test query".to_string()),
+        };
+
+        // Test that reqwest can serialize the query when building the request
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/patches")
+            .query(&query)
+            .build();
+        result.expect("Failed to serialize SearchPatchesQuery with reqwest");
+    }
+
+    #[test]
+    fn search_patches_query_serializes_empty_query() {
+        let query = SearchPatchesQuery::default();
+
+        // Test that reqwest can serialize an empty query when building the request
+        let client = reqwest::Client::new();
+        let result = client
+            .get("http://example.com/v1/patches")
+            .query(&query)
+            .build();
+        result.expect("Failed to serialize empty SearchPatchesQuery");
+    }
+}
