@@ -446,7 +446,7 @@ mod tests {
     use std::collections::HashSet;
 
     fn spawn_task() -> Task {
-        Task::Spawn {
+        Task {
             program: "0".to_string(),
             params: vec![],
             context: Bundle::None,

@@ -41,7 +41,7 @@ pub async fn process_pending_jobs(state: AppState) {
             let (image, env_vars) = {
                 let store = state.store.read().await;
                 match store.get_task(&metis_id).await {
-                    Ok(Task::Spawn {
+                    Ok(Task {
                         image, env_vars, ..
                     }) => (image, env_vars),
                     Err(err) => {

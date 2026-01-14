@@ -245,20 +245,18 @@ mod tests {
 
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
-                context,
-                program,
-                params,
-                image,
-                env_vars: _,
-            } => {
-                assert_eq!(program, "0");
-                assert!(params.is_empty());
-                assert_eq!(context, Bundle::None);
-                assert_eq!(image, default_image);
-            }
-        }
+        let Task {
+            context,
+            program,
+            params,
+            image,
+            ..
+        } = task;
+
+        assert_eq!(program, "0");
+        assert!(params.is_empty());
+        assert_eq!(context, Bundle::None);
+        assert_eq!(image, default_image);
 
         let status = store_read.get_status(&body.job_id).await?;
         assert_eq!(status, Status::Pending);
@@ -295,24 +293,21 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
-                context,
-                env_vars,
-                image,
-                ..
-            } => {
-                assert_eq!(
-                    context,
-                    Bundle::GitRepository {
-                        url: repo.remote_url.clone(),
-                        rev: "develop".to_string()
-                    }
-                );
-                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
-                assert_eq!(image, "ghcr.io/example/repo:main");
+        let Task {
+            context,
+            env_vars,
+            image,
+            ..
+        } = task;
+        assert_eq!(
+            context,
+            Bundle::GitRepository {
+                url: repo.remote_url.clone(),
+                rev: "develop".to_string()
             }
-        }
+        );
+        assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
+        assert_eq!(image, "ghcr.io/example/repo:main");
 
         Ok(())
     }
@@ -337,11 +332,8 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn { image, .. } => {
-                assert_eq!(image, "ghcr.io/example/custom:dev");
-            }
-        }
+        let Task { image, .. } = task;
+        assert_eq!(image, "ghcr.io/example/custom:dev");
 
         Ok(())
     }
@@ -377,14 +369,11 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
-                image, env_vars, ..
-            } => {
-                assert_eq!(image, "ghcr.io/example/override:main");
-                assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
-            }
-        }
+        let Task {
+            image, env_vars, ..
+        } = task;
+        assert_eq!(image, "ghcr.io/example/override:main");
+        assert_eq!(env_vars.get(ENV_GH_TOKEN), Some(&"token-123".to_string()));
 
         Ok(())
     }
@@ -409,12 +398,9 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn { env_vars, .. } => {
-                assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
-                assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
-            }
-        }
+        let Task { env_vars, .. } = task;
+        assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
+        assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
 
         Ok(())
     }
@@ -450,22 +436,19 @@ mod tests {
         let body: CreateJobResponse = response.json().await?;
         let store_read = store.read().await;
         let task = store_read.get_task(&body.job_id).await?;
-        match task {
-            Task::Spawn {
-                env_vars, image, ..
-            } => {
-                assert_eq!(
-                    env_vars.get(ENV_GH_TOKEN),
-                    Some(&"user-supplied".to_string())
-                );
-                assert_eq!(
-                    env_vars.get("PROMPT"),
-                    None,
-                    "server should not inject prompt automatically"
-                );
-                assert_eq!(image, "ghcr.io/example/repo:main");
-            }
-        }
+        let Task {
+            env_vars, image, ..
+        } = task;
+        assert_eq!(
+            env_vars.get(ENV_GH_TOKEN),
+            Some(&"user-supplied".to_string())
+        );
+        assert_eq!(
+            env_vars.get("PROMPT"),
+            None,
+            "server should not inject prompt automatically"
+        );
+        assert_eq!(image, "ghcr.io/example/repo:main");
 
         Ok(())
     }
@@ -521,7 +504,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     oldest_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -534,7 +517,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     middle_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -547,7 +530,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     newest_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -591,7 +574,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -654,7 +637,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -904,7 +887,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -969,7 +952,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1020,7 +1003,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1068,7 +1051,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1115,7 +1098,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1236,7 +1219,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     parent_job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1268,7 +1251,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     ctx_job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: context.clone(),
@@ -1308,7 +1291,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
@@ -1392,7 +1375,7 @@ mod tests {
             store_write
                 .add_task_with_id(
                     job_id.clone(),
-                    Task::Spawn {
+                    Task {
                         program: "0".to_string(),
                         params: vec![],
                         context: Bundle::None,
