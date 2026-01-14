@@ -1,12 +1,17 @@
 use crate::client::MetisClientInterface;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use metis_common::issues::{
-    Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueId, IssueRecord,
-    IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest,
+    Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
+    IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
+    UpsertIssueRequest,
 };
-use std::io::{self, Write};
-use std::str::FromStr;
+use serde::Serialize;
+use std::{
+    collections::HashSet,
+    io::{self, Write},
+    str::FromStr,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
@@ -113,6 +118,16 @@ pub enum IssueCommands {
         #[arg(long)]
         clear_progress: bool,
     },
+    /// Describe an issue and its relationships.
+    Describe {
+        /// Issue ID to describe.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Pretty-print the description instead of emitting JSON.
+        #[arg(long)]
+        pretty: bool,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
@@ -182,7 +197,100 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             )
             .await
         }
+        IssueCommands::Describe { id, pretty } => describe_issue(client, id, pretty).await,
     }
+}
+
+#[derive(Debug, Serialize)]
+struct IssueDescription {
+    issue: IssueRecord,
+    parents: Vec<IssueRecord>,
+    children: Vec<IssueRecord>,
+}
+
+async fn describe_issue(
+    client: &dyn MetisClientInterface,
+    id: IssueId,
+    pretty: bool,
+) -> Result<()> {
+    let description = collect_issue_description(client, id).await?;
+
+    let mut stdout = io::stdout().lock();
+    if pretty {
+        print_issue_description_pretty(&description, &mut stdout)?;
+    } else {
+        serde_json::to_writer(&mut stdout, &description)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
+
+    Ok(())
+}
+
+async fn collect_issue_description(
+    client: &dyn MetisClientInterface,
+    issue_id: IssueId,
+) -> Result<IssueDescription> {
+    let issue = client
+        .get_issue(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+
+    let parents = fetch_parent_issues(client, &issue).await?;
+    let children = fetch_child_issues(client, &issue.id).await?;
+
+    Ok(IssueDescription {
+        issue,
+        parents,
+        children,
+    })
+}
+
+async fn fetch_parent_issues(
+    client: &dyn MetisClientInterface,
+    issue: &IssueRecord,
+) -> Result<Vec<IssueRecord>> {
+    let mut parents = Vec::new();
+    let mut seen = HashSet::new();
+
+    for dependency in &issue.issue.dependencies {
+        if dependency.dependency_type != IssueDependencyType::ChildOf {
+            continue;
+        }
+        if !seen.insert(dependency.issue_id.clone()) {
+            continue;
+        }
+
+        let parent = client
+            .get_issue(&dependency.issue_id)
+            .await
+            .with_context(|| format!("failed to fetch parent issue '{}'", dependency.issue_id))?;
+        parents.push(parent);
+    }
+
+    Ok(parents)
+}
+
+async fn fetch_child_issues(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+) -> Result<Vec<IssueRecord>> {
+    let filter = IssueGraphFilter::new(
+        IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
+        IssueDependencyType::ChildOf,
+        IssueGraphSelector::Issue(issue_id.clone()),
+    )
+    .map_err(|err| anyhow!(err))?;
+
+    let response = client
+        .list_issues(&SearchIssuesQuery {
+            graph_filters: vec![filter],
+            ..SearchIssuesQuery::default()
+        })
+        .await
+        .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
+
+    Ok(response.issues)
 }
 
 async fn fetch_issues(
@@ -503,6 +611,101 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
     Ok(())
 }
 
+fn print_issue_description_pretty(
+    description: &IssueDescription,
+    writer: &mut impl Write,
+) -> Result<()> {
+    writeln!(writer, "Issue")?;
+    write_issue_details_pretty(&description.issue, "  ", writer)?;
+    writeln!(writer)?;
+
+    writeln!(writer, "Parents:")?;
+    if description.parents.is_empty() {
+        writeln!(writer, "  none")?;
+    } else {
+        for parent in &description.parents {
+            write_issue_details_pretty(parent, "  ", writer)?;
+            writeln!(writer)?;
+        }
+    }
+
+    writeln!(writer, "Children (transitive):")?;
+    if description.children.is_empty() {
+        writeln!(writer, "  none")?;
+    } else {
+        for child in &description.children {
+            write_issue_details_pretty(child, "  ", writer)?;
+            writeln!(writer)?;
+        }
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
+fn write_issue_details_pretty(
+    issue_record: &IssueRecord,
+    indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let Issue {
+        issue_type,
+        description,
+        status,
+        assignee,
+        dependencies,
+        patches,
+    } = &issue_record.issue;
+
+    writeln!(
+        writer,
+        "{indent}Issue {} ({issue_type}, {status})",
+        issue_record.id
+    )?;
+    writeln!(
+        writer,
+        "{indent}Assignee: {}",
+        assignee.as_deref().unwrap_or("-")
+    )?;
+    writeln!(writer, "{indent}Description:")?;
+    if description.trim().is_empty() {
+        writeln!(writer, "{indent}  -")?;
+    } else {
+        for line in description.lines() {
+            writeln!(writer, "{indent}  {line}")?;
+        }
+    }
+
+    if dependencies.is_empty() {
+        writeln!(writer, "{indent}Dependencies: none")?;
+    } else {
+        writeln!(writer, "{indent}Dependencies:")?;
+        for dependency in dependencies {
+            writeln!(
+                writer,
+                "{indent}  - {} {}",
+                dependency.dependency_type, dependency.issue_id
+            )?;
+        }
+    }
+
+    if patches.is_empty() {
+        writeln!(writer, "{indent}Patches: none")?;
+    } else {
+        writeln!(writer, "{indent}Patches:")?;
+        for patch in patches {
+            let title = if patch.title.is_empty() {
+                "(untitled)"
+            } else {
+                patch.title.as_str()
+            };
+            writeln!(writer, "{indent}  - {title}")?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,6 +715,7 @@ mod tests {
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
+    use metis_common::patches::Patch;
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
@@ -666,6 +870,103 @@ mod tests {
                 graph_filters: filters,
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn describe_issue_collects_related_issues_and_children() {
+        let client = MockMetisClient::default();
+        let root_id = issue_id("i-root");
+        let parent_id = issue_id("i-parent");
+
+        let parent_issue = IssueRecord {
+            id: parent_id.clone(),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "Parent issue".into(),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: vec![],
+                patches: vec![Patch {
+                    title: "parent patch".into(),
+                    description: "desc".into(),
+                    diff: "diff".into(),
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                }],
+            },
+        };
+
+        let root_issue = IssueRecord {
+            id: root_id.clone(),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "Root issue".into(),
+                status: IssueStatus::Open,
+                assignee: Some("owner".into()),
+                dependencies: vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: parent_id.clone(),
+                }],
+                patches: vec![Patch {
+                    title: "root patch".into(),
+                    description: "desc".into(),
+                    diff: "diff".into(),
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                }],
+            },
+        };
+
+        let child_issue = IssueRecord {
+            id: issue_id("i-child"),
+            issue: Issue {
+                issue_type: IssueType::Bug,
+                description: "Child issue".into(),
+                status: IssueStatus::InProgress,
+                assignee: None,
+                dependencies: vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: root_id.clone(),
+                }],
+                patches: vec![Patch {
+                    title: "child patch".into(),
+                    description: "desc".into(),
+                    diff: "diff".into(),
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                }],
+            },
+        };
+
+        client.push_get_issue_response(root_issue.clone());
+        client.push_get_issue_response(parent_issue.clone());
+        client.push_list_issues_response(ListIssuesResponse {
+            issues: vec![child_issue.clone()],
+        });
+
+        let description = collect_issue_description(&client, root_id.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.recorded_get_issue_requests(),
+            vec![root_id.clone(), parent_id.clone()]
+        );
+        assert_eq!(
+            client.recorded_list_issue_queries(),
+            vec![SearchIssuesQuery {
+                graph_filters: vec![IssueGraphFilter::new(
+                    IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
+                    IssueDependencyType::ChildOf,
+                    IssueGraphSelector::Issue(root_id.clone()),
+                )
+                .unwrap()],
+                ..SearchIssuesQuery::default()
+            }]
+        );
+        assert_eq!(description.issue, root_issue);
+        assert_eq!(description.parents, vec![parent_issue]);
+        assert_eq!(description.children, vec![child_issue]);
     }
 
     #[tokio::test]
@@ -938,5 +1239,50 @@ mod tests {
         assert!(rendered.contains("Progress:\n  -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
+    }
+
+    #[test]
+    fn describe_issue_pretty_printer_includes_sections() {
+        let description = IssueDescription {
+            issue: IssueRecord {
+                id: issue_id("i-main"),
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "Main issue".into(),
+                    status: IssueStatus::Open,
+                    assignee: Some("owner".into()),
+                    dependencies: vec![],
+                    patches: vec![Patch {
+                        title: "main patch".into(),
+                        description: "desc".into(),
+                        diff: "diff".into(),
+                        is_automatic_backup: false,
+                        reviews: Vec::new(),
+                    }],
+                },
+            },
+            parents: vec![IssueRecord {
+                id: issue_id("i-parent"),
+                issue: Issue {
+                    issue_type: IssueType::Feature,
+                    description: "Parent".into(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+            }],
+            children: vec![],
+        };
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("Issue"));
+        assert!(rendered.contains("Parents:"));
+        assert!(rendered.contains("Children (transitive):"));
+        assert!(rendered.contains("main patch"));
+        assert!(rendered.contains("none"));
     }
 }
