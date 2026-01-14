@@ -17,14 +17,13 @@ use metis_common::{
 use crate::client::MetisClientInterface;
 use crate::command::patches::create_patch_artifact_from_repo;
 use crate::constants;
-use crate::exec::eval_with_closure_unwrapping;
+use crate::exec::{codex_output_path, run_codex};
 
 pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
     let WorkerContext {
         request_context,
         variables,
-        program,
-        params,
+        prompt,
         ..
     } = client.get_job_context(&job).await?;
     // Startup tasks: set up context
@@ -45,9 +44,9 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
     login_codex()?;
     configure_git_repo(&dest)?;
 
-    let _ = eval_with_closure_unwrapping(&program, params, &execution_env)
+    run_codex(&prompt, &dest, &execution_env)
         .await
-        .with_context(|| "failed to execute Rhai program from worker context")?;
+        .with_context(|| "failed to execute codex for worker context")?;
 
     let last_message = read_last_message(&dest)?;
     submit_patch_artifact_if_present(client, &job, &dest, &last_message).await?;
@@ -177,7 +176,10 @@ fn login_codex() -> Result<()> {
 }
 
 fn create_output_directory(dest: &Path) -> Result<()> {
-    let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
+    let output_dir = codex_output_path(dest)
+        .parent()
+        .ok_or_else(|| anyhow!("failed to compute codex output directory"))?
+        .to_path_buf();
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create output directory at {output_dir:?}"))?;
     Ok(())
@@ -248,8 +250,7 @@ async fn submit_patch_artifact_if_present(
 }
 
 fn last_message_path(dest: &Path) -> PathBuf {
-    let output_dir = dest.join(constants::METIS_DIR).join(constants::OUTPUT_DIR);
-    output_dir.join(constants::OUTPUT_TXT_FILE)
+    codex_output_path(dest)
 }
 
 fn read_last_message(dest: &Path) -> Result<String> {

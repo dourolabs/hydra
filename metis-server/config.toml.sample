@@ -22,7 +22,7 @@ github_token = ""
 # Add additional [[background.agent_queues]] tables to run multiple queues.
 [[background.agent_queues]]
 name = "agent-a"
-# Prompt provided to the agent; passed as the first parameter to the default program.
+# Prompt provided to the agent; forwarded directly to Codex.
 prompt = "You are agent-a working on assigned issues."
 # Maximum number of times to spawn a task for the same issue state.
 max_tries = 3

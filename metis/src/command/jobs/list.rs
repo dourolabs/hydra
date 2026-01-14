@@ -237,8 +237,7 @@ mod tests {
         JobRecord {
             id: task_id(id),
             task: Task {
-                program: "0".to_string(),
-                params: vec![],
+                prompt: "0".to_string(),
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: None,

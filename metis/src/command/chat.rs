@@ -22,7 +22,6 @@ current workspace and should use the `metis` CLI as your primary tool. Helpful c
 - `metis issues <subcommand>` manages issues.
 - `metis patches <subcommand>` inspects or applies patches.
 - `metis worker-run <JOB_ID> <PATH>` fetches a job context locally.
-- `metis run <SCRIPT>` executes Rhai automation helpers.
 
 Guidelines:
 1. Prefer answering questions by calling the CLI instead of guessing.

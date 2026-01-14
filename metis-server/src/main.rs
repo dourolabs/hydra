@@ -234,7 +234,7 @@ mod tests {
         let client = test_client();
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
-            .json(&json!({ "program": "0" }))
+            .json(&json!({ "prompt": "0" }))
             .send()
             .await?;
 
@@ -246,14 +246,10 @@ mod tests {
         let task = store_read.get_task(&body.job_id).await?;
         let resolved = task.resolve(service_state.as_ref(), &default_image)?;
         let Task {
-            context,
-            program,
-            params,
-            ..
+            context, prompt, ..
         } = task;
 
-        assert_eq!(program, "0");
-        assert!(params.is_empty());
+        assert_eq!(prompt, "0");
         assert_eq!(context, BundleSpec::None);
         assert_eq!(resolved.context.bundle, Bundle::None);
         assert_eq!(resolved.image, default_image);
@@ -285,7 +281,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "context": { "type": "service_repository", "name": "private-repo" }
             }))
             .send()
@@ -332,7 +328,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "image": "ghcr.io/example/custom:dev"
             }))
             .send()
@@ -371,7 +367,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "context": { "type": "service_repository", "name": "private-repo" },
                 "image": "ghcr.io/example/override:main"
             }))
@@ -402,7 +398,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "variables": { "FOO": "bar", "PROMPT": "custom prompt" }
             }))
             .send()
@@ -441,7 +437,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "context": { "type": "service_repository", "name": "private-repo" },
                 "variables": { ENV_GH_TOKEN: "user-supplied" }
             }))
@@ -474,7 +470,7 @@ mod tests {
         let response = client
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
-                "program": "0",
+                "prompt": "0",
                 "context": { "type": "service_repository", "name": "missing" }
             }))
             .send()
@@ -519,8 +515,7 @@ mod tests {
                 .add_task_with_id(
                     oldest_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -533,8 +528,7 @@ mod tests {
                 .add_task_with_id(
                     middle_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -547,8 +541,7 @@ mod tests {
                 .add_task_with_id(
                     newest_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -592,8 +585,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -656,8 +648,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -907,8 +898,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -973,8 +963,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -1025,8 +1014,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image()),
@@ -1074,8 +1062,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image()),
@@ -1122,8 +1109,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -1244,8 +1230,7 @@ mod tests {
                 .add_task_with_id(
                     parent_job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -1277,8 +1262,7 @@ mod tests {
                 .add_task_with_id(
                     ctx_job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: context_spec.clone(),
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -1308,7 +1292,7 @@ mod tests {
                 rev: "main".to_string(),
             }
         );
-        assert!(body.params.is_empty());
+        assert_eq!(body.prompt, "0");
         Ok(())
     }
 
@@ -1324,8 +1308,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image.clone()),
@@ -1409,8 +1392,7 @@ mod tests {
                 .add_task_with_id(
                     job_id.clone(),
                     Task {
-                        program: "0".to_string(),
-                        params: vec![],
+                        prompt: "0".to_string(),
                         context: BundleSpec::None,
                         spawned_from: None,
                         image: Some(default_image),

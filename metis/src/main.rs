@@ -63,12 +63,6 @@ enum Commands {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
-    /// Run a Rhai script.
-    Run {
-        /// Rhai script to execute. Can be a file path or a one-line script.
-        #[arg(value_name = "SCRIPT_OR_FILE")]
-        script: String,
-    },
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
         /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
@@ -108,7 +102,6 @@ async fn main() -> Result<()> {
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
-        Commands::Run { script } => command::run::run(script).await?,
         Commands::Chat {
             prompt,
             model,

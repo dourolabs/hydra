@@ -5,9 +5,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
-    pub program: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
+    pub prompt: String,
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
@@ -19,9 +17,7 @@ pub struct Task {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJobRequest {
-    pub program: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
+    pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(default)]
@@ -81,9 +77,7 @@ pub enum Bundle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerContext {
     pub request_context: Bundle,
-    pub program: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
+    pub prompt: String,
     #[serde(default)]
     pub variables: HashMap<String, String>,
 }

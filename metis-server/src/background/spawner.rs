@@ -28,11 +28,6 @@ pub trait Spawner: Send + Sync {
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>>;
 }
 
-pub const DEFAULT_AGENT_PROGRAM: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../metis/scripts/default_codex_prompt.rhai"
-));
-
 #[derive(Clone, Copy, Debug)]
 struct SpawnAttempt {
     status: IssueStatus,
@@ -68,8 +63,7 @@ impl AgentQueue {
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
         Task {
-            program: DEFAULT_AGENT_PROGRAM.to_string(),
-            params: vec![self.prompt.clone()],
+            prompt: self.prompt.clone(),
             context: self.context_spec.clone(),
             spawned_from: Some(issue_id.clone()),
             image: self.image.clone(),
@@ -279,16 +273,14 @@ mod tests {
         let mut spawned_from_issue_ids = HashSet::new();
         for task in tasks {
             let Task {
-                program,
-                params,
+                prompt,
                 context,
                 spawned_from,
                 env_vars,
                 ..
             } = task;
 
-            assert_eq!(program, DEFAULT_AGENT_PROGRAM);
-            assert_eq!(params, &["Fix the issue".to_string()]);
+            assert_eq!(prompt, "Fix the issue".to_string());
             assert_eq!(context, BundleSpec::None);
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
@@ -334,8 +326,7 @@ mod tests {
             store
                 .add_task(
                     Task {
-                        program: DEFAULT_AGENT_PROGRAM.to_string(),
-                        params: vec!["Fix the issue".to_string()],
+                        prompt: "Fix the issue".to_string(),
                         context: BundleSpec::None,
                         spawned_from: Some(issue_id.clone()),
                         image: Some("metis-worker:latest".to_string()),
