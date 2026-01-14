@@ -111,6 +111,8 @@ pub struct JobRecord {
 pub struct SearchJobsQuery {
     #[serde(default)]
     pub q: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,20 +124,36 @@ pub struct KillJobResponse {
 #[cfg(test)]
 mod tests {
     use super::SearchJobsQuery;
+    use crate::IssueId;
+    use std::collections::HashMap;
 
     #[test]
     fn search_jobs_query_serializes_with_reqwest() {
+        let issue_id = IssueId::new();
         let query = SearchJobsQuery {
             q: Some("test query".to_string()),
+            spawned_from: Some(issue_id.clone()),
         };
 
         let client = reqwest::Client::new();
         let result = client
             .get("http://example.com/v1/jobs")
             .query(&query)
-            .build();
+            .build()
+            .map(|request| {
+                request
+                    .url()
+                    .query_pairs()
+                    .into_owned()
+                    .collect::<HashMap<_, _>>()
+            });
 
-        result.expect("Failed to serialize SearchJobsQuery with reqwest");
+        let params = result.expect("Failed to serialize SearchJobsQuery with reqwest");
+        assert_eq!(params.get("q").map(String::as_str), Some("test query"));
+        assert_eq!(
+            params.get("spawned_from").map(String::as_str),
+            Some(issue_id.as_ref())
+        );
     }
 
     #[test]

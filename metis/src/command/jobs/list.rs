@@ -4,6 +4,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskStatusLog},
+    IssueId,
 };
 use owo_colors::OwoColorize;
 use textwrap::{termwidth, Options, WrapAlgorithm};
@@ -16,8 +17,17 @@ const MAX_NOTE_LINES: usize = 5;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
-pub async fn run(client: &dyn MetisClientInterface, limit: usize) -> Result<()> {
-    let response = client.list_jobs(&SearchJobsQuery::default()).await?;
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    limit: usize,
+    spawned_from: Option<IssueId>,
+) -> Result<()> {
+    let response = client
+        .list_jobs(&SearchJobsQuery {
+            q: None,
+            spawned_from,
+        })
+        .await?;
     let terminal_width = current_terminal_width();
     let now = Utc::now();
 
@@ -216,8 +226,11 @@ fn job_note(job: &JobRecord) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::ids::task_id;
-    use metis_common::jobs::{BundleSpec, Task};
+    use crate::{
+        client::MockMetisClient,
+        test_utils::ids::{issue_id, task_id},
+    };
+    use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
     use std::collections::HashMap;
 
     fn sample_job(id: &str) -> JobRecord {
@@ -327,5 +340,24 @@ mod tests {
         assert_eq!(format_status(&Status::Running), "running");
         assert_eq!(format_status(&Status::Complete), "complete");
         assert_eq!(format_status(&Status::Failed), "failed");
+    }
+
+    #[tokio::test]
+    async fn run_passes_spawned_from_query() {
+        let client = MockMetisClient::default();
+        let spawned_from = issue_id("from-filter");
+
+        client.push_list_jobs_response(ListJobsResponse {
+            jobs: vec![sample_job("t-job-1")],
+        });
+
+        run(&client, 5, Some(spawned_from.clone()))
+            .await
+            .expect("list jobs should succeed");
+
+        let queries = client.list_job_queries.lock().unwrap().clone();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].spawned_from, Some(spawned_from));
+        assert!(queries[0].q.is_none());
     }
 }
