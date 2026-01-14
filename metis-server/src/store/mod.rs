@@ -124,6 +124,8 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Invalid dependency: {0}")]
     InvalidDependency(String),
+    #[error("Invalid issue status: {0}")]
+    InvalidIssueStatus(String),
     #[error("Internal error: {0}")]
     Internal(String),
     #[error("Invalid status transition: task is not in Pending state")]

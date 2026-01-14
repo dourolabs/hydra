@@ -136,6 +136,12 @@ pub async fn list_issues(
     Ok(Json(ListIssuesResponse { issues: filtered }))
 }
 
+fn join_issue_ids(ids: &[IssueId]) -> String {
+    let mut issue_ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    issue_ids.sort();
+    issue_ids.join(", ")
+}
+
 async fn validate_issue_dependencies(
     store: &mut dyn Store,
     dependencies: &[IssueDependency],
@@ -153,6 +159,67 @@ async fn validate_issue_dependencies(
     Ok(())
 }
 
+async fn validate_issue_lifecycle(
+    store: &mut dyn Store,
+    issue_id: Option<&IssueId>,
+    issue: &Issue,
+) -> Result<(), ApiError> {
+    if issue.status != IssueStatus::Closed {
+        return Ok(());
+    }
+
+    let mut open_blockers = Vec::new();
+    for dependency in issue
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
+    {
+        let blocker = store
+            .get_issue(&dependency.issue_id)
+            .await
+            .map_err(|err| map_issue_error(err, Some(&dependency.issue_id)))?;
+
+        if blocker.status != IssueStatus::Closed {
+            open_blockers.push(dependency.issue_id.clone());
+        }
+    }
+
+    if let Some(issue_id) = issue_id {
+        let children = store
+            .get_issue_children(issue_id)
+            .await
+            .map_err(|err| map_issue_error(err, Some(issue_id)))?;
+
+        let mut open_children = Vec::new();
+        for child_id in children {
+            let child = store
+                .get_issue(&child_id)
+                .await
+                .map_err(|err| map_issue_error(err, Some(issue_id)))?;
+
+            if child.status != IssueStatus::Closed {
+                open_children.push(child_id);
+            }
+        }
+
+        if !open_children.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "cannot close issue with open child issues: {}",
+                join_issue_ids(&open_children)
+            )));
+        }
+    }
+
+    if !open_blockers.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "blocked issues cannot close until blockers are closed: {}",
+            join_issue_ids(&open_blockers)
+        )));
+    }
+
+    Ok(())
+}
+
 async fn upsert_issue_internal(
     state: AppState,
     issue_id: Option<IssueId>,
@@ -162,6 +229,7 @@ async fn upsert_issue_internal(
 
     let mut store = state.store.write().await;
     validate_issue_dependencies(store.as_mut(), &issue.dependencies).await?;
+    validate_issue_lifecycle(store.as_mut(), issue_id.as_ref(), &issue).await?;
 
     let issue_id = match issue_id {
         Some(id) => {
@@ -404,6 +472,15 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
         StoreError::InvalidDependency(message) => {
             let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
             error!(issue_id = %issue_id, %message, "invalid issue dependency");
+            ApiError::bad_request(message)
+        }
+        StoreError::InvalidIssueStatus(message) => {
+            let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
+            error!(
+                issue_id = %issue_id,
+                %message,
+                "invalid issue status transition"
+            );
             ApiError::bad_request(message)
         }
         other => {

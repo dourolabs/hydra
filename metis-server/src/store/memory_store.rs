@@ -93,6 +93,70 @@ impl MemoryStore {
             }
         }
     }
+
+    fn join_issue_ids(ids: &[IssueId]) -> String {
+        let mut values: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        values.sort();
+        values.join(", ")
+    }
+
+    fn validate_issue_lifecycle(
+        &self,
+        issue_id: Option<&IssueId>,
+        issue: &Issue,
+    ) -> Result<(), StoreError> {
+        if issue.status != IssueStatus::Closed {
+            return Ok(());
+        }
+
+        let mut open_blockers = Vec::new();
+        for dependency in issue
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
+        {
+            let blocker = self
+                .issues
+                .get(&dependency.issue_id)
+                .ok_or_else(|| StoreError::IssueNotFound(dependency.issue_id.clone()))?;
+
+            if blocker.status != IssueStatus::Closed {
+                open_blockers.push(dependency.issue_id.clone());
+            }
+        }
+
+        if let Some(issue_id) = issue_id {
+            let mut open_children = Vec::new();
+            if let Some(children) = self.issue_children.get(issue_id) {
+                for child_id in children {
+                    let child = self
+                        .issues
+                        .get(child_id)
+                        .ok_or_else(|| StoreError::IssueNotFound(child_id.clone()))?;
+
+                    if child.status != IssueStatus::Closed {
+                        open_children.push(child_id.clone());
+                    }
+                }
+            }
+
+            if !open_children.is_empty() {
+                return Err(StoreError::InvalidIssueStatus(format!(
+                    "cannot close issue with open child issues: {}",
+                    Self::join_issue_ids(&open_children)
+                )));
+            }
+        }
+
+        if !open_blockers.is_empty() {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "blocked issues cannot close until blockers are closed: {}",
+                Self::join_issue_ids(&open_blockers)
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for MemoryStore {
@@ -107,6 +171,7 @@ impl Store for MemoryStore {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
 
+        self.validate_issue_lifecycle(None, &issue)?;
         self.issues.insert(id.clone(), issue);
 
         if !new_dependencies.is_empty() {
@@ -134,6 +199,7 @@ impl Store for MemoryStore {
             .unwrap_or_default();
         let updated_dependencies = issue.dependencies.clone();
 
+        self.validate_issue_lifecycle(Some(id), &issue)?;
         self.issues.insert(id.clone(), issue);
 
         if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
@@ -742,6 +808,87 @@ mod tests {
             .unwrap();
 
         assert!(!store.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn closing_issue_requires_closed_blockers() {
+        let mut store = MemoryStore::new();
+
+        let blocker_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let blocked_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: blocker_id.clone(),
+        }];
+        let blocked_issue_id = store
+            .add_issue(sample_issue(blocked_dependencies.clone()))
+            .await
+            .unwrap();
+
+        let err = store
+            .update_issue(
+                &blocked_issue_id,
+                issue_with_status(IssueStatus::Closed, blocked_dependencies.clone()),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidIssueStatus(message)
+                if message.contains(&blocker_id.to_string())
+        ));
+
+        store
+            .update_issue(&blocker_id, issue_with_status(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap();
+
+        store
+            .update_issue(
+                &blocked_issue_id,
+                issue_with_status(IssueStatus::Closed, blocked_dependencies),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_parent_requires_closed_children() {
+        let mut store = MemoryStore::new();
+
+        let parent_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let child_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        }];
+        let child_id = store
+            .add_issue(sample_issue(child_dependencies.clone()))
+            .await
+            .unwrap();
+
+        let err = store
+            .update_issue(&parent_id, issue_with_status(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidIssueStatus(message)
+                if message.contains(&child_id.to_string())
+        ));
+
+        store
+            .update_issue(
+                &child_id,
+                issue_with_status(IssueStatus::Closed, child_dependencies),
+            )
+            .await
+            .unwrap();
+
+        store
+            .update_issue(&parent_id, issue_with_status(IssueStatus::Closed, vec![]))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
