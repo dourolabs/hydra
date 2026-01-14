@@ -21,19 +21,11 @@ pub struct CreateJobRequest {
 pub enum BundleSpec {
     #[serde(rename = "none")]
     None,
-    TarGz {
-        /// Base64-encoded archive (.tar.gz) of the directory contents.
-        archive_base64: String,
-    },
     GitRepository {
         /// Remote Git repository URL that should be cloned for the job context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
-    },
-    GitBundle {
-        /// Base64-encoded git bundle representing the repository HEAD.
-        bundle_base64: String,
     },
     ServiceRepository {
         /// Name of a repository configured in the service configuration.
@@ -54,9 +46,7 @@ impl From<Bundle> for BundleSpec {
     fn from(bundle: Bundle) -> Self {
         match bundle {
             Bundle::None => BundleSpec::None,
-            Bundle::TarGz { archive_base64 } => BundleSpec::TarGz { archive_base64 },
             Bundle::GitRepository { url, rev } => BundleSpec::GitRepository { url, rev },
-            Bundle::GitBundle { bundle_base64 } => BundleSpec::GitBundle { bundle_base64 },
         }
     }
 }
@@ -66,19 +56,11 @@ impl From<Bundle> for BundleSpec {
 pub enum Bundle {
     #[serde(rename = "none")]
     None,
-    TarGz {
-        /// Base64-encoded archive (.tar.gz) of the directory contents.
-        archive_base64: String,
-    },
     GitRepository {
         /// Remote Git repository URL that should be cloned for the job context.
         url: String,
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
-    },
-    GitBundle {
-        /// Base64-encoded git bundle representing the repository HEAD.
-        bundle_base64: String,
     },
 }
 

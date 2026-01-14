@@ -81,18 +81,8 @@ impl ServiceState {
                 github_token: None,
                 default_image: None,
             }),
-            BundleSpec::TarGz { archive_base64 } => Ok(ResolvedBundle {
-                bundle: Bundle::TarGz { archive_base64 },
-                github_token: None,
-                default_image: None,
-            }),
             BundleSpec::GitRepository { url, rev } => Ok(ResolvedBundle {
                 bundle: Bundle::GitRepository { url, rev },
-                github_token: None,
-                default_image: None,
-            }),
-            BundleSpec::GitBundle { bundle_base64 } => Ok(ResolvedBundle {
-                bundle: Bundle::GitBundle { bundle_base64 },
                 github_token: None,
                 default_image: None,
             }),

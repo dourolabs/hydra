@@ -1,7 +1,5 @@
 use crate::{client::MetisClientInterface, constants};
 use anyhow::{anyhow, bail, Context, Result};
-use base64::engine::general_purpose::STANDARD as Base64Engine;
-use base64::Engine as Base64EngineTrait;
 use futures::StreamExt;
 use metis_common::{
     jobs::{BundleSpec, CreateJobRequest},
@@ -11,14 +9,11 @@ use metis_common::{
 };
 use rhai::Engine as RhaiEngine;
 use std::{
-    env, fs,
+    fs,
     io::{self, Write},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
+    path::Path,
     time::Duration,
 };
-use tar::Builder;
-use tempfile::tempdir;
 use tokio::time::sleep;
 
 pub async fn run(
@@ -27,20 +22,11 @@ pub async fn run(
     repo_arg: Option<String>,
     rev_arg: Option<String>,
     image: Option<String>,
-    context_dir: Option<PathBuf>,
-    force_encode_directory: bool,
-    force_encode_git_bundle: bool,
     cli_vars: Vec<String>,
     program: String,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
-    let context = build_context(
-        repo_arg,
-        rev_arg,
-        context_dir.as_deref(),
-        force_encode_directory,
-        force_encode_git_bundle,
-    )?;
+    let context = build_context(repo_arg, rev_arg)?;
 
     let prompt = if prompt_parts.is_empty() {
         bail!("prompt is required")
@@ -140,61 +126,12 @@ async fn wait_for_job_completion_via_server(
     }
 }
 
-fn build_context(
-    repo: Option<String>,
-    rev: Option<String>,
-    context_dir: Option<&Path>,
-    force_encode_directory: bool,
-    force_encode_git_bundle: bool,
-) -> Result<BundleSpec> {
-    if (force_encode_directory || force_encode_git_bundle) && repo.is_some() {
-        bail!("--repo cannot be combined with context directory encoding options");
-    }
-
-    let repo_context = build_repo_context(repo, rev)?;
-
-    let mut resolved_context_dir = if repo_context.is_some() {
-        None
-    } else {
-        context_dir.map(|path| path.to_path_buf())
-    };
-
-    if resolved_context_dir.is_none() && repo_context.is_none() {
-        let cwd = env::current_dir().context("failed to determine current working directory")?;
-        resolved_context_dir = Some(cwd);
-    }
-
-    if resolved_context_dir.is_none()
-        && repo_context.is_none()
-        && (force_encode_directory || force_encode_git_bundle)
-    {
-        bail!("--encode-directory and --encode-git-bundle require --context-dir");
-    }
-
-    let dir_context = if let Some(dir) = resolved_context_dir.as_deref() {
-        Some(encode_context_directory(
-            dir,
-            force_encode_directory,
-            force_encode_git_bundle,
-        )?)
-    } else {
-        None
-    };
-
-    match (dir_context, repo_context) {
-        (Some(_), Some(_)) => Err(anyhow!("Provide either --context-dir or --repo, not both")),
-        (Some(context), None) => Ok(context),
-        (None, Some(context)) => Ok(context),
-        (None, None) => Ok(BundleSpec::None),
-    }
-}
-
-fn build_repo_context(repo: Option<String>, rev: Option<String>) -> Result<Option<BundleSpec>> {
+fn build_context(repo: Option<String>, rev: Option<String>) -> Result<BundleSpec> {
     let Some(repo) = repo else {
         if rev.is_some() {
             bail!("--rev requires --repo");
         }
-        return Ok(None);
+        return Ok(BundleSpec::None);
     };
 
     let trimmed_repo = repo.trim().to_string();
@@ -214,62 +151,16 @@ fn build_repo_context(repo: Option<String>, rev: Option<String>) -> Result<Optio
     };
 
     if looks_like_git_url(&trimmed_repo) {
-        return Ok(Some(BundleSpec::GitRepository {
+        return Ok(BundleSpec::GitRepository {
             url: trimmed_repo,
             rev: trimmed_rev,
-        }));
-    }
-
-    Ok(Some(BundleSpec::ServiceRepository {
-        name: trimmed_repo,
-        rev: Some(trimmed_rev),
-    }))
-}
-
-fn encode_directory(path: &Path) -> Result<BundleSpec> {
-    if !path.exists() {
-        bail!("Context directory '{}' does not exist", path.display());
-    }
-    if !path.is_dir() {
-        bail!("'{}' is not a directory", path.display());
-    }
-
-    let mut archive = Vec::new();
-    {
-        let mut builder = Builder::new(&mut archive);
-        builder
-            .append_dir_all(".", path)
-            .with_context(|| format!("failed to archive directory '{}'", path.display()))?;
-        builder
-            .finish()
-            .context("failed to finalize context directory archive")?;
-    }
-
-    Ok(BundleSpec::TarGz {
-        archive_base64: Base64Engine.encode(archive),
-    })
-}
-
-fn encode_context_directory(
-    path: &Path,
-    force_directory: bool,
-    force_git_bundle: bool,
-) -> Result<BundleSpec> {
-    if force_directory && force_git_bundle {
-        bail!("--encode-directory and --encode-git-bundle cannot be used together");
-    }
-
-    if force_directory {
-        return encode_directory(path);
-    }
-
-    if force_git_bundle || is_git_directory(path)? {
-        return Ok(BundleSpec::GitBundle {
-            bundle_base64: encode_git_bundle(path)?,
         });
     }
 
-    encode_directory(path)
+    Ok(BundleSpec::ServiceRepository {
+        name: trimmed_repo,
+        rev: Some(trimmed_rev),
+    })
 }
 
 fn load_program(program_arg: &str) -> Result<String> {
@@ -307,54 +198,6 @@ fn validate_program_syntax(program: &str) -> Result<()> {
 
 fn looks_like_git_url(repo: &str) -> bool {
     repo.contains("://") || repo.starts_with("git@") || repo.contains('@') && repo.contains(':')
-}
-
-fn is_git_directory(path: &Path) -> Result<bool> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .arg("rev-parse")
-        .arg("--is-inside-work-tree")
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .eq_ignore_ascii_case("true")),
-        Ok(_) => Ok(false),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err).with_context(|| "failed to check if directory is a git repository"),
-    }
-}
-
-fn encode_git_bundle(path: &Path) -> Result<String> {
-    let tmp_dir = tempdir().context("failed to create temporary directory for git bundle")?;
-    let bundle_path = tmp_dir.path().join("context.bundle");
-
-    let status = Command::new("git")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .arg("-C")
-        .arg(path)
-        .arg("bundle")
-        .arg("create")
-        .arg("--quiet")
-        .arg(&bundle_path)
-        .arg("HEAD")
-        .status()
-        .with_context(|| format!("failed to create git bundle for '{}'", path.display()))?;
-
-    if !status.success() {
-        bail!(
-            "git bundle create failed for '{}'; ensure there is at least one commit",
-            path.display()
-        );
-    }
-
-    let bundle_bytes = fs::read(&bundle_path)
-        .with_context(|| format!("failed to read git bundle '{}'", bundle_path.display()))?;
-
-    Ok(Base64Engine.encode(bundle_bytes))
 }
 
 /// Parse CLI variable arguments in KEY=VALUE format.
@@ -481,9 +324,6 @@ mod tests {
             None,
             None,
             None,
-            Some(tmp_dir.path().to_path_buf()),
-            true,
-            false,
             vec![],
             program_file.to_string_lossy().to_string(),
             vec!["test prompt".into()],
@@ -500,10 +340,7 @@ mod tests {
             request.variables.get("PROMPT"),
             Some(&"test prompt".to_string())
         );
-        assert!(matches!(
-            request.context,
-            BundleSpec::TarGz { ref archive_base64 } if !archive_base64.is_empty()
-        ));
+        assert_eq!(request.context, BundleSpec::None);
         assert!(client.create_job_responses.lock().unwrap().is_empty());
         assert!(client.list_jobs_responses.lock().unwrap().is_empty());
         assert!(client.log_responses.lock().unwrap().is_empty());
@@ -522,9 +359,6 @@ mod tests {
             Some("service-repo".into()),
             Some("feature".into()),
             None,
-            None,
-            false,
-            false,
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -557,9 +391,6 @@ mod tests {
             Some("service-repo".into()),
             None,
             None,
-            None,
-            false,
-            false,
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -591,9 +422,6 @@ mod tests {
             Some("https://example.com/repo.git".into()),
             Some("main".into()),
             None,
-            None,
-            false,
-            false,
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -625,9 +453,6 @@ mod tests {
             Some("https://example.com/repo.git".into()),
             None,
             None,
-            None,
-            false,
-            false,
             vec![],
             "0".into(),
             vec!["test prompt".into()],
@@ -648,7 +473,6 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_allows_overriding_image() {
-        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
             job_id: task_id("t-job-image"),
@@ -660,9 +484,6 @@ mod tests {
             None,
             None,
             Some("ghcr.io/example/metis:dev".into()),
-            Some(tmp_dir.path().to_path_buf()),
-            true,
-            false,
             vec![],
             "0".into(),
             vec!["custom image".into()],
@@ -676,17 +497,11 @@ mod tests {
             requests[0].image,
             Some("ghcr.io/example/metis:dev".to_string())
         );
-        assert!(matches!(
-            requests[0].context,
-            BundleSpec::TarGz {
-                ref archive_base64
-            } if !archive_base64.is_empty()
-        ));
+        assert_eq!(requests[0].context, BundleSpec::None);
     }
 
     #[tokio::test]
     async fn spawn_forwards_cli_variables_into_job_request() {
-        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
             job_id: task_id("t-job-with-vars"),
@@ -698,9 +513,6 @@ mod tests {
             None,
             None,
             None,
-            Some(tmp_dir.path().to_path_buf()),
-            false,
-            false,
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
             "0".into(),
             vec!["variable prompt".into()],
@@ -717,7 +529,6 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_accepts_inline_program_and_validates() {
-        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
         client.push_create_job_response(CreateJobResponse {
             job_id: task_id("t-job-inline-program"),
@@ -729,9 +540,6 @@ mod tests {
             None,
             None,
             None,
-            Some(tmp_dir.path().to_path_buf()),
-            true,
-            false,
             vec![],
             "let x = 1 + 2;".into(),
             vec!["test prompt".into()],
@@ -762,9 +570,6 @@ mod tests {
             None,
             None,
             None,
-            Some(tmp_dir.path().to_path_buf()),
-            true,
-            false,
             vec![],
             program_path.to_string_lossy().into_owned(),
             vec!["file prompt".into()],
@@ -786,7 +591,6 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_rejects_invalid_program() {
-        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
 
         let result = run(
@@ -795,9 +599,6 @@ mod tests {
             None,
             None,
             None,
-            Some(tmp_dir.path().to_path_buf()),
-            true,
-            false,
             vec![],
             "let =".into(),
             vec!["bad prompt".into()],
