@@ -253,6 +253,7 @@ fn issue_matches(
         }
 
         return issue.description.to_lowercase().contains(term)
+            || issue.progress.to_lowercase().contains(term)
             || issue.issue_type.as_str() == term
             || issue.status.as_str() == term
             || issue
@@ -432,6 +433,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: format!("Issue {id}"),
+                progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 dependencies: deps

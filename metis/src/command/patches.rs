@@ -290,6 +290,7 @@ async fn create_merge_request_issue(
             issue: Issue {
                 issue_type: IssueType::MergeRequest,
                 description,
+                progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some(assignee),
                 dependencies,
