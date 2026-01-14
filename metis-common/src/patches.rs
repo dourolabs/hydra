@@ -1,4 +1,5 @@
 use crate::{PatchId, TaskId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -50,6 +51,9 @@ pub struct Review {
     pub contents: String,
     pub is_approved: bool,
     pub author: String,
+    /// Timestamp for when the review was recorded.
+    #[serde(default)]
+    pub submitted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

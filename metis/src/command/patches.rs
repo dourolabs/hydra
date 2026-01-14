@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
@@ -681,6 +682,7 @@ async fn review_patch(
         contents,
         is_approved: approve,
         author,
+        submitted_at: Some(Utc::now()),
     });
 
     let response = client
@@ -1258,10 +1260,12 @@ mod tests {
     #[tokio::test]
     async fn review_patch_appends_review() -> Result<()> {
         let client = MockMetisClient::default();
+        let existing_submitted_at = Utc::now();
         let existing_review = Review {
             contents: "needs work".to_string(),
             is_approved: false,
             author: "bob".to_string(),
+            submitted_at: Some(existing_submitted_at),
         };
         client.push_get_patch_response(PatchRecord {
             id: patch_id("p-123"),
@@ -1299,13 +1303,13 @@ mod tests {
         let reviews = &request.patch.reviews;
         assert_eq!(reviews.len(), 2);
         assert_eq!(reviews[0], existing_review);
-        assert_eq!(
-            reviews[1],
-            Review {
-                contents: "looks good now".to_string(),
-                is_approved: true,
-                author: "alice".to_string(),
-            }
+        let new_review = &reviews[1];
+        assert_eq!(new_review.contents, "looks good now");
+        assert!(new_review.is_approved);
+        assert_eq!(new_review.author, "alice");
+        assert!(
+            new_review.submitted_at.is_some(),
+            "new reviews should include a timestamp"
         );
 
         Ok(())
@@ -1326,6 +1330,7 @@ mod tests {
                     contents: "looks ok".to_string(),
                     is_approved: false,
                     author: "sam".to_string(),
+                    submitted_at: None,
                 }],
             },
         });
@@ -1363,6 +1368,7 @@ mod tests {
                             contents: "looks ok".to_string(),
                             is_approved: false,
                             author: "sam".to_string(),
+                            submitted_at: None,
                         }],
                     },
                     job_id: None,
