@@ -35,17 +35,12 @@ kind delete cluster --name local-dev
 
 ## Task system
 
-Tasks are written as Rhai programs.
-At the moment, these tasks are basically thin wrappers around shell scripts and calls to AI models with specific prompts.
-Tasks can define arguments to be passed in by the caller, which allows them to have flexible customizable behavior.
-
-(Note that using Rhai may not be necessary here, especially given that the current useful tasks are glorified shell scripts.
-I'm using Rhai because I think having a programming language will give us more flexibility in the future, but TBD.)
+Tasks are now plain Codex prompts.
+The worker runs Codex with the provided prompt, using the repo context and environment variables supplied by the queue.
 
 ### Arguments
 
-Tasks have access to arguments provided in two different ways (1) the typical `args: string[]` array that you would expect for any CLI, and 
-(2) a dictionary of `env` variables.
+Tasks include a prompt string and a dictionary of `env` variables injected into the worker environment.
 
 ### Context
 

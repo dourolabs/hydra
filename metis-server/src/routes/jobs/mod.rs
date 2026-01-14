@@ -37,8 +37,7 @@ pub async fn create_job(
     env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
     let task = Task {
-        program: payload.program.clone(),
-        params: payload.params.clone(),
+        prompt: payload.prompt.clone(),
         context: payload.context.clone(),
         spawned_from: None,
         image: payload.image,
@@ -279,11 +278,7 @@ fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
         let lower_term = term.to_lowercase();
         let contains = |value: &str| value.to_lowercase().contains(&lower_term);
 
-        if contains(job.id.as_ref()) || contains(&job.task.program) {
-            return true;
-        }
-
-        if contains(&job.task.params.join(" ")) {
+        if contains(job.id.as_ref()) || contains(&job.task.prompt) {
             return true;
         }
 

@@ -1,4 +1,4 @@
-use crate::{client::MetisClientInterface, constants};
+use crate::client::MetisClientInterface;
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{IssueId, TaskId};
@@ -34,14 +34,6 @@ pub enum JobsCommand {
         /// Override or set job variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
-
-        /// Rhai program to execute. Can be a file path or an inline script.
-        #[arg(
-            long = "program",
-            value_name = "PROGRAM",
-            default_value = constants::DEFAULT_PROGRAM_PATH
-        )]
-        program: String,
 
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
@@ -91,9 +83,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             rev,
             image,
             var,
-            program,
             prompt,
-        } => create::run(client, wait, repo, rev, image, var, program, prompt).await?,
+        } => create::run(client, wait, repo, rev, image, var, prompt).await?,
         JobsCommand::List {
             limit,
             spawned_from,

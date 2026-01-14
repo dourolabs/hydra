@@ -26,8 +26,7 @@ pub async fn get_job_context(
 
     Ok(Json(WorkerContext {
         request_context: resolved.bundle,
-        program: task.program,
-        params: task.params,
+        prompt: task.prompt,
         variables: env_vars,
     }))
 }

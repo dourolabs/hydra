@@ -447,8 +447,7 @@ mod tests {
 
     fn spawn_task() -> Task {
         Task {
-            program: "0".to_string(),
-            params: vec![],
+            prompt: "0".to_string(),
             context: BundleSpec::None,
             spawned_from: None,
             image: Some("metis-worker:latest".to_string()),

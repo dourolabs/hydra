@@ -1,5 +1,5 @@
-use crate::{client::MetisClientInterface, constants};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::client::MetisClientInterface;
+use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
@@ -7,11 +7,8 @@ use metis_common::{
     task_status::Status,
     TaskId,
 };
-use rhai::Engine as RhaiEngine;
 use std::{
-    fs,
     io::{self, Write},
-    path::Path,
     time::Duration,
 };
 use tokio::time::sleep;
@@ -23,7 +20,6 @@ pub async fn run(
     rev_arg: Option<String>,
     image: Option<String>,
     cli_vars: Vec<String>,
-    program: String,
     prompt_parts: Vec<String>,
 ) -> Result<()> {
     let context = build_context(repo_arg, rev_arg)?;
@@ -34,12 +30,9 @@ pub async fn run(
         prompt_parts.join(" ")
     };
 
-    let program = load_program(&program)?;
-
     let mut variables = parse_cli_variables(&cli_vars)?;
     variables.insert("PROMPT".to_string(), prompt.clone());
 
-    let params = vec![prompt.clone()];
     let image = match image {
         Some(value) => {
             let trimmed = value.trim();
@@ -51,8 +44,7 @@ pub async fn run(
         None => None,
     };
     let request = CreateJobRequest {
-        program,
-        params,
+        prompt,
         image,
         context,
         variables,
@@ -163,39 +155,6 @@ fn build_context(repo: Option<String>, rev: Option<String>) -> Result<BundleSpec
     })
 }
 
-fn load_program(program_arg: &str) -> Result<String> {
-    let trimmed = program_arg.trim();
-    if trimmed.is_empty() {
-        bail!("--program value must not be empty");
-    }
-
-    let program_source = if Path::new(trimmed).exists() {
-        fs::read_to_string(trimmed)
-            .with_context(|| format!("failed to read program file '{trimmed}'"))?
-    } else if trimmed == constants::DEFAULT_PROGRAM_PATH {
-        constants::DEFAULT_PROGRAM_SOURCE.to_string()
-    } else {
-        program_arg.to_string()
-    };
-
-    validate_program_syntax(&program_source)?;
-    Ok(program_source)
-}
-
-fn validate_program_syntax(program: &str) -> Result<()> {
-    let mut engine = RhaiEngine::new();
-    engine.set_max_expr_depths(
-        constants::RHAI_MAX_EXPR_DEPTHS.0,
-        constants::RHAI_MAX_EXPR_DEPTHS.1,
-    );
-    engine.set_max_call_levels(constants::RHAI_MAX_CALL_LEVELS);
-    engine.set_max_operations(constants::RHAI_MAX_OPERATIONS);
-    engine
-        .compile(program)
-        .map(|_| ())
-        .map_err(|err| anyhow!("invalid Rhai program: {err}"))
-}
-
 fn looks_like_git_url(repo: &str) -> bool {
     repo.contains("://") || repo.starts_with("git@") || repo.contains('@') && repo.contains(':')
 }
@@ -259,16 +218,28 @@ mod tests {
         task_status::{Event, Status, TaskStatusLog},
     };
     use std::collections::HashMap;
-    use std::fs;
-    use tempfile::tempdir;
 
     fn task_id(value: &str) -> TaskId {
         ids::task_id(value)
     }
 
+    fn job_record(id: &str, status_log: TaskStatusLog) -> JobRecord {
+        JobRecord {
+            id: task_id(id),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: None,
+                env_vars: HashMap::new(),
+            },
+            notes: None,
+            status_log,
+        }
+    }
+
     #[tokio::test]
     async fn spawn_uses_injected_client_and_waits_for_completion() {
-        let tmp_dir = tempdir().unwrap();
         let client = MockMetisClient::default();
 
         client.push_create_job_response(CreateJobResponse {
@@ -277,18 +248,9 @@ mod tests {
         client.push_log_lines(["first log line\n", "second log line\n"]);
         let start_time = Utc::now();
         client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobRecord {
-                id: task_id("t-job-123"),
-                task: Task {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: None,
-                    env_vars: HashMap::new(),
-                },
-                notes: None,
-                status_log: TaskStatusLog {
+            jobs: vec![job_record(
+                "t-job-123",
+                TaskStatusLog {
                     events: vec![
                         Event::Created {
                             at: start_time,
@@ -297,21 +259,12 @@ mod tests {
                         Event::Started { at: start_time },
                     ],
                 },
-            }],
+            )],
         });
         client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![JobRecord {
-                id: task_id("t-job-123"),
-                task: Task {
-                    program: "0".to_string(),
-                    params: vec![],
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: None,
-                    env_vars: HashMap::new(),
-                },
-                notes: None,
-                status_log: TaskStatusLog {
+            jobs: vec![job_record(
+                "t-job-123",
+                TaskStatusLog {
                     events: vec![
                         Event::Created {
                             at: start_time,
@@ -324,12 +277,8 @@ mod tests {
                         },
                     ],
                 },
-            }],
+            )],
         });
-
-        let program_content = "0";
-        let program_file = tmp_dir.path().join("program.rhai");
-        fs::write(&program_file, program_content).unwrap();
 
         run(
             &client,
@@ -338,7 +287,6 @@ mod tests {
             None,
             None,
             vec![],
-            program_file.to_string_lossy().to_string(),
             vec!["test prompt".into()],
         )
         .await
@@ -347,8 +295,7 @@ mod tests {
         let requests = client.recorded_requests();
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
-        assert_eq!(request.program, program_content);
-        assert_eq!(request.params, vec!["test prompt".to_string()]);
+        assert_eq!(request.prompt, "test prompt");
         assert_eq!(
             request.variables.get("PROMPT"),
             Some(&"test prompt".to_string())
@@ -373,7 +320,6 @@ mod tests {
             Some("feature".into()),
             None,
             vec![],
-            "0".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -388,7 +334,7 @@ mod tests {
                 rev: Some("feature".into())
             }
         );
-        assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
+        assert_eq!(requests[0].prompt, "test prompt");
     }
 
     #[tokio::test]
@@ -405,7 +351,6 @@ mod tests {
             None,
             None,
             vec![],
-            "0".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -436,7 +381,6 @@ mod tests {
             Some("main".into()),
             None,
             vec![],
-            "0".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -467,7 +411,6 @@ mod tests {
             None,
             None,
             vec![],
-            "0".into(),
             vec!["test prompt".into()],
         )
         .await
@@ -498,7 +441,6 @@ mod tests {
             None,
             Some("ghcr.io/example/metis:dev".into()),
             vec![],
-            "0".into(),
             vec!["custom image".into()],
         )
         .await
@@ -527,7 +469,6 @@ mod tests {
             None,
             None,
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
-            "0".into(),
             vec!["variable prompt".into()],
         )
         .await
@@ -541,82 +482,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_accepts_inline_program_and_validates() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-inline-program"),
-        });
-
-        run(
-            &client,
-            false,
-            None,
-            None,
-            None,
-            vec![],
-            "let x = 1 + 2;".into(),
-            vec!["test prompt".into()],
-        )
-        .await
-        .unwrap();
-
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].program, "let x = 1 + 2;");
-        assert_eq!(requests[0].params, vec!["test prompt".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn spawn_reads_program_from_file() {
-        let tmp_dir = tempdir().unwrap();
-        let program_path = tmp_dir.path().join("script.rhai");
-        fs::write(&program_path, "let answer = 42;").unwrap();
-
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-file-program"),
-        });
-
-        run(
-            &client,
-            false,
-            None,
-            None,
-            None,
-            vec![],
-            program_path.to_string_lossy().into_owned(),
-            vec!["file prompt".into()],
-        )
-        .await
-        .unwrap();
-
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].program, "let answer = 42;");
-        assert_eq!(requests[0].params, vec!["file prompt".to_string()]);
-    }
-
-    #[test]
-    fn default_program_constant_loads_file_contents() {
-        let program = load_program(constants::DEFAULT_PROGRAM_PATH).unwrap();
-        assert_eq!(program, constants::DEFAULT_PROGRAM_SOURCE);
-    }
-
-    #[tokio::test]
-    async fn spawn_rejects_invalid_program() {
+    async fn spawn_requires_prompt() {
         let client = MockMetisClient::default();
 
-        let result = run(
-            &client,
-            false,
-            None,
-            None,
-            None,
-            vec![],
-            "let =".into(),
-            vec!["bad prompt".into()],
-        )
-        .await;
+        let result = run(&client, false, None, None, None, vec![], vec![]).await;
 
         assert!(result.is_err());
         assert!(client.recorded_requests().is_empty());

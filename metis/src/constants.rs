@@ -19,24 +19,3 @@ pub const OUTPUT_TXT_FILE: &str = "output.txt";
 /// The default configuration file name (`config.toml`) used when no config
 /// file is explicitly specified via the `--config` flag.
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
-
-/// Absolute path to the default Rhai program executed when `--program` is not provided.
-pub const DEFAULT_PROGRAM_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/scripts/default_codex_prompt.rhai"
-);
-
-/// Contents of the default Rhai program used by the CLI.
-pub const DEFAULT_PROGRAM_SOURCE: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/scripts/default_codex_prompt.rhai"
-));
-
-/// Expression depth limits used when configuring the Rhai engine.
-pub const RHAI_MAX_EXPR_DEPTHS: (usize, usize) = (256, 256);
-
-/// Maximum call stack depth for the Rhai engine.
-pub const RHAI_MAX_CALL_LEVELS: usize = 128;
-
-/// Maximum number of operations a Rhai script may execute.
-pub const RHAI_MAX_OPERATIONS: u64 = 50_000;
