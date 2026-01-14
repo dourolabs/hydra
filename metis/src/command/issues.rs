@@ -740,7 +740,7 @@ fn write_issue_details_pretty(
 ) -> Result<()> {
     let IssueWithPatches {
         issue: issue_record,
-        patches,
+        patches: patch_records,
     } = issue_with_patches;
     let Issue {
         issue_type,
@@ -748,7 +748,6 @@ fn write_issue_details_pretty(
         status,
         assignee,
         dependencies,
-        patches,
         ..
     } = &issue_record.issue;
 
@@ -784,11 +783,11 @@ fn write_issue_details_pretty(
         }
     }
 
-    if patches.is_empty() {
+    if patch_records.is_empty() {
         writeln!(writer, "{indent}Patches: none")?;
     } else {
         writeln!(writer, "{indent}Patches:")?;
-        for patch in patches {
+        for patch in patch_records {
             let title = if patch.patch.title.is_empty() {
                 "(untitled)"
             } else {
@@ -810,7 +809,7 @@ mod tests {
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchStatus, PatchRecord};
+    use metis_common::patches::{Patch, PatchRecord};
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
