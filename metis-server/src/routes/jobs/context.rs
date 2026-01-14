@@ -1,6 +1,7 @@
 use crate::{
     AppState,
     routes::jobs::{ApiError, JobIdPath},
+    store::TaskExt,
 };
 use axum::{Json, extract::State};
 use metis_common::jobs::WorkerContext;

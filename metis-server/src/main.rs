@@ -174,7 +174,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         state::{GitRepository, ServiceState},
-        store::{Status, Task, TaskError},
+        store::{Status, Task, TaskError, TaskExt},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
             test_state_with_engine,
@@ -189,9 +189,7 @@ mod tests {
             UpsertIssueRequest, UpsertIssueResponse,
         },
         job_status::GetJobStatusResponse,
-        jobs::{
-            Bundle, BundleSpec, CreateJobResponse, JobSummary, ListJobsResponse, WorkerContext,
-        },
+        jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
         patches::{
             ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
@@ -616,7 +614,7 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
+        let summary: JobRecord = response.json().await?;
         assert_eq!(summary.id, job_id);
         assert_eq!(summary.status_log.current_status(), Status::Running);
         assert_eq!(
@@ -1161,7 +1159,7 @@ mod tests {
             .await?;
 
         assert!(response.status().is_success());
-        let summary: JobSummary = response.json().await?;
+        let summary: JobRecord = response.json().await?;
         let emitted_ids = summary
             .status_log
             .events

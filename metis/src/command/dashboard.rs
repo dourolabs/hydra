@@ -19,7 +19,7 @@ use metis_common::{
         IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
         SearchIssuesQuery,
     },
-    jobs::JobSummary,
+    jobs::{JobRecord, SearchJobsQuery},
     patches::{PatchRecord as ApiPatchRecord, PatchStatus, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
     IssueId, MetisId, PatchId, TaskId,
@@ -490,7 +490,7 @@ async fn refresh_jobs(
     client: &dyn MetisClientInterface,
     state: &mut DashboardState,
 ) -> Result<bool> {
-    let response = client.list_jobs().await?;
+    let response = client.list_jobs(&SearchJobsQuery::default()).await?;
     let now = Utc::now();
 
     let previous_jobs = state.jobs.clone();
@@ -915,7 +915,7 @@ fn categorize_jobs(jobs: Vec<JobDisplay>) -> JobSections {
     JobSections { running, finished }
 }
 
-fn summarize_job(job: JobSummary, now: DateTime<Utc>) -> JobDisplay {
+fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.status_log.current_status();
     let runtime = jobs::format_runtime(&job.status_log, now);
     let last_change = last_activity(&job.status_log);
@@ -946,7 +946,7 @@ fn compare_recent(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Orderin
     }
 }
 
-fn note_or_error(job: &JobSummary) -> String {
+fn note_or_error(job: &JobRecord) -> String {
     if let Some(Err(error)) = job.status_log.result() {
         return format_task_error(&error);
     }
@@ -1042,9 +1042,11 @@ mod tests {
     use super::*;
     use crate::test_utils::ids::{issue_id, patch_id, task_id};
     use chrono::Duration as ChronoDuration;
+    use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use std::collections::HashMap;
 
-    fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobSummary {
+    fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
         let mut log = TaskStatusLog::new(Status::Pending, now);
         match status {
@@ -1068,11 +1070,17 @@ mod tests {
             Status::Pending => {}
         }
 
-        JobSummary {
+        JobRecord {
             id: task_id(id),
+            task: Task {
+                program: "0".into(),
+                params: vec![],
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: None,
+                env_vars: HashMap::new(),
+            },
             notes: None,
-            program: "0".into(),
-            params: vec![],
             status_log: log,
         }
     }

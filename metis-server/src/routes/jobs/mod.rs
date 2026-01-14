@@ -1,11 +1,11 @@
 use crate::{
     AppState,
     state::BundleResolutionError,
-    store::{Store, StoreError, Task, TaskError, TaskResolutionError},
+    store::{Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
 };
 use axum::{
     Json, async_trait,
-    extract::{FromRequestParts, Path, State},
+    extract::{FromRequestParts, Path, Query, State},
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
@@ -14,7 +14,7 @@ use metis_common::{
     TaskId,
     constants::ENV_METIS_ID,
     issues::Issue,
-    jobs::{CreateJobRequest, CreateJobResponse, JobSummary, ListJobsResponse},
+    jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
     patches::Patch,
 };
 use serde_json::json;
@@ -68,13 +68,22 @@ pub async fn create_job(
     Ok(Json(CreateJobResponse { job_id }))
 }
 
-pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsResponse>, ApiError> {
-    info!("list_jobs invoked");
+pub async fn list_jobs(
+    State(state): State<AppState>,
+    Query(query): Query<SearchJobsQuery>,
+) -> Result<Json<ListJobsResponse>, ApiError> {
+    info!(query = ?query.q, "list_jobs invoked");
     let config = state.config;
     let namespace = config.metis.namespace.clone();
 
     let store_read = state.store.read().await;
     let store = store_read.as_ref();
+
+    let search_term = query
+        .q
+        .as_ref()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
 
     // Get all tasks with all statuses
     let task_ids = store.list_tasks().await.map_err(|err| {
@@ -83,10 +92,14 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
     })?;
 
     // Collect all summaries with their reference times for sorting
-    let mut summaries_with_times: Vec<(JobSummary, Option<DateTime<Utc>>)> = Vec::new();
+    let mut summaries_with_times: Vec<(JobRecord, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
-        match job_summary_with_time(&task_id, store).await {
-            Ok(summary) => summaries_with_times.push(summary),
+        match job_record_with_time(&task_id, store).await {
+            Ok(summary) => {
+                if job_matches(search_term.as_deref(), &summary.0) {
+                    summaries_with_times.push(summary);
+                }
+            }
             Err(err) => {
                 error!(
                     job_id = %task_id,
@@ -105,9 +118,9 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
         time_b.cmp(&time_a)
     });
 
-    let summaries: Vec<JobSummary> = summaries_with_times
+    let summaries: Vec<JobRecord> = summaries_with_times
         .into_iter()
-        .map(|(summary, _)| summary)
+        .map(|(record, _)| record)
         .collect();
 
     info!(
@@ -122,13 +135,13 @@ pub async fn list_jobs(State(state): State<AppState>) -> Result<Json<ListJobsRes
 pub async fn get_job(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<JobSummary>, ApiError> {
+) -> Result<Json<JobRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
     let store_read = state.store.read().await;
     let store = store_read.as_ref();
 
-    let (summary, _) = job_summary_with_time(&job_id, store)
+    let (summary, _) = job_record_with_time(&job_id, store)
         .await
         .map_err(|err| match err {
             StoreError::TaskNotFound(_) => {
@@ -226,28 +239,50 @@ where
     }
 }
 
-async fn job_summary_with_time(
+async fn job_record_with_time(
     job_id: &TaskId,
     store: &dyn Store,
-) -> Result<(JobSummary, Option<DateTime<Utc>>), StoreError> {
+) -> Result<(JobRecord, Option<DateTime<Utc>>), StoreError> {
     let status_log = store.get_status_log(job_id).await?;
-    let Task {
-        program, params, ..
-    } = store.get_task(job_id).await?;
+    let task = store.get_task(job_id).await?;
     let notes = job_notes_from_store(job_id, store).await;
 
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
     Ok((
-        JobSummary {
+        JobRecord {
             id: job_id.clone(),
+            task,
             notes,
-            program,
-            params,
             status_log,
         },
         reference_time,
     ))
+}
+
+fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
+    if let Some(term) = search_term {
+        let lower_term = term.to_lowercase();
+        let contains = |value: &str| value.to_lowercase().contains(&lower_term);
+
+        if contains(job.id.as_ref()) || contains(&job.task.program) {
+            return true;
+        }
+
+        if contains(&job.task.params.join(" ")) {
+            return true;
+        }
+
+        if let Some(note) = &job.notes {
+            if contains(note) {
+                return true;
+            }
+        }
+
+        return contains(&format!("{:?}", job.status_log.current_status()));
+    }
+
+    true
 }
 
 async fn job_notes_from_store(job_id: &TaskId, store: &dyn Store) -> Option<String> {
