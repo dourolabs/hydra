@@ -54,6 +54,7 @@ pub async fn create_job(
             program: payload.program.clone(),
             params: payload.params.clone(),
             context,
+            spawned_from: None,
             image,
             env_vars,
         };

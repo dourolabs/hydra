@@ -14,6 +14,7 @@ pub struct Task {
     pub program: String,
     pub params: Vec<String>,
     pub context: Bundle,
+    pub spawned_from: Option<IssueId>,
     pub image: String,
     pub env_vars: HashMap<String, String>,
 }
