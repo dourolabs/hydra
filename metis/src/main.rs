@@ -44,37 +44,16 @@ enum Commands {
         wait: bool,
 
         /// Service repo name (preferred) or git URL to use as the job context.
-        #[arg(
-            long = "repo",
-            value_name = "REPO",
-            conflicts_with_all = ["context_dir", "encode_directory", "encode_git_bundle"]
-        )]
+        #[arg(long = "repo", value_name = "REPO")]
         repo: Option<String>,
 
         /// Revision to use with --repo (optional for service repos, required for URLs).
-        #[arg(
-            long = "rev",
-            value_name = "REV",
-            requires = "repo",
-            conflicts_with_all = ["context_dir", "encode_directory", "encode_git_bundle"]
-        )]
+        #[arg(long = "rev", value_name = "REV", requires = "repo")]
         rev: Option<String>,
 
         /// Override the worker Docker image for this task.
         #[arg(long = "image", value_name = "IMAGE")]
         image: Option<String>,
-
-        /// Directory to upload as the job context (will be archived and base64 encoded).
-        #[arg(long = "context-dir", value_name = "PATH")]
-        context_dir: Option<PathBuf>,
-
-        /// Force --context-dir to be encoded as a tar archive, even if it is a git repo.
-        #[arg(long = "encode-directory", conflicts_with = "encode_git_bundle")]
-        encode_directory: bool,
-
-        /// Force --context-dir to be encoded as a git bundle.
-        #[arg(long = "encode-git-bundle")]
-        encode_git_bundle: bool,
 
         /// Override or set job variable (format: KEY=VALUE). Can be repeated.
         #[arg(long = "var", value_name = "KEY=VALUE")]
@@ -188,28 +167,10 @@ async fn main() -> Result<()> {
             repo,
             rev,
             image,
-            context_dir,
-            encode_directory,
-            encode_git_bundle,
             var,
             program,
             prompt,
-        } => {
-            command::spawn::run(
-                &client,
-                wait,
-                repo,
-                rev,
-                image,
-                context_dir,
-                encode_directory,
-                encode_git_bundle,
-                var,
-                program,
-                prompt,
-            )
-            .await?
-        }
+        } => command::spawn::run(&client, wait, repo, rev, image, var, program, prompt).await?,
         Commands::Jobs { limit } => command::jobs::run(&client, limit).await?,
         Commands::Logs { id, watch } => command::logs::run(&client, id, watch).await?,
         Commands::Kill { job } => command::kill::run(&client, job).await?,
