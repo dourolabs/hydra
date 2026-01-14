@@ -1,7 +1,6 @@
 use crate::{
     AppState,
     routes::jobs::{ApiError, JobIdPath},
-    store::Task,
 };
 use axum::{Json, extract::State};
 use metis_common::jobs::WorkerContext;
@@ -19,18 +18,15 @@ pub async fn get_job_context(
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
-    let Task {
-        program,
-        params,
-        context,
-        env_vars,
-        ..
-    } = task;
+    let resolved = task
+        .resolve_context(state.service_state.as_ref())
+        .map_err(ApiError::from)?;
+    let env_vars = task.resolve_env_vars(&resolved);
 
     Ok(Json(WorkerContext {
-        request_context: context,
-        program,
-        params,
+        request_context: resolved.bundle,
+        program: task.program,
+        params: task.params,
         variables: env_vars,
     }))
 }

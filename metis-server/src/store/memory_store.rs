@@ -440,7 +440,7 @@ mod tests {
     use chrono::Utc;
     use metis_common::{
         issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
-        jobs::Bundle,
+        jobs::BundleSpec,
         patches::{Patch, PatchStatus},
     };
     use std::collections::HashSet;
@@ -449,9 +449,9 @@ mod tests {
         Task {
             program: "0".to_string(),
             params: vec![],
-            context: Bundle::None,
+            context: BundleSpec::None,
             spawned_from: None,
-            image: "metis-worker:latest".to_string(),
+            image: Some("metis-worker:latest".to_string()),
             env_vars: HashMap::new(),
         }
     }

@@ -1,7 +1,9 @@
+use crate::state::{BundleResolutionError, ResolvedBundle, ServiceState};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use metis_common::constants::ENV_GH_TOKEN;
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
-use metis_common::{issues::Issue, jobs::Bundle, patches::Patch};
+use metis_common::{issues::Issue, jobs::BundleSpec, patches::Patch};
 use std::collections::HashMap;
 
 mod memory_store;
@@ -13,10 +15,90 @@ pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
 pub struct Task {
     pub program: String,
     pub params: Vec<String>,
-    pub context: Bundle,
+    pub context: BundleSpec,
     pub spawned_from: Option<IssueId>,
+    pub image: Option<String>,
+    pub env_vars: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedTask {
+    pub context: ResolvedBundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TaskResolutionError {
+    #[error(transparent)]
+    Bundle(#[from] BundleResolutionError),
+    #[error("image must not be empty")]
+    EmptyImage,
+    #[error("default worker image must not be empty")]
+    MissingDefaultImage,
+}
+
+impl Task {
+    pub fn resolve_context(
+        &self,
+        service_state: &ServiceState,
+    ) -> Result<ResolvedBundle, BundleResolutionError> {
+        service_state.resolve_bundle_spec(self.context.clone())
+    }
+
+    pub fn resolve_image(
+        &self,
+        resolved: &ResolvedBundle,
+        fallback_image: &str,
+    ) -> Result<String, TaskResolutionError> {
+        if let Some(image) = &self.image {
+            let trimmed = image.trim();
+            if trimmed.is_empty() {
+                return Err(TaskResolutionError::EmptyImage);
+            }
+            return Ok(trimmed.to_string());
+        }
+
+        if let Some(default_image) = &resolved.default_image {
+            let trimmed = default_image.trim();
+            if !trimmed.is_empty() {
+                return Ok(trimmed.to_string());
+            }
+        }
+
+        let trimmed = fallback_image.trim();
+        if trimmed.is_empty() {
+            return Err(TaskResolutionError::MissingDefaultImage);
+        }
+
+        Ok(trimmed.to_string())
+    }
+
+    pub fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String> {
+        let mut env_vars = self.env_vars.clone();
+        if let Some(token) = &resolved.github_token {
+            env_vars
+                .entry(ENV_GH_TOKEN.to_string())
+                .or_insert_with(|| token.clone());
+        }
+        env_vars
+    }
+
+    pub fn resolve(
+        &self,
+        service_state: &ServiceState,
+        fallback_image: &str,
+    ) -> Result<ResolvedTask, TaskResolutionError> {
+        let context = self.resolve_context(service_state)?;
+        let image = self.resolve_image(&context, fallback_image)?;
+        let env_vars = self.resolve_env_vars(&context);
+
+        Ok(ResolvedTask {
+            context,
+            image,
+            env_vars,
+        })
+    }
 }
 
 /// Error type for store operations.
