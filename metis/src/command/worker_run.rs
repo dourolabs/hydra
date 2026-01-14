@@ -148,7 +148,7 @@ fn login_codex() -> Result<()> {
         .with_context(|| format!("{ENV_OPENAI_API_KEY} is not set; unable to login Codex CLI"))?;
 
     let mut login_cmd = Command::new("codex")
-        .args(["login", "--with-api-key"])
+        .args(["--color", "always", "login", "--with-api-key"])
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

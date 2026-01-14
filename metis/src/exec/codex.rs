@@ -30,6 +30,8 @@ pub async fn run_codex(
     let mut command = Command::new("codex");
     command
         .args([
+            "--color",
+            "always",
             "exec",
             "-o",
             output_path
