@@ -1,6 +1,19 @@
 use crate::{PatchId, TaskId};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PatchStatus {
+    Open,
+    Closed,
+    Merged,
+}
+
+impl Default for PatchStatus {
+    fn default() -> Self {
+        Self::Open
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
     pub contents: String,
@@ -14,6 +27,8 @@ pub struct Patch {
     pub title: String,
     pub description: String,
     pub diff: String,
+    #[serde(default)]
+    pub status: PatchStatus,
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
     #[serde(default)]
     pub is_automatic_backup: bool,

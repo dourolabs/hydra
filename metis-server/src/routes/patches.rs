@@ -173,7 +173,8 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
 
         return patch.title.to_lowercase().contains(term)
             || patch.diff.to_lowercase().contains(term)
-            || patch.description.to_lowercase().contains(term);
+            || patch.description.to_lowercase().contains(term)
+            || format!("{:?}", patch.status).to_lowercase().contains(term);
     }
 
     true

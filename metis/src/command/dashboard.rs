@@ -20,7 +20,7 @@ use metis_common::{
         SearchIssuesQuery,
     },
     jobs::JobSummary,
-    patches::{PatchRecord as ApiPatchRecord, SearchPatchesQuery},
+    patches::{PatchRecord as ApiPatchRecord, PatchStatus, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
     IssueId, MetisId, PatchId, TaskId,
 };
@@ -69,6 +69,7 @@ struct JobDisplay {
 struct PatchDisplay {
     id: String,
     summary: String,
+    status: PatchStatus,
 }
 
 #[derive(Clone, PartialEq)]
@@ -85,6 +86,7 @@ struct IssueRecord {
 struct PatchRecord {
     id: PatchId,
     summary: String,
+    status: PatchStatus,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -465,6 +467,11 @@ fn render_unassociated_patches(
             .iter()
             .map(|patch| {
                 ListItem::new(Line::from(vec![
+                    Span::styled(
+                        patch_status_label(patch.status),
+                        patch_status_style(patch.status),
+                    ),
+                    Span::raw(" "),
                     Span::styled(&patch.id, Style::default().fg(Color::Cyan)),
                     Span::raw(" — "),
                     Span::raw(truncate_message(&patch.summary, MAX_MESSAGE_WIDTH)),
@@ -606,6 +613,7 @@ fn patch_to_record(record: ApiPatchRecord) -> Option<PatchRecord> {
     Some(PatchRecord {
         id: record.id,
         summary,
+        status: patch.status,
     })
 }
 
@@ -634,6 +642,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         .map(|patch| PatchDisplay {
             id: patch.id.to_string(),
             summary: patch.summary.clone(),
+            status: patch.status,
         })
         .collect();
     unassociated_patches.truncate(MAX_PATCH_ROWS);
@@ -1000,6 +1009,22 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
     }
 }
 
+fn patch_status_label(status: PatchStatus) -> &'static str {
+    match status {
+        PatchStatus::Open => "open",
+        PatchStatus::Closed => "closed",
+        PatchStatus::Merged => "merged",
+    }
+}
+
+fn patch_status_style(status: PatchStatus) -> Style {
+    match status {
+        PatchStatus::Open => Style::default().fg(Color::Blue),
+        PatchStatus::Closed => Style::default().fg(Color::Red),
+        PatchStatus::Merged => Style::default().fg(Color::Green),
+    }
+}
+
 fn truncate_message(message: &str, max_chars: usize) -> String {
     if message.chars().count() <= max_chars {
         return message.to_string();
@@ -1196,6 +1221,7 @@ mod tests {
         let patches = vec![PatchRecord {
             id: patch_id("p-1"),
             summary: "fix".to_string(),
+            status: PatchStatus::Open,
         }];
         let jobs = vec![job_details_with_issue(
             "t-job-1",
