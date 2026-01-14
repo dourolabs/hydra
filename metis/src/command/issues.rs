@@ -1,14 +1,18 @@
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
-use metis_common::issues::{
-    Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
-    IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
-    UpsertIssueRequest,
+use metis_common::{
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
+        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
+        UpsertIssueRequest,
+    },
+    patches::PatchRecord,
+    PatchId,
 };
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{self, Write},
     str::FromStr,
 };
@@ -64,6 +68,10 @@ pub enum IssueCommands {
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
         dependencies: Vec<IssueDependency>,
 
+        /// Patch ids to associate with the issue.
+        #[arg(long = "patches", value_name = "PATCH_ID", value_delimiter = ',')]
+        patches: Vec<PatchId>,
+
         /// Assignee for the issue.
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
@@ -110,6 +118,19 @@ pub enum IssueCommands {
         #[arg(long)]
         clear_dependencies: bool,
 
+        /// Replace the set of patches associated with the issue.
+        #[arg(
+            long = "patches",
+            value_name = "PATCH_ID",
+            value_delimiter = ',',
+            conflicts_with = "clear_patches"
+        )]
+        patches: Vec<PatchId>,
+
+        /// Remove all patches from the issue.
+        #[arg(long)]
+        clear_patches: bool,
+
         /// Updated progress notes.
         #[arg(long, value_name = "PROGRESS", conflicts_with = "clear_progress")]
         progress: Option<String>,
@@ -155,6 +176,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             r#type,
             status,
             dependencies,
+            patches,
             assignee,
             description,
             progress,
@@ -164,6 +186,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 r#type,
                 status,
                 dependencies,
+                patches,
                 assignee,
                 description,
                 progress,
@@ -179,6 +202,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             description,
             dependencies,
             clear_dependencies,
+            patches,
+            clear_patches,
             progress,
             clear_progress,
         } => {
@@ -192,6 +217,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 description,
                 dependencies,
                 clear_dependencies,
+                patches,
+                clear_patches,
                 progress,
                 clear_progress,
             )
@@ -201,11 +228,17 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
     }
 }
 
-#[derive(Debug, Serialize)]
-struct IssueDescription {
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct IssueWithPatches {
     issue: IssueRecord,
-    parents: Vec<IssueRecord>,
-    children: Vec<IssueRecord>,
+    patches: Vec<PatchRecord>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct IssueDescription {
+    issue: IssueWithPatches,
+    parents: Vec<IssueWithPatches>,
+    children: Vec<IssueWithPatches>,
 }
 
 async fn describe_issue(
@@ -238,11 +271,12 @@ async fn collect_issue_description(
 
     let parents = fetch_parent_issues(client, &issue).await?;
     let children = fetch_child_issues(client, &issue.id).await?;
+    let mut patch_cache = HashMap::new();
 
     Ok(IssueDescription {
-        issue,
-        parents,
-        children,
+        issue: issue_with_patches(client, issue, &mut patch_cache).await?,
+        parents: issues_with_patches(client, parents, &mut patch_cache).await?,
+        children: issues_with_patches(client, children, &mut patch_cache).await?,
     })
 }
 
@@ -291,6 +325,50 @@ async fn fetch_child_issues(
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
     Ok(response.issues)
+}
+
+async fn issues_with_patches(
+    client: &dyn MetisClientInterface,
+    issues: Vec<IssueRecord>,
+    cache: &mut HashMap<PatchId, PatchRecord>,
+) -> Result<Vec<IssueWithPatches>> {
+    let mut enriched = Vec::with_capacity(issues.len());
+    for issue in issues {
+        enriched.push(issue_with_patches(client, issue, cache).await?);
+    }
+    Ok(enriched)
+}
+
+async fn issue_with_patches(
+    client: &dyn MetisClientInterface,
+    issue: IssueRecord,
+    cache: &mut HashMap<PatchId, PatchRecord>,
+) -> Result<IssueWithPatches> {
+    let patches = fetch_patch_records(client, &issue.issue.patches, cache, &issue.id).await?;
+    Ok(IssueWithPatches { issue, patches })
+}
+
+async fn fetch_patch_records(
+    client: &dyn MetisClientInterface,
+    patch_ids: &[PatchId],
+    cache: &mut HashMap<PatchId, PatchRecord>,
+    issue_id: &IssueId,
+) -> Result<Vec<PatchRecord>> {
+    let mut patches = Vec::with_capacity(patch_ids.len());
+    for patch_id in patch_ids {
+        if let Some(record) = cache.get(patch_id) {
+            patches.push(record.clone());
+            continue;
+        }
+
+        let record = client.get_patch(patch_id).await.with_context(|| {
+            format!("failed to fetch patch '{patch_id}' for issue '{issue_id}'")
+        })?;
+        cache.insert(patch_id.clone(), record.clone());
+        patches.push(record);
+    }
+
+    Ok(patches)
 }
 
 async fn fetch_issues(
@@ -390,6 +468,7 @@ async fn create_issue(
     issue_type: IssueType,
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
+    patches: Vec<PatchId>,
     assignee: Option<String>,
     description: String,
     progress: Option<String>,
@@ -422,7 +501,7 @@ async fn create_issue(
             status,
             assignee,
             dependencies,
-            patches: Vec::new(),
+            patches,
         },
         job_id: None,
     };
@@ -446,6 +525,8 @@ async fn update_issue(
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
+    patches: Vec<PatchId>,
+    clear_patches: bool,
     progress: Option<String>,
     clear_progress: bool,
 ) -> Result<()> {
@@ -482,6 +563,14 @@ async fn update_issue(
         Some(dependencies)
     };
 
+    let patches_update = if clear_patches {
+        Some(Vec::new())
+    } else if patches.is_empty() {
+        None
+    } else {
+        Some(patches)
+    };
+
     let progress_update = if clear_progress {
         Some(String::new())
     } else {
@@ -493,6 +582,7 @@ async fn update_issue(
         && assignee.is_none()
         && description.is_none()
         && dependencies_update.is_none()
+        && patches_update.is_none()
         && progress_update.is_none();
     if no_changes {
         bail!("At least one field must be provided to update.");
@@ -510,7 +600,7 @@ async fn update_issue(
         status: status.unwrap_or(current.issue.status),
         assignee: assignee.unwrap_or(current.issue.assignee),
         dependencies: dependencies_update.unwrap_or(current.issue.dependencies),
-        patches: current.issue.patches,
+        patches: patches_update.unwrap_or(current.issue.patches),
     };
 
     let response = client
@@ -644,10 +734,14 @@ fn print_issue_description_pretty(
 }
 
 fn write_issue_details_pretty(
-    issue_record: &IssueRecord,
+    issue_with_patches: &IssueWithPatches,
     indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
+    let IssueWithPatches {
+        issue: issue_record,
+        patches,
+    } = issue_with_patches;
     let Issue {
         issue_type,
         description,
@@ -695,12 +789,12 @@ fn write_issue_details_pretty(
     } else {
         writeln!(writer, "{indent}Patches:")?;
         for patch in patches {
-            let title = if patch.title.is_empty() {
+            let title = if patch.patch.title.is_empty() {
                 "(untitled)"
             } else {
-                patch.title.as_str()
+                patch.patch.title.as_str()
             };
-            writeln!(writer, "{indent}  - {title}")?;
+            writeln!(writer, "{indent}  - {title} ({})", patch.id)?;
         }
     }
 
@@ -711,12 +805,12 @@ fn write_issue_details_pretty(
 mod tests {
     use super::*;
     use crate::client::MockMetisClient;
-    use crate::test_utils::ids::issue_id;
+    use crate::test_utils::ids::{issue_id, patch_id};
     use metis_common::issues::{
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchStatus};
+    use metis_common::patches::{Patch, PatchStatus, PatchRecord};
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
@@ -878,6 +972,9 @@ mod tests {
         let client = MockMetisClient::default();
         let root_id = issue_id("i-root");
         let parent_id = issue_id("i-parent");
+        let root_patch_id = patch_id("p-root");
+        let parent_patch_id = patch_id("p-parent");
+        let child_patch_id = patch_id("p-child");
 
         let parent_issue = IssueRecord {
             id: parent_id.clone(),
@@ -888,14 +985,7 @@ mod tests {
                 status: IssueStatus::Open,
                 assignee: None,
                 dependencies: vec![],
-                patches: vec![Patch {
-                    title: "parent patch".into(),
-                    description: "desc".into(),
-                    diff: "diff".into(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    reviews: Vec::new(),
-                }],
+                patches: vec![parent_patch_id.clone()],
             },
         };
 
@@ -911,14 +1001,7 @@ mod tests {
                     dependency_type: IssueDependencyType::ChildOf,
                     issue_id: parent_id.clone(),
                 }],
-                patches: vec![Patch {
-                    title: "root patch".into(),
-                    description: "desc".into(),
-                    diff: "diff".into(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    reviews: Vec::new(),
-                }],
+                patches: vec![root_patch_id.clone()],
             },
         };
 
@@ -934,14 +1017,7 @@ mod tests {
                     dependency_type: IssueDependencyType::ChildOf,
                     issue_id: root_id.clone(),
                 }],
-                patches: vec![Patch {
-                    title: "child patch".into(),
-                    description: "desc".into(),
-                    diff: "diff".into(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    reviews: Vec::new(),
-                }],
+                patches: vec![child_patch_id.clone()],
             },
         };
 
@@ -950,6 +1026,42 @@ mod tests {
         client.push_list_issues_response(ListIssuesResponse {
             issues: vec![child_issue.clone()],
         });
+        let root_patch_record = PatchRecord {
+            id: root_patch_id.clone(),
+            patch: Patch {
+                title: "root patch".into(),
+                description: "desc".into(),
+                diff: "diff".into(),
+                status: Default::default(),
+                is_automatic_backup: false,
+                reviews: Vec::new(),
+            },
+        };
+        let parent_patch_record = PatchRecord {
+            id: parent_patch_id.clone(),
+            patch: Patch {
+                title: "parent patch".into(),
+                description: "desc".into(),
+                diff: "diff".into(),
+                status: Default::default(),
+                is_automatic_backup: false,
+                reviews: Vec::new(),
+            },
+        };
+        let child_patch_record = PatchRecord {
+            id: child_patch_id.clone(),
+            patch: Patch {
+                title: "child patch".into(),
+                description: "desc".into(),
+                diff: "diff".into(),
+                status: Default::default(),
+                is_automatic_backup: false,
+                reviews: Vec::new(),
+            },
+        };
+        client.push_get_patch_response(root_patch_record.clone());
+        client.push_get_patch_response(parent_patch_record.clone());
+        client.push_get_patch_response(child_patch_record.clone());
 
         let description = collect_issue_description(&client, root_id.clone())
             .await
@@ -958,6 +1070,14 @@ mod tests {
         assert_eq!(
             client.recorded_get_issue_requests(),
             vec![root_id.clone(), parent_id.clone()]
+        );
+        assert_eq!(
+            client.recorded_get_patch_requests(),
+            vec![
+                root_patch_id.clone(),
+                parent_patch_id.clone(),
+                child_patch_id.clone()
+            ]
         );
         assert_eq!(
             client.recorded_list_issue_queries(),
@@ -971,9 +1091,27 @@ mod tests {
                 ..SearchIssuesQuery::default()
             }]
         );
-        assert_eq!(description.issue, root_issue);
-        assert_eq!(description.parents, vec![parent_issue]);
-        assert_eq!(description.children, vec![child_issue]);
+        assert_eq!(
+            description.issue,
+            IssueWithPatches {
+                issue: root_issue,
+                patches: vec![root_patch_record]
+            }
+        );
+        assert_eq!(
+            description.parents,
+            vec![IssueWithPatches {
+                issue: parent_issue,
+                patches: vec![parent_patch_record]
+            }]
+        );
+        assert_eq!(
+            description.children,
+            vec![IssueWithPatches {
+                issue: child_issue,
+                patches: vec![child_patch_record]
+            }]
+        );
     }
 
     #[tokio::test]
@@ -987,12 +1125,14 @@ mod tests {
             dependency_type: IssueDependencyType::ChildOf,
             issue_id: issue_id("i-1"),
         }];
+        let patch_ids = vec![patch_id("p-123")];
 
         create_issue(
             &client,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             dependencies.clone(),
+            patch_ids.clone(),
             Some("team-a".into()),
             "New issue description".into(),
             Some("Initial notes".into()),
@@ -1012,7 +1152,7 @@ mod tests {
                         progress: "Initial notes".into(),
                         assignee: Some("team-a".into()),
                         dependencies,
-                        patches: Vec::new(),
+                        patches: patch_ids,
                     },
                     job_id: None,
                 }
@@ -1028,6 +1168,7 @@ mod tests {
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
+            Vec::new(),
             None,
             "   ".into(),
             None,
@@ -1044,6 +1185,7 @@ mod tests {
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
+            Vec::new(),
             Some("   ".into()),
             "Valid description".into(),
             None,
@@ -1109,6 +1251,8 @@ mod tests {
                 issue_id: issue_id("i-2"),
             }],
             false,
+            vec![patch_id("p-3")],
+            false,
             Some("New progress".into()),
             false,
         )
@@ -1131,7 +1275,7 @@ mod tests {
                             dependency_type: IssueDependencyType::BlockedOn,
                             issue_id: issue_id("i-2"),
                         }],
-                        patches: Vec::new(),
+                        patches: vec![patch_id("p-3")],
                     },
                     job_id: None,
                 }
@@ -1169,6 +1313,8 @@ mod tests {
             None,
             true,
             None,
+            vec![],
+            true,
             vec![],
             true,
             None,
@@ -1250,37 +1396,48 @@ mod tests {
 
     #[test]
     fn describe_issue_pretty_printer_includes_sections() {
-        let description = IssueDescription {
-            issue: IssueRecord {
-                id: issue_id("i-main"),
-                issue: Issue {
-                    issue_type: IssueType::Task,
-                    description: "Main issue".into(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("owner".into()),
-                    dependencies: vec![],
-                    patches: vec![Patch {
-                        title: "main patch".into(),
-                        description: "desc".into(),
-                        diff: "diff".into(),
-                        status: PatchStatus::Open,
-                        is_automatic_backup: false,
-                        reviews: Vec::new(),
-                    }],
-                },
+        let main_patch_id = patch_id("p-main");
+        let main_patch_record = PatchRecord {
+            id: main_patch_id.clone(),
+            patch: Patch {
+                title: "main patch".into(),
+                description: "desc".into(),
+                diff: "diff".into(),
+                status: Default::default(),
+                is_automatic_backup: false,
+                reviews: Vec::new(),
             },
-            parents: vec![IssueRecord {
-                id: issue_id("i-parent"),
-                issue: Issue {
-                    issue_type: IssueType::Feature,
-                    description: "Parent".into(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: None,
-                    dependencies: vec![],
-                    patches: Vec::new(),
+        };
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-main"),
+                    issue: Issue {
+                        issue_type: IssueType::Task,
+                        description: "Main issue".into(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: Some("owner".into()),
+                        dependencies: vec![],
+                        patches: vec![main_patch_id],
+                    },
                 },
+                patches: vec![main_patch_record],
+            },
+            parents: vec![IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-parent"),
+                    issue: Issue {
+                        issue_type: IssueType::Feature,
+                        description: "Parent".into(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: None,
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
             }],
             children: vec![],
         };

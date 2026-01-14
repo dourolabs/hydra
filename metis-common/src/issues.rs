@@ -1,5 +1,5 @@
 pub use crate::IssueId;
-use crate::TaskId;
+use crate::{PatchId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -303,7 +303,7 @@ pub struct Issue {
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
-    pub patches: Vec<crate::patches::Patch>,
+    pub patches: Vec<PatchId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
