@@ -121,8 +121,8 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            // Do not spawn tasks for closed issues.
-            if status == IssueStatus::Closed {
+            // Do not spawn tasks for closed or dropped issues.
+            if matches!(status, IssueStatus::Closed | IssueStatus::Dropped) {
                 continue;
             }
 
