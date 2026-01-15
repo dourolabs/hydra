@@ -46,6 +46,8 @@ cargo test --workspace
 
 The CLI reads `--config <file>` if passed, otherwise `~/metis/config.toml`.
 
+`metis jobs create --repo <service-or-git-url>` defaults to the `main` revision when `--rev` is omitted, regardless of whether the repository is a named service or a git URL.
+
 #### Natural language chat
 
 `metis chat` opens an interactive Codex session that already knows how to call the

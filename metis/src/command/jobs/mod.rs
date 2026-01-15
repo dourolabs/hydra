@@ -23,7 +23,7 @@ pub enum JobsCommand {
         #[arg(long = "repo", value_name = "REPO")]
         repo: Option<String>,
 
-        /// Revision to use with --repo (optional for service repos, required for URLs).
+        /// Revision to use with --repo (defaults to 'main' for service repos and git URLs).
         #[arg(long = "rev", value_name = "REV", requires = "repo")]
         rev: Option<String>,
 
@@ -94,4 +94,31 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    #[test]
+    fn jobs_create_help_mentions_default_rev() {
+        let mut cmd = crate::Cli::command();
+        let jobs_cmd = cmd
+            .find_subcommand_mut("jobs")
+            .expect("jobs subcommand missing");
+        let create_cmd = jobs_cmd
+            .find_subcommand_mut("create")
+            .expect("create subcommand missing");
+
+        let mut buffer = Vec::new();
+        create_cmd
+            .write_help(&mut buffer)
+            .expect("failed to render help");
+
+        let help = String::from_utf8(buffer).expect("help output not utf8");
+        assert!(
+            help.contains("defaults to 'main'"),
+            "expected jobs create help to mention default revision: {help}"
+        );
+    }
 }
