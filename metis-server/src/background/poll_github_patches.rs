@@ -24,8 +24,7 @@ pub async fn poll_github_patches(state: AppState) {
     let scheduler = &state.config.background.scheduler.github_poller;
     let interval_secs = scheduler
         .interval_secs
-        .max(state.config.background.github_poller.interval_secs)
-        .max(60);
+        .max(state.config.background.github_poller.interval_secs);
     let sleep_duration = Duration::from_secs(interval_secs);
     let max_patches_per_cycle = max_patches_per_cycle(interval_secs);
     let mut start_from = 0usize;
