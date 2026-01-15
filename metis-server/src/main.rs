@@ -916,6 +916,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    github: None,
                 })
                 .await?;
             store_write
@@ -1127,6 +1128,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    github: None,
                 })
                 .await?;
             store_write
@@ -1250,6 +1252,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    github: None,
                 })
                 .await?;
             store_write
@@ -1349,6 +1352,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            github: None,
         };
 
         let response = client
@@ -1416,6 +1420,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    github: None,
                 },
                 job_id: Some(job_id.clone()),
             })
@@ -1448,6 +1453,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            github: None,
         };
         let filtered_patch = Patch {
             title: "login retry patch".to_string(),
@@ -1456,6 +1462,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            github: None,
         };
 
         for patch in [patch.clone(), filtered_patch.clone()] {

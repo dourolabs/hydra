@@ -57,6 +57,19 @@ pub struct Review {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubPr {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     #[serde(default)]
     pub title: String,
@@ -69,6 +82,8 @@ pub struct Patch {
     pub is_automatic_backup: bool,
     #[serde(default)]
     pub reviews: Vec<Review>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GithubPr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

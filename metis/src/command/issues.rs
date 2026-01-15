@@ -1043,6 +1043,7 @@ mod tests {
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
+                github: None,
             },
         };
         let parent_patch_record = PatchRecord {
@@ -1054,6 +1055,7 @@ mod tests {
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
+                github: None,
             },
         };
         let child_patch_record = PatchRecord {
@@ -1065,6 +1067,7 @@ mod tests {
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
+                github: None,
             },
         };
         client.push_get_patch_response(root_patch_record.clone());
@@ -1414,6 +1417,7 @@ mod tests {
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
+                github: None,
             },
         };
         let description = IssueDescription {
