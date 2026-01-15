@@ -7,5 +7,5 @@ if [[ -n "${NVM_DIR:-}" && -s "$NVM_DIR/nvm.sh" ]]; then
   source "$NVM_DIR/nvm.sh"
 fi
 
-# Run worker-run (includes codex login, output directory creation, and job submission)
+# Run jobs worker-run (includes codex login, output directory creation, and job submission)
 metis jobs worker-run "${METIS_ID}" .
