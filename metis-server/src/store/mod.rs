@@ -3,8 +3,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::constants::ENV_GH_TOKEN;
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
-use metis_common::{issues::Issue, patches::Patch};
-use std::collections::HashMap;
+use metis_common::{
+    issues::{Issue, IssueGraphFilter},
+    patches::Patch,
+};
+use std::collections::{HashMap, HashSet};
 
 mod memory_store;
 
@@ -156,6 +159,15 @@ pub trait Store: Send + Sync {
 
     /// Lists all issues in the store with their corresponding IDs.
     async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError>;
+
+    /// Applies dependency graph filters and returns the matching issue IDs.
+    ///
+    /// Filters are intersected, and any filter referencing a missing issue
+    /// should return `StoreError::IssueNotFound`.
+    async fn search_issue_graph(
+        &self,
+        filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError>;
 
     /// Adds a new patch to the store and assigns it a PatchId.
     async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError>;

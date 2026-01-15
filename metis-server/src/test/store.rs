@@ -2,7 +2,11 @@ use crate::store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
-use metis_common::{issues::Issue, patches::Patch};
+use metis_common::{
+    issues::{Issue, IssueGraphFilter},
+    patches::Patch,
+};
+use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
 #[derive(Default)]
@@ -27,6 +31,13 @@ impl Store for FailingStore {
     }
 
     async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+        fail()
+    }
+
+    async fn search_issue_graph(
+        &self,
+        _filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError> {
         fail()
     }
 
