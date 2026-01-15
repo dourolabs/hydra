@@ -171,6 +171,31 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
             error!(patch_id = %patch_id, "patch not found");
             ApiError::not_found(format!("patch '{patch_id}' not found"))
         }
+        UpsertPatchError::MergeRequestLookup { patch_id, source } => {
+            error!(
+                patch_id = %patch_id,
+                error = %source,
+                "failed to load merge-request issues for patch"
+            );
+            ApiError::internal(anyhow!(
+                "failed to load merge-request issues for '{patch_id}': {source}"
+            ))
+        }
+        UpsertPatchError::MergeRequestUpdate {
+            patch_id,
+            issue_id,
+            source,
+        } => {
+            error!(
+                patch_id = %patch_id,
+                issue_id = %issue_id,
+                error = %source,
+                "failed to update merge-request issue for patch"
+            );
+            ApiError::internal(anyhow!(
+                "failed to update merge-request issue '{issue_id}' for '{patch_id}': {source}"
+            ))
+        }
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))
