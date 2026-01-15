@@ -20,16 +20,15 @@ use metis_common::{
         SearchIssuesQuery,
     },
     jobs::{JobRecord, SearchJobsQuery},
-    patches::{PatchRecord as ApiPatchRecord, PatchStatus, SearchPatchesQuery},
     task_status::{Status, TaskError, TaskStatusLog},
-    IssueId, MetisId, PatchId, TaskId,
+    IssueId, TaskId,
 };
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
 
@@ -37,23 +36,13 @@ use crate::{client::MetisClientInterface, command::jobs};
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const MAX_RUNNING_JOBS: usize = 10;
-const MAX_FINISHED_JOBS: usize = 12;
-const MAX_PATCH_ROWS: usize = 12;
 const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
-
-#[derive(Default, Clone, PartialEq)]
-struct JobSections {
-    running: Vec<JobDisplay>,
-    finished: Vec<JobDisplay>,
-}
 
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
     issue_id: Option<IssueId>,
-    emitted_artifacts: Vec<MetisId>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -66,13 +55,6 @@ struct JobDisplay {
 }
 
 #[derive(Clone, PartialEq)]
-struct PatchDisplay {
-    id: String,
-    summary: String,
-    status: PatchStatus,
-}
-
-#[derive(Clone, PartialEq)]
 struct IssueRecord {
     id: IssueId,
     description: String,
@@ -80,13 +62,6 @@ struct IssueRecord {
     status: IssueStatus,
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
-}
-
-#[derive(Clone, PartialEq)]
-struct PatchRecord {
-    id: PatchId,
-    summary: String,
-    status: PatchStatus,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -101,7 +76,6 @@ struct IssueLine {
     status: IssueStatus,
     readiness: IssueReadiness,
     assignee: Option<String>,
-    patch_count: usize,
     task: Option<TaskIndicator>,
     depth: usize,
 }
@@ -119,7 +93,6 @@ struct IssueNode {
     record: IssueRecord,
     parent: Option<IssueId>,
     children: Vec<IssueId>,
-    patch_count: usize,
     task: Option<TaskIndicator>,
 }
 
@@ -133,17 +106,16 @@ struct TaskIndicator {
 struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
-    patches: Vec<PatchRecord>,
     issue_lines: IssueLines,
-    unassociated_jobs: JobSections,
-    unassociated_patches: Vec<PatchDisplay>,
+    assigned_issue_lines: IssueLines,
     jobs_error: Option<String>,
     records_error: Option<String>,
+    username: Option<String>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let dashboard_result = run_dashboard_loop(client, &mut terminal).await;
+    let dashboard_result = run_dashboard_loop(client, &mut terminal, username).await;
     teardown_terminal(&mut terminal)?;
     dashboard_result
 }
@@ -151,8 +123,12 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    username: Option<String>,
 ) -> Result<()> {
-    let mut state = DashboardState::default();
+    let mut state = DashboardState {
+        username,
+        ..DashboardState::default()
+    };
     let mut needs_draw = true;
 
     match refresh_jobs(client, &mut state).await {
@@ -166,7 +142,7 @@ async fn run_dashboard_loop(
     match refresh_records(client, &mut state).await {
         Ok(changed) => needs_draw |= changed,
         Err(err) => {
-            state.records_error = Some(format!("Failed to load issues and patches: {err}"));
+            state.records_error = Some(format!("Failed to load issues: {err}"));
             needs_draw = true;
         }
     }
@@ -201,7 +177,7 @@ async fn run_dashboard_loop(
                         needs_draw |= changed;
                     }
                     Err(err) => {
-                        state.records_error = Some(format!("Failed to refresh issues and patches: {err}"));
+                        state.records_error = Some(format!("Failed to refresh issues: {err}"));
                         needs_draw = true;
                     }
                 }
@@ -263,16 +239,11 @@ fn handle_event(event: Event) -> ControlFlow<()> {
 fn render(frame: &mut Frame, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(12),
-            Constraint::Length(10),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(12)])
         .split(frame.size());
 
     render_header(frame, chunks[0], state);
-    render_issues(frame, chunks[1], state);
-    render_other_panels(frame, chunks[2], state);
+    render_issue_sections(frame, chunks[1], state);
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -293,7 +264,7 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
 
     if let Some(error) = &state.records_error {
         lines.push(Line::from(Span::styled(
-            format!("Issues/Patches: {error}"),
+            format!("Issues: {error}"),
             Style::default().fg(Color::Red),
         )));
     }
@@ -307,48 +278,87 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     frame.render_widget(paragraph, area);
 }
 
-fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let items: Vec<ListItem> = if state.issue_lines.rows.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
+fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+    let has_username = state
+        .username
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    if has_username {
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(area);
+
+        let username = state.username.as_deref().unwrap();
+        render_issue_list(
+            frame,
+            panels[0],
+            &state.assigned_issue_lines,
+            &format!("Open issues for @{username}"),
+            &format!("No open issues assigned to @{username}"),
+        );
+        render_issue_list(
+            frame,
+            panels[1],
+            &state.issue_lines,
+            "Running issues",
             "No issues found",
+        );
+    } else {
+        render_issue_list(
+            frame,
+            area,
+            &state.issue_lines,
+            "Running issues",
+            "No issues found",
+        );
+    }
+}
+
+fn render_issue_list(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    issue_lines: &IssueLines,
+    title: &str,
+    empty_message: &str,
+) {
+    let items: Vec<ListItem> = if issue_lines.rows.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            empty_message,
             Style::default().fg(Color::DarkGray),
         )))]
     } else {
-        state
-            .issue_lines
+        issue_lines
             .rows
             .iter()
             .map(|line| {
                 let mut spans = Vec::new();
-                spans.push(Span::raw("  ".repeat(line.depth)));
+                spans.push(Span::raw(issue_prefix(line.depth)));
+                spans.push(Span::raw(" "));
                 let (issue_status_label, issue_status_style) =
                     issue_status_display(line.status, &line.readiness);
                 spans.push(Span::styled(
                     format!("[{issue_status_label}]"),
                     issue_status_style,
                 ));
+
+                if let Some(task) = &line.task {
+                    if let Some(runtime) = &task.runtime {
+                        spans.push(Span::raw(" "));
+                        spans.push(Span::styled(
+                            format!("[{runtime}]"),
+                            status_style(task.status),
+                        ));
+                    }
+                }
+
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     line.id.clone(),
                     Style::default().add_modifier(Modifier::BOLD),
                 ));
-                if let Some(task) = &line.task {
-                    spans.push(Span::raw(" "));
-                    let mut task_label = format!("[task:{}", status_label(task.status));
-                    if let Some(runtime) = &task.runtime {
-                        task_label.push(' ');
-                        task_label.push_str(runtime);
-                    }
-                    task_label.push(']');
-                    spans.push(Span::styled(task_label, status_style(task.status)));
-                }
-                if line.patch_count > 0 {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("[patch:{}]", line.patch_count),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
                 if let Some(assignee) = &line.assignee {
                     spans.push(Span::raw(" "));
                     spans.push(Span::styled(
@@ -368,123 +378,18 @@ fn render_issues(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     };
 
     let block = Block::default()
-        .title("Issues")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::White));
     frame.render_widget(List::new(items).block(block), area);
 }
 
-fn render_other_panels(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let rows = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(area);
-
-    render_unassociated_jobs(frame, rows[0], state);
-    render_unassociated_patches(frame, rows[1], state);
-}
-
-fn render_unassociated_jobs(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
-    state: &DashboardState,
-) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    let running_table = job_table(
-        "Other running tasks",
-        &state.unassociated_jobs.running,
-        &[
-            Constraint::Percentage(28),
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Min(10),
-        ],
-    );
-    let finished_table = job_table(
-        "Other recent results",
-        &state.unassociated_jobs.finished,
-        &[
-            Constraint::Percentage(28),
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Min(10),
-        ],
-    );
-
-    frame.render_widget(running_table, columns[0]);
-    frame.render_widget(finished_table, columns[1]);
-}
-
-fn job_table<'a>(title: &'a str, jobs: &'a [JobDisplay], widths: &'a [Constraint]) -> Table<'a> {
-    let header = Row::new(vec![
-        Cell::from("ID").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Runtime").style(Style::default().add_modifier(Modifier::BOLD)),
-        Cell::from("Notes / Errors").style(Style::default().add_modifier(Modifier::BOLD)),
-    ]);
-
-    let rows: Vec<Row> = if jobs.is_empty() {
-        vec![Row::new(vec![
-            Cell::from("No data").style(Style::default().fg(Color::DarkGray)),
-            Cell::default(),
-            Cell::default(),
-            Cell::default(),
-        ])]
+fn issue_prefix(depth: usize) -> String {
+    if depth == 0 {
+        "|".to_string()
     } else {
-        jobs.iter()
-            .map(|job| {
-                Row::new(vec![
-                    Cell::from(job.id.to_string()),
-                    Cell::from(status_label(job.status)).style(status_style(job.status)),
-                    Cell::from(job.runtime.clone().unwrap_or_else(|| "-".into())),
-                    Cell::from(truncate_message(&job.note, MAX_MESSAGE_WIDTH)),
-                ])
-            })
-            .collect()
-    };
-
-    Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().title(title).borders(Borders::ALL))
-}
-
-fn render_unassociated_patches(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
-    state: &DashboardState,
-) {
-    let items: Vec<ListItem> = if state.unassociated_patches.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            "No patches",
-            Style::default().fg(Color::DarkGray),
-        )))]
-    } else {
-        state
-            .unassociated_patches
-            .iter()
-            .map(|patch| {
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        patch_status_label(patch.status),
-                        patch_status_style(patch.status),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(&patch.id, Style::default().fg(Color::Cyan)),
-                    Span::raw(" — "),
-                    Span::raw(truncate_message(&patch.summary, MAX_MESSAGE_WIDTH)),
-                ]))
-            })
-            .collect()
-    };
-
-    let block = Block::default()
-        .title("Patches without issues")
-        .borders(Borders::ALL);
-    frame.render_widget(List::new(items).block(block), area);
+        format!("│{}", "  ".repeat(depth))
+    }
 }
 
 async fn refresh_jobs(
@@ -501,13 +406,8 @@ async fn refresh_jobs(
             Some(id) => id,
             None => fetch_issue_id(client, &summary.id).await?,
         };
-        let emitted_artifacts = summary.status_log.emitted_artifacts().unwrap_or_default();
         let display = summarize_job(summary, now);
-        jobs.push(JobDetails {
-            display,
-            issue_id,
-            emitted_artifacts,
-        });
+        jobs.push(JobDetails { display, issue_id });
     }
 
     let jobs_changed = jobs != state.jobs;
@@ -524,12 +424,10 @@ async fn refresh_records(
     state: &mut DashboardState,
 ) -> Result<bool> {
     let issues = fetch_issues(client).await?;
-    let patches = fetch_patches(client).await?;
 
-    let changed = issues != state.issues || patches != state.patches;
+    let changed = issues != state.issues;
     if changed {
         state.issues = issues;
-        state.patches = patches;
     }
 
     let derived_changed = update_views(state);
@@ -577,21 +475,6 @@ async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueReco
     Ok(issues)
 }
 
-async fn fetch_patches(client: &dyn MetisClientInterface) -> Result<Vec<PatchRecord>> {
-    let response = client
-        .list_patches(&SearchPatchesQuery::default())
-        .await
-        .context("failed to fetch patches")?;
-
-    let patches = response
-        .patches
-        .into_iter()
-        .filter_map(patch_to_record)
-        .collect();
-
-    Ok(patches)
-}
-
 fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     let issue = record.issue;
     Some(IssueRecord {
@@ -604,67 +487,44 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     })
 }
 
-fn patch_to_record(record: ApiPatchRecord) -> Option<PatchRecord> {
-    let patch = record.patch;
-    let summary = if patch.title.trim().is_empty() {
-        patch.description
-    } else {
-        patch.title
-    };
-    Some(PatchRecord {
-        id: record.id,
-        summary,
-        status: patch.status,
-    })
-}
-
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
-    let previous_unassociated_jobs = state.unassociated_jobs.clone();
-    let previous_unassociated_patches = state.unassociated_patches.clone();
+    let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
 
-    let (issue_lines, associated_patch_ids) =
-        build_issue_lines(&state.issues, &state.jobs, &state.patches);
-
-    let unassociated_jobs = categorize_jobs(
-        state
-            .jobs
-            .iter()
-            .filter(|job| job.issue_id.is_none())
-            .map(|job| job.display.clone())
-            .collect(),
-    );
-
-    let mut unassociated_patches: Vec<PatchDisplay> = state
-        .patches
-        .iter()
-        .filter(|patch| !associated_patch_ids.contains(&patch.id))
-        .take(MAX_PATCH_ROWS)
-        .map(|patch| PatchDisplay {
-            id: patch.id.to_string(),
-            summary: patch.summary.clone(),
-            status: patch.status,
-        })
-        .collect();
-    unassociated_patches.truncate(MAX_PATCH_ROWS);
+    let issue_lines = build_issue_lines(&state.issues, &state.jobs);
+    let assigned_issue_lines =
+        build_assigned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
 
     state.issue_lines = issue_lines;
-    state.unassociated_jobs = unassociated_jobs;
-    state.unassociated_patches = unassociated_patches;
+    state.assigned_issue_lines = assigned_issue_lines;
 
     previous_issue_lines != state.issue_lines
-        || previous_unassociated_jobs != state.unassociated_jobs
-        || previous_unassociated_patches != state.unassociated_patches
+        || previous_assigned_issue_lines != state.assigned_issue_lines
 }
 
-fn build_issue_lines(
+fn build_assigned_issue_lines(
+    username: Option<&str>,
     issues: &[IssueRecord],
     jobs: &[JobDetails],
-    patches: &[PatchRecord],
-) -> (IssueLines, HashSet<PatchId>) {
-    let issue_ids: HashSet<IssueId> = issues.iter().map(|issue| issue.id.clone()).collect();
+) -> IssueLines {
+    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
+        return IssueLines::default();
+    };
+
+    let assigned: Vec<IssueRecord> = issues
+        .iter()
+        .filter(|issue| {
+            matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress)
+                && issue.assignee.as_deref() == Some(username)
+        })
+        .cloned()
+        .collect();
+
+    build_issue_lines(&assigned, jobs)
+}
+
+fn build_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> IssueLines {
     let mut tasks_by_issue: HashMap<IssueId, Vec<JobDisplay>> = HashMap::new();
-    let mut emitted_artifacts_by_issue: HashMap<IssueId, HashSet<MetisId>> = HashMap::new();
 
     for job in jobs {
         if let Some(issue_id) = &job.issue_id {
@@ -672,33 +532,6 @@ fn build_issue_lines(
                 .entry(issue_id.clone())
                 .or_default()
                 .push(job.display.clone());
-
-            let emitted = emitted_artifacts_by_issue
-                .entry(issue_id.clone())
-                .or_default();
-            for artifact_id in &job.emitted_artifacts {
-                emitted.insert(artifact_id.clone());
-            }
-        }
-    }
-
-    let patch_lookup: HashSet<PatchId> = patches.iter().map(|patch| patch.id.clone()).collect();
-    let mut patch_ids_by_issue: HashMap<IssueId, HashSet<PatchId>> = HashMap::new();
-    let mut associated_patch_ids = HashSet::new();
-    for (issue_id, artifact_ids) in &emitted_artifacts_by_issue {
-        if !issue_ids.contains(issue_id) {
-            continue;
-        }
-        for artifact_id in artifact_ids {
-            if let Some(patch_id) = artifact_id.as_patch_id() {
-                if patch_lookup.contains(&patch_id) {
-                    patch_ids_by_issue
-                        .entry(issue_id.clone())
-                        .or_default()
-                        .insert(patch_id.clone());
-                    associated_patch_ids.insert(patch_id);
-                }
-            }
         }
     }
 
@@ -708,17 +541,12 @@ fn build_issue_lines(
             let task = tasks_by_issue
                 .get(&issue.id)
                 .and_then(|tasks| best_task_indicator(tasks));
-            let patch_count = patch_ids_by_issue
-                .get(&issue.id)
-                .map(|set| set.len())
-                .unwrap_or(0);
             (
                 issue.id.clone(),
                 IssueNode {
                     record: issue.clone(),
                     parent: None,
                     children: Vec::new(),
-                    patch_count,
                     task,
                 },
             )
@@ -758,7 +586,7 @@ fn build_issue_lines(
         append_issue(&root, 0, &mut rows, &mut visited, &nodes);
     }
 
-    (IssueLines { rows }, associated_patch_ids)
+    IssueLines { rows }
 }
 
 fn append_issue(
@@ -784,7 +612,6 @@ fn append_issue(
         status: node.record.status,
         readiness,
         assignee: node.record.assignee.clone(),
-        patch_count: node.patch_count,
         task: node.task.clone(),
         depth,
     });
@@ -897,30 +724,6 @@ fn issue_status_order(status: IssueStatus) -> usize {
     }
 }
 
-fn categorize_jobs(jobs: Vec<JobDisplay>) -> JobSections {
-    let mut running = Vec::new();
-    let mut finished = Vec::new();
-
-    for job in jobs {
-        match job.status {
-            Status::Complete | Status::Failed => finished.push(job),
-            _ => running.push(job),
-        }
-    }
-
-    running.sort_by(|a, b| compare_recent(a.last_change, b.last_change));
-    finished.sort_by(|a, b| compare_recent(a.last_change, b.last_change));
-
-    if running.len() > MAX_RUNNING_JOBS {
-        running.truncate(MAX_RUNNING_JOBS);
-    }
-    if finished.len() > MAX_FINISHED_JOBS {
-        finished.truncate(MAX_FINISHED_JOBS);
-    }
-
-    JobSections { running, finished }
-}
-
 fn summarize_job(job: JobRecord, now: DateTime<Utc>) -> JobDisplay {
     let status = job.status_log.current_status();
     let runtime = jobs::format_runtime(&job.status_log, now);
@@ -973,10 +776,6 @@ fn format_task_error(error: &TaskError) -> String {
     }
 }
 
-fn status_label(status: Status) -> &'static str {
-    jobs::format_status(&status)
-}
-
 fn status_style(status: Status) -> Style {
     match status {
         Status::Complete => Style::default().fg(Color::Green),
@@ -1005,9 +804,6 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
             format!("blocked: {}", blockers.join(", ")),
             Style::default().fg(Color::Magenta),
         ),
-        (IssueStatus::InProgress, IssueReadiness::Waiting) => {
-            ("waiting".to_string(), Style::default().fg(Color::Magenta))
-        }
         (IssueStatus::Closed, _) => (
             "closed".to_string(),
             issue_status_style(IssueStatus::Closed),
@@ -1017,22 +813,6 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
             issue_status_style(IssueStatus::InProgress),
         ),
         (IssueStatus::Open, _) => ("open".to_string(), issue_status_style(IssueStatus::Open)),
-    }
-}
-
-fn patch_status_label(status: PatchStatus) -> &'static str {
-    match status {
-        PatchStatus::Open => "open",
-        PatchStatus::Closed => "closed",
-        PatchStatus::Merged => "merged",
-    }
-}
-
-fn patch_status_style(status: PatchStatus) -> Style {
-    match status {
-        PatchStatus::Open => Style::default().fg(Color::Blue),
-        PatchStatus::Closed => Style::default().fg(Color::Red),
-        PatchStatus::Merged => Style::default().fg(Color::Green),
     }
 }
 
@@ -1051,7 +831,7 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::ids::{issue_id, patch_id, task_id};
+    use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
@@ -1106,11 +886,21 @@ mod tests {
         }
     }
 
+    fn issue_with_assignee(id: &str, status: IssueStatus, assignee: Option<&str>) -> IssueRecord {
+        IssueRecord {
+            id: issue_id(id),
+            description: id.to_string(),
+            progress: String::new(),
+            status,
+            assignee: assignee.map(str::to_string),
+            dependencies: Vec::new(),
+        }
+    }
+
     fn job_details_with_issue(
         id: &str,
         status: Status,
         linked_issue: Option<&str>,
-        emitted_artifacts: Vec<&str>,
         runtime: Option<&str>,
     ) -> JobDetails {
         JobDetails {
@@ -1122,35 +912,7 @@ mod tests {
                 last_change: Some(Utc::now()),
             },
             issue_id: linked_issue.map(issue_id),
-            emitted_artifacts: emitted_artifacts
-                .into_iter()
-                .map(|value| MetisId::from(patch_id(value)))
-                .collect(),
         }
-    }
-
-    #[test]
-    fn categorize_jobs_splits_running_and_finished() {
-        let now = Utc::now();
-        let jobs = vec![
-            summarize_job(job_with_status("t-job-running", Status::Running, 0), now),
-            summarize_job(job_with_status("t-job-complete", Status::Complete, 1), now),
-            summarize_job(job_with_status("t-job-failed", Status::Failed, 2), now),
-        ];
-
-        let categorized = categorize_jobs(jobs);
-
-        assert_eq!(categorized.running.len(), 1);
-        assert_eq!(categorized.finished.len(), 2);
-        assert_eq!(categorized.running[0].id, task_id("t-job-running"));
-        assert!(categorized
-            .finished
-            .iter()
-            .any(|job| job.id == task_id("t-job-complete")));
-        assert!(categorized
-            .finished
-            .iter()
-            .any(|job| job.id == task_id("t-job-failed")));
     }
 
     #[test]
@@ -1188,7 +950,7 @@ mod tests {
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
-        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+        let lines = build_issue_lines(&issues, &[]);
 
         assert_eq!(lines.rows.len(), 3);
         assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
@@ -1218,7 +980,7 @@ mod tests {
             issue("i-open", IssueStatus::Open, vec![]),
         ];
 
-        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+        let lines = build_issue_lines(&issues, &[]);
 
         let blocked_line = lines
             .rows
@@ -1236,7 +998,7 @@ mod tests {
     #[test]
     fn dropped_issues_render_as_dropped() {
         let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
-        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+        let lines = build_issue_lines(&issues, &[]);
 
         let line = lines.rows.first().expect("missing issue line");
         assert_eq!(line.readiness, IssueReadiness::Dropped);
@@ -1247,26 +1009,18 @@ mod tests {
     }
 
     #[test]
-    fn issue_lines_include_task_and_patch_indicators() {
+    fn issue_lines_include_task_indicator() {
         let issues = vec![issue("i-1", IssueStatus::Open, vec![])];
-        let patches = vec![PatchRecord {
-            id: patch_id("p-1"),
-            summary: "fix".to_string(),
-            status: PatchStatus::Open,
-        }];
         let jobs = vec![job_details_with_issue(
             "t-job-1",
             Status::Running,
             Some("i-1"),
-            vec!["p-1"],
             Some("3s"),
         )];
 
-        let (lines, associated_patches) = build_issue_lines(&issues, &jobs, &patches);
+        let lines = build_issue_lines(&issues, &jobs);
 
-        assert!(associated_patches.contains(&patch_id("p-1")));
         let line = lines.rows.first().expect("issue line missing");
-        assert_eq!(line.patch_count, 1);
         let task = line.task.as_ref().expect("task indicator missing");
         assert_eq!(task.status, Status::Running);
         assert_eq!(task.runtime.as_deref(), Some("3s"));
@@ -1294,7 +1048,7 @@ mod tests {
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
-        let (lines, _) = build_issue_lines(&issues, &[], &[]);
+        let lines = build_issue_lines(&issues, &[]);
 
         let line = lines
             .rows
@@ -1303,5 +1057,31 @@ mod tests {
             .expect("issue line missing");
         assert_eq!(line.status, IssueStatus::InProgress);
         assert!(matches!(line.readiness, IssueReadiness::Waiting));
+
+        let (label, style) = issue_status_display(line.status, &line.readiness);
+        assert_eq!(label, "in-progress");
+        assert_eq!(style, issue_status_style(IssueStatus::InProgress));
+    }
+
+    #[test]
+    fn assigned_issue_lines_filter_assignee_and_status() {
+        let issues = vec![
+            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-in-progress", IssueStatus::InProgress, Some("alice")),
+            issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
+            issue_with_assignee("i-other", IssueStatus::Open, Some("bob")),
+        ];
+
+        let lines = build_assigned_issue_lines(Some("alice"), &issues, &[]);
+
+        assert_eq!(lines.rows.len(), 2);
+        assert!(lines
+            .rows
+            .iter()
+            .any(|line| line.id == issue_id("i-open").to_string()));
+        assert!(lines
+            .rows
+            .iter()
+            .any(|line| line.id == issue_id("i-in-progress").to_string()));
     }
 }
