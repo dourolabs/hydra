@@ -5,8 +5,10 @@ pub mod run_spawners;
 pub mod scheduler;
 pub mod spawner;
 
-pub use monitor_running_jobs::monitor_running_jobs;
 pub use poll_github_patches::poll_github_patches;
-pub use process_pending_jobs::process_pending_jobs;
 pub use run_spawners::run_spawners;
+pub use scheduler::start_background_scheduler;
 pub use spawner::{AgentQueue, Spawner};
+
+#[cfg(test)]
+pub(crate) mod test_support;

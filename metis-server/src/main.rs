@@ -11,8 +11,7 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::{
-    AgentQueue, Spawner, monitor_running_jobs, poll_github_patches, process_pending_jobs,
-    run_spawners,
+    AgentQueue, Spawner, poll_github_patches, run_spawners, start_background_scheduler,
 };
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
@@ -28,17 +27,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
-    // Spawn background task to process pending jobs
-    let background_state = state.clone();
-    tokio::spawn(async move {
-        process_pending_jobs(background_state).await;
-    });
-
-    // Spawn background task to monitor running jobs
-    let monitor_state = state.clone();
-    tokio::spawn(async move {
-        monitor_running_jobs(monitor_state).await;
-    });
+    // Run scheduler-backed workers for pending and running job processing
+    let scheduler = start_background_scheduler(state.clone());
 
     // Spawn background task to sync GitHub PR metadata for patches
     let github_poll_state = state.clone();
@@ -95,7 +85,9 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     info!("metis-server listening on http://{}", addr);
     println!("metis-server listening on http://{addr}");
 
-    axum::serve(listener, app).await?;
+    let serve_result = axum::serve(listener, app).await;
+    scheduler.shutdown().await;
+    serve_result?;
 
     Ok(())
 }
