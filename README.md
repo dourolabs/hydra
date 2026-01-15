@@ -17,6 +17,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 | `metis-common` | Shared models (`MetisId`, job/log/issue/patch types, env var constants) used by both crates. |
 | `images/` | Dockerfiles for the server and worker images. |
 | `scripts/` | Helper scripts (cluster bootstrap, Docker builds, worker entrypoint). |
+| `OPERATIONS.md` | Operations guide covering CI failure auto-review behavior, metrics, and alert hooks. |
 | `config.toml.sample` files | Copy to `config.toml` (per crate) to override defaults. |
 
 ## Prerequisites

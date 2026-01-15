@@ -122,6 +122,16 @@ pub enum GithubCiState {
     Failed,
 }
 
+impl GithubCiState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GithubCiState::Pending => "pending",
+            GithubCiState::Success => "success",
+            GithubCiState::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GithubCiFailure {
     pub name: String,
