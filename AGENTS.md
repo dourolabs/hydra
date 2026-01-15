@@ -10,6 +10,9 @@ Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers
 - `METIS_CONFIG=metis-server/config.toml cargo run -p metis-server` launches the HTTP service with the desired config.
 - `./scripts/docker-build.sh` builds all deployment containers.
 
+## Documentation Guidelines
+- Do not add CLI command details to `README.md` unless explicitly requested; the README has tight space and should stay focused on top-level orientation, so keep command-specific docs elsewhere.
+
 ## Coding Style & Naming Conventions
 Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before submitting. Modules and files use snake_case; types and traits use UpperCamelCase; constants are SCREAMING_SNAKE_CASE. Keep each CLI subcommand isolated per file under `metis/src/command` and prefer thin synchronous wrappers around async helpers. Document only non-obvious public behavior with `///` comments.
 - Use the `MetisId` type alias for all Metis identifiers instead of raw `String` values.
