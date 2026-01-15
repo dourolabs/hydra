@@ -8,10 +8,10 @@ use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, TaskId,
     constants::ENV_METIS_ID,
-    issues::{IssueId, IssueStatus, UpsertIssueRequest},
+    issues::{IssueId, IssueStatus, IssueType, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
-    patches::UpsertPatchRequest,
+    patches::{PatchStatus, UpsertPatchRequest},
 };
 use std::sync::Arc;
 use thiserror::Error;
@@ -94,6 +94,19 @@ pub enum UpsertPatchError {
         #[source]
         source: StoreError,
         job_id: TaskId,
+    },
+    #[error("failed to load merge-request issues for patch '{patch_id}'")]
+    MergeRequestLookup {
+        #[source]
+        source: StoreError,
+        patch_id: PatchId,
+    },
+    #[error("failed to update merge-request issue '{issue_id}' for patch '{patch_id}'")]
+    MergeRequestUpdate {
+        #[source]
+        source: StoreError,
+        patch_id: PatchId,
+        issue_id: IssueId,
     },
 }
 
@@ -407,13 +420,24 @@ impl AppState {
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
         let UpsertPatchRequest { patch, job_id } = request;
-
+        let mut should_close_merge_requests = false;
         let mut store = self.store.write().await;
         let patch_id = match patch_id {
             Some(id) => {
                 if job_id.is_some() {
                     return Err(UpsertPatchError::JobIdProvidedForUpdate);
                 }
+
+                let existing_patch = store.get_patch(&id).await.map_err(|source| match source {
+                    StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                        patch_id: id.clone(),
+                        source,
+                    },
+                    other => UpsertPatchError::Store { source: other },
+                })?;
+                let new_status = patch.status;
+                should_close_merge_requests = matches!(existing_patch.status, PatchStatus::Open)
+                    && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
                 store
                     .update_patch(&id, patch)
@@ -488,6 +512,58 @@ impl AppState {
                 id
             }
         };
+
+        if should_close_merge_requests {
+            let merge_request_issue_ids =
+                store
+                    .get_issues_for_patch(&patch_id)
+                    .await
+                    .map_err(|source| UpsertPatchError::MergeRequestLookup {
+                        patch_id: patch_id.clone(),
+                        source,
+                    })?;
+
+            let mut closed_issue_ids = Vec::new();
+            for issue_id in merge_request_issue_ids {
+                let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+                    UpsertPatchError::MergeRequestUpdate {
+                        patch_id: patch_id.clone(),
+                        issue_id: issue_id.clone(),
+                        source,
+                    }
+                })?;
+
+                if issue.issue_type != IssueType::MergeRequest
+                    || matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped)
+                {
+                    continue;
+                }
+
+                issue.status = IssueStatus::Closed;
+                store
+                    .update_issue(&issue_id, issue)
+                    .await
+                    .map_err(|source| UpsertPatchError::MergeRequestUpdate {
+                        patch_id: patch_id.clone(),
+                        issue_id: issue_id.clone(),
+                        source,
+                    })?;
+                closed_issue_ids.push(issue_id);
+            }
+
+            if !closed_issue_ids.is_empty() {
+                let issues = closed_issue_ids
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                tracing::info!(
+                    patch_id = %patch_id,
+                    issues = %issues,
+                    "closed merge-request issues for patch"
+                );
+            }
+        }
 
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 

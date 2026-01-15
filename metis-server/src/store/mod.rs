@@ -169,6 +169,9 @@ pub trait Store: Send + Sync {
     /// Lists all patches in the store with their corresponding IDs.
     async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError>;
 
+    /// Lists all issues that reference the provided patch ID.
+    async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
+
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     #[allow(dead_code)]
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;

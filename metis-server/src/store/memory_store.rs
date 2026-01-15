@@ -27,6 +27,8 @@ pub struct MemoryStore {
     issue_blocked_on: HashMap<IssueId, Vec<IssueId>>,
     /// Maps issue IDs to tasks spawned from them
     issue_tasks: HashMap<IssueId, Vec<TaskId>>,
+    /// Maps patch IDs to the issues that reference them
+    patch_issues: HashMap<PatchId, Vec<IssueId>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<TaskId, TaskStatusLog>,
 }
@@ -41,6 +43,7 @@ impl MemoryStore {
             issue_children: HashMap::new(),
             issue_blocked_on: HashMap::new(),
             issue_tasks: HashMap::new(),
+            patch_issues: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
@@ -186,6 +189,29 @@ impl MemoryStore {
 
         Ok(())
     }
+
+    fn apply_issue_patch_delta(
+        &mut self,
+        issue_id: &IssueId,
+        previous: &[PatchId],
+        updated: &[PatchId],
+    ) {
+        for patch_id in previous {
+            if let Some(issues) = self.patch_issues.get_mut(patch_id) {
+                issues.retain(|existing| existing != issue_id);
+                if issues.is_empty() {
+                    self.patch_issues.remove(patch_id);
+                }
+            }
+        }
+
+        for patch_id in updated {
+            let issues = self.patch_issues.entry(patch_id.clone()).or_default();
+            if !issues.contains(issue_id) {
+                issues.push(issue_id.clone());
+            }
+        }
+    }
 }
 
 impl Default for MemoryStore {
@@ -199,6 +225,7 @@ impl Store for MemoryStore {
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
+        let new_patches = issue.patches.clone();
 
         self.validate_dependencies(&new_dependencies)?;
         self.validate_issue_lifecycle(None, &issue)?;
@@ -206,6 +233,9 @@ impl Store for MemoryStore {
 
         if !new_dependencies.is_empty() {
             self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
+        }
+        if !new_patches.is_empty() {
+            self.apply_issue_patch_delta(&id, &[], &new_patches);
         }
         Ok(id)
     }
@@ -227,7 +257,13 @@ impl Store for MemoryStore {
             .get(id)
             .map(|issue| issue.dependencies.clone())
             .unwrap_or_default();
+        let previous_patches = self
+            .issues
+            .get(id)
+            .map(|issue| issue.patches.clone())
+            .unwrap_or_default();
         let updated_dependencies = issue.dependencies.clone();
+        let updated_patches = issue.patches.clone();
 
         self.validate_dependencies(&updated_dependencies)?;
         self.validate_issue_lifecycle(Some(id), &issue)?;
@@ -235,6 +271,9 @@ impl Store for MemoryStore {
 
         if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
             self.apply_issue_dependency_delta(id, &previous_dependencies, &updated_dependencies);
+        }
+        if !previous_patches.is_empty() || !updated_patches.is_empty() {
+            self.apply_issue_patch_delta(id, &previous_patches, &updated_patches);
         }
         Ok(())
     }
@@ -274,6 +313,13 @@ impl Store for MemoryStore {
             .iter()
             .map(|(id, patch)| (id.clone(), patch.clone()))
             .collect())
+    }
+
+    async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
+        match self.patches.get(patch_id) {
+            Some(_) => Ok(self.patch_issues.get(patch_id).cloned().unwrap_or_default()),
+            None => Err(StoreError::PatchNotFound(patch_id.clone())),
+        }
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -840,6 +886,45 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_issue_indexes_updated_on_issue_changes() {
+        let mut store = MemoryStore::new();
+        let patch_a = store.add_patch(sample_patch()).await.unwrap();
+        let patch_b = store.add_patch(sample_patch()).await.unwrap();
+
+        let mut issue = sample_issue(vec![]);
+        issue.patches = vec![patch_a.clone()];
+        let issue_id = store.add_issue(issue).await.unwrap();
+
+        assert_eq!(
+            store.get_issues_for_patch(&patch_a).await.unwrap(),
+            vec![issue_id.clone()]
+        );
+        assert!(
+            store
+                .get_issues_for_patch(&patch_b)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut updated_issue = sample_issue(vec![]);
+        updated_issue.patches = vec![patch_b.clone()];
+        store.update_issue(&issue_id, updated_issue).await.unwrap();
+
+        assert!(
+            store
+                .get_issues_for_patch(&patch_a)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store.get_issues_for_patch(&patch_b).await.unwrap(),
+            vec![issue_id]
         );
     }
 

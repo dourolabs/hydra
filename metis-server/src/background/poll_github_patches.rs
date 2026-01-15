@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
     constants::ENV_GH_TOKEN,
-    patches::{GithubPr, Patch, PatchStatus, Review},
+    patches::{GithubPr, Patch, PatchStatus, Review, UpsertPatchRequest},
 };
 use octocrab::{
     Octocrab,
@@ -160,8 +160,10 @@ async fn sync_patch_from_github(
 
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
 
-    let mut store = state.store.write().await;
-    let mut latest_patch = store.get_patch(patch_id).await?;
+    let mut latest_patch = {
+        let store = state.store.read().await;
+        store.get_patch(patch_id).await?
+    };
     if !matches!(latest_patch.status, PatchStatus::Open) {
         debug!(patch_id = %patch_id, "skipping GitHub sync for non-open patch");
         return Ok(());
@@ -196,8 +198,14 @@ async fn sync_patch_from_github(
     }
 
     if changed {
-        store
-            .update_patch(patch_id, latest_patch)
+        state
+            .upsert_patch(
+                Some(patch_id.clone()),
+                UpsertPatchRequest {
+                    patch: latest_patch,
+                    job_id: None,
+                },
+            )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
         info!(patch_id = %patch_id, "updated patch from GitHub metadata");
