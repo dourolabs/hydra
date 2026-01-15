@@ -10,7 +10,7 @@ use metis_common::{
     constants::ENV_METIS_ID,
     issues::{IssueId, IssueStatus, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
-    jobs::{BundleSpec, CreateJobRequest},
+    jobs::CreateJobRequest,
     patches::UpsertPatchRequest,
 };
 use std::sync::Arc;
