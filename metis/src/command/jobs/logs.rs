@@ -3,11 +3,11 @@ use crate::client::MetisClientInterface;
 use anyhow::Result;
 use metis_common::TaskId;
 
-pub async fn run(client: &dyn MetisClientInterface, id: TaskId, watch: bool) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, job_id: TaskId, watch: bool) -> Result<()> {
     let action = if watch { "Streaming" } else { "Fetching" };
-    println!("{action} logs for job '{id}' via metis-server…");
+    println!("{action} logs for job '{job_id}' via metis-server…");
 
-    stream_job_logs_via_server(client, &id, watch).await
+    stream_job_logs_via_server(client, &job_id, watch).await
 }
 
 #[cfg(test)]

@@ -115,3 +115,43 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod cli_tests {
+    use super::{Cli, Commands};
+    use crate::command::jobs::JobsCommand;
+    use clap::Parser;
+    use metis_common::TaskId;
+    use std::str::FromStr;
+
+    #[test]
+    fn logs_accepts_job_id_flag() {
+        let cli = Cli::try_parse_from(["metis", "jobs", "logs", "--job-id", "t-abcde", "--watch"])
+            .unwrap();
+
+        match cli.command {
+            Commands::Jobs {
+                command: JobsCommand::Logs { job, watch },
+            } => {
+                assert_eq!(job.into_task_id(), TaskId::from_str("t-abcde").unwrap());
+                assert!(watch);
+            }
+            _ => panic!("expected jobs logs subcommand"),
+        }
+    }
+
+    #[test]
+    fn kill_accepts_positional_job_id_for_backward_compatibility() {
+        let cli =
+            Cli::try_parse_from(["metis", "jobs", "kill", "t-fghij"]).expect("parse should work");
+
+        match cli.command {
+            Commands::Jobs {
+                command: JobsCommand::Kill { job },
+            } => {
+                assert_eq!(job.into_task_id(), TaskId::from_str("t-fghij").unwrap());
+            }
+            _ => panic!("expected jobs kill subcommand"),
+        }
+    }
+}

@@ -1,6 +1,6 @@
 use crate::client::MetisClientInterface;
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{ArgGroup, Args, Subcommand};
 use metis_common::{IssueId, TaskId};
 
 pub mod create;
@@ -59,9 +59,8 @@ pub enum JobsCommand {
     },
     /// Show logs for an existing Metis job.
     Logs {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "ID")]
-        id: TaskId,
+        #[command(flatten)]
+        job: JobIdArg,
 
         /// Stream logs if the job is still running.
         #[arg(short = 'w', long = "watch")]
@@ -69,9 +68,8 @@ pub enum JobsCommand {
     },
     /// Terminate a running Metis job.
     Kill {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
-        #[arg(value_name = "JOB_ID")]
-        job: TaskId,
+        #[command(flatten)]
+        job: JobIdArg,
     },
 }
 
@@ -89,9 +87,40 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             limit,
             spawned_from,
         } => list::run(client, limit, spawned_from).await?,
-        JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
-        JobsCommand::Kill { job } => kill::run(client, job).await?,
+        JobsCommand::Logs { job, watch } => logs::run(client, job.into_task_id(), watch).await?,
+        JobsCommand::Kill { job } => kill::run(client, job.into_task_id()).await?,
     }
 
     Ok(())
+}
+
+#[derive(Args, Clone, Debug)]
+#[command(
+    group(
+        ArgGroup::new("job_id_source")
+            .required(true)
+            .args(&["job_id", "job_id_positional"])
+    )
+)]
+pub struct JobIdArg {
+    /// Job identifier returned by `metis jobs create` or `metis jobs list`.
+    #[arg(
+        long = "job-id",
+        value_name = "JOB_ID",
+        alias = "job",
+        group = "job_id_source"
+    )]
+    job_id: Option<TaskId>,
+
+    /// (deprecated) Job identifier passed positionally; prefer --job-id.
+    #[arg(value_name = "JOB_ID", hide = true, group = "job_id_source")]
+    job_id_positional: Option<TaskId>,
+}
+
+impl JobIdArg {
+    pub fn into_task_id(self) -> TaskId {
+        self.job_id
+            .or(self.job_id_positional)
+            .expect("job_id_source requires a job id")
+    }
 }
