@@ -17,10 +17,10 @@ thiserror = "1.0"
 tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "io-util"] }
 toml = "0.8"
 uuid = { version = "1.10", features = ["v4"] }
-chrono = { version = "0.4", features = ["clock"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
 metis-common = { path = "../metis-common" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }

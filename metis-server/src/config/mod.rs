@@ -96,6 +96,8 @@ pub struct ServiceSection {
 pub struct BackgroundSection {
     #[serde(default)]
     pub agent_queues: Vec<AgentQueueConfig>,
+    #[serde(default)]
+    pub github_poller: GithubPollerConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -121,6 +123,20 @@ pub struct AgentQueueConfig {
     pub max_tries: u32,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GithubPollerConfig {
+    #[serde(default = "default_github_poll_interval_secs")]
+    pub interval_secs: u64,
+}
+
+impl Default for GithubPollerConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_github_poll_interval_secs(),
+        }
+    }
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
@@ -159,4 +175,8 @@ fn default_bundle_spec() -> BundleSpec {
 
 const fn default_agent_max_tries() -> u32 {
     DEFAULT_AGENT_MAX_TRIES
+}
+
+const fn default_github_poll_interval_secs() -> u64 {
+    60
 }
