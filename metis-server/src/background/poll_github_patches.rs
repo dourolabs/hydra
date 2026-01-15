@@ -3,14 +3,12 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
+    github::{GithubClient, GithubConfig},
     patches::{Patch, PatchStatus, Review, UpsertPatchRequest},
 };
-use octocrab::{
-    Octocrab,
-    models::{
-        issues::Comment as IssueComment,
-        pulls::{Comment as PullRequestComment, PullRequest, Review as PullRequestReview},
-    },
+use octocrab::models::{
+    issues::Comment as IssueComment,
+    pulls::{Comment as PullRequestComment, PullRequest, Review as PullRequestReview},
 };
 use std::collections::HashSet;
 use tokio::time::{Duration, sleep};
@@ -119,7 +117,9 @@ async fn sync_patch_from_github(
         );
         return Ok(());
     };
-    let client = github_client(token)?;
+    let github_client = github_client(&state.config.github, token)?;
+    let per_page = github_client.per_page();
+    let client = github_client.into_client();
 
     let pr = client
         .pulls(&github.owner, &github.repo)
@@ -130,7 +130,7 @@ async fn sync_patch_from_github(
             client
                 .pulls(&github.owner, &github.repo)
                 .list_reviews(github.number)
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
@@ -140,7 +140,7 @@ async fn sync_patch_from_github(
             client
                 .pulls(&github.owner, &github.repo)
                 .list_comments(Some(github.number))
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
@@ -150,7 +150,7 @@ async fn sync_patch_from_github(
             client
                 .issues(&github.owner, &github.repo)
                 .list_comments(github.number)
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
@@ -343,10 +343,9 @@ fn patch_status_from_github(pr: &PullRequest) -> PatchStatus {
     }
 }
 
-fn github_client(token: String) -> anyhow::Result<Octocrab> {
-    Octocrab::builder()
-        .personal_token(token)
-        .build()
+fn github_client(config: &GithubConfig, token: String) -> anyhow::Result<GithubClient> {
+    config
+        .build_client_with_token(Some(token))
         .context("building GitHub client")
 }
 
