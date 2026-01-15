@@ -25,6 +25,8 @@ pub struct MemoryStore {
     issue_children: HashMap<IssueId, Vec<IssueId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
     issue_blocked_on: HashMap<IssueId, Vec<IssueId>>,
+    /// Maps issue IDs to tasks spawned from them
+    issue_tasks: HashMap<IssueId, Vec<TaskId>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<TaskId, TaskStatusLog>,
 }
@@ -38,6 +40,7 @@ impl MemoryStore {
             patches: HashMap::new(),
             issue_children: HashMap::new(),
             issue_blocked_on: HashMap::new(),
+            issue_tasks: HashMap::new(),
             status_logs: HashMap::new(),
         }
     }
@@ -98,6 +101,32 @@ impl MemoryStore {
         let mut values: Vec<String> = ids.iter().map(ToString::to_string).collect();
         values.sort();
         values.join(", ")
+    }
+
+    fn index_task_for_issue(&mut self, issue_id: &IssueId, task_id: TaskId) {
+        let tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
+        if !tasks.contains(&task_id) {
+            tasks.push(task_id);
+        }
+    }
+
+    fn remove_task_from_issue_index(&mut self, issue_id: &IssueId, task_id: &TaskId) {
+        if let Some(tasks) = self.issue_tasks.get_mut(issue_id) {
+            tasks.retain(|id| id != task_id);
+            if tasks.is_empty() {
+                self.issue_tasks.remove(issue_id);
+            }
+        }
+    }
+
+    fn validate_dependencies(&self, dependencies: &[IssueDependency]) -> Result<(), StoreError> {
+        for dependency in dependencies {
+            if !self.issues.contains_key(&dependency.issue_id) {
+                return Err(StoreError::InvalidDependency(dependency.issue_id.clone()));
+            }
+        }
+
+        Ok(())
     }
 
     fn validate_issue_lifecycle(
@@ -171,6 +200,7 @@ impl Store for MemoryStore {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
 
+        self.validate_dependencies(&new_dependencies)?;
         self.validate_issue_lifecycle(None, &issue)?;
         self.issues.insert(id.clone(), issue);
 
@@ -199,6 +229,7 @@ impl Store for MemoryStore {
             .unwrap_or_default();
         let updated_dependencies = issue.dependencies.clone();
 
+        self.validate_dependencies(&updated_dependencies)?;
         self.validate_issue_lifecycle(Some(id), &issue)?;
         self.issues.insert(id.clone(), issue);
 
@@ -321,6 +352,29 @@ impl Store for MemoryStore {
         }
     }
 
+    async fn get_active_tasks_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        let task_ids = self.issue_tasks.get(issue_id).cloned().unwrap_or_default();
+
+        let mut active_tasks = Vec::new();
+        for task_id in task_ids {
+            if matches!(
+                self.get_status(&task_id).await?,
+                Status::Pending | Status::Running
+            ) {
+                active_tasks.push(task_id);
+            }
+        }
+
+        Ok(active_tasks)
+    }
+
     async fn add_task(
         &mut self,
         task: Task,
@@ -328,6 +382,7 @@ impl Store for MemoryStore {
     ) -> Result<TaskId, StoreError> {
         // Generate a unique ID for the new task
         let id = TaskId::new();
+        let spawned_from = task.spawned_from.clone();
 
         // Add the task
         self.tasks.insert(id.clone(), task);
@@ -337,6 +392,10 @@ impl Store for MemoryStore {
             id.clone(),
             TaskStatusLog::new(Status::Pending, creation_time),
         );
+
+        if let Some(issue_id) = spawned_from.as_ref() {
+            self.index_task_for_issue(issue_id, id.clone());
+        }
 
         Ok(id)
     }
@@ -353,6 +412,7 @@ impl Store for MemoryStore {
                 "Task already exists: {metis_id}"
             )));
         }
+        let spawned_from = task.spawned_from.clone();
 
         // Add the task with the specified ID
         self.tasks.insert(metis_id.clone(), task);
@@ -363,6 +423,10 @@ impl Store for MemoryStore {
             TaskStatusLog::new(Status::Pending, creation_time),
         );
 
+        if let Some(issue_id) = spawned_from.as_ref() {
+            self.index_task_for_issue(issue_id, metis_id.clone());
+        }
+
         Ok(())
     }
 
@@ -371,8 +435,23 @@ impl Store for MemoryStore {
             return Err(StoreError::TaskNotFound(metis_id.clone()));
         }
 
+        let previous_spawned_from = self
+            .tasks
+            .get(metis_id)
+            .and_then(|existing| existing.spawned_from.clone());
+
+        if let Some(previous_issue) = previous_spawned_from.as_ref() {
+            if task.spawned_from.as_ref() != Some(previous_issue) {
+                self.remove_task_from_issue_index(previous_issue, metis_id);
+            }
+        }
+
         // Overwrite the existing task without modifying edge structure
-        self.tasks.insert(metis_id.clone(), task);
+        self.tasks.insert(metis_id.clone(), task.clone());
+
+        if let Some(issue_id) = task.spawned_from.as_ref() {
+            self.index_task_for_issue(issue_id, metis_id.clone());
+        }
         Ok(())
     }
 
@@ -737,6 +816,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_issue_rejects_missing_dependencies() {
+        let mut store = MemoryStore::new();
+        let missing_dependency = IssueId::new();
+
+        let err = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: missing_dependency.clone(),
+            }]))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidDependency(id) if id == missing_dependency
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_issue_rejects_missing_dependencies() {
+        let mut store = MemoryStore::new();
+
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let missing_dependency = IssueId::new();
+
+        let err = store
+            .update_issue(
+                &issue_id,
+                sample_issue(vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: missing_dependency.clone(),
+                }]),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidDependency(id) if id == missing_dependency
+        ));
+    }
+
+    #[tokio::test]
     async fn open_issue_ready_when_not_blocked() {
         let mut store = MemoryStore::new();
 
@@ -938,6 +1060,64 @@ mod tests {
 
         let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
         assert_eq!(tasks, HashSet::from([task_id]));
+    }
+
+    #[tokio::test]
+    async fn active_tasks_for_issue_uses_index() {
+        let mut store = MemoryStore::new();
+
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let other_issue = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let mut pending_task = spawn_task();
+        pending_task.spawned_from = Some(issue_id.clone());
+        let pending_id = store.add_task(pending_task, Utc::now()).await.unwrap();
+
+        let mut running_task = spawn_task();
+        running_task.spawned_from = Some(issue_id.clone());
+        let running_id = store.add_task(running_task, Utc::now()).await.unwrap();
+        store
+            .mark_task_running(&running_id, Utc::now())
+            .await
+            .unwrap();
+
+        let mut completed_task = spawn_task();
+        completed_task.spawned_from = Some(issue_id.clone());
+        let completed_id = store.add_task(completed_task, Utc::now()).await.unwrap();
+        store
+            .mark_task_running(&completed_id, Utc::now())
+            .await
+            .unwrap();
+        store
+            .mark_task_complete(&completed_id, Ok(()), None, Utc::now())
+            .await
+            .unwrap();
+
+        let mut unrelated_task = spawn_task();
+        unrelated_task.spawned_from = Some(other_issue.clone());
+        store.add_task(unrelated_task, Utc::now()).await.unwrap();
+
+        let active: HashSet<_> = store
+            .get_active_tasks_for_issue(&issue_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+
+        assert_eq!(active, HashSet::from([pending_id, running_id]));
+    }
+
+    #[tokio::test]
+    async fn active_tasks_for_missing_issue_returns_error() {
+        let store = MemoryStore::new();
+        let missing_issue = IssueId::new();
+
+        let err = store
+            .get_active_tasks_for_issue(&missing_issue)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, StoreError::IssueNotFound(id) if id == missing_issue));
     }
 
     #[tokio::test]
