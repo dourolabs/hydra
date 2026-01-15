@@ -762,6 +762,7 @@ async fn create_github_pull_request(
         head_ref: pr_metadata.head_ref_name,
         base_ref: pr_metadata.base_ref_name,
         url: Some(pr_metadata.url),
+        ci: None,
     })
 }
 

@@ -67,6 +67,8 @@ pub struct GithubPr {
     pub base_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<GithubCiStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +113,29 @@ pub struct UpsertPatchResponse {
 pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GithubCiState {
+    Pending,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubCiFailure {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubCiStatus {
+    pub state: GithubCiState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<GithubCiFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

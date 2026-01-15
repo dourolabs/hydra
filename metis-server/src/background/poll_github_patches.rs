@@ -3,21 +3,27 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
-    patches::{Patch, PatchStatus, Review, UpsertPatchRequest},
+    patches::{
+        GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
+        UpsertPatchRequest,
+    },
 };
 use octocrab::{
     Octocrab,
     models::{
+        CombinedStatus, Status,
+        checks::{CheckRun, ListCheckRuns},
         issues::Comment as IssueComment,
         pulls::{Comment as PullRequestComment, PullRequest, Review as PullRequestReview},
     },
+    params::repos::Commitish,
 };
 use std::collections::HashSet;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
-const REQUESTS_PER_PATCH: u64 = 4;
+const REQUESTS_PER_PATCH: u64 = 6;
 
 /// Periodically polls GitHub for open patches linked to PRs and updates their status and reviews.
 pub async fn poll_github_patches(state: AppState) {
@@ -167,6 +173,7 @@ async fn sync_patch_from_github(
         .await?;
 
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
 
     let mut latest_patch = {
         let store = state.store.read().await;
@@ -190,6 +197,7 @@ async fn sync_patch_from_github(
     updated_github.head_ref = Some(pr.head.ref_field.clone());
     updated_github.base_ref = Some(pr.base.ref_field.clone());
     updated_github.url = pr.html_url.as_ref().map(ToString::to_string);
+    updated_github.ci = Some(ci_status);
 
     let mut changed = false;
     if merged_reviews != latest_patch.reviews {
@@ -360,6 +368,141 @@ fn github_client(token: String) -> anyhow::Result<Octocrab> {
         .context("building GitHub client")
 }
 
+async fn fetch_ci_status(
+    client: &Octocrab,
+    github: &metis_common::patches::GithubPr,
+    pr: &PullRequest,
+) -> anyhow::Result<GithubCiStatus> {
+    let head_sha = pr.head.sha.clone();
+    let combined_status: CombinedStatus = client
+        .get(
+            format!(
+                "/repos/{owner}/{repo}/commits/{sha}/status",
+                owner = github.owner,
+                repo = github.repo,
+                sha = head_sha
+            ),
+            None::<&()>,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "fetching combined status for {}/{}@{}",
+                github.owner, github.repo, head_sha
+            )
+        })?;
+
+    let check_runs = client
+        .checks(&github.owner, &github.repo)
+        .list_check_runs_for_git_ref(Commitish(head_sha.clone()))
+        .per_page(100)
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "fetching check runs for {}/{}@{}",
+                github.owner, github.repo, head_sha
+            )
+        })?;
+
+    Ok(ci_status_from_responses(check_runs, combined_status))
+}
+
+fn ci_status_from_responses(
+    check_runs: ListCheckRuns,
+    combined_status: CombinedStatus,
+) -> GithubCiStatus {
+    if let Some(failure) = first_failed_check_run(&check_runs.check_runs) {
+        return GithubCiStatus {
+            state: GithubCiState::Failed,
+            failure: Some(failure),
+        };
+    }
+
+    if check_runs.check_runs.iter().any(is_pending_check_run) {
+        return GithubCiStatus {
+            state: GithubCiState::Pending,
+            failure: None,
+        };
+    }
+
+    if let Some(failure) = first_failed_status(&combined_status.statuses) {
+        return GithubCiStatus {
+            state: GithubCiState::Failed,
+            failure: Some(failure),
+        };
+    }
+
+    if combined_status
+        .statuses
+        .iter()
+        .any(|status| matches!(status.state, octocrab::models::StatusState::Pending))
+    {
+        return GithubCiStatus {
+            state: GithubCiState::Pending,
+            failure: None,
+        };
+    }
+
+    GithubCiStatus {
+        state: state_from_combined_status(&combined_status),
+        failure: None,
+    }
+}
+
+fn first_failed_check_run(check_runs: &[CheckRun]) -> Option<GithubCiFailure> {
+    check_runs.iter().find_map(|run| {
+        let conclusion = run.conclusion.as_deref()?;
+        if is_failed_conclusion(conclusion) {
+            return Some(GithubCiFailure {
+                name: run.name.clone(),
+                summary: run.output.summary.clone(),
+                details_url: run.details_url.clone().or_else(|| run.html_url.clone()),
+            });
+        }
+
+        None
+    })
+}
+
+fn is_pending_check_run(run: &CheckRun) -> bool {
+    run.conclusion.is_none()
+}
+
+fn is_failed_conclusion(conclusion: &str) -> bool {
+    matches!(
+        conclusion.to_ascii_lowercase().as_str(),
+        "failure" | "cancelled" | "timed_out" | "action_required" | "startup_failure" | "stale"
+    )
+}
+
+fn first_failed_status(statuses: &[Status]) -> Option<GithubCiFailure> {
+    statuses.iter().find_map(|status| match status.state {
+        octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
+            Some(GithubCiFailure {
+                name: status
+                    .context
+                    .clone()
+                    .unwrap_or_else(|| "status".to_string()),
+                summary: status.description.clone(),
+                details_url: status.target_url.clone(),
+            })
+        }
+        _ => None,
+    })
+}
+
+fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState {
+    match combined_status.state {
+        octocrab::models::StatusState::Pending => GithubCiState::Pending,
+        octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
+            GithubCiState::Failed
+        }
+        octocrab::models::StatusState::Success => GithubCiState::Success,
+        _ => GithubCiState::Pending,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,8 +552,8 @@ mod tests {
 
     #[test]
     fn max_patches_per_cycle_respects_rate_limit() {
-        assert_eq!(max_patches_per_cycle(60), 20);
-        assert_eq!(max_patches_per_cycle(120), 41);
+        assert_eq!(max_patches_per_cycle(60), 13);
+        assert_eq!(max_patches_per_cycle(120), 27);
     }
 
     #[test]
@@ -452,6 +595,137 @@ mod tests {
             patch_status_from_github(&base_pr),
             PatchStatus::Closed
         ));
+    }
+
+    #[test]
+    fn ci_status_from_check_runs_marks_failure() {
+        let check_runs = list_check_runs(vec![build_check_run(
+            "build",
+            Some("failure"),
+            Some("compile error"),
+            Some("https://ci.example.com/run/1"),
+        )]);
+        let combined = make_combined_status(
+            "failure",
+            vec![make_status(
+                "failure",
+                "build",
+                Some("compile error"),
+                Some("https://ci.example.com/run/1"),
+            )],
+        );
+
+        let ci_status = ci_status_from_responses(check_runs, combined);
+
+        assert!(matches!(ci_status.state, GithubCiState::Failed));
+        let failure = ci_status.failure.expect("expected failure details");
+        assert_eq!(failure.name, "build");
+        assert_eq!(failure.summary.as_deref(), Some("compile error"));
+        assert_eq!(
+            failure.details_url.as_deref(),
+            Some("https://ci.example.com/run/1")
+        );
+    }
+
+    #[test]
+    fn ci_status_from_check_runs_handles_pending() {
+        let check_runs = list_check_runs(vec![build_check_run("tests", None, None, None)]);
+        let combined =
+            make_combined_status("pending", vec![make_status("pending", "tests", None, None)]);
+
+        let ci_status = ci_status_from_responses(check_runs, combined);
+
+        assert!(matches!(ci_status.state, GithubCiState::Pending));
+        assert!(ci_status.failure.is_none());
+    }
+
+    #[test]
+    fn ci_status_from_statuses_reports_success() {
+        let check_runs = list_check_runs(vec![]);
+        let combined = make_combined_status(
+            "success",
+            vec![make_status(
+                "success",
+                "lint",
+                Some("ok"),
+                Some("https://ci.example.com/lint"),
+            )],
+        );
+
+        let ci_status = ci_status_from_responses(check_runs, combined);
+
+        assert!(matches!(ci_status.state, GithubCiState::Success));
+        assert!(ci_status.failure.is_none());
+    }
+
+    fn list_check_runs(runs: Vec<serde_json::Value>) -> ListCheckRuns {
+        serde_json::from_value(json!({
+            "total_count": runs.len(),
+            "check_runs": runs,
+        }))
+        .unwrap()
+    }
+
+    fn build_check_run(
+        name: &str,
+        conclusion: Option<&str>,
+        summary: Option<&str>,
+        details_url: Option<&str>,
+    ) -> serde_json::Value {
+        json!({
+            "id": 1,
+            "node_id": format!("node-{name}"),
+            "details_url": details_url,
+            "head_sha": "abc123",
+            "url": format!("https://api.example.com/checks/{name}"),
+            "html_url": format!("https://ci.example.com/checks/{name}"),
+            "conclusion": conclusion,
+            "output": {
+                "title": name,
+                "summary": summary,
+                "text": null,
+                "annotations_count": 0,
+                "annotations_url": "https://ci.example.com/annotations"
+            },
+            "started_at": null,
+            "completed_at": null,
+            "name": name,
+            "pull_requests": []
+        })
+    }
+
+    fn make_combined_status(state: &str, statuses: Vec<serde_json::Value>) -> CombinedStatus {
+        serde_json::from_value(json!({
+            "state": state,
+            "sha": "abc123",
+            "total_count": statuses.len(),
+            "statuses": statuses,
+            "repository": null,
+            "commit_url": null,
+            "url": null
+        }))
+        .unwrap()
+    }
+
+    fn make_status(
+        state: &str,
+        context: &str,
+        description: Option<&str>,
+        target_url: Option<&str>,
+    ) -> serde_json::Value {
+        json!({
+            "id": null,
+            "node_id": null,
+            "avatar_url": null,
+            "description": description,
+            "url": null,
+            "target_url": target_url,
+            "created_at": null,
+            "updated_at": null,
+            "state": state,
+            "creator": null,
+            "context": context
+        })
     }
 
     #[test]
