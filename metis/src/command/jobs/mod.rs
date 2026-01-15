@@ -54,6 +54,9 @@ pub enum JobsCommand {
             default_value_t = DEFAULT_JOB_LIMIT,
         )]
         limit: usize,
+        /// Emit jobs as machine-readable JSON instead of the default table.
+        #[arg(long = "json")]
+        json: bool,
         /// Filter jobs that were spawned from a specific issue.
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
@@ -97,8 +100,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
         } => create::run(client, wait, repo, rev, image, var, prompt).await?,
         JobsCommand::List {
             limit,
+            json,
             spawned_from,
-        } => list::run(client, limit, spawned_from).await?,
+        } => list::run(client, limit, spawned_from, json).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
         JobsCommand::Kill { job } => kill::run(client, job).await?,
         JobsCommand::WorkerRun { job, path } => {

@@ -4,9 +4,10 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskStatusLog},
-    IssueId,
+    IssueId, TaskId,
 };
 use owo_colors::OwoColorize;
+use serde::{Deserialize, Serialize};
 use textwrap::{termwidth, Options, WrapAlgorithm};
 
 const NAME_WIDTH: usize = 48;
@@ -17,10 +18,33 @@ const MAX_NOTE_LINES: usize = 5;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 pub const DEFAULT_JOB_LIMIT: usize = 10;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct JobSummary {
+    id: TaskId,
+    status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finished_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct JobsListOutput {
+    page: usize,
+    page_size: usize,
+    total: usize,
+    jobs: Vec<JobSummary>,
+}
+
 pub async fn run(
     client: &dyn MetisClientInterface,
     limit: usize,
     spawned_from: Option<IssueId>,
+    json: bool,
 ) -> Result<()> {
     let response = client
         .list_jobs(&SearchJobsQuery {
@@ -28,16 +52,23 @@ pub async fn run(
             spawned_from,
         })
         .await?;
+    let limit = limit.max(1);
+    let total_jobs = response.jobs.len();
+
+    if json {
+        let output = jobs_json_output(response.jobs, limit);
+        println!("{}", serde_json::to_string(&output)?);
+        return Ok(());
+    }
+
     let terminal_width = current_terminal_width();
     let now = Utc::now();
 
-    if response.jobs.is_empty() {
+    if total_jobs == 0 {
         println!("No Metis jobs found.");
         return Ok(());
     }
 
-    let limit = limit.max(1);
-    let total_jobs = response.jobs.len();
     let (jobs, truncated) = truncate_jobs(response.jobs, limit);
     let (plain_header, colored_header) = header_row();
     println!("{colored_header}");
@@ -76,6 +107,33 @@ pub(crate) fn truncate_jobs(jobs: Vec<JobRecord>, limit: usize) -> (Vec<JobRecor
     }
 
     (jobs.into_iter().take(limit).collect(), true)
+}
+
+fn jobs_json_output(jobs: Vec<JobRecord>, limit: usize) -> JobsListOutput {
+    let page_size = limit.max(1);
+    let total = jobs.len();
+    let (jobs, _) = truncate_jobs(jobs, page_size);
+    let jobs = jobs.into_iter().map(JobSummary::from).collect();
+
+    JobsListOutput {
+        page: 1,
+        page_size,
+        total,
+        jobs,
+    }
+}
+
+impl From<JobRecord> for JobSummary {
+    fn from(job: JobRecord) -> Self {
+        Self {
+            id: job.id,
+            status: job.status_log.current_status(),
+            created_at: job.status_log.creation_time(),
+            started_at: job.status_log.start_time(),
+            finished_at: job.status_log.end_time(),
+            notes: job.notes,
+        }
+    }
 }
 
 pub(crate) fn format_job_lines(prefix: &str, notes: &str, terminal_width: usize) -> Vec<String> {
@@ -230,7 +288,9 @@ mod tests {
         client::MockMetisClient,
         test_utils::ids::{issue_id, task_id},
     };
+    use chrono::TimeZone;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
+    use metis_common::task_status::Event;
     use std::collections::HashMap;
 
     fn sample_job(id: &str) -> JobRecord {
@@ -350,7 +410,7 @@ mod tests {
             jobs: vec![sample_job("t-job-1")],
         });
 
-        run(&client, 5, Some(spawned_from.clone()))
+        run(&client, 5, Some(spawned_from.clone()), false)
             .await
             .expect("list jobs should succeed");
 
@@ -358,5 +418,57 @@ mod tests {
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].spawned_from, Some(spawned_from));
         assert!(queries[0].q.is_none());
+    }
+
+    #[test]
+    fn jobs_json_output_includes_timestamps() {
+        let created_at = Utc
+            .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+            .single()
+            .expect("valid timestamp");
+        let started_at = created_at + ChronoDuration::seconds(5);
+        let finished_at = started_at + ChronoDuration::seconds(10);
+
+        let mut job = sample_job("t-job-1");
+        job.notes = Some("note".to_string());
+        job.status_log = TaskStatusLog::new(Status::Pending, created_at);
+        job.status_log
+            .events
+            .push(Event::Started { at: started_at });
+        job.status_log.events.push(Event::Completed {
+            at: finished_at,
+            last_message: None,
+        });
+
+        let output = jobs_json_output(vec![job], 5);
+        let serialized = serde_json::to_string(&output).expect("should serialize");
+        let parsed: JobsListOutput =
+            serde_json::from_str(&serialized).expect("should parse serialized output");
+
+        assert_eq!(parsed.total, 1);
+        assert_eq!(parsed.page, 1);
+        assert_eq!(parsed.page_size, 5);
+        assert_eq!(parsed.jobs.len(), 1);
+
+        let summary = &parsed.jobs[0];
+        assert_eq!(summary.id, task_id("t-job-1"));
+        assert_eq!(summary.status, Status::Complete);
+        assert_eq!(summary.created_at, Some(created_at));
+        assert_eq!(summary.started_at, Some(started_at));
+        assert_eq!(summary.finished_at, Some(finished_at));
+        assert_eq!(summary.notes.as_deref(), Some("note"));
+    }
+
+    #[test]
+    fn jobs_json_output_handles_empty_results() {
+        let output = jobs_json_output(Vec::new(), 3);
+        let serialized = serde_json::to_string(&output).expect("should serialize");
+        let parsed: JobsListOutput =
+            serde_json::from_str(&serialized).expect("should parse serialized output");
+
+        assert_eq!(parsed.total, 0);
+        assert_eq!(parsed.page, 1);
+        assert_eq!(parsed.page_size, 3);
+        assert!(parsed.jobs.is_empty());
     }
 }
