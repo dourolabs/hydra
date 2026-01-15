@@ -1,6 +1,8 @@
 use crate::{
     app::{AppState, ServiceState},
-    config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
+    config::{
+        AppConfig, BackgroundSection, GithubConfig, KubernetesSection, MetisSection, ServiceSection,
+    },
     job_engine::{JobEngine, MockJobEngine},
     run_with_state,
     store::MemoryStore,
@@ -37,6 +39,7 @@ pub(crate) fn test_app_config() -> AppConfig {
         kubernetes: KubernetesSection::default(),
         service: ServiceSection::default(),
         background: BackgroundSection::default(),
+        github: GithubConfig::default(),
     }
 }
 

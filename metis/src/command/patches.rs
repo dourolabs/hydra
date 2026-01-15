@@ -10,7 +10,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_GH_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    github::GithubConfig,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -22,7 +23,6 @@ use metis_common::{
     },
     PatchId, TaskId,
 };
-use octocrab::Octocrab;
 use serde::Deserialize;
 
 use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
@@ -995,11 +995,11 @@ async fn open_pull_request(
         .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
 
     // Use octocrab to get structured PR metadata
-    let token = env::var("GH_TOKEN").context("GH_TOKEN environment variable is required")?;
-    let crab = Octocrab::builder()
-        .personal_token(token)
-        .build()
-        .context("failed to create octocrab client")?;
+    let token = env::var(ENV_GH_TOKEN).context("GH_TOKEN environment variable is required")?;
+    let crab = GithubConfig::from_env()
+        .build_client_with_token(Some(token))
+        .context("failed to create GitHub client")?
+        .into_client();
 
     let (owner, repo) = parse_pr_repository(pr_url.trim())
         .ok_or_else(|| anyhow!("failed to parse repository from PR URL: {pr_url}"))?;

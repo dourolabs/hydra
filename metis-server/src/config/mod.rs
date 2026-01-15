@@ -1,6 +1,7 @@
 pub mod kube;
 
 pub use kube::build_kube_client;
+pub use metis_common::github::GithubConfig;
 
 use anyhow::{Context, Result};
 use metis_common::jobs::BundleSpec;
@@ -21,6 +22,8 @@ pub struct AppConfig {
     pub service: ServiceSection,
     #[serde(default)]
     pub background: BackgroundSection,
+    #[serde(default)]
+    pub github: GithubConfig,
 }
 
 impl AppConfig {
