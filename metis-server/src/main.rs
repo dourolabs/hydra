@@ -10,9 +10,7 @@ mod store;
 mod test;
 
 use crate::app::{AppState, ServiceState};
-use crate::background::{
-    AgentQueue, Spawner, poll_github_patches, run_spawners, start_background_scheduler,
-};
+use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{MemoryStore, Store};
@@ -27,20 +25,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
-    // Run scheduler-backed workers for pending and running job processing
+    // Run scheduler-backed workers for background processing (jobs, spawners, GitHub poller)
     let scheduler = start_background_scheduler(state.clone());
-
-    // Spawn background task to sync GitHub PR metadata for patches
-    let github_poll_state = state.clone();
-    tokio::spawn(async move {
-        poll_github_patches(github_poll_state).await;
-    });
-
-    // Spawn background task to run configured spawners
-    let spawner_state = state.clone();
-    tokio::spawn(async move {
-        run_spawners(spawner_state).await;
-    });
 
     let app = Router::new()
         .route("/health", get(health_check))

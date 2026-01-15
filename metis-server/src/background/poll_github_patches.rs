@@ -1,4 +1,7 @@
-use crate::AppState;
+use crate::{
+    AppState,
+    background::scheduler::{ScheduledWorker, WorkerOutcome},
+};
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use metis_common::{
@@ -21,36 +24,55 @@ use octocrab::{
     params::{pulls::State, repos::Commitish},
 };
 use serde_json::json;
-use std::collections::HashSet;
-use tokio::time::{Duration, sleep};
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
 
-/// Periodically polls GitHub for open patches linked to PRs and updates their status and reviews.
-pub async fn poll_github_patches(state: AppState) {
-    let scheduler = &state.config.background.scheduler.github_poller;
-    let interval_secs = scheduler
-        .interval_secs
-        .max(state.config.background.github_poller.interval_secs);
-    let sleep_duration = Duration::from_secs(interval_secs);
-    let max_patches_per_cycle = max_patches_per_cycle(interval_secs);
-    let mut start_from = 0usize;
-    debug!(
-        interval_secs,
-        initial_backoff_secs = scheduler.initial_backoff_secs,
-        max_backoff_secs = scheduler.max_backoff_secs,
-        "github_poller scheduler configured"
-    );
+#[derive(Clone)]
+pub struct GithubPollerWorker {
+    state: AppState,
+    max_patches_per_cycle: usize,
+    start_from: Arc<Mutex<usize>>,
+}
 
-    loop {
-        if let Err(err) = sync_open_patches(&state, max_patches_per_cycle, &mut start_from).await {
-            warn!(error = %err, "failed to sync GitHub patches");
+impl GithubPollerWorker {
+    pub fn new(state: AppState, interval_secs: u64) -> Self {
+        let interval_secs = interval_secs.max(1);
+        let max_patches_per_cycle = max_patches_per_cycle(interval_secs);
+
+        Self {
+            state,
+            max_patches_per_cycle,
+            start_from: Arc::new(Mutex::new(0)),
         }
-
-        sleep(sleep_duration).await;
     }
+}
+
+#[async_trait::async_trait]
+impl ScheduledWorker for GithubPollerWorker {
+    async fn run_iteration(&self) -> WorkerOutcome {
+        let mut start_from = self.start_from.lock().await;
+
+        match sync_open_patches(&self.state, self.max_patches_per_cycle, &mut start_from).await {
+            Ok(stats) if stats.processed == 0 && stats.failed == 0 => WorkerOutcome::Idle,
+            Ok(stats) => WorkerOutcome::Progress {
+                processed: stats.processed,
+                failed: stats.failed,
+            },
+            Err(err) => WorkerOutcome::TransientError {
+                reason: err.to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+struct SyncStats {
+    processed: usize,
+    failed: usize,
 }
 
 fn max_patches_per_cycle(interval_secs: u64) -> usize {
@@ -70,7 +92,7 @@ async fn sync_open_patches(
     state: &AppState,
     max_per_cycle: usize,
     start_from: &mut usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<SyncStats> {
     let open_patches: Vec<(PatchId, Patch)> = {
         let store = state.store.read().await;
         store
@@ -84,7 +106,7 @@ async fn sync_open_patches(
 
     if open_patches.is_empty() {
         *start_from = 0;
-        return Ok(());
+        return Ok(SyncStats::default());
     }
 
     if *start_from >= open_patches.len() {
@@ -105,18 +127,23 @@ async fn sync_open_patches(
         "synchronizing GitHub patches"
     );
 
-    let mut processed = 0usize;
+    let mut stats = SyncStats::default();
+    let mut attempted = 0usize;
     for (patch_id, patch) in ordered.into_iter().take(limit) {
-        if let Err(err) = sync_patch_from_github(state, &patch_id, patch).await {
-            warn!(patch_id = %patch_id, error = %err, "failed to sync patch from GitHub");
+        match sync_patch_from_github(state, &patch_id, patch).await {
+            Ok(()) => stats.processed += 1,
+            Err(err) => {
+                stats.failed += 1;
+                warn!(patch_id = %patch_id, error = %err, "failed to sync patch from GitHub");
+            }
         }
 
-        processed += 1;
+        attempted += 1;
     }
 
-    *start_from = (*start_from + processed) % open_patches.len();
+    *start_from = (*start_from + attempted) % open_patches.len();
 
-    Ok(())
+    Ok(stats)
 }
 
 async fn sync_patch_from_github(
@@ -629,13 +656,75 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use metis_common::patches::GithubPr;
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::RwLock;
 
     use crate::{
         app::{GitRepository, ServiceState},
-        test::test_state,
+        test::{store::FailingStore, test_state},
     };
+
+    #[tokio::test]
+    async fn github_worker_returns_idle_without_open_patches() {
+        let worker = GithubPollerWorker::new(test_state(), 60);
+
+        assert_eq!(worker.run_iteration().await, WorkerOutcome::Idle);
+    }
+
+    #[tokio::test]
+    async fn github_worker_reports_progress_for_github_patches_without_token() -> anyhow::Result<()>
+    {
+        let state = test_state();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_patch(Patch {
+                    title: "test".to_string(),
+                    description: "desc".to_string(),
+                    diff: String::new(),
+                    status: PatchStatus::Open,
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                    service_repo_name: Some("api".to_string()),
+                    github: Some(GithubPr {
+                        owner: "octo".to_string(),
+                        repo: "repo".to_string(),
+                        number: 1,
+                        head_ref: None,
+                        base_ref: None,
+                        url: None,
+                        ci: None,
+                    }),
+                })
+                .await?;
+        }
+        let worker = GithubPollerWorker::new(state, 60);
+
+        let outcome = worker.run_iteration().await;
+
+        assert_eq!(
+            outcome,
+            WorkerOutcome::Progress {
+                processed: 1,
+                failed: 0
+            }
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn github_worker_surfaces_store_errors() {
+        let mut state = test_state();
+        state.store = Arc::new(RwLock::new(Box::new(FailingStore)));
+        let worker = GithubPollerWorker::new(state, 60);
+
+        let outcome = worker.run_iteration().await;
+
+        assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
+    }
 
     #[test]
     fn merge_reviews_preserves_existing() {
