@@ -6,9 +6,10 @@ use std::{
     process::{Command, Stdio},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
+    git::{GitClient, GitRepository},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     TaskId,
@@ -30,20 +31,34 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
+    let git_client = GitClient::new();
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    match request_context {
+    let git_repo = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
+            git_client.open(&dest).ok()
         }
         Bundle::GitRepository { url, rev } => {
-            clone_git_repo(&url, &rev, &dest, github_token.as_deref())?;
+            if github_token.is_some() {
+                // The token is present as an environment variable, so it doesn't need to be explicitly
+                // passed to authenticate.
+                authenticate_github()?;
+            }
+            let repo = git_client
+                .clone_checkout(&url, &dest)
+                .with_context(|| format!("failed to clone {url}"))?;
+            repo.checkout(&rev)
+                .with_context(|| format!("failed to checkout revision {rev}"))?;
+            Some(repo)
         }
-    }
+    };
     create_output_directory(&dest)?;
 
     login_codex()?;
-    configure_git_repo(&dest)?;
+    if let Some(repo) = git_repo.as_ref() {
+        configure_git_repo(repo)?;
+    }
 
     run_codex(&prompt, &dest, &execution_env)
         .await
@@ -79,31 +94,6 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
     }
 }
 
-fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
-    if let Some(_token) = github_token {
-        // The token is also present as an environment variable so it doesn't need to be explicitly
-        // passed to authenticate.
-        authenticate_github()?;
-    }
-
-    let status = Command::new("git")
-        .args(["clone", "--no-checkout", url, dest.to_str().unwrap()])
-        .status()
-        .context("failed to spawn git clone")?;
-    if !status.success() {
-        return Err(anyhow!("git clone failed with status {status}"));
-    }
-
-    let status = Command::new("git")
-        .args(["-C", dest.to_str().unwrap(), "checkout", rev])
-        .status()
-        .context("failed to spawn git checkout")?;
-    if !status.success() {
-        return Err(anyhow!("git checkout failed with status {status}"));
-    }
-    Ok(())
-}
-
 fn authenticate_github() -> Result<()> {
     let status = Command::new("gh")
         .args(["auth", "setup-git"])
@@ -116,39 +106,8 @@ fn authenticate_github() -> Result<()> {
     Ok(())
 }
 
-fn configure_git_repo(dest: &Path) -> Result<()> {
-    let git_dir = dest.join(".git");
-    if !git_dir.exists() {
-        return Ok(());
-    }
-
-    let repo_path = dest
-        .to_str()
-        .ok_or_else(|| anyhow!("destination path contains invalid UTF-8"))?;
-
-    let status = Command::new("git")
-        .args(["-C", repo_path, "config", "user.name", "Metis Worker"])
-        .status()
-        .context("failed to set git user.name")?;
-    if !status.success() {
-        return Err(anyhow!("git config user.name failed with status {status}"));
-    }
-
-    let status = Command::new("git")
-        .args([
-            "-C",
-            repo_path,
-            "config",
-            "user.email",
-            "metis-worker@example.com",
-        ])
-        .status()
-        .context("failed to set git user.email")?;
-    if !status.success() {
-        return Err(anyhow!("git config user.email failed with status {status}"));
-    }
-
-    Ok(())
+fn configure_git_repo(repo: &GitRepository) -> Result<()> {
+    repo.set_user_config("Metis Worker", "metis-worker@example.com")
 }
 
 fn login_codex() -> Result<()> {
@@ -295,67 +254,20 @@ fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
 /// Create a unified diff from the repository at `dest`, staging all changes (including
 /// untracked files) except for `.metis/**`, and returning the diff as a string.
 pub fn create_patch_from_repo(dest: &Path) -> Result<String> {
+    let git_client = GitClient::new();
+    let repo = git_client
+        .discover(dest)
+        .with_context(|| format!("failed to open git repository at {dest:?}"))?;
     let temp_dir = tempfile::tempdir()
         .context("failed to create temporary directory for git index during patch creation")?;
     let temp_index_path = temp_dir.path().join("index");
 
-    let patch = create_patch_with_index(dest, Some(temp_index_path.as_path()))?;
-    Ok(patch)
-}
-
-fn create_patch_with_index(dest: &Path, index_file: Option<&Path>) -> Result<String> {
-    stage_changes(dest, index_file)?;
-    capture_cached_diff(dest, index_file)
-}
-
-fn stage_changes(dest: &Path, index_file: Option<&Path>) -> Result<()> {
-    let add_status = git_command(dest, index_file)
-        .args(["add", "-A", "--", "."])
-        .status()
-        .context("failed to stage repository changes")?;
-    if !add_status.success() {
-        bail!("git add failed while preparing patch contents");
-    }
-
-    let reset_status = git_command(dest, index_file)
-        .args(["reset", "-q", "--", constants::METIS_DIR])
-        .status()
-        .context("failed to exclude .metis contents from patch")?;
-    if !reset_status.success() {
-        bail!("git reset failed while excluding {}", constants::METIS_DIR);
-    }
-
-    Ok(())
-}
-
-fn capture_cached_diff(dest: &Path, index_file: Option<&Path>) -> Result<String> {
-    // Create patch from staged changes
-    // Note: git diff returns exit code 1 when there are no changes (normal case)
-    let output = git_command(dest, index_file)
-        .args([
-            "diff",
-            "--cached",
-            "--",
-            ".",
-            &format!(":!{}/**", constants::METIS_DIR),
-        ])
-        .current_dir(dest)
-        .output()
-        .context("failed to spawn git diff")?;
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(anyhow!("git diff failed with status {}", output.status));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn git_command(dest: &Path, index_file: Option<&Path>) -> Command {
-    let mut command = Command::new("git");
-    command.current_dir(dest);
-    if let Some(index) = index_file {
-        command.env("GIT_INDEX_FILE", index);
-    }
-    command
+    repo.stage_all(Some(temp_index_path.as_path()))?;
+    repo.reset_path(constants::METIS_DIR, Some(temp_index_path.as_path()))?;
+    repo.diff_cached_excluding(
+        Some(&format!(":!{}/**", constants::METIS_DIR)),
+        Some(temp_index_path.as_path()),
+    )
 }
 
 #[cfg(test)]
@@ -487,7 +399,8 @@ mod tests {
             .then_some(())
             .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
-        configure_git_repo(repo_path)?;
+        let git_repo = GitClient::new().open(repo_path)?;
+        configure_git_repo(&git_repo)?;
 
         let user_name = Command::new("git")
             .args(["-C", repo_str, "config", "user.name"])

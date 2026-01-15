@@ -8,6 +8,9 @@ indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }
 rand = "0.8"
+anyhow = "1.0"
+gix = { version = "0.77", features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
+tempfile = "3.13"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = [] }

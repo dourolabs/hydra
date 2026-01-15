@@ -11,6 +11,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    git::{GitClient, GitRepository},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -556,21 +557,11 @@ pub async fn create_patch_artifact_from_repo(
 }
 
 fn git_repository_root() -> Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .context("failed to find git repository root")?;
-
-    if !output.status.success() {
-        bail!("Current directory is not inside a git repository.");
-    }
-
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.is_empty() {
-        bail!("Failed to resolve git repository root.");
-    }
-
-    Ok(PathBuf::from(root))
+    let current_dir = std::env::current_dir().context("failed to resolve current directory")?;
+    let repo = GitClient::new()
+        .discover(&current_dir)
+        .context("Current directory is not inside a git repository.")?;
+    repo.workdir()
 }
 
 fn extract_patch_title(record: &PatchRecord) -> &str {
@@ -640,12 +631,15 @@ async fn apply_patch_record(client: &dyn MetisClientInterface, id: PatchId) -> R
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
     let diff = extract_patch_diff(&patch_record);
     let repo_root = git_repository_root()?;
+    let git_repo = GitClient::new()
+        .open(&repo_root)
+        .with_context(|| format!("failed to open git repository at {repo_root:?}"))?;
 
-    apply_patch_to_repo(diff, &repo_root)?;
+    apply_patch_to_repo(diff, &git_repo)?;
     Ok(())
 }
 
-fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
+fn apply_patch_to_repo(patch: &str, repo: &GitRepository) -> Result<()> {
     if patch.trim().is_empty() {
         bail!("Patch is empty. Nothing to apply.");
     }
@@ -653,49 +647,9 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
     println!("Applying patch to current git repository...\n");
     pretty_print_patch(patch);
 
-    let patch_file = NamedTempFile::new().context("Failed to create temporary file for patch")?;
-    fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
-
-    let output = Command::new("git")
-        .arg("apply")
-        .args(["--3way", "--index"])
-        .arg(patch_file.path())
-        .current_dir(git_root)
-        .output()
-        .context("Failed to execute git apply with 3-way merge")?;
-
-    if !output.stderr.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("git apply stderr: {stderr}");
-    }
-
-    if !output.stdout.is_empty() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        println!("git apply stdout: {stdout}");
-    }
-
-    if output.status.success() {
-        println!("Patch applied successfully.");
-        return Ok(());
-    }
-
-    let conflicted_files = Command::new("git")
-        .args(["diff", "--name-only", "--diff-filter=U"])
-        .current_dir(git_root)
-        .output()
-        .context("Failed to check for merge conflicts after applying patch")?;
-    let conflicts = String::from_utf8_lossy(&conflicted_files.stdout);
-
-    if !conflicts.trim().is_empty() {
-        bail!("Merge conflicts detected while applying patch; resolve these files and continue:\n{conflicts}");
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!(
-        "Failed to apply patch. Exit code: {}. Error: {}",
-        output.status.code().unwrap_or(-1),
-        stderr
-    );
+    repo.apply_patch(patch)?;
+    println!("Patch applied successfully.");
+    Ok(())
 }
 
 async fn review_patch(
@@ -747,11 +701,14 @@ async fn create_github_pull_request(
     description: &str,
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
-    let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    stage_changes_for_pr(repo_root)?;
-    ensure_staged_changes(repo_root)?;
-    commit_changes(repo_root, title)?;
-    push_branch(repo_root, &branch_name)?;
+    let git_repo = GitClient::new()
+        .open(repo_root)
+        .with_context(|| format!("failed to open git repository at {repo_root:?}"))?;
+    let branch_name = ensure_feature_branch(&git_repo, job_id)?;
+    stage_changes_for_pr(&git_repo)?;
+    ensure_staged_changes(&git_repo)?;
+    commit_changes(&git_repo, title)?;
+    push_branch(&git_repo, &branch_name)?;
     let pr_metadata = open_pull_request(repo_root, title, description, &branch_name).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
         .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
@@ -766,8 +723,8 @@ async fn create_github_pull_request(
     })
 }
 
-fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
-    let current_branch = current_branch(repo_root)?;
+fn ensure_feature_branch(repo: &GitRepository, job_id: Option<&str>) -> Result<String> {
+    let current_branch = repo.current_branch()?;
     if !should_create_new_branch(&current_branch) {
         return Ok(current_branch);
     }
@@ -779,12 +736,12 @@ fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<Strin
         format!("metis-{sanitized_job}")
     };
     let mut suffix = 0;
-    while branch_exists(repo_root, &candidate)? {
+    while repo.branch_exists(&candidate)? {
         suffix += 1;
         candidate = format!("{candidate}-{suffix}");
     }
 
-    checkout_new_branch(repo_root, &candidate)?;
+    repo.checkout_new_branch(&candidate)?;
     Ok(candidate)
 }
 
@@ -811,113 +768,25 @@ fn sanitize_branch_segment(input: &str) -> String {
     normalized.trim_matches('-').to_string()
 }
 
-fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool> {
-    let status = Command::new("git")
-        .args(["show-ref", "--verify", &format!("refs/heads/{branch}")])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check for existing branch")?;
-
-    Ok(status.success())
+fn stage_changes_for_pr(repo: &GitRepository) -> Result<()> {
+    repo.stage_all(None)?;
+    repo.reset_path(constants::METIS_DIR, None)?;
+    Ok(())
 }
 
-fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["checkout", "-b", branch])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to create feature branch for GitHub PR")?;
-
-    if status.success() {
+fn ensure_staged_changes(repo: &GitRepository) -> Result<()> {
+    if repo.has_staged_changes()? {
         return Ok(());
     }
-
-    bail!("failed to create branch '{branch}'");
+    bail!("No staged changes to commit for GitHub PR")
 }
 
-fn current_branch(repo_root: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_root)
-        .output()
-        .context("failed to resolve current branch")?;
-    if !output.status.success() {
-        bail!("git rev-parse --abbrev-ref failed");
-    }
-
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() {
-        bail!("unable to determine current branch");
-    }
-
-    Ok(branch)
+fn commit_changes(repo: &GitRepository, title: &str) -> Result<()> {
+    repo.commit(title)
 }
 
-fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
-    let add_status = Command::new("git")
-        .arg("add")
-        .args(["-A", "--", "."])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to stage changes for GitHub PR")?;
-
-    if !add_status.success() {
-        bail!("failed to stage changes for GitHub PR");
-    }
-
-    let reset_status = Command::new("git")
-        .args(["reset", "-q", "--", constants::METIS_DIR])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to exclude .metis directory from GitHub PR staging")?;
-
-    if reset_status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to exclude .metis directory from GitHub PR staging");
-}
-
-fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check staged changes")?;
-
-    match status.code() {
-        Some(0) => bail!("No staged changes to commit for GitHub PR"),
-        Some(1) => Ok(()),
-        _ => bail!("failed to check staged changes before committing"),
-    }
-}
-
-fn commit_changes(repo_root: &Path, title: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["commit", "-m", title])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to commit changes for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to commit changes for GitHub PR");
-}
-
-fn push_branch(repo_root: &Path, branch: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["push", "-u", "origin", branch])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to push branch to origin for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to push branch '{branch}' to origin");
+fn push_branch(repo: &GitRepository, branch: &str) -> Result<()> {
+    repo.push("origin", branch)
 }
 
 #[derive(Deserialize)]
@@ -1033,6 +902,7 @@ mod tests {
         test_utils::ids::{issue_id, patch_id, task_id},
     };
     use anyhow::anyhow;
+    use metis_common::git::{GitClient, GitRepository};
     use metis_common::{
         issues::{
             IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
@@ -1043,7 +913,8 @@ mod tests {
     };
     use std::{env, fs, process::Command};
 
-    fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
+    fn initialize_repo_with_changes(
+    ) -> Result<(tempfile::TempDir, std::path::PathBuf, GitRepository)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
         let repo_path = tempdir.path().to_path_buf();
         let repo_str = repo_path
@@ -1101,7 +972,9 @@ mod tests {
         }
         fs::write(&metis_internal, "ignore me").context("failed to write .metis file")?;
 
-        Ok((tempdir, repo_path))
+        let git_repo = GitClient::new().open(&repo_path)?;
+
+        Ok((tempdir, repo_path, git_repo))
     }
 
     struct EnvVarGuard {
@@ -1142,7 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1232,7 +1105,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_uses_provided_job_id() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1272,7 +1145,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_reads_job_id_from_environment() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
         let env_job_id = task_id("t-job-from-env");
         let env_job_value = env_job_id.to_string();
         let _guard = EnvVarGuard::set(ENV_METIS_ID, &env_job_value);
@@ -1311,7 +1184,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
         let created_patch_id = patch_id("p-merge");
@@ -1368,7 +1241,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-automatic"),
@@ -1396,7 +1269,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_uses_service_repo_name_from_job() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _git_repo) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         client.push_get_job_response(JobRecord {
             id: task_id("t-job-service"),
@@ -1628,7 +1501,7 @@ mod tests {
 
     #[test]
     fn stage_changes_for_pr_keeps_metis_directory() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, git_repo) = initialize_repo_with_changes()?;
         let repo_str = repo_path
             .to_str()
             .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
@@ -1639,7 +1512,7 @@ mod tests {
         )
         .context("failed to write .gitignore for test repo")?;
 
-        stage_changes_for_pr(&repo_path)?;
+        stage_changes_for_pr(&git_repo)?;
 
         assert!(
             repo_path.join(constants::METIS_DIR).exists(),
@@ -1667,11 +1540,11 @@ mod tests {
 
     #[test]
     fn ensure_feature_branch_uses_job_id_when_on_main() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
-        let branch = ensure_feature_branch(&repo_path, Some("Job 123"))?;
+        let (_tempdir, _repo_path, git_repo) = initialize_repo_with_changes()?;
+        let branch = ensure_feature_branch(&git_repo, Some("Job 123"))?;
 
         assert_eq!(branch, "metis-job-123");
-        assert_eq!(current_branch(&repo_path)?, branch);
+        assert_eq!(git_repo.current_branch()?, branch);
 
         Ok(())
     }
