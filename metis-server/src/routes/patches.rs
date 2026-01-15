@@ -1,8 +1,7 @@
 use crate::{
-    app::AppState,
+    app::{AppState, UpsertPatchError},
     routes::jobs::ApiError,
-    routes::map_emit_error,
-    store::{Status, StoreError},
+    store::StoreError,
 };
 use anyhow::anyhow;
 use axum::{
@@ -10,7 +9,6 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use chrono::Utc;
 use metis_common::{
     PatchId,
     patches::{
@@ -44,7 +42,12 @@ pub async fn create_patch(
     Json(payload): Json<UpsertPatchRequest>,
 ) -> Result<Json<UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
-    upsert_patch_internal(state, None, payload).await
+    let patch_id = state
+        .upsert_patch(None, payload)
+        .await
+        .map_err(map_upsert_patch_error)?;
+
+    Ok(Json(UpsertPatchResponse { patch_id }))
 }
 
 pub async fn update_patch(
@@ -53,7 +56,12 @@ pub async fn update_patch(
     Json(payload): Json<UpsertPatchRequest>,
 ) -> Result<Json<UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
-    upsert_patch_internal(state, Some(patch_id), payload).await
+    let patch_id = state
+        .upsert_patch(Some(patch_id), payload)
+        .await
+        .map_err(map_upsert_patch_error)?;
+
+    Ok(Json(UpsertPatchResponse { patch_id }))
 }
 
 pub async fn get_patch(
@@ -100,70 +108,6 @@ pub async fn list_patches(
     Ok(Json(ListPatchesResponse { patches: filtered }))
 }
 
-async fn upsert_patch_internal(
-    state: AppState,
-    patch_id: Option<PatchId>,
-    payload: UpsertPatchRequest,
-) -> Result<Json<UpsertPatchResponse>, ApiError> {
-    let UpsertPatchRequest { patch, job_id } = payload;
-
-    let mut store = state.store.write().await;
-    let patch_id = match patch_id {
-        Some(id) => {
-            if job_id.is_some() {
-                return Err(ApiError::bad_request(
-                    "job_id may only be provided when creating a patch",
-                ));
-            }
-
-            match store.update_patch(&id, patch).await {
-                Ok(()) => id,
-                Err(err) => return Err(map_patch_error(err, Some(&id))),
-            }
-        }
-        None => {
-            if let Some(ref job_id) = job_id {
-                let status = store.get_status(job_id).await.map_err(|err| match err {
-                    StoreError::TaskNotFound(id) => {
-                        error!(job_id = %id, "job not found when creating patch");
-                        ApiError::not_found(format!("job '{id}' not found"))
-                    }
-                    other => {
-                        error!(job_id = %job_id, error = %other, "failed to validate job status");
-                        ApiError::internal(anyhow!(
-                            "failed to validate job status for '{job_id}': {other}"
-                        ))
-                    }
-                })?;
-
-                if status != Status::Running {
-                    return Err(ApiError::bad_request(
-                        "job_id must reference a running job to record emitted artifacts",
-                    ));
-                }
-            }
-
-            let id = store
-                .add_patch(patch)
-                .await
-                .map_err(|err| map_patch_error(err, None))?;
-
-            if let Some(job_id) = job_id {
-                store
-                    .emit_task_artifacts(&job_id, vec![id.clone().into()], Utc::now())
-                    .await
-                    .map_err(|err| map_emit_error(err, job_id.as_ref()))?;
-            }
-
-            id
-        }
-    };
-
-    info!(patch_id = %patch_id, "patch stored successfully");
-
-    Ok(Json(UpsertPatchResponse { patch_id }))
-}
-
 fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
     if let Some(term) = search_term {
         let lower_id = patch_id.to_string().to_lowercase();
@@ -197,6 +141,40 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
     }
 
     true
+}
+
+fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
+    match err {
+        UpsertPatchError::JobIdProvidedForUpdate => {
+            ApiError::bad_request("job_id may only be provided when creating a patch")
+        }
+        UpsertPatchError::JobNotFound { job_id, .. } => {
+            error!(job_id = %job_id, "job not found when creating patch");
+            ApiError::not_found(format!("job '{job_id}' not found"))
+        }
+        UpsertPatchError::JobStatusLookup { job_id, source } => {
+            error!(job_id = %job_id, error = %source, "failed to validate job status");
+            ApiError::internal(anyhow!(
+                "failed to validate job status for '{job_id}': {source}"
+            ))
+        }
+        UpsertPatchError::JobNotRunning { job_id, .. } => {
+            error!(job_id = %job_id, "job not running when recording patch artifacts");
+            ApiError::bad_request("job_id must reference a running job to record emitted artifacts")
+        }
+        UpsertPatchError::PatchNotFound { patch_id, .. } => {
+            error!(patch_id = %patch_id, "patch not found");
+            ApiError::not_found(format!("patch '{patch_id}' not found"))
+        }
+        UpsertPatchError::Store { source } => {
+            error!(error = %source, "patch store operation failed");
+            ApiError::internal(anyhow!("patch store error: {source}"))
+        }
+        UpsertPatchError::EmitArtifacts { job_id, source } => {
+            error!(job_id = %job_id, error = %source, "failed to emit artifacts");
+            ApiError::internal(anyhow!("failed to emit artifacts for '{job_id}': {source}"))
+        }
+    }
 }
 
 fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
