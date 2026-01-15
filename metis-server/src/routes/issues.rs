@@ -1,9 +1,8 @@
 use crate::{
-    app::AppState,
-    job_engine::JobEngineError,
+    app::{AppState, UpsertIssueError},
     routes::jobs::ApiError,
     routes::map_emit_error,
-    store::{Status, Store, StoreError},
+    store::StoreError,
 };
 use anyhow::anyhow;
 use axum::{
@@ -11,14 +10,10 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use chrono::Utc;
-use metis_common::{
-    MetisId, TaskId,
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
-        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
-        SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
-    },
+use metis_common::issues::{
+    Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
+    IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery,
+    UpsertIssueRequest, UpsertIssueResponse,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{error, info};
@@ -47,7 +42,12 @@ pub async fn create_issue(
     Json(payload): Json<UpsertIssueRequest>,
 ) -> Result<Json<UpsertIssueResponse>, ApiError> {
     info!("create_issue invoked");
-    upsert_issue_internal(state, None, payload).await
+    let issue_id = state
+        .upsert_issue(None, payload)
+        .await
+        .map_err(map_upsert_issue_error)?;
+
+    Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
 pub async fn update_issue(
@@ -56,7 +56,12 @@ pub async fn update_issue(
     Json(payload): Json<UpsertIssueRequest>,
 ) -> Result<Json<UpsertIssueResponse>, ApiError> {
     info!(issue_id = %issue_id, "update_issue invoked");
-    upsert_issue_internal(state, Some(issue_id), payload).await
+    let issue_id = state
+        .upsert_issue(Some(issue_id), payload)
+        .await
+        .map_err(map_upsert_issue_error)?;
+
+    Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
 pub async fn get_issue(
@@ -137,140 +142,49 @@ pub async fn list_issues(
     Ok(Json(ListIssuesResponse { issues: filtered }))
 }
 
-async fn validate_issue_dependencies(
-    store: &mut dyn Store,
-    dependencies: &[IssueDependency],
-) -> Result<(), ApiError> {
-    for dependency in dependencies {
-        let target_id = &dependency.issue_id;
-        store.get_issue(target_id).await.map_err(|err| match err {
-            StoreError::IssueNotFound(id) => {
-                ApiError::bad_request(format!("issue dependency '{id}' not found"))
-            }
-            other => map_issue_error(other, Some(target_id)),
-        })?;
+fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
+    match err {
+        UpsertIssueError::JobIdProvidedForUpdate => {
+            ApiError::bad_request("job_id may only be provided when creating an issue")
+        }
+        UpsertIssueError::MissingDependency { dependency_id, .. } => {
+            ApiError::bad_request(format!("issue dependency '{dependency_id}' not found"))
+        }
+        UpsertIssueError::DependencyValidation {
+            dependency_id,
+            source,
+        } => map_issue_error(source, Some(&dependency_id)),
+        UpsertIssueError::IssueNotFound { issue_id, source } => {
+            map_issue_error(source, Some(&issue_id))
+        }
+        UpsertIssueError::Store { source, issue_id } => map_issue_error(source, issue_id.as_ref()),
+        UpsertIssueError::JobNotFound { job_id, .. } => {
+            error!(job_id = %job_id, "job not found when creating issue");
+            ApiError::not_found(format!("job '{job_id}' not found"))
+        }
+        UpsertIssueError::JobStatusLookup { job_id, source } => {
+            error!(job_id = %job_id, error = %source, "failed to validate job status");
+            ApiError::internal(anyhow!(
+                "failed to validate job status for '{job_id}': {source}"
+            ))
+        }
+        UpsertIssueError::JobNotRunning { .. } => {
+            ApiError::bad_request("job_id must reference a running job to record emitted artifacts")
+        }
+        UpsertIssueError::EmitArtifacts { job_id, source } => {
+            map_emit_error(source, job_id.as_ref())
+        }
+        UpsertIssueError::TaskLookup { issue_id, source } => {
+            map_issue_error(source, Some(&issue_id))
+        }
+        UpsertIssueError::KillTask {
+            issue_id,
+            job_id,
+            source,
+        } => ApiError::internal(anyhow!(
+            "failed to kill task '{job_id}' for dropped issue '{issue_id}': {source}"
+        )),
     }
-
-    Ok(())
-}
-
-async fn active_tasks_for_issue(
-    store: &mut dyn Store,
-    issue_id: &IssueId,
-) -> Result<Vec<TaskId>, StoreError> {
-    let mut task_ids = Vec::new();
-
-    for task_id in store.list_tasks().await? {
-        let task = store.get_task(&task_id).await?;
-        if task.spawned_from.as_ref() != Some(issue_id) {
-            continue;
-        }
-
-        let status = store.get_status(&task_id).await?;
-        if matches!(status, Status::Pending | Status::Running) {
-            task_ids.push(task_id);
-        }
-    }
-
-    Ok(task_ids)
-}
-
-async fn upsert_issue_internal(
-    state: AppState,
-    issue_id: Option<IssueId>,
-    payload: UpsertIssueRequest,
-) -> Result<Json<UpsertIssueResponse>, ApiError> {
-    let UpsertIssueRequest { issue, job_id } = payload;
-    let mut tasks_to_kill = Vec::new();
-
-    let mut store = state.store.write().await;
-    validate_issue_dependencies(store.as_mut(), &issue.dependencies).await?;
-
-    let issue_id = match issue_id {
-        Some(id) => {
-            if job_id.is_some() {
-                return Err(ApiError::bad_request(
-                    "job_id may only be provided when creating an issue",
-                ));
-            }
-
-            let updated_issue = issue.clone();
-
-            match store.update_issue(&id, issue).await {
-                Ok(()) => {
-                    if updated_issue.status == IssueStatus::Dropped {
-                        tasks_to_kill = active_tasks_for_issue(store.as_mut(), &id)
-                            .await
-                            .map_err(|err| map_issue_error(err, Some(&id)))?;
-                    }
-                    id
-                }
-                Err(err) => return Err(map_issue_error(err, Some(&id))),
-            }
-        }
-        None => {
-            if let Some(ref job_id) = job_id {
-                let status = store.get_status(job_id).await.map_err(|err| match err {
-                    StoreError::TaskNotFound(id) => {
-                        error!(job_id = %id, "job not found when creating issue");
-                        ApiError::not_found(format!("job '{id}' not found"))
-                    }
-                    other => {
-                        error!(job_id = %job_id, error = %other, "failed to validate job status");
-                        ApiError::internal(anyhow!(
-                            "failed to validate job status for '{job_id}': {other}"
-                        ))
-                    }
-                })?;
-
-                if status != Status::Running {
-                    return Err(ApiError::bad_request(
-                        "job_id must reference a running job to record emitted artifacts",
-                    ));
-                }
-            }
-
-            let id = store
-                .add_issue(issue)
-                .await
-                .map_err(|err| map_issue_error(err, None))?;
-
-            if let Some(job_id) = job_id {
-                store
-                    .emit_task_artifacts(&job_id, vec![MetisId::from(id.clone())], Utc::now())
-                    .await
-                    .map_err(|err| map_emit_error(err, job_id.as_ref()))?;
-            }
-
-            id
-        }
-    };
-
-    drop(store);
-
-    for job_id in tasks_to_kill {
-        match state.job_engine.kill_job(&job_id).await {
-            Ok(()) => info!(
-                issue_id = %issue_id,
-                job_id = %job_id,
-                "killed task for dropped issue"
-            ),
-            Err(JobEngineError::NotFound(_)) => info!(
-                issue_id = %issue_id,
-                job_id = %job_id,
-                "task already missing while dropping issue"
-            ),
-            Err(err) => {
-                return Err(ApiError::internal(anyhow!(
-                    "failed to kill task '{job_id}' for dropped issue '{issue_id}': {err}"
-                )));
-            }
-        }
-    }
-
-    info!(issue_id = %issue_id, "issue stored successfully");
-
-    Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
 fn issue_matches(
@@ -484,6 +398,7 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metis_common::issues::IssueDependency;
     use std::{collections::HashSet, str::FromStr};
 
     fn issue_id(value: &str) -> IssueId {
