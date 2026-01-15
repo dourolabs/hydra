@@ -54,6 +54,23 @@ impl MockJobEngine {
         logs.insert(metis_id.clone(), chunks);
     }
 
+    pub async fn set_job_status(
+        &self,
+        metis_id: &TaskId,
+        status: JobStatus,
+        failure_message: Option<String>,
+    ) {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| &job.id == metis_id) {
+            job.status = status;
+            job.failure_message = failure_message;
+            job.completion_time = match status {
+                JobStatus::Running => None,
+                _ => Some(Utc::now()),
+            };
+        }
+    }
+
     pub fn env_vars_for_job(&self, metis_id: &TaskId) -> Option<HashMap<String, String>> {
         let env_vars = self.env_vars.lock().unwrap();
         env_vars.get(metis_id).cloned()
@@ -212,5 +229,24 @@ mod tests {
             .env_vars_for_job(&metis_id)
             .expect("env vars should be recorded");
         assert_eq!(recorded.get("FOO"), Some(&"bar".to_string()));
+    }
+
+    #[tokio::test]
+    async fn set_job_status_updates_existing_job() {
+        let engine = MockJobEngine::new();
+        let metis_id = TaskId::new();
+        engine.insert_job(&metis_id, JobStatus::Running).await;
+
+        engine
+            .set_job_status(&metis_id, JobStatus::Failed, Some("boom".into()))
+            .await;
+
+        let job = engine
+            .find_job_by_metis_id(&metis_id)
+            .await
+            .expect("job should exist");
+        assert_eq!(job.status, JobStatus::Failed);
+        assert_eq!(job.failure_message.as_deref(), Some("boom"));
+        assert!(job.completion_time.is_some());
     }
 }

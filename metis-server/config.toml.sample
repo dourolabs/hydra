@@ -40,9 +40,34 @@ image = "metis-worker:latest"
 #url = "https://github.com/example/repo.git"
 #rev = "main"
 
+[background.scheduler]
+# Default backoff settings applied to all background workers unless overridden.
+default_initial_backoff_secs = 5
+default_max_backoff_secs = 60
+
+[background.scheduler.workers.process_pending_jobs]
+# Interval (in seconds) between pending task scans.
+interval_secs = 2
+
+[background.scheduler.workers.monitor_running_jobs]
+# Interval (in seconds) between running job monitors.
+interval_secs = 5
+
+[background.scheduler.workers.run_spawners]
+# Interval (in seconds) between spawner executions.
+interval_secs = 3
+
+[background.scheduler.workers.poll_github_patches]
+# Interval (in seconds) between GitHub patch sync cycles.
+interval_secs = 60
+#initial_backoff_secs = 5
+#max_backoff_secs = 60
+
 [background.github_poller]
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.
 interval_secs = 60
+# Optionally limit the number of patches processed per sync cycle.
+#max_patches_per_run = 25
 
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use

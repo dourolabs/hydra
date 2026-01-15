@@ -1,4 +1,4 @@
-use crate::AppState;
+use crate::{AppState, background::WorkerOutcome};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use metis_common::{
@@ -13,29 +13,37 @@ use octocrab::{
     },
 };
 use std::collections::HashSet;
-use tokio::time::{Duration, sleep};
 use tracing::{debug, info, warn};
 
-const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
-const REQUESTS_PER_PATCH: u64 = 4;
+pub const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
+pub const REQUESTS_PER_PATCH: u64 = 4;
 
-/// Periodically polls GitHub for open patches linked to PRs and updates their status and reviews.
-pub async fn poll_github_patches(state: AppState) {
-    let interval_secs = state.config.background.github_poller.interval_secs.max(60);
-    let sleep_duration = Duration::from_secs(interval_secs);
-    let max_patches_per_cycle = max_patches_per_cycle(interval_secs);
-    let mut start_from = 0usize;
-
-    loop {
-        if let Err(err) = sync_open_patches(&state, max_patches_per_cycle, &mut start_from).await {
-            warn!(error = %err, "failed to sync GitHub patches");
+/// Poll GitHub for open patches linked to PRs once.
+pub async fn poll_github_patches(
+    state: &AppState,
+    max_patches_per_cycle: usize,
+    start_from: &mut usize,
+) -> WorkerOutcome {
+    match sync_open_patches(state, max_patches_per_cycle, start_from).await {
+        Ok(stats) => {
+            if stats.processed == 0 && stats.failed == 0 {
+                WorkerOutcome::Idle
+            } else {
+                WorkerOutcome::Progress {
+                    processed: stats.processed,
+                    failed: stats.failed,
+                }
+            }
         }
-
-        sleep(sleep_duration).await;
+        Err(err) => {
+            let reason = err.to_string();
+            warn!(error = %reason, "failed to sync GitHub patches");
+            WorkerOutcome::TransientError { reason }
+        }
     }
 }
 
-fn max_patches_per_cycle(interval_secs: u64) -> usize {
+pub fn max_patches_per_cycle(interval_secs: u64) -> usize {
     if interval_secs == 0 {
         return 1;
     }
@@ -52,7 +60,7 @@ async fn sync_open_patches(
     state: &AppState,
     max_per_cycle: usize,
     start_from: &mut usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<SyncStats> {
     let open_patches: Vec<(PatchId, Patch)> = {
         let store = state.store.read().await;
         store
@@ -66,7 +74,7 @@ async fn sync_open_patches(
 
     if open_patches.is_empty() {
         *start_from = 0;
-        return Ok(());
+        return Ok(SyncStats::default());
     }
 
     if *start_from >= open_patches.len() {
@@ -88,17 +96,18 @@ async fn sync_open_patches(
     );
 
     let mut processed = 0usize;
+    let mut failed = 0usize;
     for (patch_id, patch) in ordered.into_iter().take(limit) {
+        processed += 1;
         if let Err(err) = sync_patch_from_github(state, &patch_id, patch).await {
+            failed += 1;
             warn!(patch_id = %patch_id, error = %err, "failed to sync patch from GitHub");
         }
-
-        processed += 1;
     }
 
     *start_from = (*start_from + processed) % open_patches.len();
 
-    Ok(())
+    Ok(SyncStats { processed, failed })
 }
 
 async fn sync_patch_from_github(
@@ -210,6 +219,12 @@ async fn sync_patch_from_github(
     }
 
     Ok(())
+}
+
+#[derive(Default)]
+struct SyncStats {
+    processed: usize,
+    failed: usize,
 }
 
 fn select_github_token(state: &AppState, service_repo_name: Option<&str>) -> Option<String> {
