@@ -19,6 +19,7 @@ kind delete cluster --name local-dev
 
 ```cargo build``` in the top level will build all projects.
 
+Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before opening a PR to keep the workspace clean.
 
 `./scripts/docker-build.sh` will build docker images for codex and metis-server, and additionally push those images into kind's image repository.
 
