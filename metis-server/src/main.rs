@@ -911,6 +911,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1123,6 +1124,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1247,6 +1249,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1347,6 +1350,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 
@@ -1415,6 +1419,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 },
                 job_id: Some(job_id.clone()),
@@ -1437,6 +1442,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creating_patch_records_service_repo_name() -> anyhow::Result<()> {
+        let state = test_state();
+        let default_image = default_image();
+        let store = state.store.clone();
+        let job_id = task_id("t-service");
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task {
+                        prompt: "0".to_string(),
+                        context: BundleSpec::ServiceRepository {
+                            name: "api".to_string(),
+                            rev: None,
+                        },
+                        spawned_from: None,
+                        image: Some(default_image),
+                        env_vars: HashMap::new(),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+            store_write.mark_task_running(&job_id, Utc::now()).await?;
+        }
+
+        let server = spawn_test_server_with_state(state).await?;
+        let client = test_client();
+        let response = client
+            .post(format!("{}/v1/patches", server.base_url()))
+            .json(&UpsertPatchRequest {
+                patch: Patch {
+                    title: "artifact for repo".to_string(),
+                    diff: "diff --git a/file b/file".to_string(),
+                    description: "artifact for repo".to_string(),
+                    status: PatchStatus::Open,
+                    is_automatic_backup: false,
+                    reviews: Vec::new(),
+                    service_repo_name: None,
+                    github: None,
+                },
+                job_id: Some(job_id.clone()),
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let created: UpsertPatchResponse = response.json().await?;
+
+        let stored = {
+            let store_read = store.read().await;
+            store_read.get_patch(&created.patch_id).await?
+        };
+        assert_eq!(stored.service_repo_name.as_deref(), Some("api"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_endpoints_support_filters() -> anyhow::Result<()> {
         let server = spawn_test_server().await?;
         let client = test_client();
@@ -1448,6 +1511,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
         let filtered_patch = Patch {
@@ -1457,6 +1521,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 
