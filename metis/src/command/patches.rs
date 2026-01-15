@@ -22,6 +22,7 @@ use metis_common::{
     },
     PatchId, TaskId,
 };
+use octocrab::Octocrab;
 use serde::Deserialize;
 
 use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
@@ -536,7 +537,8 @@ pub async fn create_patch_artifact_from_repo(
             &title,
             &description,
             job_id.as_ref().map(|id| id.as_ref()),
-        )?;
+        )
+        .await?;
         patch_payload.github = Some(github_pr);
         client
             .update_patch(
@@ -739,7 +741,7 @@ async fn review_patch(
     Ok(())
 }
 
-fn create_github_pull_request(
+async fn create_github_pull_request(
     repo_root: &Path,
     title: &str,
     description: &str,
@@ -750,7 +752,7 @@ fn create_github_pull_request(
     ensure_staged_changes(repo_root)?;
     commit_changes(repo_root, title)?;
     push_branch(repo_root, &branch_name)?;
-    let pr_metadata = open_pull_request(repo_root, title, description, &branch_name)?;
+    let pr_metadata = open_pull_request(repo_root, title, description, &branch_name).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
         .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
     Ok(GithubPr {
@@ -942,7 +944,23 @@ fn parse_pr_repository(url: &str) -> Option<(String, String)> {
     Some((owner.to_string(), repo.to_string()))
 }
 
-fn open_pull_request(
+fn parse_pr_number(url: &str) -> Option<u64> {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))?;
+    let mut segments = without_scheme.split('/');
+    let _owner = segments.next()?;
+    let _repo = segments.next()?;
+    let pr_segment = segments.next()?;
+    if pr_segment != "pull" {
+        return None;
+    }
+    let pr_number_str = segments.next()?;
+    pr_number_str.parse().ok()
+}
+
+async fn open_pull_request(
     repo_root: &Path,
     title: &str,
     description: &str,
@@ -975,25 +993,34 @@ fn open_pull_request(
         .find(|line| line.contains("github.com") && line.contains("/pull/"))
         .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
 
-    // Use gh pr view to get structured JSON output
-    let view_output = Command::new("gh")
-        .args(["pr", "view", pr_url.trim()])
-        .args(["--json", "url,number,headRefName,baseRefName"])
-        .current_dir(repo_root)
-        .output()
+    // Use octocrab to get structured PR metadata
+    let token = env::var("GH_TOKEN").context("GH_TOKEN environment variable is required")?;
+    let crab = Octocrab::builder()
+        .personal_token(token)
+        .build()
+        .context("failed to create octocrab client")?;
+
+    let (owner, repo) = parse_pr_repository(pr_url.trim())
+        .ok_or_else(|| anyhow!("failed to parse repository from PR URL: {pr_url}"))?;
+    let pr_number = parse_pr_number(pr_url.trim())
+        .ok_or_else(|| anyhow!("failed to parse PR number from URL: {pr_url}"))?;
+
+    let pr = crab
+        .pulls(owner, repo)
+        .get(pr_number)
+        .await
         .context("failed to fetch GitHub pull request metadata")?;
 
-    if !view_output.status.success() {
-        let stdout = String::from_utf8_lossy(&view_output.stdout);
-        let stderr = String::from_utf8_lossy(&view_output.stderr);
-        bail!("failed to fetch PR metadata: {stderr}{stdout}");
-    }
-
-    let stdout = String::from_utf8_lossy(&view_output.stdout);
-    let trimmed = stdout.trim();
-    let parsed = serde_json::from_str::<GhPrCreateResponse>(trimmed)
-        .context("failed to decode GitHub pull request metadata")?;
-    Ok(parsed)
+    Ok(GhPrCreateResponse {
+        url: pr
+            .html_url
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| pr_url.trim().to_string()),
+        number: pr.number,
+        head_ref_name: Some(pr.head.ref_field.clone()),
+        base_ref_name: Some(pr.base.ref_field.clone()),
+    })
 }
 
 #[cfg(test)]
