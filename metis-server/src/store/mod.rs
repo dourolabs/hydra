@@ -1,4 +1,4 @@
-use crate::state::{BundleResolutionError, ResolvedBundle, ServiceState};
+use crate::app::{BundleResolutionError, ResolvedBundle, ServiceState};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::constants::ENV_GH_TOKEN;
@@ -122,6 +122,7 @@ pub enum StoreError {
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
     PatchNotFound(PatchId),
+    #[allow(dead_code)]
     #[error("Invalid dependency: {0}")]
     InvalidDependency(String),
     #[error("Invalid issue status: {0}")]
@@ -164,9 +165,11 @@ pub trait Store: Send + Sync {
     async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError>;
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
+    #[allow(dead_code)]
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Lists all issues that are blocked on the provided issue.
+    #[allow(dead_code)]
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
     /// Returns whether the issue is ready to be worked on based on its status and dependencies.
@@ -218,6 +221,7 @@ pub trait Store: Send + Sync {
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if the task doesn't exist
+    #[allow(dead_code)]
     async fn update_task(&mut self, metis_id: &TaskId, task: Task) -> Result<(), StoreError>;
 
     /// Gets a task by its TaskId.
@@ -275,6 +279,7 @@ pub trait Store: Send + Sync {
     /// Some(Ok(())) if the task completed successfully,
     /// Some(Err(TaskError)) if the task completed with an error,
     /// None if the task doesn't exist or has no result yet
+    #[allow(dead_code)]
     fn get_result(&self, id: &TaskId) -> Option<Result<(), TaskError>>;
 
     /// Records an emitted event for a running task.

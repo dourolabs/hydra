@@ -1,9 +1,8 @@
 use crate::{
-    AppState,
+    app::{AppState, ServiceState},
     config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
     job_engine::{JobEngine, MockJobEngine},
     run_with_state,
-    state::ServiceState,
     store::MemoryStore,
 };
 use reqwest::Client;

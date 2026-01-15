@@ -1,20 +1,20 @@
 #![allow(clippy::too_many_arguments)]
 
+mod app;
 mod background;
 mod config;
 mod job_engine;
 mod routes;
-mod state;
 mod store;
 #[cfg(test)]
 mod test;
 
+use crate::app::{AppState, ServiceState};
 use crate::background::{
     AgentQueue, Spawner, monitor_running_jobs, process_pending_jobs, run_spawners,
 };
 use crate::config::{AppConfig, build_kube_client};
-use crate::job_engine::{JobEngine, KubernetesJobEngine};
-use crate::state::ServiceState;
+use crate::job_engine::KubernetesJobEngine;
 use crate::store::{MemoryStore, Store};
 use axum::{
     Json, Router,
@@ -25,15 +25,6 @@ use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::info;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<AppConfig>,
-    pub service_state: Arc<ServiceState>,
-    pub store: Arc<RwLock<Box<dyn Store>>>,
-    pub job_engine: Arc<dyn JobEngine>,
-    pub spawners: Vec<Arc<dyn Spawner>>,
-}
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
     // Spawn background task to process pending jobs
@@ -172,8 +163,8 @@ fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        app::{GitRepository, ServiceState},
         job_engine::{JobEngine, JobStatus, MockJobEngine},
-        state::{GitRepository, ServiceState},
         store::{Status, Task, TaskError, TaskExt},
         test::{
             spawn_test_server, spawn_test_server_with_state, test_client, test_state,
@@ -263,7 +254,6 @@ mod tests {
     async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
         let mut state = test_state();
         let repo = GitRepository {
-            name: "private-repo".to_string(),
             remote_url: "https://example.com/private.git".to_string(),
             default_branch: Some("develop".to_string()),
             github_token: Some("token-123".to_string()),
@@ -349,7 +339,6 @@ mod tests {
     async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         let mut state = test_state();
         let repo = GitRepository {
-            name: "private-repo".to_string(),
             remote_url: "https://example.com/private.git".to_string(),
             default_branch: Some("develop".to_string()),
             github_token: Some("token-123".to_string()),
@@ -419,7 +408,6 @@ mod tests {
     async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Result<()> {
         let mut state = test_state();
         let repo = GitRepository {
-            name: "private-repo".to_string(),
             remote_url: "https://example.com/private.git".to_string(),
             default_branch: Some("develop".to_string()),
             github_token: Some("token-123".to_string()),

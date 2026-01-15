@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::store::TaskExt;
 use crate::{
-    AppState,
+    app::AppState,
     config::AgentQueueConfig,
     store::{Status, Store, StoreError, Task},
 };
@@ -187,8 +187,8 @@ async fn existing_issue_tasks_for_agent(
 mod tests {
     use super::*;
     use crate::{
+        app::{GitRepository, ServiceState},
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
-        state::{GitRepository, ServiceState},
         test::test_state,
     };
     use chrono::Utc;
@@ -487,7 +487,6 @@ mod tests {
             repositories: HashMap::from([(
                 "dourolabs/metis".to_string(),
                 GitRepository {
-                    name: "dourolabs/metis".to_string(),
                     remote_url: "https://github.com/dourolabs/metis.git".to_string(),
                     default_branch: Some("main".to_string()),
                     github_token: Some("token".to_string()),
