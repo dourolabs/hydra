@@ -174,7 +174,26 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
         return patch.title.to_lowercase().contains(term)
             || patch.diff.to_lowercase().contains(term)
             || patch.description.to_lowercase().contains(term)
-            || format!("{:?}", patch.status).to_lowercase().contains(term);
+            || format!("{:?}", patch.status).to_lowercase().contains(term)
+            || patch
+                .github
+                .as_ref()
+                .map(|github| {
+                    github.owner.to_lowercase().contains(term)
+                        || github.repo.to_lowercase().contains(term)
+                        || github.number.to_string().contains(term)
+                        || github
+                            .head_ref
+                            .as_deref()
+                            .map(|value| value.to_lowercase().contains(term))
+                            .unwrap_or(false)
+                        || github
+                            .base_ref
+                            .as_deref()
+                            .map(|value| value.to_lowercase().contains(term))
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false);
     }
 
     true

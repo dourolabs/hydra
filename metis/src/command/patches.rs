@@ -16,11 +16,12 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{
-        Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
+        GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
     PatchId, TaskId,
 };
+use serde::Deserialize;
 
 use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
 use tempfile::NamedTempFile;
@@ -487,28 +488,41 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch description must not be empty.");
     }
 
+    let mut patch_payload = Patch {
+        title: title.clone(),
+        diff: patch,
+        description: description.clone(),
+        status: PatchStatus::Open,
+        is_automatic_backup,
+        reviews: Vec::new(),
+        github: None,
+    };
     let response = client
         .create_patch(&UpsertPatchRequest {
-            patch: Patch {
-                title: title.clone(),
-                diff: patch,
-                description: description.clone(),
-                status: PatchStatus::Open,
-                is_automatic_backup,
-                reviews: Vec::new(),
-            },
+            patch: patch_payload.clone(),
             job_id: job_id.clone(),
         })
         .await
         .context("failed to create patch")?;
 
     if create_github_pr {
-        create_github_pull_request(
+        let github_pr = create_github_pull_request(
             repo_root,
             &title,
             &description,
             job_id.as_ref().map(|id| id.as_ref()),
         )?;
+        patch_payload.github = Some(github_pr);
+        client
+            .update_patch(
+                &response.patch_id,
+                &UpsertPatchRequest {
+                    patch: patch_payload,
+                    job_id: None,
+                },
+            )
+            .await
+            .context("failed to update patch with GitHub metadata")?;
     }
 
     Ok(Some(response))
@@ -705,14 +719,23 @@ fn create_github_pull_request(
     title: &str,
     description: &str,
     job_id: Option<&str>,
-) -> Result<()> {
+) -> Result<GithubPr> {
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
     stage_changes_for_pr(repo_root)?;
     ensure_staged_changes(repo_root)?;
     commit_changes(repo_root, title)?;
     push_branch(repo_root, &branch_name)?;
-    open_pull_request(repo_root, title, description, &branch_name)?;
-    Ok(())
+    let pr_metadata = open_pull_request(repo_root, title, description, &branch_name)?;
+    let (owner, repo) = parse_pr_repository(&pr_metadata.url)
+        .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
+    Ok(GithubPr {
+        owner,
+        repo,
+        number: pr_metadata.number,
+        head_ref: pr_metadata.head_ref_name,
+        base_ref: pr_metadata.base_ref_name,
+        url: Some(pr_metadata.url),
+    })
 }
 
 fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
@@ -869,25 +892,60 @@ fn push_branch(repo_root: &Path, branch: &str) -> Result<()> {
     bail!("failed to push branch '{branch}' to origin");
 }
 
-fn open_pull_request(repo_root: &Path, title: &str, description: &str, branch: &str) -> Result<()> {
+#[derive(Deserialize)]
+struct GhPrCreateResponse {
+    url: String,
+    number: u64,
+    #[serde(rename = "headRefName", default)]
+    head_ref_name: Option<String>,
+    #[serde(rename = "baseRefName", default)]
+    base_ref_name: Option<String>,
+}
+
+fn parse_pr_repository(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))?;
+    let mut segments = without_scheme.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    let pr_segment = segments.next()?;
+    if pr_segment != "pull" {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
+fn open_pull_request(
+    repo_root: &Path,
+    title: &str,
+    description: &str,
+    branch: &str,
+) -> Result<GhPrCreateResponse> {
     let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
     writeln!(body_file, "{description}").context("failed to write pull request description")?;
 
-    let status = Command::new("gh")
+    let output = Command::new("gh")
         .args(["pr", "create"])
         .args(["--head", branch])
         .args(["--title", title])
         .args(["--body-file"])
         .arg(body_file.path())
+        .args(["--json", "url,number,headRefName,baseRefName"])
         .current_dir(repo_root)
-        .status()
+        .output()
         .context("failed to create GitHub pull request")?;
 
-    if status.success() {
-        return Ok(());
+    if output.status.success() {
+        let parsed = serde_json::from_slice::<GhPrCreateResponse>(&output.stdout)
+            .context("failed to decode GitHub pull request metadata")?;
+        return Ok(parsed);
     }
 
-    bail!("failed to open GitHub pull request for branch '{branch}'");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    bail!("failed to open GitHub pull request for branch '{branch}': {stderr}{stdout}");
 }
 
 #[cfg(test)]
@@ -1276,6 +1334,7 @@ mod tests {
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
+                github: None,
             },
         });
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1332,6 +1391,7 @@ mod tests {
                     author: "sam".to_string(),
                     submitted_at: None,
                 }],
+                github: None,
             },
         });
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1370,6 +1430,7 @@ mod tests {
                             author: "sam".to_string(),
                             submitted_at: None,
                         }],
+                        github: None,
                     },
                     job_id: None,
                 }
@@ -1391,6 +1452,7 @@ mod tests {
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![],
+                github: None,
             },
         });
         client.push_upsert_patch_response(UpsertPatchResponse {
