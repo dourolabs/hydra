@@ -171,7 +171,7 @@ mod tests {
             test_state_with_engine,
         },
     };
-    use chrono::{Duration, Utc};
+    use chrono::{Duration, TimeZone, Utc};
     use metis_common::{
         TaskId,
         constants::ENV_GH_TOKEN,
@@ -182,7 +182,7 @@ mod tests {
         job_status::GetJobStatusResponse,
         jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+            ListPatchesResponse, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
         },
         task_status::Event,
@@ -1369,6 +1369,62 @@ mod tests {
 
         assert_eq!(fetched.id, created.patch_id);
         assert_eq!(fetched.patch, patch);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn patch_reviews_round_trip_through_server() -> anyhow::Result<()> {
+        let server = spawn_test_server().await?;
+        let client = test_client();
+        let reviews = vec![
+            Review {
+                contents: "needs another pass".to_string(),
+                is_approved: false,
+                author: "alex".to_string(),
+                submitted_at: Some(Utc.with_ymd_and_hms(2024, 5, 1, 8, 30, 0).unwrap()),
+            },
+            Review {
+                contents: "looks good now".to_string(),
+                is_approved: true,
+                author: "sam".to_string(),
+                submitted_at: None,
+            },
+        ];
+        let patch = Patch {
+            title: "Patch with reviews".to_string(),
+            diff: "diff --git a/file b/file".to_string(),
+            description: "ready for review".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: reviews.clone(),
+            github: None,
+        };
+
+        let response = client
+            .post(format!("{}/v1/patches", server.base_url()))
+            .json(&UpsertPatchRequest {
+                patch: patch.clone(),
+                job_id: None,
+            })
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let created: UpsertPatchResponse = response.json().await?;
+
+        let fetched: PatchRecord = client
+            .get(format!(
+                "{}/v1/patches/{}",
+                server.base_url(),
+                created.patch_id
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(fetched.patch, patch);
+        assert_eq!(fetched.patch.reviews, reviews);
         Ok(())
     }
 

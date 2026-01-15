@@ -62,6 +62,21 @@ same server as the parent process. Pass `--model <name>` to override the Codex
 model or `--full-auto` to forward Codex's `--full-auto` flag and let it run
 commands without manual approvals.
 
+#### Issue describe output
+
+`metis issues describe --pretty` includes a review summary for each patch attached to an issue. The summary shows the latest review decision, total approvals and change requests, and the latest review per reviewer:
+
+```
+Reviews:
+  Latest: approved by sam @ 2024-06-02T09:15:00Z
+  Counts: 1 approval, 1 change request
+  Reviewers:
+    - alex: changes requested @ 2024-06-02T09:00:00Z
+    - sam: approved @ 2024-06-02T09:15:00Z
+```
+
+Timestamps only appear when the review payload includes `submitted_at`.
+
 ### Server (`metis-server`)
 
 1. `cp metis-server/config.toml.sample metis-server/config.toml`.

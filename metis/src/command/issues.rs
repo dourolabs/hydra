@@ -1687,4 +1687,80 @@ mod tests {
         assert!(rendered.contains("- alex: changes requested @ 2024-05-01T11:50:00Z"));
         assert!(rendered.contains("- sam: approved @ 2024-05-01T12:00:00Z"));
     }
+
+    #[tokio::test]
+    async fn describe_issue_includes_review_summary_when_fetched_from_client() {
+        let client = MockMetisClient::default();
+        let issue_id = issue_id("i-review");
+        let patch_id = patch_id("p-reviewed");
+        let first_review_time = Utc.with_ymd_and_hms(2024, 6, 2, 9, 0, 0).unwrap();
+        let patch_reviews = vec![
+            Review {
+                contents: "needs more tests".to_string(),
+                is_approved: false,
+                author: "alex".to_string(),
+                submitted_at: Some(first_review_time),
+            },
+            Review {
+                contents: "all set".to_string(),
+                is_approved: true,
+                author: "sam".to_string(),
+                submitted_at: Some(first_review_time + Duration::minutes(15)),
+            },
+        ];
+
+        client.push_get_issue_response(IssueRecord {
+            id: issue_id.clone(),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "Issue with reviewable patch".into(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("owner".into()),
+                dependencies: vec![],
+                patches: vec![patch_id.clone()],
+            },
+        });
+        client.push_list_issues_response(ListIssuesResponse { issues: vec![] });
+        client.push_get_patch_response(PatchRecord {
+            id: patch_id.clone(),
+            patch: Patch {
+                title: "reviewed patch".into(),
+                description: "desc".into(),
+                diff: "diff".into(),
+                status: Default::default(),
+                is_automatic_backup: false,
+                reviews: patch_reviews,
+                github: None,
+            },
+        });
+
+        let description = collect_issue_description(&client, issue_id.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(client.recorded_get_issue_requests(), vec![issue_id.clone()]);
+        assert_eq!(
+            client.recorded_list_issue_queries(),
+            vec![SearchIssuesQuery {
+                graph_filters: vec![IssueGraphFilter::new(
+                    IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
+                    IssueDependencyType::ChildOf,
+                    IssueGraphSelector::Issue(issue_id),
+                )
+                .unwrap()],
+                ..SearchIssuesQuery::default()
+            }]
+        );
+        assert_eq!(client.recorded_get_patch_requests(), vec![patch_id]);
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Latest: approved by sam @ 2024-06-02T09:15:00Z"));
+        assert!(rendered.contains("Counts: 1 approval, 1 change request"));
+        assert!(rendered.contains("Reviewers:"));
+        assert!(rendered.contains("- alex: changes requested @ 2024-06-02T09:00:00Z"));
+        assert!(rendered.contains("- sam: approved @ 2024-06-02T09:15:00Z"));
+    }
 }
