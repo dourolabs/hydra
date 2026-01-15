@@ -44,6 +44,14 @@ image = "metis-worker:latest"
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.
 interval_secs = 60
 
+[github]
+# Optional defaults for GitHub API access used by the server.
+# These settings are overridden at startup by environment variables:
+# GH_TOKEN/GITHUB_TOKEN, GITHUB_API_URL or GH_HOST, and GITHUB_PER_PAGE.
+token = ""
+api_base_url = "https://api.github.com"
+per_page = 100
+
 [background.scheduler.process_pending_jobs]
 # Optional scheduler settings for the worker that spawns pending jobs.
 interval_secs = 2

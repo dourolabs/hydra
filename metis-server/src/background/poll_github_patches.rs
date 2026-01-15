@@ -3,6 +3,7 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
+    github::{GithubClient, GithubConfig},
     patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
         UpsertPatchRequest,
@@ -133,11 +134,13 @@ async fn sync_patch_from_github(
             owner = %github.owner,
             repo = %github.repo,
             service_repo_name = ?patch.service_repo_name,
-            "skipping GitHub sync because no token is configured for the service repository"
+            "skipping GitHub sync because no GitHub token is configured"
         );
         return Ok(());
     };
-    let client = github_client(token)?;
+    let github_client = github_client(&state.config.github, token)?;
+    let per_page = github_client.per_page();
+    let client = github_client.into_client();
 
     let pr = client
         .pulls(&github.owner, &github.repo)
@@ -148,7 +151,7 @@ async fn sync_patch_from_github(
             client
                 .pulls(&github.owner, &github.repo)
                 .list_reviews(github.number)
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
@@ -158,7 +161,7 @@ async fn sync_patch_from_github(
             client
                 .pulls(&github.owner, &github.repo)
                 .list_comments(Some(github.number))
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
@@ -168,14 +171,14 @@ async fn sync_patch_from_github(
             client
                 .issues(&github.owner, &github.repo)
                 .list_comments(github.number)
-                .per_page(100)
+                .per_page(per_page)
                 .send()
                 .await?,
         )
         .await?;
 
     let mut github_reviews = build_review_entries(reviews, review_comments, issue_comments);
-    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
+    let ci_status = fetch_ci_status(&client, &github, &pr, per_page).await?;
     let mut new_status = patch_status_from_github(&pr);
 
     if let Err(err) = maybe_post_ci_failure_review_and_close(
@@ -353,12 +356,14 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
 }
 
 fn select_github_token(state: &AppState, service_repo_name: Option<&str>) -> Option<String> {
-    let name = service_repo_name?;
-    state
-        .service_state
-        .repositories
-        .get(name)
-        .and_then(|repo| repo.github_token.clone())
+    let repo_token = service_repo_name
+        .and_then(|name| state.service_state.repositories.get(name))
+        .and_then(|repo| repo.github_token.as_deref())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned);
+
+    state.config.github.resolved_token(repo_token)
 }
 
 fn build_review_entries(
@@ -483,10 +488,9 @@ fn patch_status_from_github(pr: &PullRequest) -> PatchStatus {
     }
 }
 
-fn github_client(token: String) -> anyhow::Result<Octocrab> {
-    Octocrab::builder()
-        .personal_token(token)
-        .build()
+fn github_client(config: &GithubConfig, token: String) -> anyhow::Result<GithubClient> {
+    config
+        .build_client_with_token(Some(token))
         .context("building GitHub client")
 }
 
@@ -494,6 +498,7 @@ async fn fetch_ci_status(
     client: &Octocrab,
     github: &metis_common::patches::GithubPr,
     pr: &PullRequest,
+    per_page: u8,
 ) -> anyhow::Result<GithubCiStatus> {
     let head_sha = pr.head.sha.clone();
     let combined_status: CombinedStatus = client
@@ -517,7 +522,7 @@ async fn fetch_ci_status(
     let check_runs = client
         .checks(&github.owner, &github.repo)
         .list_check_runs_for_git_ref(Commitish(head_sha.clone()))
-        .per_page(100)
+        .per_page(per_page)
         .send()
         .await
         .with_context(|| {
@@ -634,8 +639,10 @@ mod tests {
 
     use crate::{
         app::{GitRepository, ServiceState},
-        test::test_state,
+        config::AppConfig,
+        test::{test_app_config, test_state},
     };
+    use metis_common::github::GithubConfig;
 
     #[test]
     fn merge_reviews_preserves_existing() {
@@ -912,15 +919,34 @@ mod tests {
     }
 
     #[test]
-    fn select_github_token_requires_service_repo_name() {
-        let state = test_state();
+    fn select_github_token_uses_config_when_service_repo_missing() {
+        let mut state = test_state();
+        state.config = Arc::new(AppConfig {
+            github: GithubConfig {
+                token: Some("config-token".to_string()),
+                api_base_url: None,
+                per_page: None,
+            },
+            ..test_app_config()
+        });
 
-        assert!(select_github_token(&state, None).is_none());
+        assert_eq!(
+            select_github_token(&state, None).as_deref(),
+            Some("config-token")
+        );
     }
 
     #[test]
     fn select_github_token_uses_service_repo_name() {
         let mut state = test_state();
+        state.config = Arc::new(AppConfig {
+            github: GithubConfig {
+                token: Some("config-token".to_string()),
+                api_base_url: None,
+                per_page: None,
+            },
+            ..test_app_config()
+        });
         state.service_state = Arc::new(ServiceState {
             repositories: HashMap::from([(
                 "api".to_string(),
