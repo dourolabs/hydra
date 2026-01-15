@@ -21,10 +21,20 @@ const REQUESTS_PER_PATCH: u64 = 4;
 
 /// Periodically polls GitHub for open patches linked to PRs and updates their status and reviews.
 pub async fn poll_github_patches(state: AppState) {
-    let interval_secs = state.config.background.github_poller.interval_secs.max(60);
+    let scheduler = &state.config.background.scheduler.github_poller;
+    let interval_secs = scheduler
+        .interval_secs
+        .max(state.config.background.github_poller.interval_secs)
+        .max(60);
     let sleep_duration = Duration::from_secs(interval_secs);
     let max_patches_per_cycle = max_patches_per_cycle(interval_secs);
     let mut start_from = 0usize;
+    debug!(
+        interval_secs,
+        initial_backoff_secs = scheduler.initial_backoff_secs,
+        max_backoff_secs = scheduler.max_backoff_secs,
+        "github_poller scheduler configured"
+    );
 
     loop {
         if let Err(err) = sync_open_patches(&state, max_patches_per_cycle, &mut start_from).await {

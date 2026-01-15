@@ -98,6 +98,8 @@ pub struct BackgroundSection {
     pub agent_queues: Vec<AgentQueueConfig>,
     #[serde(default)]
     pub github_poller: GithubPollerConfig,
+    #[serde(default)]
+    pub scheduler: SchedulerSection,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -135,6 +137,49 @@ impl Default for GithubPollerConfig {
     fn default() -> Self {
         Self {
             interval_secs: default_github_poll_interval_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SchedulerSection {
+    #[serde(default = "default_process_pending_scheduler")]
+    pub process_pending_jobs: WorkerSchedulerConfig,
+    #[serde(default = "default_monitor_running_scheduler")]
+    pub monitor_running_jobs: WorkerSchedulerConfig,
+    #[serde(default = "default_run_spawners_scheduler")]
+    pub run_spawners: WorkerSchedulerConfig,
+    #[serde(default = "default_github_poller_scheduler")]
+    pub github_poller: WorkerSchedulerConfig,
+}
+
+impl Default for SchedulerSection {
+    fn default() -> Self {
+        Self {
+            process_pending_jobs: default_process_pending_scheduler(),
+            monitor_running_jobs: default_monitor_running_scheduler(),
+            run_spawners: default_run_spawners_scheduler(),
+            github_poller: default_github_poller_scheduler(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkerSchedulerConfig {
+    #[serde(default = "default_scheduler_interval_secs")]
+    pub interval_secs: u64,
+    #[serde(default = "default_scheduler_initial_backoff_secs")]
+    pub initial_backoff_secs: u64,
+    #[serde(default = "default_scheduler_max_backoff_secs")]
+    pub max_backoff_secs: u64,
+}
+
+impl Default for WorkerSchedulerConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_scheduler_interval_secs(),
+            initial_backoff_secs: default_scheduler_initial_backoff_secs(),
+            max_backoff_secs: default_scheduler_max_backoff_secs(),
         }
     }
 }
@@ -179,4 +224,72 @@ const fn default_agent_max_tries() -> u32 {
 
 const fn default_github_poll_interval_secs() -> u64 {
     60
+}
+
+const fn default_scheduler_interval_secs() -> u64 {
+    60
+}
+
+const fn default_scheduler_initial_backoff_secs() -> u64 {
+    1
+}
+
+const fn default_scheduler_max_backoff_secs() -> u64 {
+    30
+}
+
+fn default_process_pending_scheduler() -> WorkerSchedulerConfig {
+    WorkerSchedulerConfig {
+        interval_secs: 2,
+        ..Default::default()
+    }
+}
+
+fn default_monitor_running_scheduler() -> WorkerSchedulerConfig {
+    WorkerSchedulerConfig {
+        interval_secs: 5,
+        ..Default::default()
+    }
+}
+
+fn default_run_spawners_scheduler() -> WorkerSchedulerConfig {
+    WorkerSchedulerConfig {
+        interval_secs: 3,
+        ..Default::default()
+    }
+}
+
+fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
+    WorkerSchedulerConfig {
+        interval_secs: default_github_poll_interval_secs(),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheduler_defaults_match_worker_intervals() {
+        let background = BackgroundSection::default();
+        let scheduler = background.scheduler;
+
+        assert_eq!(scheduler.process_pending_jobs.interval_secs, 2);
+        assert_eq!(scheduler.monitor_running_jobs.interval_secs, 5);
+        assert_eq!(scheduler.run_spawners.interval_secs, 3);
+        assert_eq!(
+            scheduler.github_poller.interval_secs,
+            default_github_poll_interval_secs()
+        );
+
+        assert_eq!(scheduler.process_pending_jobs.initial_backoff_secs, 1);
+        assert_eq!(scheduler.process_pending_jobs.max_backoff_secs, 30);
+        assert_eq!(scheduler.monitor_running_jobs.initial_backoff_secs, 1);
+        assert_eq!(scheduler.monitor_running_jobs.max_backoff_secs, 30);
+        assert_eq!(scheduler.run_spawners.initial_backoff_secs, 1);
+        assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
+        assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
+        assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
+    }
 }
