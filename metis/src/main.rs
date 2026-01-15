@@ -48,7 +48,11 @@ enum Commands {
         command: command::patches::PatchesCommand,
     },
     /// Launch a live dashboard for jobs, issues, and patches.
-    Dashboard,
+    Dashboard {
+        /// Only show a dedicated panel for open issues assigned to this user.
+        #[arg(long = "username", value_name = "USERNAME")]
+        username: Option<String>,
+    },
     /// List or create issues.
     Issues {
         #[command(subcommand)]
@@ -98,7 +102,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Jobs { command } => command::jobs::run(&client, command).await?,
         Commands::Patches { command } => command::patches::run(&client, command).await?,
-        Commands::Dashboard => command::dashboard::run(&client).await?,
+        Commands::Dashboard { username } => command::dashboard::run(&client, username).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
         Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,

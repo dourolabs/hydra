@@ -8,8 +8,8 @@ pub mod kill;
 pub mod list;
 pub mod logs;
 
+pub(crate) use list::format_runtime;
 pub use list::DEFAULT_JOB_LIMIT;
-pub(crate) use list::{format_runtime, format_status};
 
 #[derive(Subcommand)]
 pub enum JobsCommand {
