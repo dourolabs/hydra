@@ -1,10 +1,10 @@
 use crate::{
     background::Spawner,
     config::AppConfig,
-    job_engine::{JobEngine, JobEngineError},
+    job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, TaskId,
     constants::ENV_METIS_ID,
@@ -308,6 +308,105 @@ impl AppState {
         }
     }
 
+    pub async fn reconcile_running_task(&self, task_id: TaskId) {
+        match self.job_engine.find_job_by_metis_id(&task_id).await {
+            Ok(job) => match job.status {
+                JobStatus::Running => {}
+                JobStatus::Complete => {
+                    warn!(
+                        metis_id = %task_id,
+                        "Job completed in job engine without submitting results."
+                    );
+
+                    let completion_time = job.completion_time.unwrap_or_else(Utc::now);
+                    let duration_since_completion =
+                        Utc::now().signed_duration_since(completion_time);
+
+                    if duration_since_completion < Duration::seconds(60) {
+                        return;
+                    }
+
+                    let failure_reason =
+                        "Job completed without submitting results (timeout after 1 minute)"
+                            .to_string();
+                    let mut store = self.store.write().await;
+                    match store
+                        .mark_task_complete(
+                            &task_id,
+                            Err(TaskError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            None,
+                            completion_time,
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            warn!(metis_id = %task_id, "task marked failed due to missing results after job completion timeout");
+                        }
+                        Err(err) => {
+                            warn!(metis_id = %task_id, error = %err, "failed to mark task failed after missing results timeout");
+                        }
+                    }
+                }
+                JobStatus::Failed => {
+                    let mut store = self.store.write().await;
+                    let end_time = job.completion_time.unwrap_or_else(Utc::now);
+                    let failure_reason = job
+                        .failure_message
+                        .unwrap_or_else(|| "Job failed for an undetermined reason".to_string());
+                    match store
+                        .mark_task_complete(
+                            &task_id,
+                            Err(TaskError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            None,
+                            end_time,
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            info!(metis_id = %task_id, "updated task status to Failed from job engine");
+                        }
+                        Err(err) => {
+                            warn!(metis_id = %task_id, error = %err, "failed to update task status to Failed");
+                        }
+                    }
+                }
+            },
+            Err(JobEngineError::NotFound(_)) => {
+                warn!(
+                    metis_id = %task_id,
+                    "job not found in job engine, marking as failed"
+                );
+
+                let mut store = self.store.write().await;
+                let failure_reason = "Job not found in job engine".to_string();
+                if let Err(update_err) = store
+                    .mark_task_complete(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                        Utc::now(),
+                    )
+                    .await
+                {
+                    error!(metis_id = %task_id, error = %update_err, "failed to set task status to Failed");
+                }
+            }
+            Err(err) => {
+                error!(
+                    metis_id = %task_id,
+                    error = %err,
+                    "failed to check job status in job engine"
+                );
+            }
+        }
+    }
+
     pub async fn upsert_patch(
         &self,
         patch_id: Option<PatchId>,
@@ -570,23 +669,30 @@ async fn active_tasks_for_issue(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{job_engine::MockJobEngine, test::test_state_with_engine};
-    use chrono::Utc;
+    use crate::{
+        job_engine::{JobStatus, MockJobEngine},
+        store::{Status, TaskError},
+        test::test_state_with_engine,
+    };
+    use chrono::{Duration, Utc};
     use metis_common::jobs::{BundleSpec, Task};
     use std::{collections::HashMap, sync::Arc};
 
-    #[tokio::test]
-    async fn start_pending_task_spawns_and_marks_running() {
-        let job_engine = Arc::new(MockJobEngine::new());
-        let state = test_state_with_engine(job_engine.clone());
-        let task = Task {
+    fn sample_task() -> Task {
+        Task {
             prompt: "Spawn me".to_string(),
             context: BundleSpec::None,
             spawned_from: None,
             image: Some("worker:latest".to_string()),
             env_vars: HashMap::new(),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn start_pending_task_spawns_and_marks_running() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let task = sample_task();
 
         let task_id = {
             let mut store = state.store.write().await;
@@ -602,5 +708,69 @@ mod tests {
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn reconcile_running_task_marks_missing_jobs_failed() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let task_id = {
+            let mut store = state.store.write().await;
+            let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            store
+                .mark_task_running(&task_id, Utc::now())
+                .await
+                .expect("task should transition to running");
+            task_id
+        };
+
+        state.reconcile_running_task(task_id.clone()).await;
+
+        let store = state.store.read().await;
+        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
+
+        let status_log = store.get_status_log(&task_id).await.unwrap();
+        match status_log.result().expect("task should be finished") {
+            Err(TaskError::JobEngineError { reason }) => {
+                assert_eq!(reason, "Job not found in job engine");
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_running_task_times_out_completed_jobs_without_results() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let completion_time = Utc::now() - Duration::seconds(90);
+
+        let task_id = {
+            let mut store = state.store.write().await;
+            let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+            store
+                .mark_task_running(&task_id, Utc::now())
+                .await
+                .expect("task should transition to running");
+            task_id
+        };
+
+        job_engine
+            .insert_job_with_metadata(&task_id, JobStatus::Complete, Some(completion_time), None)
+            .await;
+
+        state.reconcile_running_task(task_id.clone()).await;
+
+        let store = state.store.read().await;
+        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
+        let status_log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(status_log.end_time(), Some(completion_time));
+
+        match status_log.result().expect("task should be finished") {
+            Err(TaskError::JobEngineError { reason }) => assert_eq!(
+                reason,
+                "Job completed without submitting results (timeout after 1 minute)"
+            ),
+            other => panic!("unexpected result: {other:?}"),
+        }
     }
 }
