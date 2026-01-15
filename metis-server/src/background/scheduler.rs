@@ -3,8 +3,8 @@
 use crate::{
     app::AppState,
     background::{
-        monitor_running_jobs::MonitorRunningJobsWorker,
-        process_pending_jobs::ProcessPendingJobsWorker,
+        monitor_running_jobs::MonitorRunningJobsWorker, poll_github_patches::GithubPollerWorker,
+        process_pending_jobs::ProcessPendingJobsWorker, run_spawners::RunSpawnersWorker,
     },
     config::WorkerSchedulerConfig,
 };
@@ -93,19 +93,40 @@ impl BackgroundScheduler {
 
 pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
     let scheduler_config = state.config.background.scheduler.clone();
+    let process_interval_secs = scheduler_config.process_pending_jobs.interval_secs.max(1);
+    let monitor_interval_secs = scheduler_config.monitor_running_jobs.interval_secs.max(1);
+    let spawner_interval_secs = scheduler_config.run_spawners.interval_secs.max(1);
+    let github_interval_secs = scheduler_config
+        .github_poller
+        .interval_secs
+        .max(state.config.background.github_poller.interval_secs)
+        .max(1);
     log_worker_config(
         "process_pending_jobs",
+        process_interval_secs,
         &scheduler_config.process_pending_jobs,
     );
     log_worker_config(
         "monitor_running_jobs",
+        monitor_interval_secs,
         &scheduler_config.monitor_running_jobs,
+    );
+    log_worker_config(
+        "run_spawners",
+        spawner_interval_secs,
+        &scheduler_config.run_spawners,
+    );
+    log_worker_config(
+        "github_poller",
+        github_interval_secs,
+        &scheduler_config.github_poller,
     );
 
     let workers = vec![
         WorkerHandle::new(
             worker_settings_from_config(
                 "process_pending_jobs",
+                process_interval_secs,
                 &scheduler_config.process_pending_jobs,
             ),
             Arc::new(ProcessPendingJobsWorker::new(state.clone())),
@@ -113,29 +134,50 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         WorkerHandle::new(
             worker_settings_from_config(
                 "monitor_running_jobs",
+                monitor_interval_secs,
                 &scheduler_config.monitor_running_jobs,
             ),
-            Arc::new(MonitorRunningJobsWorker::new(state)),
+            Arc::new(MonitorRunningJobsWorker::new(state.clone())),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                "run_spawners",
+                spawner_interval_secs,
+                &scheduler_config.run_spawners,
+            ),
+            Arc::new(RunSpawnersWorker::new(state.clone())),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                "github_poller",
+                github_interval_secs,
+                &scheduler_config.github_poller,
+            ),
+            Arc::new(GithubPollerWorker::new(state, github_interval_secs)),
         ),
     ];
 
     BackgroundScheduler::start(workers)
 }
 
-fn log_worker_config(name: &str, config: &WorkerSchedulerConfig) {
+fn log_worker_config(name: &str, interval_secs: u64, config: &WorkerSchedulerConfig) {
     debug!(
         worker = name,
-        interval_secs = config.interval_secs,
+        interval_secs,
         initial_backoff_secs = config.initial_backoff_secs,
         max_backoff_secs = config.max_backoff_secs,
         "scheduler worker configured"
     );
 }
 
-fn worker_settings_from_config(name: &str, config: &WorkerSchedulerConfig) -> WorkerSettings {
+fn worker_settings_from_config(
+    name: &str,
+    interval_secs: u64,
+    config: &WorkerSchedulerConfig,
+) -> WorkerSettings {
     WorkerSettings::new(
         name.to_string(),
-        Duration::from_secs(config.interval_secs.max(1)),
+        Duration::from_secs(interval_secs.max(1)),
         Duration::from_secs(config.initial_backoff_secs.max(1)),
         Duration::from_secs(
             config
