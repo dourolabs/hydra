@@ -1,6 +1,6 @@
 use crate::{
-    app::{AppState, BundleResolutionError},
-    store::{Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
+    app::{AppState, BundleResolutionError, CreateJobError},
+    store::{Store, StoreError, TaskError, TaskResolutionError},
 };
 use axum::{
     Json, async_trait,
@@ -11,7 +11,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     IssueId, TaskId,
-    constants::ENV_METIS_ID,
     issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
     patches::Patch,
@@ -29,34 +28,13 @@ pub async fn create_job(
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let job_id = TaskId::new();
-    let fallback_image = state.config.metis.worker_image.clone();
-
-    let mut env_vars = payload.variables;
-    env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
-
-    let task = Task {
-        prompt: payload.prompt.clone(),
-        context: payload.context.clone(),
-        spawned_from: None,
-        image: payload.image,
-        env_vars,
-    };
-
-    let resolved_context = task
-        .resolve_context(state.service_state.as_ref())
-        .map_err(ApiError::from)?;
-    task.resolve_image(&resolved_context, &fallback_image)
-        .map_err(ApiError::from)?;
-
-    let mut store = state.store.write().await;
-    store
-        .add_task_with_id(job_id.clone(), task, Utc::now())
-        .await
-        .map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to store task");
-            ApiError::internal(anyhow::anyhow!("Failed to store task: {err}"))
-        })?;
+    let job_id = state.create_job(payload).await.map_err(|err| match err {
+        CreateJobError::TaskResolution(err) => ApiError::from(err),
+        CreateJobError::Store { source, job_id } => {
+            error!(error = %source, job_id = %job_id, "failed to store task");
+            ApiError::internal(anyhow::anyhow!("Failed to store task: {source}"))
+        }
+    })?;
 
     info!(
         job_id = %job_id,
