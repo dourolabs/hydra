@@ -637,16 +637,20 @@ impl AppState {
                 }
 
                 let updated_issue = issue.clone();
+                let is_dropping = updated_issue.status == IssueStatus::Dropped;
 
                 match store.update_issue(&id, issue).await {
                     Ok(()) => {
-                        if updated_issue.status == IssueStatus::Dropped {
+                        if is_dropping {
                             tasks_to_kill = active_tasks_for_issue(store.as_ref(), &id)
                                 .await
                                 .map_err(|source| UpsertIssueError::TaskLookup {
                                     source,
                                     issue_id: id.clone(),
                                 })?;
+
+                            let child_tasks = drop_issue_children(store.as_mut(), &id).await?;
+                            tasks_to_kill.extend(child_tasks);
                         }
                         id
                     }
@@ -754,6 +758,68 @@ impl AppState {
     }
 }
 
+async fn drop_issue_children(
+    store: &mut dyn Store,
+    issue_id: &IssueId,
+) -> Result<Vec<TaskId>, UpsertIssueError> {
+    let mut tasks_to_kill = Vec::new();
+    let mut to_visit =
+        store
+            .get_issue_children(issue_id)
+            .await
+            .map_err(|source| UpsertIssueError::Store {
+                source,
+                issue_id: Some(issue_id.clone()),
+            })?;
+    let mut visited: HashSet<IssueId> = HashSet::new();
+
+    while let Some(child_id) = to_visit.pop() {
+        if !visited.insert(child_id.clone()) {
+            continue;
+        }
+
+        let mut child_issue =
+            store
+                .get_issue(&child_id)
+                .await
+                .map_err(|source| UpsertIssueError::Store {
+                    source,
+                    issue_id: Some(child_id.clone()),
+                })?;
+
+        if child_issue.status != IssueStatus::Dropped {
+            child_issue.status = IssueStatus::Dropped;
+            store
+                .update_issue(&child_id, child_issue)
+                .await
+                .map_err(|source| UpsertIssueError::Store {
+                    source,
+                    issue_id: Some(child_id.clone()),
+                })?;
+        }
+
+        let active_child_tasks =
+            active_tasks_for_issue(store, &child_id)
+                .await
+                .map_err(|source| UpsertIssueError::TaskLookup {
+                    source,
+                    issue_id: child_id.clone(),
+                })?;
+        tasks_to_kill.extend(active_child_tasks);
+
+        let grandchildren = store
+            .get_issue_children(&child_id)
+            .await
+            .map_err(|source| UpsertIssueError::Store {
+                source,
+                issue_id: Some(child_id.clone()),
+            })?;
+        to_visit.extend(grandchildren);
+    }
+
+    Ok(tasks_to_kill)
+}
+
 async fn active_tasks_for_issue(
     store: &dyn Store,
     issue_id: &IssueId,
@@ -780,7 +846,10 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        TaskId,
+        IssueId, TaskId,
+        issues::{
+            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueRequest,
+        },
         jobs::{BundleSpec, Task},
     };
     use std::{collections::HashMap, sync::Arc};
@@ -792,6 +861,32 @@ mod tests {
             spawned_from: None,
             image: Some("worker:latest".to_string()),
             env_vars: HashMap::new(),
+        }
+    }
+
+    fn task_for_issue(issue_id: &IssueId) -> Task {
+        Task {
+            prompt: "Spawn me".to_string(),
+            context: BundleSpec::None,
+            spawned_from: Some(issue_id.clone()),
+            image: Some("worker:latest".to_string()),
+            env_vars: HashMap::new(),
+        }
+    }
+
+    fn issue_with_status(
+        description: &str,
+        status: IssueStatus,
+        dependencies: Vec<IssueDependency>,
+    ) -> Issue {
+        Issue {
+            issue_type: IssueType::Task,
+            description: description.to_string(),
+            progress: String::new(),
+            status,
+            assignee: None,
+            dependencies,
+            patches: Vec::new(),
         }
     }
 
@@ -912,6 +1007,121 @@ mod tests {
                 "Job completed without submitting results (timeout after 1 minute)"
             ),
             other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_issue_cascades_to_children() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: parent_issue.clone(),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        let child_issue =
+            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+        let child_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: child_issue.clone(),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let grandchild_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: child_id.clone(),
+        };
+        let grandchild_issue = issue_with_status(
+            "grandchild",
+            IssueStatus::Open,
+            vec![grandchild_dependency.clone()],
+        );
+        let grandchild_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: grandchild_issue.clone(),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let (parent_task_id, child_task_id, grandchild_task_id) = {
+            let mut store = state.store.write().await;
+            let parent_task_id = store
+                .add_task(task_for_issue(&parent_id), Utc::now())
+                .await
+                .unwrap();
+            let child_task_id = store
+                .add_task(task_for_issue(&child_id), Utc::now())
+                .await
+                .unwrap();
+            let grandchild_task_id = store
+                .add_task(task_for_issue(&grandchild_id), Utc::now())
+                .await
+                .unwrap();
+            (parent_task_id, child_task_id, grandchild_task_id)
+        };
+
+        job_engine
+            .insert_job(&parent_task_id, JobStatus::Running)
+            .await;
+        job_engine
+            .insert_job(&child_task_id, JobStatus::Running)
+            .await;
+        job_engine
+            .insert_job(&grandchild_task_id, JobStatus::Running)
+            .await;
+
+        let mut dropped_parent = parent_issue.clone();
+        dropped_parent.status = IssueStatus::Dropped;
+        state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                UpsertIssueRequest {
+                    issue: dropped_parent,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        {
+            let store = state.store.read().await;
+            assert_eq!(
+                store.get_issue(&child_id).await.unwrap().status,
+                IssueStatus::Dropped
+            );
+            assert_eq!(
+                store.get_issue(&grandchild_id).await.unwrap().status,
+                IssueStatus::Dropped
+            );
+        }
+
+        for task_id in [parent_task_id, child_task_id, grandchild_task_id] {
+            let job = job_engine
+                .find_job_by_metis_id(&task_id)
+                .await
+                .expect("job should exist");
+            assert_eq!(job.status, JobStatus::Failed);
         }
     }
 }
