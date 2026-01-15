@@ -8,4 +8,4 @@ if [[ -n "${NVM_DIR:-}" && -s "$NVM_DIR/nvm.sh" ]]; then
 fi
 
 # Run worker-run (includes codex login, output directory creation, and job submission)
-metis worker-run "${METIS_ID}" .
+metis jobs worker-run "${METIS_ID}" .
