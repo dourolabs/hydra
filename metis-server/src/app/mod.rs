@@ -5,7 +5,7 @@ use metis_common::jobs::{Bundle, BundleSpec};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub use app_state::{AppState, CreateJobError, SetJobStatusError};
+pub use app_state::{AppState, CreateJobError, SetJobStatusError, UpsertPatchError};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
