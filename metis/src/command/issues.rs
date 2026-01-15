@@ -746,6 +746,7 @@ fn write_issue_details_pretty(
     let Issue {
         issue_type,
         description,
+        progress,
         status,
         assignee,
         dependencies,
@@ -767,6 +768,15 @@ fn write_issue_details_pretty(
         writeln!(writer, "{indent}  -")?;
     } else {
         for line in description.lines() {
+            writeln!(writer, "{indent}  {line}")?;
+        }
+    }
+
+    writeln!(writer, "{indent}Progress:")?;
+    if progress.trim().is_empty() {
+        writeln!(writer, "{indent}  -")?;
+    } else {
+        for line in progress.lines() {
             writeln!(writer, "{indent}  {line}")?;
         }
     }
@@ -1620,6 +1630,65 @@ mod tests {
         assert!(rendered.contains("main patch (p-main) [open]"));
         assert!(rendered.contains("      Description:\n        desc"));
         assert!(rendered.contains("Reviews: none"));
+    }
+
+    #[test]
+    fn describe_issue_pretty_printer_includes_progress() {
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-main"),
+                    issue: Issue {
+                        issue_type: IssueType::Task,
+                        description: "Main issue".into(),
+                        progress: "Main progress".into(),
+                        status: IssueStatus::Open,
+                        assignee: Some("owner".into()),
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            },
+            parents: vec![IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-parent"),
+                    issue: Issue {
+                        issue_type: IssueType::Feature,
+                        description: "Parent".into(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: None,
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            }],
+            children: vec![IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-child"),
+                    issue: Issue {
+                        issue_type: IssueType::Bug,
+                        description: "Child".into(),
+                        progress: "Child update".into(),
+                        status: IssueStatus::InProgress,
+                        assignee: None,
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            }],
+        };
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("Progress:\n    Main progress"));
+        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
+        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
     }
 
     #[test]
