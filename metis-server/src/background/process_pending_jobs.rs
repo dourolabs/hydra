@@ -58,9 +58,8 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        background::test_support::FailingStore,
         store::{Status, Task},
-        test::test_state,
+        test::{store::FailingStore, test_state},
     };
     use chrono::Utc;
     use metis_common::jobs::BundleSpec;
