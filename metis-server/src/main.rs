@@ -911,6 +911,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1123,6 +1124,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1247,6 +1249,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1347,6 +1350,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 
@@ -1415,6 +1419,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 },
                 job_id: Some(job_id.clone()),
@@ -1448,6 +1453,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
         let filtered_patch = Patch {
@@ -1457,6 +1463,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 

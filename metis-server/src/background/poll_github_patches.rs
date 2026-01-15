@@ -3,8 +3,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
-    constants::ENV_GH_TOKEN,
-    patches::{GithubPr, Patch, PatchStatus, Review},
+    patches::{Patch, PatchStatus, Review},
 };
 use octocrab::{
     Octocrab,
@@ -13,7 +12,7 @@ use octocrab::{
         pulls::{Comment as PullRequestComment, PullRequest, Review as PullRequestReview},
     },
 };
-use std::{collections::HashSet, env};
+use std::collections::HashSet;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info, warn};
 
@@ -90,12 +89,7 @@ async fn sync_open_patches(
 
     let mut processed = 0usize;
     for (patch_id, patch) in ordered.into_iter().take(limit) {
-        let Some(github) = patch.github.clone() else {
-            processed += 1;
-            continue;
-        };
-
-        if let Err(err) = sync_patch_from_github(state, &patch_id, github).await {
+        if let Err(err) = sync_patch_from_github(state, &patch_id, patch).await {
             warn!(patch_id = %patch_id, error = %err, "failed to sync patch from GitHub");
         }
 
@@ -110,14 +104,18 @@ async fn sync_open_patches(
 async fn sync_patch_from_github(
     state: &AppState,
     patch_id: &PatchId,
-    github: GithubPr,
+    patch: Patch,
 ) -> anyhow::Result<()> {
-    let Some(token) = select_github_token(state, &github) else {
+    let Some(github) = patch.github.clone() else {
+        return Ok(());
+    };
+    let Some(token) = select_github_token(state, patch.service_repo_name.as_deref()) else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
             repo = %github.repo,
-            "skipping GitHub sync because no token is configured"
+            service_repo_name = ?patch.service_repo_name,
+            "skipping GitHub sync because no token is configured for the service repository"
         );
         return Ok(());
     };
@@ -206,24 +204,13 @@ async fn sync_patch_from_github(
     Ok(())
 }
 
-fn select_github_token(state: &AppState, github: &GithubPr) -> Option<String> {
-    let repo_identifier = format!(
-        "{}/{}",
-        github.owner.to_lowercase(),
-        github.repo.to_lowercase()
-    );
-    if let Some((_, repo)) = state.service_state.repositories.iter().find(|(_, repo)| {
-        let remote = repo.remote_url.to_lowercase();
-        remote.contains("github.com") && remote.contains(&repo_identifier)
-    }) {
-        if let Some(token) = &repo.github_token {
-            return Some(token.clone());
-        }
-    }
-
-    env::var(ENV_GH_TOKEN)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+fn select_github_token(state: &AppState, service_repo_name: Option<&str>) -> Option<String> {
+    let name = service_repo_name?;
+    state
+        .service_state
+        .repositories
+        .get(name)
+        .and_then(|repo| repo.github_token.clone())
 }
 
 fn build_review_entries(
@@ -360,6 +347,12 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
+
+    use crate::{
+        app::{GitRepository, ServiceState},
+        test::test_state,
+    };
 
     #[test]
     fn merge_reviews_preserves_existing() {
@@ -441,5 +434,32 @@ mod tests {
             patch_status_from_github(&base_pr),
             PatchStatus::Closed
         ));
+    }
+
+    #[test]
+    fn select_github_token_requires_service_repo_name() {
+        let state = test_state();
+
+        assert!(select_github_token(&state, None).is_none());
+    }
+
+    #[test]
+    fn select_github_token_uses_service_repo_name() {
+        let mut state = test_state();
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([(
+                "api".to_string(),
+                GitRepository {
+                    remote_url: "https://github.com/example/api.git".to_string(),
+                    default_branch: None,
+                    github_token: Some("svc-token".to_string()),
+                    default_image: None,
+                },
+            )]),
+        });
+
+        let token = select_github_token(&state, Some("api"));
+
+        assert_eq!(token.as_deref(), Some("svc-token"));
     }
 }
