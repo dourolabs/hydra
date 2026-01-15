@@ -40,6 +40,10 @@ image = "metis-worker:latest"
 #url = "https://github.com/example/repo.git"
 #rev = "main"
 
+[background.github_poller]
+# Polling interval (in seconds) used when syncing GitHub PRs for patches.
+interval_secs = 60
+
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
 # its mounted ServiceAccount credentials.

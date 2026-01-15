@@ -11,7 +11,8 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::{
-    AgentQueue, Spawner, monitor_running_jobs, process_pending_jobs, run_spawners,
+    AgentQueue, Spawner, monitor_running_jobs, poll_github_patches, process_pending_jobs,
+    run_spawners,
 };
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
@@ -37,6 +38,12 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
     let monitor_state = state.clone();
     tokio::spawn(async move {
         monitor_running_jobs(monitor_state).await;
+    });
+
+    // Spawn background task to sync GitHub PR metadata for patches
+    let github_poll_state = state.clone();
+    tokio::spawn(async move {
+        poll_github_patches(github_poll_state).await;
     });
 
     // Spawn background task to run configured spawners
