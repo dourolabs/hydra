@@ -187,6 +187,42 @@ impl AppState {
         Ok(job_id)
     }
 
+    pub async fn enqueue_spawned_tasks(&self, spawner_name: &str, tasks: Vec<Task>) -> Vec<TaskId> {
+        if tasks.is_empty() {
+            return Vec::new();
+        }
+
+        info!(
+            spawner = spawner_name,
+            count = tasks.len(),
+            "spawner produced tasks"
+        );
+
+        let mut stored_task_ids = Vec::new();
+        let mut store = self.store.write().await;
+        for task in tasks {
+            match store.add_task(task, Utc::now()).await {
+                Ok(metis_id) => {
+                    info!(
+                        spawner = spawner_name,
+                        metis_id = %metis_id,
+                        "added task produced by spawner"
+                    );
+                    stored_task_ids.push(metis_id);
+                }
+                Err(err) => {
+                    warn!(
+                        spawner = spawner_name,
+                        error = %err,
+                        "failed to add task from spawner"
+                    );
+                }
+            }
+        }
+
+        stored_task_ids
+    }
+
     pub async fn set_job_status(
         &self,
         job_id: TaskId,
@@ -650,7 +686,7 @@ mod tests {
     use crate::{
         job_engine::{JobStatus, MockJobEngine},
         store::{Status, TaskError},
-        test::test_state_with_engine,
+        test::{test_state, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
     use metis_common::jobs::{BundleSpec, Task};
@@ -686,6 +722,43 @@ mod tests {
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn enqueue_spawned_tasks_stores_tasks_and_returns_ids() {
+        let state = test_state();
+        let first = sample_task();
+        let second = sample_task();
+
+        let task_ids = state
+            .enqueue_spawned_tasks("agent_queue", vec![first.clone(), second.clone()])
+            .await;
+
+        assert_eq!(task_ids.len(), 2);
+
+        let store = state.store.read().await;
+        assert_eq!(store.get_task(&task_ids[0]).await.unwrap(), first);
+        assert_eq!(store.get_task(&task_ids[1]).await.unwrap(), second);
+        assert_eq!(
+            store.get_status(&task_ids[0]).await.unwrap(),
+            Status::Pending
+        );
+        assert_eq!(
+            store.get_status(&task_ids[1]).await.unwrap(),
+            Status::Pending
+        );
+    }
+
+    #[tokio::test]
+    async fn enqueue_spawned_tasks_noops_on_empty_input() {
+        let state = test_state();
+
+        let task_ids = state.enqueue_spawned_tasks("agent_queue", Vec::new()).await;
+
+        assert!(task_ids.is_empty());
+
+        let store = state.store.read().await;
+        assert!(store.list_tasks().await.unwrap().is_empty());
     }
 
     #[tokio::test]
