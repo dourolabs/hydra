@@ -234,6 +234,7 @@ async fn create_patch(
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
     };
+    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -245,6 +246,7 @@ async fn create_patch(
         job_id.clone(),
         create_github_pr,
         is_automatic_backup,
+        service_repo_name,
     )
     .await?
     .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
@@ -465,6 +467,22 @@ fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
     Ok(Some(issue_id))
 }
 
+async fn resolve_service_repo_name(
+    client: &dyn MetisClientInterface,
+    job_id: Option<&TaskId>,
+) -> Result<Option<String>> {
+    let Some(job_id) = job_id else {
+        return Ok(None);
+    };
+
+    let context = match client.get_job_context(job_id).await {
+        Ok(context) => context,
+        Err(_) => return Ok(None),
+    };
+
+    Ok(context.service_repo_name)
+}
+
 pub async fn create_patch_artifact_from_repo(
     client: &dyn MetisClientInterface,
     repo_root: &Path,
@@ -473,6 +491,7 @@ pub async fn create_patch_artifact_from_repo(
     job_id: Option<TaskId>,
     create_github_pr: bool,
     is_automatic_backup: bool,
+    service_repo_name: Option<String>,
 ) -> Result<Option<UpsertPatchResponse>> {
     let patch = create_patch_from_repo(repo_root)?;
     if patch.trim().is_empty() {
@@ -495,6 +514,7 @@ pub async fn create_patch_artifact_from_repo(
         status: PatchStatus::Open,
         is_automatic_backup,
         reviews: Vec::new(),
+        service_repo_name,
         github: None,
     };
     let response = client
@@ -960,10 +980,11 @@ mod tests {
     use metis_common::issues::{
         IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
     };
+    use metis_common::jobs::{Bundle, WorkerContext};
     use metis_common::patches::{
         ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse,
     };
-    use std::{env, fs, process::Command};
+    use std::{collections::HashMap, env, fs, process::Command};
 
     fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
@@ -1304,6 +1325,7 @@ mod tests {
             Some(task_id("t-job-automatic")),
             false,
             true,
+            None,
         )
         .await?
         .expect("patch should be created for repository changes");
@@ -1312,6 +1334,46 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
         let (_, request) = &requests[0];
         assert!(request.patch.is_automatic_backup);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_uses_service_repo_name_from_job_context() -> Result<()> {
+        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let client = MockMetisClient::default();
+        client.push_get_job_context_response(WorkerContext {
+            request_context: Bundle::GitRepository {
+                url: "https://example.com/repo.git".to_string(),
+                rev: "main".to_string(),
+            },
+            prompt: "do work".to_string(),
+            variables: HashMap::new(),
+            service_repo_name: Some("api".to_string()),
+        });
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: patch_id("p-service"),
+        });
+
+        create_patch(
+            &client,
+            "backup patch".to_string(),
+            "backup description".to_string(),
+            Some(task_id("t-job-automatic")),
+            false,
+            None,
+            None,
+            Some(repo_path.as_path()),
+        )
+        .await?;
+
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
+        let (_, request) = &requests[0];
+        assert_eq!(
+            request.patch.service_repo_name.as_deref(),
+            Some("api"),
+            "service repo name should be pulled from job context"
+        );
         Ok(())
     }
 
@@ -1334,6 +1396,7 @@ mod tests {
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
+                service_repo_name: None,
                 github: None,
             },
         });
@@ -1391,6 +1454,7 @@ mod tests {
                     author: "sam".to_string(),
                     submitted_at: None,
                 }],
+                service_repo_name: None,
                 github: None,
             },
         });
@@ -1430,6 +1494,7 @@ mod tests {
                             author: "sam".to_string(),
                             submitted_at: None,
                         }],
+                        service_repo_name: None,
                         github: None,
                     },
                     job_id: None,
@@ -1452,6 +1517,7 @@ mod tests {
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![],
+                service_repo_name: None,
                 github: None,
             },
         });

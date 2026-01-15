@@ -80,6 +80,8 @@ pub struct WorkerContext {
     pub prompt: String,
     #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_repo_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

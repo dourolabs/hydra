@@ -4,7 +4,7 @@ use crate::{
     store::TaskExt,
 };
 use axum::{Json, extract::State};
-use metis_common::jobs::WorkerContext;
+use metis_common::jobs::{BundleSpec, WorkerContext};
 use tracing::{error, info};
 
 pub async fn get_job_context(
@@ -23,10 +23,15 @@ pub async fn get_job_context(
         .resolve_context(state.service_state.as_ref())
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);
+    let service_repo_name = match &task.context {
+        BundleSpec::ServiceRepository { name, .. } => Some(name.clone()),
+        _ => None,
+    };
 
     Ok(Json(WorkerContext {
         request_context: resolved.bundle,
         prompt: task.prompt,
         variables: env_vars,
+        service_repo_name,
     }))
 }

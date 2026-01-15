@@ -911,6 +911,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1123,6 +1124,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1247,6 +1249,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 })
                 .await?;
@@ -1291,6 +1294,62 @@ mod tests {
             }
         );
         assert_eq!(body.prompt, "0");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_job_context_exposes_service_repo_name() -> anyhow::Result<()> {
+        let mut state = test_state();
+        let store = state.store.clone();
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([(
+                "api".to_string(),
+                GitRepository {
+                    remote_url: "https://github.com/example/api.git".to_string(),
+                    default_branch: Some("main".to_string()),
+                    github_token: Some("svc-token".to_string()),
+                    default_image: None,
+                },
+            )]),
+        });
+        let job_id = TaskId::new();
+        {
+            let mut store_write = store.write().await;
+            store_write
+                .add_task_with_id(
+                    job_id.clone(),
+                    Task {
+                        prompt: "0".to_string(),
+                        context: BundleSpec::ServiceRepository {
+                            name: "api".to_string(),
+                            rev: None,
+                        },
+                        spawned_from: None,
+                        image: Some(default_image()),
+                        env_vars: HashMap::new(),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+        }
+        let server = spawn_test_server_with_state(state).await?;
+
+        let client = test_client();
+        let response = client
+            .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+            .send()
+            .await?;
+
+        assert!(response.status().is_success());
+        let body: WorkerContext = response.json().await?;
+        assert_eq!(body.service_repo_name.as_deref(), Some("api"));
+        assert_eq!(
+            body.request_context,
+            Bundle::GitRepository {
+                url: "https://github.com/example/api.git".to_string(),
+                rev: "main".to_string(),
+            }
+        );
         Ok(())
     }
 
@@ -1347,6 +1406,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 
@@ -1415,6 +1475,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 },
                 job_id: Some(job_id.clone()),
@@ -1448,6 +1509,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
         let filtered_patch = Patch {
@@ -1457,6 +1519,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 

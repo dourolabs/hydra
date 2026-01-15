@@ -24,6 +24,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         request_context,
         variables,
         prompt,
+        service_repo_name,
         ..
     } = client.get_job_context(&job).await?;
     // Startup tasks: set up context
@@ -49,7 +50,14 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         .with_context(|| "failed to execute codex for worker context")?;
 
     let last_message = read_last_message(&dest)?;
-    submit_patch_artifact_if_present(client, &job, &dest, &last_message).await?;
+    submit_patch_artifact_if_present(
+        client,
+        &job,
+        &dest,
+        &last_message,
+        service_repo_name.as_deref(),
+    )
+    .await?;
     // Submit job status (merge of worker-submit functionality)
     submit_job_status(client, &job, &last_message).await?;
 
@@ -223,6 +231,7 @@ async fn submit_patch_artifact_if_present(
     job: &TaskId,
     dest: &Path,
     last_message: &str,
+    service_repo_name: Option<&str>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
@@ -235,6 +244,7 @@ async fn submit_patch_artifact_if_present(
         Some(job.clone()),
         create_github_pr,
         is_automatic_backup,
+        service_repo_name.map(str::to_string),
     )
     .await?
     {
@@ -745,7 +755,14 @@ mod tests {
         });
         let job_id = task_id("t-job-123");
 
-        submit_patch_artifact_if_present(&client, &job_id, repo_path, "final output line").await?;
+        submit_patch_artifact_if_present(
+            &client,
+            &job_id,
+            repo_path,
+            "final output line",
+            Some("service-api"),
+        )
+        .await?;
 
         let requests = client.recorded_patch_upserts();
         assert_eq!(requests.len(), 1, "expected a single patch submission");
@@ -756,6 +773,10 @@ mod tests {
         assert!(
             request.patch.is_automatic_backup,
             "worker-run patches should be marked as automatic backups"
+        );
+        assert_eq!(
+            request.patch.service_repo_name.as_deref(),
+            Some("service-api")
         );
         assert!(
             request.patch.diff.contains("updated content"),
@@ -773,7 +794,7 @@ mod tests {
 
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-456");
-        submit_patch_artifact_if_present(&client, &job_id, repo_path, "done").await?;
+        submit_patch_artifact_if_present(&client, &job_id, repo_path, "done", None).await?;
 
         let requests = client.recorded_patch_upserts();
         assert!(

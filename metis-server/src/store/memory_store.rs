@@ -530,6 +530,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         }
     }
@@ -580,6 +581,7 @@ mod tests {
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
+            service_repo_name: None,
             github: None,
         };
 
@@ -603,6 +605,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
+                    service_repo_name: None,
                     github: None,
                 },
             )

@@ -90,12 +90,7 @@ async fn sync_open_patches(
 
     let mut processed = 0usize;
     for (patch_id, patch) in ordered.into_iter().take(limit) {
-        let Some(github) = patch.github.clone() else {
-            processed += 1;
-            continue;
-        };
-
-        if let Err(err) = sync_patch_from_github(state, &patch_id, github).await {
+        if let Err(err) = sync_patch_from_github(state, &patch_id, patch).await {
             warn!(patch_id = %patch_id, error = %err, "failed to sync patch from GitHub");
         }
 
@@ -110,9 +105,13 @@ async fn sync_open_patches(
 async fn sync_patch_from_github(
     state: &AppState,
     patch_id: &PatchId,
-    github: GithubPr,
+    patch: Patch,
 ) -> anyhow::Result<()> {
-    let Some(token) = select_github_token(state, &github) else {
+    let Some(github) = patch.github.clone() else {
+        return Ok(());
+    };
+    let Some(token) = select_github_token(state, &github, patch.service_repo_name.as_deref())
+    else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -206,7 +205,19 @@ async fn sync_patch_from_github(
     Ok(())
 }
 
-fn select_github_token(state: &AppState, github: &GithubPr) -> Option<String> {
+fn select_github_token(
+    state: &AppState,
+    github: &GithubPr,
+    service_repo_name: Option<&str>,
+) -> Option<String> {
+    if let Some(name) = service_repo_name {
+        if let Some(repo) = state.service_state.repositories.get(name) {
+            if let Some(token) = &repo.github_token {
+                return Some(token.clone());
+            }
+        }
+    }
+
     let repo_identifier = format!(
         "{}/{}",
         github.owner.to_lowercase(),
@@ -360,6 +371,12 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
+
+    use crate::{
+        app::{GitRepository, ServiceState},
+        test::test_state,
+    };
 
     #[test]
     fn merge_reviews_preserves_existing() {
@@ -441,5 +458,33 @@ mod tests {
             patch_status_from_github(&base_pr),
             PatchStatus::Closed
         ));
+    }
+
+    #[test]
+    fn select_github_token_prefers_service_repo_name() {
+        let mut state = test_state();
+        state.service_state = Arc::new(ServiceState {
+            repositories: HashMap::from([(
+                "api".to_string(),
+                GitRepository {
+                    remote_url: "https://github.com/example/api.git".to_string(),
+                    default_branch: Some("main".to_string()),
+                    github_token: Some("svc-token".to_string()),
+                    default_image: None,
+                },
+            )]),
+        });
+        let github = GithubPr {
+            owner: "other".to_string(),
+            repo: "repo".to_string(),
+            number: 1,
+            head_ref: None,
+            base_ref: None,
+            url: None,
+        };
+
+        let token = select_github_token(&state, &github, Some("api"));
+
+        assert_eq!(token.as_deref(), Some("svc-token"));
     }
 }
