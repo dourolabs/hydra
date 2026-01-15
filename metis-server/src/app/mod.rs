@@ -1,7 +1,11 @@
+mod app_state;
+
 use crate::config::{ServiceSection, non_empty};
 use metis_common::jobs::{Bundle, BundleSpec};
 use std::collections::HashMap;
 use thiserror::Error;
+
+pub use app_state::AppState;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
@@ -13,7 +17,6 @@ pub struct ResolvedBundle {
 /// Connection details for a git repository remote.
 #[derive(Debug, Clone)]
 pub struct GitRepository {
-    pub name: String,
     pub remote_url: String,
     pub default_branch: Option<String>,
     pub github_token: Option<String>,
@@ -52,7 +55,6 @@ impl ServiceState {
                 (
                     name.clone(),
                     GitRepository {
-                        name: name.clone(),
                         remote_url: repo.remote_url.clone(),
                         default_branch,
                         github_token,

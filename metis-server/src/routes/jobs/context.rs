@@ -1,5 +1,5 @@
 use crate::{
-    AppState,
+    app::AppState,
     routes::jobs::{ApiError, JobIdPath},
     store::TaskExt,
 };

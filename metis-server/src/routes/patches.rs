@@ -1,5 +1,5 @@
 use crate::{
-    AppState,
+    app::AppState,
     routes::jobs::ApiError,
     routes::map_emit_error,
     store::{Status, StoreError},

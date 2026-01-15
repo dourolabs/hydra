@@ -1,6 +1,5 @@
 use crate::{
-    AppState,
-    state::BundleResolutionError,
+    app::{AppState, BundleResolutionError},
     store::{Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
 };
 use axum::{
