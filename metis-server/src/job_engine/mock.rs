@@ -1,6 +1,6 @@
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use std::{
     collections::HashMap,
@@ -28,6 +28,24 @@ impl MockJobEngine {
             start_time: Some(Utc::now()),
             completion_time: None,
             failure_message: None,
+        });
+    }
+
+    pub async fn insert_job_with_metadata(
+        &self,
+        metis_id: &TaskId,
+        status: JobStatus,
+        completion_time: Option<DateTime<Utc>>,
+        failure_message: Option<String>,
+    ) {
+        let mut jobs = self.jobs.lock().unwrap();
+        jobs.push(MetisJob {
+            id: metis_id.clone(),
+            status,
+            creation_time: Some(Utc::now()),
+            start_time: Some(Utc::now()),
+            completion_time,
+            failure_message,
         });
     }
 

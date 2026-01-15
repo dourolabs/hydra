@@ -1,9 +1,4 @@
-use crate::{
-    app::AppState,
-    job_engine::JobStatus,
-    store::{Status, TaskError},
-};
-use chrono::Utc;
+use crate::{app::AppState, store::Status};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -89,97 +84,7 @@ pub async fn monitor_running_jobs(state: AppState) {
 
         // Check each running job's status
         for metis_id in running_ids {
-            match state.job_engine.find_job_by_metis_id(&metis_id).await {
-                Ok(job) => {
-                    match job.status {
-                        JobStatus::Complete => {
-                            warn!(metis_id = %metis_id, "Job completed in job engine without submitting results.");
-                            // If job has been completed for at least 1 minute, mark as failed due to timeout for missing result
-                            let mut store = state.store.write().await;
-                            let completion_time = job.completion_time.unwrap_or_else(Utc::now);
-                            let now = Utc::now();
-                            let duration_since_completion =
-                                now.signed_duration_since(completion_time);
-                            // Check for a 1 minute (60s) timeout since completion
-                            if duration_since_completion.num_seconds() >= 60 {
-                                let failure_reason = "Job completed without submitting results (timeout after 1 minute)".to_string();
-                                match store
-                                    .mark_task_complete(
-                                        &metis_id,
-                                        Err(TaskError::JobEngineError {
-                                            reason: failure_reason,
-                                        }),
-                                        None,
-                                        completion_time,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        warn!(metis_id = %metis_id, "task marked failed due to missing results after job completion timeout");
-                                    }
-                                    Err(err) => {
-                                        warn!(metis_id = %metis_id, error = %err, "failed to mark task failed after missing results timeout");
-                                    }
-                                }
-                            }
-                        }
-                        JobStatus::Failed => {
-                            // Update status in store
-                            let mut store = state.store.write().await;
-                            let end_time = job.completion_time.unwrap_or_else(Utc::now);
-                            let failure_reason = job.failure_message.unwrap_or_else(|| {
-                                "Job failed for an undetermined reason".to_string()
-                            });
-                            match store
-                                .mark_task_complete(
-                                    &metis_id,
-                                    Err(TaskError::JobEngineError {
-                                        reason: failure_reason,
-                                    }),
-                                    None,
-                                    end_time,
-                                )
-                                .await
-                            {
-                                Ok(()) => {
-                                    info!(metis_id = %metis_id, "updated task status to Failed from job engine");
-                                }
-                                Err(err) => {
-                                    warn!(metis_id = %metis_id, error = %err, "failed to update task status to Failed");
-                                }
-                            }
-                        }
-                        JobStatus::Running => {
-                            // Still running, skip
-                            continue;
-                        }
-                    }
-                }
-                Err(crate::job_engine::JobEngineError::NotFound(_)) => {
-                    // Job not found in Kubernetes - might have been deleted or never created
-                    // This could happen if the job was cleaned up externally
-                    warn!(metis_id = %metis_id, "job not found in job engine, marking as failed");
-                    let mut store = state.store.write().await;
-                    let failure_reason = "Job not found in job engine".to_string();
-                    if let Err(update_err) = store
-                        .mark_task_complete(
-                            &metis_id,
-                            Err(TaskError::JobEngineError {
-                                reason: failure_reason,
-                            }),
-                            None,
-                            Utc::now(),
-                        )
-                        .await
-                    {
-                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed");
-                    }
-                }
-                Err(err) => {
-                    error!(metis_id = %metis_id, error = %err, "failed to check job status in job engine");
-                    // Don't update status on transient errors
-                }
-            }
+            state.reconcile_running_task(metis_id).await;
         }
     }
 }
