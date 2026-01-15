@@ -2,7 +2,7 @@ use crate::{
     background::Spawner,
     config::AppConfig,
     job_engine::{JobEngine, JobEngineError},
-    store::{Status, Store, StoreError, Task, TaskExt, TaskResolutionError},
+    store::{Status, Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
 };
 use chrono::Utc;
 use metis_common::{
@@ -16,7 +16,7 @@ use metis_common::{
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::ServiceState;
 
@@ -227,6 +227,85 @@ impl AppState {
             job_id,
             status: status.as_status(),
         })
+    }
+
+    pub async fn start_pending_task(&self, task_id: TaskId) {
+        let fallback_image = self.config.metis.worker_image.clone();
+        let resolved = {
+            let store = self.store.read().await;
+            match store.get_task(&task_id).await {
+                Ok(task) => match task.resolve(self.service_state.as_ref(), &fallback_image) {
+                    Ok(resolved) => resolved,
+                    Err(err) => {
+                        warn!(
+                            metis_id = %task_id,
+                            error = %err,
+                            "failed to resolve task for spawning"
+                        );
+                        return;
+                    }
+                },
+                Err(err) => {
+                    warn!(
+                        metis_id = %task_id,
+                        error = %err,
+                        "failed to load task for spawning"
+                    );
+                    return;
+                }
+            }
+        };
+
+        match self
+            .job_engine
+            .create_job(&task_id, &resolved.image, &resolved.env_vars)
+            .await
+        {
+            Ok(()) => {
+                let mut store = self.store.write().await;
+                match store.mark_task_running(&task_id, Utc::now()).await {
+                    Ok(()) => {
+                        info!(
+                            metis_id = %task_id,
+                            "set task status to Running (spawned)"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            metis_id = %task_id,
+                            error = %err,
+                            "failed to set task to Running after spawn"
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                let mut store = self.store.write().await;
+                let failure_reason = format!("Failed to create Kubernetes job: {err}");
+                if let Err(update_err) = store
+                    .mark_task_complete(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                        Utc::now(),
+                    )
+                    .await
+                {
+                    error!(
+                        metis_id = %task_id,
+                        error = %update_err,
+                        "failed to set task status to Failed (spawn failed)"
+                    );
+                } else {
+                    info!(
+                        metis_id = %task_id,
+                        "set task status to Failed (spawn failed)"
+                    );
+                }
+            }
+        }
     }
 
     pub async fn upsert_patch(
@@ -487,4 +566,41 @@ async fn active_tasks_for_issue(
     }
 
     Ok(task_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{job_engine::MockJobEngine, test::test_state_with_engine};
+    use chrono::Utc;
+    use metis_common::jobs::{BundleSpec, Task};
+    use std::{collections::HashMap, sync::Arc};
+
+    #[tokio::test]
+    async fn start_pending_task_spawns_and_marks_running() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let task = Task {
+            prompt: "Spawn me".to_string(),
+            context: BundleSpec::None,
+            spawned_from: None,
+            image: Some("worker:latest".to_string()),
+            env_vars: HashMap::new(),
+        };
+
+        let task_id = {
+            let mut store = state.store.write().await;
+            store.add_task(task, Utc::now()).await.unwrap()
+        };
+
+        state.start_pending_task(task_id.clone()).await;
+
+        {
+            let store = state.store.read().await;
+            let status = store.get_status(&task_id).await.unwrap();
+            assert_eq!(status, Status::Running);
+        }
+
+        assert!(job_engine.env_vars_for_job(&task_id).is_some());
+    }
 }

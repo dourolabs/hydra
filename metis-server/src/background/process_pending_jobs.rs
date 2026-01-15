@@ -1,11 +1,7 @@
-use crate::{
-    app::AppState,
-    store::{Status, TaskError, TaskExt},
-};
-use chrono::Utc;
+use crate::{app::AppState, store::Status};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Background task that periodically processes pending jobs.
 ///
@@ -14,9 +10,6 @@ use tracing::{error, info, warn};
 /// 1. Setting their status to Running
 /// 2. Creating the Kubernetes job via the job engine
 pub async fn process_pending_jobs(state: AppState) {
-    let fallback_image = state.config.metis.worker_image.clone();
-    let service_state = state.service_state.clone();
-
     loop {
         // Check every 2 seconds
         sleep(Duration::from_secs(2)).await;
@@ -41,60 +34,7 @@ pub async fn process_pending_jobs(state: AppState) {
 
         // Process each pending task
         for metis_id in pending_ids {
-            let resolved = {
-                let store = state.store.read().await;
-                match store.get_task(&metis_id).await {
-                    Ok(task) => match task.resolve(service_state.as_ref(), &fallback_image) {
-                        Ok(resolved) => resolved,
-                        Err(err) => {
-                            warn!(metis_id = %metis_id, error = %err, "failed to resolve task for spawning");
-                            continue;
-                        }
-                    },
-                    Err(err) => {
-                        warn!(metis_id = %metis_id, error = %err, "failed to load task for spawning");
-                        continue;
-                    }
-                }
-            };
-
-            // Spawn the job
-            match state
-                .job_engine
-                .create_job(&metis_id, &resolved.image, &resolved.env_vars)
-                .await
-            {
-                Ok(()) => {
-                    let mut store = state.store.write().await;
-                    match store.mark_task_running(&metis_id, Utc::now()).await {
-                        Ok(()) => {
-                            info!(metis_id = %metis_id, "set task status to Running (spawned)");
-                        }
-                        Err(err) => {
-                            warn!(metis_id = %metis_id, error = %err, "failed to set task to Running after spawn");
-                        }
-                    }
-                }
-                Err(err) => {
-                    let mut store = state.store.write().await;
-                    let failure_reason = format!("Failed to create Kubernetes job: {err}");
-                    if let Err(update_err) = store
-                        .mark_task_complete(
-                            &metis_id,
-                            Err(TaskError::JobEngineError {
-                                reason: failure_reason,
-                            }),
-                            None,
-                            Utc::now(),
-                        )
-                        .await
-                    {
-                        error!(metis_id = %metis_id, error = %update_err, "failed to set task status to Failed (spawn failed)");
-                    } else {
-                        info!(metis_id = %metis_id, "set task status to Failed (spawn failed)");
-                    }
-                }
-            }
+            state.start_pending_task(metis_id).await;
         }
     }
 }
