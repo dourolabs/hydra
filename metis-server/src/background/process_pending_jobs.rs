@@ -1,40 +1,34 @@
-use crate::{app::AppState, store::Status};
-use std::time::Duration;
-use tokio::time::sleep;
+use crate::{app::AppState, background::WorkerOutcome, store::Status};
 use tracing::{error, info};
 
-/// Background task that periodically processes pending jobs.
-///
-/// This function runs in a loop, checking for pending tasks every few seconds
-/// and starting them by:
-/// 1. Setting their status to Running
-/// 2. Creating the Kubernetes job via the job engine
-pub async fn process_pending_jobs(state: AppState) {
-    loop {
-        // Check every 2 seconds
-        sleep(Duration::from_secs(2)).await;
-
-        // Get pending tasks
-        let pending_ids = {
-            let store = state.store.read().await;
-            match store.list_tasks_with_status(Status::Pending).await {
-                Ok(ids) => ids,
-                Err(err) => {
-                    error!(error = %err, "failed to list pending tasks");
-                    continue;
-                }
+/// Process pending jobs once.
+pub async fn process_pending_jobs(state: &AppState) -> WorkerOutcome {
+    let pending_ids = {
+        let store = state.store.read().await;
+        match store.list_tasks_with_status(Status::Pending).await {
+            Ok(ids) => ids,
+            Err(err) => {
+                error!(error = %err, "failed to list pending tasks");
+                return WorkerOutcome::TransientError {
+                    reason: "list_pending_failed".to_string(),
+                };
             }
-        };
-
-        if pending_ids.is_empty() {
-            continue;
         }
+    };
 
-        info!(count = pending_ids.len(), "found pending tasks to process");
+    if pending_ids.is_empty() {
+        return WorkerOutcome::Idle;
+    }
 
-        // Process each pending task
-        for metis_id in pending_ids {
-            state.start_pending_task(metis_id).await;
-        }
+    let pending_count = pending_ids.len();
+    info!(count = pending_count, "found pending tasks to process");
+
+    for metis_id in pending_ids {
+        state.start_pending_task(metis_id).await;
+    }
+
+    WorkerOutcome::Progress {
+        processed: pending_count,
+        failed: 0,
     }
 }

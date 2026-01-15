@@ -98,6 +98,8 @@ pub struct BackgroundSection {
     pub agent_queues: Vec<AgentQueueConfig>,
     #[serde(default)]
     pub github_poller: GithubPollerConfig,
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -137,6 +139,42 @@ impl Default for GithubPollerConfig {
             interval_secs: default_github_poll_interval_secs(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SchedulerConfig {
+    #[serde(default = "default_retry_backoff_secs")]
+    pub retry_backoff_secs: u64,
+    #[serde(default = "default_max_backoff_secs")]
+    pub max_backoff_secs: u64,
+    #[serde(default = "default_worker_intervals")]
+    pub workers: HashMap<String, WorkerIntervalConfig>,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            retry_backoff_secs: default_retry_backoff_secs(),
+            max_backoff_secs: default_max_backoff_secs(),
+            workers: default_worker_intervals(),
+        }
+    }
+}
+
+impl SchedulerConfig {
+    pub fn worker_interval_secs(&self, worker_name: &str, fallback: u64) -> u64 {
+        self.workers
+            .get(worker_name)
+            .map(|config| config.interval_secs)
+            .unwrap_or(fallback)
+            .max(1)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkerIntervalConfig {
+    #[serde(default = "default_worker_interval_secs")]
+    pub interval_secs: u64,
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
@@ -180,3 +218,48 @@ const fn default_agent_max_tries() -> u32 {
 const fn default_github_poll_interval_secs() -> u64 {
     60
 }
+
+const fn default_worker_interval_secs() -> u64 {
+    1
+}
+
+const fn default_retry_backoff_secs() -> u64 {
+    DEFAULT_RETRY_BACKOFF_SECS
+}
+
+const fn default_max_backoff_secs() -> u64 {
+    DEFAULT_MAX_BACKOFF_SECS
+}
+
+fn default_worker_intervals() -> HashMap<String, WorkerIntervalConfig> {
+    HashMap::from([
+        (
+            WORKER_PROCESS_PENDING_JOBS.to_string(),
+            WorkerIntervalConfig {
+                interval_secs: DEFAULT_PENDING_INTERVAL_SECS,
+            },
+        ),
+        (
+            WORKER_MONITOR_RUNNING_JOBS.to_string(),
+            WorkerIntervalConfig {
+                interval_secs: DEFAULT_MONITOR_INTERVAL_SECS,
+            },
+        ),
+        (
+            WORKER_RUN_SPAWNERS.to_string(),
+            WorkerIntervalConfig {
+                interval_secs: DEFAULT_SPAWNER_INTERVAL_SECS,
+            },
+        ),
+    ])
+}
+
+pub const WORKER_PROCESS_PENDING_JOBS: &str = "process_pending_jobs";
+pub const WORKER_MONITOR_RUNNING_JOBS: &str = "monitor_running_jobs";
+pub const WORKER_RUN_SPAWNERS: &str = "run_spawners";
+
+pub const DEFAULT_PENDING_INTERVAL_SECS: u64 = 2;
+pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 5;
+pub const DEFAULT_SPAWNER_INTERVAL_SECS: u64 = 3;
+pub const DEFAULT_RETRY_BACKOFF_SECS: u64 = 5;
+pub const DEFAULT_MAX_BACKOFF_SECS: u64 = 60;

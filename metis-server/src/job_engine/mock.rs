@@ -54,6 +54,23 @@ impl MockJobEngine {
         logs.insert(metis_id.clone(), chunks);
     }
 
+    pub async fn set_job_status(
+        &self,
+        metis_id: &TaskId,
+        status: JobStatus,
+        failure_message: Option<String>,
+    ) {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.iter_mut().find(|job| &job.id == metis_id) {
+            job.status = status;
+            job.failure_message = failure_message;
+            job.completion_time = match status {
+                JobStatus::Running => None,
+                _ => Some(Utc::now()),
+            };
+        }
+    }
+
     pub fn env_vars_for_job(&self, metis_id: &TaskId) -> Option<HashMap<String, String>> {
         let env_vars = self.env_vars.lock().unwrap();
         env_vars.get(metis_id).cloned()
