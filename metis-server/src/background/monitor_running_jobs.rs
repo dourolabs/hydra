@@ -1,7 +1,7 @@
 use crate::{app::AppState, store::Status};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 /// Background task that periodically monitors running jobs.
 ///
@@ -11,9 +11,18 @@ use tracing::{error, info};
 /// 2. Checks each job's status in the job engine
 /// 3. Updates the store status to Complete or Failed if the job has finished
 pub async fn monitor_running_jobs(state: AppState) {
+    let settings = &state.config.background.scheduler.monitor_running_jobs;
+    let interval_secs = settings.interval_secs.max(1);
+    let sleep_duration = Duration::from_secs(interval_secs);
+    debug!(
+        interval_secs,
+        initial_backoff_secs = settings.initial_backoff_secs,
+        max_backoff_secs = settings.max_backoff_secs,
+        "monitor_running_jobs scheduler configured"
+    );
+
     loop {
-        // Check every 5 seconds
-        sleep(Duration::from_secs(5)).await;
+        sleep(sleep_duration).await;
 
         // Kill any jobs that are running in the engine but missing from the store
         state.reap_orphaned_jobs().await;

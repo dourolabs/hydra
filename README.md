@@ -72,6 +72,8 @@ commands without manual approvals.
      background queues know what to check out.
    - `[[background.agent_queues]]` entries if you want autonomous queues
      that automatically create jobs based on prompts.
+   - `[background.scheduler.<worker>]` blocks to adjust polling/backoff
+     intervals for background workers (see `config.toml.sample` for defaults).
    - `[kubernetes]` connection info (`in_cluster`, `config_path`, etc.).
 3. Launch with `METIS_CONFIG=metis-server/config.toml cargo run -p metis-server`.
 
