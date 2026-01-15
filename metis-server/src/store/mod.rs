@@ -124,7 +124,7 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[allow(dead_code)]
     #[error("Invalid dependency: {0}")]
-    InvalidDependency(String),
+    InvalidDependency(IssueId),
     #[error("Invalid issue status: {0}")]
     InvalidIssueStatus(String),
     #[error("Internal error: {0}")]
@@ -141,12 +141,17 @@ pub enum StoreError {
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new issue to the store and assigns it an IssueId.
+    ///
+    /// Returns an error if any declared dependencies reference missing issues.
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError>;
 
     /// Retrieves an issue by its IssueId.
     async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError>;
 
     /// Updates an existing issue in the store.
+    ///
+    /// Returns an error if the issue does not exist or if any dependencies
+    /// reference missing issues.
     async fn update_issue(&mut self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
 
     /// Lists all issues in the store with their corresponding IDs.
@@ -174,6 +179,10 @@ pub trait Store: Send + Sync {
 
     /// Returns whether the issue is ready to be worked on based on its status and dependencies.
     async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError>;
+
+    /// Lists all task IDs spawned from the provided issue.
+    #[allow(dead_code)]
+    async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
 
     /// Adds a task to the store.
     ///

@@ -150,10 +150,6 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
         UpsertIssueError::MissingDependency { dependency_id, .. } => {
             ApiError::bad_request(format!("issue dependency '{dependency_id}' not found"))
         }
-        UpsertIssueError::DependencyValidation {
-            dependency_id,
-            source,
-        } => map_issue_error(source, Some(&dependency_id)),
         UpsertIssueError::IssueNotFound { issue_id, source } => {
             map_issue_error(source, Some(&issue_id))
         }
@@ -369,10 +365,14 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
             error!(issue_id = %id, "issue not found");
             ApiError::not_found(format!("issue '{id}' not found"))
         }
-        StoreError::InvalidDependency(message) => {
+        StoreError::InvalidDependency(dependency_id) => {
             let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();
-            error!(issue_id = %issue_id, %message, "invalid issue dependency");
-            ApiError::bad_request(message)
+            error!(
+                issue_id = %issue_id,
+                dependency_id = %dependency_id,
+                "invalid issue dependency"
+            );
+            ApiError::bad_request(format!("issue dependency '{dependency_id}' not found"))
         }
         StoreError::InvalidIssueStatus(message) => {
             let issue_id = issue_id.map(|id| id.to_string()).unwrap_or_default();

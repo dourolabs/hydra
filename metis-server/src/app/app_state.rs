@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, TaskId,
     constants::ENV_METIS_ID,
-    issues::{IssueDependency, IssueId, IssueStatus, UpsertIssueRequest},
+    issues::{IssueId, IssueStatus, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
     patches::UpsertPatchRequest,
@@ -103,12 +103,6 @@ pub enum UpsertIssueError {
     JobIdProvidedForUpdate,
     #[error("issue dependency '{dependency_id}' not found")]
     MissingDependency {
-        #[source]
-        source: StoreError,
-        dependency_id: IssueId,
-    },
-    #[error("issue dependency '{dependency_id}' could not be validated")]
-    DependencyValidation {
         #[source]
         source: StoreError,
         dependency_id: IssueId,
@@ -509,7 +503,6 @@ impl AppState {
         let mut tasks_to_kill = Vec::new();
 
         let mut store = self.store.write().await;
-        validate_issue_dependencies(store.as_mut(), &issue.dependencies).await?;
 
         let issue_id = match issue_id {
             Some(id) => {
@@ -522,7 +515,7 @@ impl AppState {
                 match store.update_issue(&id, issue).await {
                     Ok(()) => {
                         if updated_issue.status == IssueStatus::Dropped {
-                            tasks_to_kill = active_tasks_for_issue(store.as_mut(), &id)
+                            tasks_to_kill = active_tasks_for_issue(store.as_ref(), &id)
                                 .await
                                 .map_err(|source| UpsertIssueError::TaskLookup {
                                     source,
@@ -535,6 +528,12 @@ impl AppState {
                         return Err(UpsertIssueError::IssueNotFound {
                             issue_id: id.clone(),
                             source,
+                        });
+                    }
+                    Err(StoreError::InvalidDependency(dependency_id)) => {
+                        return Err(UpsertIssueError::MissingDependency {
+                            dependency_id: dependency_id.clone(),
+                            source: StoreError::InvalidDependency(dependency_id),
                         });
                     }
                     Err(source) => {
@@ -569,14 +568,21 @@ impl AppState {
                     }
                 }
 
-                let id =
-                    store
-                        .add_issue(issue)
-                        .await
-                        .map_err(|source| UpsertIssueError::Store {
-                            source,
+                let id = store
+                    .add_issue(issue)
+                    .await
+                    .map_err(|source| match source {
+                        StoreError::InvalidDependency(dependency_id) => {
+                            UpsertIssueError::MissingDependency {
+                                dependency_id: dependency_id.clone(),
+                                source: StoreError::InvalidDependency(dependency_id),
+                            }
+                        }
+                        other => UpsertIssueError::Store {
+                            source: other,
                             issue_id: None,
-                        })?;
+                        },
+                    })?;
 
                 if let Some(job_id) = job_id {
                     store
@@ -622,49 +628,21 @@ impl AppState {
     }
 }
 
-async fn validate_issue_dependencies(
-    store: &mut dyn Store,
-    dependencies: &[IssueDependency],
-) -> Result<(), UpsertIssueError> {
-    for dependency in dependencies {
-        let target_id = &dependency.issue_id;
-        store
-            .get_issue(target_id)
-            .await
-            .map_err(|source| match source {
-                StoreError::IssueNotFound(_) => UpsertIssueError::MissingDependency {
-                    dependency_id: target_id.clone(),
-                    source,
-                },
-                other => UpsertIssueError::DependencyValidation {
-                    dependency_id: target_id.clone(),
-                    source: other,
-                },
-            })?;
-    }
-
-    Ok(())
-}
-
 async fn active_tasks_for_issue(
-    store: &mut dyn Store,
+    store: &dyn Store,
     issue_id: &IssueId,
 ) -> Result<Vec<TaskId>, StoreError> {
-    let mut task_ids = Vec::new();
+    let task_ids = store.get_tasks_for_issue(issue_id).await?;
 
-    for task_id in store.list_tasks().await? {
-        let task = store.get_task(&task_id).await?;
-        if task.spawned_from.as_ref() != Some(issue_id) {
-            continue;
-        }
-
+    let mut active_task_ids = Vec::new();
+    for task_id in task_ids {
         let status = store.get_status(&task_id).await?;
         if matches!(status, Status::Pending | Status::Running) {
-            task_ids.push(task_id);
+            active_task_ids.push(task_id);
         }
     }
 
-    Ok(task_ids)
+    Ok(active_task_ids)
 }
 
 #[cfg(test)]
