@@ -182,42 +182,54 @@ async fn list_patches(
     query: Option<String>,
     pretty: bool,
 ) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    list_patches_with_writer(client, id, query, pretty, &mut stdout).await
+}
+
+async fn list_patches_with_writer(
+    client: &dyn MetisClientInterface,
+    id: Option<PatchId>,
+    query: Option<String>,
+    pretty: bool,
+    writer: &mut impl Write,
+) -> Result<()> {
     if let Some(id) = id {
         if query.is_some() {
             bail!("--id and --query cannot be combined");
         }
 
-        let patch_record = client
+        let patch = client
             .get_patch(&id)
             .await
             .with_context(|| format!("failed to fetch patch '{id}'"))?;
         if pretty {
-            print_patch_record(&patch_record)?;
+            print_patches_pretty(&[patch], writer)?;
         } else {
-            println!("{}", serde_json::to_string(&patch_record)?);
+            print_patches_jsonl(&[patch], writer)?;
         }
         return Ok(());
     }
 
+    let patches = fetch_patches(client, query).await?;
+
+    if pretty {
+        print_patches_pretty(&patches, writer)?;
+    } else {
+        print_patches_jsonl(&patches, writer)?;
+    }
+
+    Ok(())
+}
+
+async fn fetch_patches(
+    client: &dyn MetisClientInterface,
+    query: Option<String>,
+) -> Result<Vec<PatchRecord>> {
     let response = client
         .list_patches(&SearchPatchesQuery { q: query })
         .await
         .context("failed to search for patches")?;
-
-    if response.patches.is_empty() {
-        eprintln!("No patches found.");
-        return Ok(());
-    }
-
-    for patch_record in response.patches {
-        if pretty {
-            print_patch_record(&patch_record)?;
-        } else {
-            println!("{}", serde_json::to_string(&patch_record)?);
-        }
-    }
-
-    Ok(())
+    Ok(response.patches)
 }
 
 async fn create_patch(
@@ -597,40 +609,56 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
     }
 }
 
-fn print_patch_record(record: &PatchRecord) -> Result<()> {
+fn print_patches_jsonl(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
+    for patch in patches {
+        serde_json::to_writer(&mut *writer, patch)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn print_patches_pretty(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
+    for patch in patches {
+        write_patch_record_pretty(patch, writer)?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn write_patch_record_pretty(record: &PatchRecord, writer: &mut impl Write) -> Result<()> {
     let diff = extract_patch_diff(record);
     let title = extract_patch_title(record);
     let status = extract_patch_status(record);
     let description = extract_patch_description(record);
-    println!(
+    writeln!(
+        writer,
         "Patch {} [{}]: {}",
         record.id,
         format_patch_status(status),
         title
-    );
+    )?;
     if !description.trim().is_empty() {
-        println!("{description}");
+        writeln!(writer, "{description}")?;
     }
-    println!();
-    pretty_print_patch(diff);
-    println!();
+    writeln!(writer)?;
+    pretty_print_patch(diff, writer)?;
+    writeln!(writer)?;
     Ok(())
 }
 
 /// Pretty-print a patch with color coding (green for additions, red for deletions).
-fn pretty_print_patch(patch: &str) {
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-
+fn pretty_print_patch(patch: &str, writer: &mut impl Write) -> Result<()> {
     for line in patch.lines() {
         if line.starts_with('+') && !line.starts_with("+++") {
-            writeln!(handle, "{GREEN}{line}{RESET}").unwrap();
+            writeln!(writer, "{GREEN}{line}{RESET}")?;
         } else if line.starts_with('-') && !line.starts_with("---") {
-            writeln!(handle, "{RED}{line}{RESET}").unwrap();
+            writeln!(writer, "{RED}{line}{RESET}")?;
         } else {
-            writeln!(handle, "{line}").unwrap();
+            writeln!(writer, "{line}")?;
         }
     }
+    Ok(())
 }
 
 async fn apply_patch_record(client: &dyn MetisClientInterface, id: PatchId) -> Result<()> {
@@ -651,7 +679,9 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
     }
 
     println!("Applying patch to current git repository...\n");
-    pretty_print_patch(patch);
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    pretty_print_patch(patch, &mut handle)?;
 
     let patch_file = NamedTempFile::new().context("Failed to create temporary file for patch")?;
     fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
@@ -1038,7 +1068,10 @@ mod tests {
             IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
         },
         jobs::{BundleSpec, JobRecord, Task},
-        patches::{ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
+        patches::{
+            ListPatchesResponse, Patch, PatchRecord, Review, SearchPatchesQuery,
+            UpsertPatchResponse,
+        },
         task_status::TaskStatusLog,
     };
     use std::{env, fs, process::Command};
@@ -1137,6 +1170,22 @@ mod tests {
         let queries = client.recorded_list_patch_queries();
         assert_eq!(queries.len(), 1);
         assert_eq!(queries[0].q.as_deref(), Some("login"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_patches_emits_no_output_for_empty_results() -> Result<()> {
+        let client = MockMetisClient::default();
+        client.push_list_patches_response(ListPatchesResponse { patches: vec![] });
+
+        let mut output = Vec::new();
+        list_patches_with_writer(&client, None, None, false, &mut output).await?;
+
+        assert!(output.is_empty());
+        assert_eq!(
+            client.recorded_list_patch_queries(),
+            vec![SearchPatchesQuery { q: None }]
+        );
         Ok(())
     }
 
