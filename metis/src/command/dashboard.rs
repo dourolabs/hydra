@@ -73,6 +73,7 @@ struct IssueLines {
 struct IssueLine {
     id: String,
     summary: String,
+    progress: Option<String>,
     status: IssueStatus,
     readiness: IssueReadiness,
     assignee: Option<String>,
@@ -100,6 +101,11 @@ struct IssueNode {
 struct TaskIndicator {
     status: Status,
     runtime: Option<String>,
+}
+
+struct IssueSummary {
+    summary: String,
+    progress: Option<String>,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -371,6 +377,13 @@ fn render_issue_list(
                     &line.summary,
                     MAX_MESSAGE_WIDTH,
                 )));
+                if let Some(progress) = &line.progress {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        truncate_message(progress, MAX_MESSAGE_WIDTH),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
 
                 ListItem::new(Line::from(spans))
             })
@@ -605,10 +618,12 @@ fn append_issue(
     };
 
     let readiness = issue_readiness(node, nodes);
+    let issue_summary = issue_summary(&node.record.description, &node.record.progress);
 
     rows.push(IssueLine {
         id: node.record.id.to_string(),
-        summary: issue_summary(&node.record.description, &node.record.progress),
+        summary: issue_summary.summary,
+        progress: issue_summary.progress,
         status: node.record.status,
         readiness,
         assignee: node.record.assignee.clone(),
@@ -623,16 +638,23 @@ fn append_issue(
     }
 }
 
-fn issue_summary(description: &str, progress: &str) -> String {
+fn issue_summary(description: &str, progress: &str) -> IssueSummary {
     let description = description.trim();
     let progress = progress.trim();
 
-    match (description.is_empty(), progress.is_empty()) {
-        (false, false) => format!("{description} | {progress}"),
-        (false, true) => description.to_string(),
-        (true, false) => progress.to_string(),
-        (true, true) => "-".to_string(),
-    }
+    let summary = if description.is_empty() {
+        "-".to_string()
+    } else {
+        description.to_string()
+    };
+
+    let progress = if progress.is_empty() {
+        None
+    } else {
+        Some(progress.to_string())
+    };
+
+    IssueSummary { summary, progress }
 }
 
 fn active_blockers(node: &IssueNode, nodes: &HashMap<IssueId, IssueNode>) -> Vec<String> {
@@ -700,7 +722,7 @@ fn best_task_indicator(tasks: &[JobDisplay]) -> Option<TaskIndicator> {
         .map(|job| TaskIndicator {
             status: job.status,
             runtime: match job.status {
-                Status::Running | Status::Complete => job.runtime.clone(),
+                Status::Running | Status::Complete | Status::Failed => job.runtime.clone(),
                 _ => None,
             },
         })
@@ -1024,6 +1046,36 @@ mod tests {
         let task = line.task.as_ref().expect("task indicator missing");
         assert_eq!(task.status, Status::Running);
         assert_eq!(task.runtime.as_deref(), Some("3s"));
+    }
+
+    #[test]
+    fn failed_tasks_keep_runtime_in_indicator() {
+        let jobs = vec![
+            job_details_with_issue("t-failed", Status::Failed, Some("i-1"), Some("8s")).display,
+        ];
+
+        let indicator = best_task_indicator(&jobs).expect("missing task indicator");
+
+        assert_eq!(indicator.status, Status::Failed);
+        assert_eq!(indicator.runtime.as_deref(), Some("8s"));
+    }
+
+    #[test]
+    fn issue_lines_include_progress() {
+        let issues = vec![IssueRecord {
+            id: issue_id("i-progress"),
+            description: "investigate logs".into(),
+            progress: "drafting tests".into(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: Vec::new(),
+        }];
+
+        let lines = build_issue_lines(&issues, &[]);
+
+        let line = lines.rows.first().expect("issue line missing");
+        assert_eq!(line.summary, "investigate logs");
+        assert_eq!(line.progress.as_deref(), Some("drafting tests"));
     }
 
     #[test]
