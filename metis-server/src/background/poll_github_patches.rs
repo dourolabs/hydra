@@ -1,5 +1,6 @@
-use crate::AppState;
+use crate::{AppState, observability};
 use anyhow::{Context, anyhow};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
@@ -23,10 +24,254 @@ use octocrab::{
 use serde_json::json;
 use std::collections::HashSet;
 use tokio::time::{Duration, sleep};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
+
+#[async_trait]
+trait GithubClient: Send + Sync {
+    async fn pull_request(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<PullRequest>;
+
+    async fn list_reviews(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<PullRequestReview>>;
+
+    async fn list_review_comments(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<PullRequestComment>>;
+
+    async fn list_issue_comments(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<IssueComment>>;
+
+    async fn list_check_runs(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        head_sha: &str,
+    ) -> anyhow::Result<ListCheckRuns>;
+
+    async fn combined_status(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        head_sha: &str,
+    ) -> anyhow::Result<CombinedStatus>;
+
+    async fn post_review(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        commit_sha: &str,
+        body: &str,
+    ) -> anyhow::Result<PullRequestReview>;
+
+    async fn close_pull_request(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<()>;
+}
+
+struct OctocrabGithubClient {
+    client: Octocrab,
+}
+
+#[async_trait]
+impl GithubClient for OctocrabGithubClient {
+    async fn pull_request(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<PullRequest> {
+        self.client
+            .pulls(&github.owner, &github.repo)
+            .get(github.number)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetching pull request {owner}/{repo}#{number}",
+                    owner = github.owner,
+                    repo = github.repo,
+                    number = github.number
+                )
+            })
+    }
+
+    async fn list_reviews(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<PullRequestReview>> {
+        self.client
+            .all_pages(
+                self.client
+                    .pulls(&github.owner, &github.repo)
+                    .list_reviews(github.number)
+                    .per_page(100)
+                    .send()
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "fetching reviews for {owner}/{repo}#{number}",
+                            owner = github.owner,
+                            repo = github.repo,
+                            number = github.number
+                        )
+                    })?,
+            )
+            .await
+            .context("iterating GitHub reviews")
+    }
+
+    async fn list_review_comments(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<PullRequestComment>> {
+        self.client
+            .all_pages(
+                self.client
+                    .pulls(&github.owner, &github.repo)
+                    .list_comments(Some(github.number))
+                    .per_page(100)
+                    .send()
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "fetching review comments for {owner}/{repo}#{number}",
+                            owner = github.owner,
+                            repo = github.repo,
+                            number = github.number
+                        )
+                    })?,
+            )
+            .await
+            .context("iterating GitHub review comments")
+    }
+
+    async fn list_issue_comments(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<Vec<IssueComment>> {
+        self.client
+            .all_pages(
+                self.client
+                    .issues(&github.owner, &github.repo)
+                    .list_comments(github.number)
+                    .per_page(100)
+                    .send()
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "fetching issue comments for {owner}/{repo}#{number}",
+                            owner = github.owner,
+                            repo = github.repo,
+                            number = github.number
+                        )
+                    })?,
+            )
+            .await
+            .context("iterating GitHub issue comments")
+    }
+
+    async fn list_check_runs(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        head_sha: &str,
+    ) -> anyhow::Result<ListCheckRuns> {
+        self.client
+            .checks(&github.owner, &github.repo)
+            .list_check_runs_for_git_ref(Commitish(head_sha.to_string()))
+            .per_page(100)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "fetching check runs for {}/{}@{}",
+                    github.owner, github.repo, head_sha
+                )
+            })
+    }
+
+    async fn combined_status(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        head_sha: &str,
+    ) -> anyhow::Result<CombinedStatus> {
+        self.client
+            .get(
+                format!(
+                    "/repos/{owner}/{repo}/commits/{sha}/status",
+                    owner = github.owner,
+                    repo = github.repo,
+                    sha = head_sha
+                ),
+                None::<&()>,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "fetching combined status for {}/{}@{}",
+                    github.owner, github.repo, head_sha
+                )
+            })
+    }
+
+    async fn post_review(
+        &self,
+        github: &metis_common::patches::GithubPr,
+        commit_sha: &str,
+        body: &str,
+    ) -> anyhow::Result<PullRequestReview> {
+        self.client
+            .post(
+                format!(
+                    "/repos/{owner}/{repo}/pulls/{number}/reviews",
+                    owner = github.owner,
+                    repo = github.repo,
+                    number = github.number
+                ),
+                Some(&json!({
+                    "body": body,
+                    "event": ReviewAction::Comment,
+                    "commit_id": commit_sha,
+                    "comments": []
+                })),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "posting CI failure review for {owner}/{repo}#{number}",
+                    owner = github.owner,
+                    repo = github.repo,
+                    number = github.number,
+                )
+            })
+    }
+
+    async fn close_pull_request(
+        &self,
+        github: &metis_common::patches::GithubPr,
+    ) -> anyhow::Result<()> {
+        self.client
+            .pulls(&github.owner, &github.repo)
+            .update(github.number)
+            .state(State::Closed)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "closing PR {owner}/{repo}#{number}",
+                    owner = github.owner,
+                    repo = github.repo,
+                    number = github.number
+                )
+            })?;
+
+        Ok(())
+    }
+}
 
 /// Periodically polls GitHub for open patches linked to PRs and updates their status and reviews.
 pub async fn poll_github_patches(state: AppState) {
@@ -137,62 +382,78 @@ async fn sync_patch_from_github(
         );
         return Ok(());
     };
-    let client = github_client(token)?;
+    let client = OctocrabGithubClient {
+        client: github_client(token)?,
+    };
 
-    let pr = client
-        .pulls(&github.owner, &github.repo)
-        .get(github.number)
-        .await?;
-    let reviews = client
-        .all_pages(
-            client
-                .pulls(&github.owner, &github.repo)
-                .list_reviews(github.number)
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
-    let review_comments = client
-        .all_pages(
-            client
-                .pulls(&github.owner, &github.repo)
-                .list_comments(Some(github.number))
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
-    let issue_comments = client
-        .all_pages(
-            client
-                .issues(&github.owner, &github.repo)
-                .list_comments(github.number)
-                .per_page(100)
-                .send()
-                .await?,
-        )
-        .await?;
+    sync_patch_with_client(state, patch_id, patch, &client).await
+}
+
+async fn sync_patch_with_client(
+    state: &AppState,
+    patch_id: &PatchId,
+    patch: Patch,
+    client: &dyn GithubClient,
+) -> anyhow::Result<()> {
+    let Some(github) = patch.github.clone() else {
+        return Ok(());
+    };
+
+    let pr = client.pull_request(&github).await?;
+    let reviews = client.list_reviews(&github).await?;
+    let review_comments = client.list_review_comments(&github).await?;
+    let issue_comments = client.list_issue_comments(&github).await?;
 
     let mut github_reviews = build_review_entries(reviews, review_comments, issue_comments);
-    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
+    let ci_status = fetch_ci_status(client, &github, &pr).await?;
+    record_ci_poll_result(&ci_status);
+    info!(
+        patch_id = %patch_id,
+        owner = %github.owner,
+        repo = %github.repo,
+        number = github.number,
+        ci_state = ci_status.state.as_str(),
+        failure = github_failure_name(&ci_status),
+        "polled GitHub CI status"
+    );
     let mut new_status = patch_status_from_github(&pr);
 
-    if let Err(err) = maybe_post_ci_failure_review_and_close(
-        patch_id,
-        &client,
-        &github,
-        &pr,
-        &ci_status,
-        &mut github_reviews,
-        &mut new_status,
-    )
-    .await
+    if state
+        .config
+        .background
+        .github_poller
+        .enable_ci_failure_autoreview
     {
-        warn!(
+        if let Err(err) = maybe_post_ci_failure_review_and_close(
+            patch_id,
+            client,
+            &github,
+            &pr,
+            &ci_status,
+            &mut github_reviews,
+            &mut new_status,
+        )
+        .await
+        {
+            record_autoreview_action("alert", "error");
+            error!(
+                patch_id = %patch_id,
+                owner = %github.owner,
+                repo = %github.repo,
+                number = github.number,
+                error = %err,
+                alert = true,
+                "failed to post CI failure review or close PR"
+            );
+        }
+    } else if matches!(ci_status.state, GithubCiState::Failed) {
+        record_autoreview_action("review", "disabled");
+        debug!(
             patch_id = %patch_id,
-            error = %err,
-            "failed to post CI failure review or close PR"
+            owner = %github.owner,
+            repo = %github.repo,
+            number = github.number,
+            "CI failure auto-review disabled; leaving PR open"
         );
     }
 
@@ -252,7 +513,7 @@ async fn sync_patch_from_github(
 
 async fn maybe_post_ci_failure_review_and_close(
     patch_id: &PatchId,
-    client: &Octocrab,
+    client: &dyn GithubClient,
     github: &metis_common::patches::GithubPr,
     pr: &PullRequest,
     ci_status: &GithubCiStatus,
@@ -267,27 +528,26 @@ async fn maybe_post_ci_failure_review_and_close(
         return Ok(());
     }
     if has_ci_failure_review(reviews, failure) {
+        record_autoreview_action("review", "duplicate");
         return Ok(());
     }
 
     let body = ci_failure_review_body(failure);
-    let review: PullRequestReview = client
-        .post(
-            format!(
-                "/repos/{owner}/{repo}/pulls/{number}/reviews",
-                owner = github.owner,
-                repo = github.repo,
-                number = github.number
-            ),
-            Some(&json!({
-                "body": body,
-                "event": ReviewAction::Comment,
-                "commit_id": pr.head.sha,
-                "comments": []
-            })),
-        )
+    record_autoreview_action("review", "attempt");
+    let review: PullRequestReview = match client
+        .post_review(github, &pr.head.sha, &body)
         .await
-        .with_context(|| format!("posting CI failure review for patch '{patch_id}'"))?;
+        .with_context(|| format!("posting CI failure review for patch '{patch_id}'"))
+    {
+        Ok(review) => {
+            record_autoreview_action("review", "success");
+            review
+        }
+        Err(err) => {
+            record_autoreview_action("review", "error");
+            return Err(err);
+        }
+    };
     reviews.push(Review {
         contents: body,
         is_approved: matches!(
@@ -302,14 +562,28 @@ async fn maybe_post_ci_failure_review_and_close(
         submitted_at: review.submitted_at,
     });
 
-    client
-        .pulls(&github.owner, &github.repo)
-        .update(github.number)
-        .state(State::Closed)
-        .send()
+    record_autoreview_action("close", "attempt");
+    match client
+        .close_pull_request(github)
         .await
-        .with_context(|| format!("closing PR for patch '{patch_id}' after CI failure"))?;
+        .with_context(|| format!("closing PR for patch '{patch_id}' after CI failure"))
+    {
+        Ok(()) => record_autoreview_action("close", "success"),
+        Err(err) => {
+            record_autoreview_action("close", "error");
+            return Err(err);
+        }
+    };
     *new_status = PatchStatus::Closed;
+
+    info!(
+        patch_id = %patch_id,
+        owner = %github.owner,
+        repo = %github.repo,
+        number = github.number,
+        failure = %failure.name,
+        "posted CI failure review and closed PR"
+    );
 
     Ok(())
 }
@@ -491,41 +765,13 @@ fn github_client(token: String) -> anyhow::Result<Octocrab> {
 }
 
 async fn fetch_ci_status(
-    client: &Octocrab,
+    client: &dyn GithubClient,
     github: &metis_common::patches::GithubPr,
     pr: &PullRequest,
 ) -> anyhow::Result<GithubCiStatus> {
     let head_sha = pr.head.sha.clone();
-    let combined_status: CombinedStatus = client
-        .get(
-            format!(
-                "/repos/{owner}/{repo}/commits/{sha}/status",
-                owner = github.owner,
-                repo = github.repo,
-                sha = head_sha
-            ),
-            None::<&()>,
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "fetching combined status for {}/{}@{}",
-                github.owner, github.repo, head_sha
-            )
-        })?;
-
-    let check_runs = client
-        .checks(&github.owner, &github.repo)
-        .list_check_runs_for_git_ref(Commitish(head_sha.clone()))
-        .per_page(100)
-        .send()
-        .await
-        .with_context(|| {
-            format!(
-                "fetching check runs for {}/{}@{}",
-                github.owner, github.repo, head_sha
-            )
-        })?;
+    let combined_status: CombinedStatus = client.combined_status(github, &head_sha).await?;
+    let check_runs = client.list_check_runs(github, &head_sha).await?;
 
     Ok(ci_status_from_responses(check_runs, combined_status))
 }
@@ -625,17 +871,402 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
     }
 }
 
+fn github_failure_name(ci_status: &GithubCiStatus) -> Option<&str> {
+    ci_status
+        .failure
+        .as_ref()
+        .map(|failure| failure.name.as_str())
+}
+
+fn record_ci_poll_result(ci_status: &GithubCiStatus) {
+    observability::ensure_metrics_recorder();
+    match ci_status.state {
+        GithubCiState::Pending => {
+            let counter = metrics::counter!("github_ci_poll_results_total", "state" => "pending");
+            counter.increment(1);
+        }
+        GithubCiState::Success => {
+            let counter = metrics::counter!("github_ci_poll_results_total", "state" => "success");
+            counter.increment(1);
+        }
+        GithubCiState::Failed => {
+            let counter = metrics::counter!("github_ci_poll_results_total", "state" => "failed");
+            counter.increment(1);
+        }
+    }
+}
+
+fn record_autoreview_action(action: &str, result: &str) {
+    observability::ensure_metrics_recorder();
+    match (action, result) {
+        ("review", "attempt") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "review",
+                "result" => "attempt"
+            );
+            counter.increment(1);
+        }
+        ("review", "success") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "review",
+                "result" => "success"
+            );
+            counter.increment(1);
+        }
+        ("review", "error") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "review",
+                "result" => "error"
+            );
+            counter.increment(1);
+        }
+        ("review", "disabled") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "review",
+                "result" => "disabled"
+            );
+            counter.increment(1);
+        }
+        ("review", "duplicate") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "review",
+                "result" => "duplicate"
+            );
+            counter.increment(1);
+        }
+        ("close", "attempt") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "close",
+                "result" => "attempt"
+            );
+            counter.increment(1);
+        }
+        ("close", "success") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "close",
+                "result" => "success"
+            );
+            counter.increment(1);
+        }
+        ("close", "error") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "close",
+                "result" => "error"
+            );
+            counter.increment(1);
+        }
+        ("alert", "error") => {
+            let counter = metrics::counter!(
+                "github_ci_autoreview_actions_total",
+                "action" => "alert",
+                "result" => "error"
+            );
+            counter.increment(1);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use chrono::TimeZone;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+    use tokio::sync::Mutex;
 
     use crate::{
         app::{GitRepository, ServiceState},
         test::test_state,
     };
+
+    #[derive(Clone)]
+    struct MockGithubClient {
+        pr: PullRequest,
+        reviews: Vec<PullRequestReview>,
+        review_comments: Vec<PullRequestComment>,
+        issue_comments: Vec<IssueComment>,
+        check_runs: ListCheckRuns,
+        combined_status: CombinedStatus,
+        posted_reviews: Arc<Mutex<Vec<String>>>,
+        closed: Arc<AtomicBool>,
+    }
+
+    impl MockGithubClient {
+        fn new(
+            pr: PullRequest,
+            check_runs: ListCheckRuns,
+            combined_status: CombinedStatus,
+        ) -> Self {
+            Self {
+                pr,
+                reviews: Vec::new(),
+                review_comments: Vec::new(),
+                issue_comments: Vec::new(),
+                check_runs,
+                combined_status,
+                posted_reviews: Arc::new(Mutex::new(Vec::new())),
+                closed: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        async fn posted_review_bodies(&self) -> Vec<String> {
+            self.posted_reviews.lock().await.clone()
+        }
+
+        fn is_closed(&self) -> bool {
+            self.closed.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl GithubClient for MockGithubClient {
+        async fn pull_request(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+        ) -> anyhow::Result<PullRequest> {
+            Ok(self.pr.clone())
+        }
+
+        async fn list_reviews(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+        ) -> anyhow::Result<Vec<PullRequestReview>> {
+            Ok(self.reviews.clone())
+        }
+
+        async fn list_review_comments(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+        ) -> anyhow::Result<Vec<PullRequestComment>> {
+            Ok(self.review_comments.clone())
+        }
+
+        async fn list_issue_comments(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+        ) -> anyhow::Result<Vec<IssueComment>> {
+            Ok(self.issue_comments.clone())
+        }
+
+        async fn list_check_runs(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+            _head_sha: &str,
+        ) -> anyhow::Result<ListCheckRuns> {
+            Ok(self.check_runs.clone())
+        }
+
+        async fn combined_status(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+            _head_sha: &str,
+        ) -> anyhow::Result<CombinedStatus> {
+            Ok(self.combined_status.clone())
+        }
+
+        async fn post_review(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+            _commit_sha: &str,
+            body: &str,
+        ) -> anyhow::Result<PullRequestReview> {
+            self.posted_reviews.lock().await.push(body.to_string());
+            Ok(review_response(body))
+        }
+
+        async fn close_pull_request(
+            &self,
+            _github: &metis_common::patches::GithubPr,
+        ) -> anyhow::Result<()> {
+            self.closed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn sample_pull_request(head_sha: &str) -> PullRequest {
+        serde_json::from_value(json!({
+            "url": "",
+            "id": 1,
+            "number": 1,
+            "state": "open",
+            "locked": false,
+            "maintainer_can_modify": false,
+            "head": { "ref": "feature", "sha": head_sha, "user": null, "repo": null },
+            "base": { "ref": "main", "sha": "", "user": null, "repo": null }
+        }))
+        .unwrap()
+    }
+
+    fn failing_ci_artifacts(
+        name: &str,
+        summary: &str,
+        details_url: &str,
+    ) -> (ListCheckRuns, CombinedStatus) {
+        (
+            list_check_runs(vec![build_check_run(
+                name,
+                Some("failure"),
+                Some(summary),
+                Some(details_url),
+            )]),
+            make_combined_status(
+                "failure",
+                vec![make_status(
+                    "failure",
+                    name,
+                    Some(summary),
+                    Some(details_url),
+                )],
+            ),
+        )
+    }
+
+    fn review_response(body: &str) -> PullRequestReview {
+        serde_json::from_value(json!({
+            "id": 1,
+            "node_id": "node-1",
+            "user": null,
+            "body": body,
+            "state": "COMMENTED",
+            "submitted_at": "2024-01-01T00:00:00Z",
+            "html_url": "https://example.com/review/1",
+            "pull_request_url": "https://example.com/pr/1",
+            "author_association": "MEMBER",
+            "commit_id": "abc123"
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn ci_failure_review_respects_disabled_flag() -> anyhow::Result<()> {
+        let state = test_state();
+        let github = metis_common::patches::GithubPr {
+            owner: "example".to_string(),
+            repo: "repo".to_string(),
+            number: 7,
+            head_ref: None,
+            base_ref: None,
+            url: None,
+            ci: None,
+        };
+        let patch = Patch {
+            title: "test".to_string(),
+            description: "desc".to_string(),
+            diff: "diff".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+            service_repo_name: None,
+            github: Some(github.clone()),
+        };
+        let patch_id = {
+            let mut store = state.store.write().await;
+            store.add_patch(patch.clone()).await?
+        };
+        let patch = {
+            let store = state.store.read().await;
+            store.get_patch(&patch_id).await?
+        };
+
+        let pr = sample_pull_request("abc123");
+        let (check_runs, combined_status) =
+            failing_ci_artifacts("build", "compile error", "https://ci.example.com/run/1");
+        let client = MockGithubClient::new(pr, check_runs, combined_status);
+
+        sync_patch_with_client(&state, &patch_id, patch, &client).await?;
+
+        let store_read = state.store.read().await;
+        let updated = store_read.get_patch(&patch_id).await?;
+        assert!(matches!(updated.status, PatchStatus::Open));
+        assert!(updated.reviews.is_empty());
+        assert!(updated.github.and_then(|gh| gh.ci).is_some());
+        assert!(client.posted_review_bodies().await.is_empty());
+        assert!(!client.is_closed());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ci_failure_review_posts_and_closes_when_enabled() -> anyhow::Result<()> {
+        let mut state = test_state();
+        let mut config = (*state.config).clone();
+        config.background.github_poller.enable_ci_failure_autoreview = true;
+        state.config = Arc::new(config);
+
+        let github = metis_common::patches::GithubPr {
+            owner: "example".to_string(),
+            repo: "repo".to_string(),
+            number: 8,
+            head_ref: None,
+            base_ref: None,
+            url: None,
+            ci: None,
+        };
+        let patch = Patch {
+            title: "test".to_string(),
+            description: "desc".to_string(),
+            diff: "diff".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+            service_repo_name: None,
+            github: Some(github.clone()),
+        };
+        let patch_id = {
+            let mut store = state.store.write().await;
+            store.add_patch(patch.clone()).await?
+        };
+        let patch = {
+            let store = state.store.read().await;
+            store.get_patch(&patch_id).await?
+        };
+
+        let failure = GithubCiFailure {
+            name: "build".to_string(),
+            summary: Some("compile error".to_string()),
+            details_url: Some("https://ci.example.com/run/2".to_string()),
+        };
+        let pr = sample_pull_request("def456");
+        let (check_runs, combined_status) = failing_ci_artifacts(
+            &failure.name,
+            failure.summary.as_deref().unwrap(),
+            failure.details_url.as_deref().unwrap(),
+        );
+        let client = MockGithubClient::new(pr, check_runs, combined_status);
+
+        sync_patch_with_client(&state, &patch_id, patch, &client).await?;
+
+        let store_read = state.store.read().await;
+        let updated = store_read.get_patch(&patch_id).await?;
+        assert!(matches!(updated.status, PatchStatus::Closed));
+        let expected_body = ci_failure_review_body(&failure);
+        assert!(
+            updated
+                .reviews
+                .iter()
+                .any(|review| review.contents == expected_body)
+        );
+        assert_eq!(client.posted_review_bodies().await, vec![expected_body]);
+        assert!(client.is_closed());
+
+        Ok(())
+    }
 
     #[test]
     fn merge_reviews_preserves_existing() {

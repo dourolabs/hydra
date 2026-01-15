@@ -131,12 +131,15 @@ pub struct AgentQueueConfig {
 pub struct GithubPollerConfig {
     #[serde(default = "default_github_poll_interval_secs")]
     pub interval_secs: u64,
+    #[serde(default)]
+    pub enable_ci_failure_autoreview: bool,
 }
 
 impl Default for GithubPollerConfig {
     fn default() -> Self {
         Self {
             interval_secs: default_github_poll_interval_secs(),
+            enable_ci_failure_autoreview: false,
         }
     }
 }
@@ -291,5 +294,11 @@ mod tests {
         assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
+    }
+
+    #[test]
+    fn github_poller_defaults_to_disabled_autoreview() {
+        let poller = GithubPollerConfig::default();
+        assert!(!poller.enable_ci_failure_autoreview);
     }
 }

@@ -43,6 +43,8 @@ image = "metis-worker:latest"
 [background.github_poller]
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.
 interval_secs = 60
+# When true, the poller will post CI failure reviews and close PRs automatically.
+enable_ci_failure_autoreview = false
 
 [background.scheduler.process_pending_jobs]
 # Optional scheduler settings for the worker that spawns pending jobs.

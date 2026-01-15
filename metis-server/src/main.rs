@@ -4,6 +4,7 @@ mod app;
 mod background;
 mod config;
 mod job_engine;
+mod observability;
 mod routes;
 mod store;
 #[cfg(test)]
@@ -19,6 +20,7 @@ use crate::job_engine::KubernetesJobEngine;
 use crate::store::{MemoryStore, Store};
 use axum::{
     Json, Router,
+    http::{HeaderValue, StatusCode, header},
     routing::{get, post},
 };
 use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
@@ -28,6 +30,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+    let metrics_handle = observability::init_metrics_recorder();
+
     // Spawn background task to process pending jobs
     let background_state = state.clone();
     tokio::spawn(async move {
@@ -52,7 +56,24 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
         run_spawners(spawner_state).await;
     });
 
+    let metrics_route_handle = metrics_handle.clone();
     let app = Router::new()
+        .route(
+            "/metrics",
+            get(move || {
+                let handle = metrics_route_handle.clone();
+                async move {
+                    (
+                        StatusCode::OK,
+                        [(
+                            header::CONTENT_TYPE,
+                            HeaderValue::from_static("text/plain; version=0.0.4"),
+                        )],
+                        handle.render(),
+                    )
+                }
+            }),
+        )
         .route("/health", get(health_check))
         .route(
             "/v1/issues",
