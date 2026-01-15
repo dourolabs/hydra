@@ -406,7 +406,7 @@ impl AppState {
         patch_id: Option<PatchId>,
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest { mut patch, job_id } = request;
+        let UpsertPatchRequest { patch, job_id } = request;
 
         let mut store = self.store.write().await;
         let patch_id = match patch_id {
@@ -450,21 +450,6 @@ impl AppState {
                             status: Some(status),
                         });
                     }
-
-                    let task = store
-                        .get_task(job_id)
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::TaskNotFound(_) => UpsertPatchError::JobNotFound {
-                                job_id: job_id.clone(),
-                                source,
-                            },
-                            other => UpsertPatchError::Store { source: other },
-                        })?;
-                    patch.service_repo_name = match task.context {
-                        BundleSpec::ServiceRepository { name, .. } => Some(name),
-                        _ => None,
-                    };
                 }
 
                 let id = store
