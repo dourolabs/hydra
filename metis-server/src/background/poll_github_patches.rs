@@ -1,5 +1,5 @@
 use crate::AppState;
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId,
@@ -14,10 +14,13 @@ use octocrab::{
         CombinedStatus, Status,
         checks::{CheckRun, ListCheckRuns},
         issues::Comment as IssueComment,
-        pulls::{Comment as PullRequestComment, PullRequest, Review as PullRequestReview},
+        pulls::{
+            Comment as PullRequestComment, PullRequest, Review as PullRequestReview, ReviewAction,
+        },
     },
-    params::repos::Commitish,
+    params::{pulls::State, repos::Commitish},
 };
+use serde_json::json;
 use std::collections::HashSet;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info, warn};
@@ -171,8 +174,27 @@ async fn sync_patch_from_github(
         )
         .await?;
 
-    let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
+    let mut github_reviews = build_review_entries(reviews, review_comments, issue_comments);
     let ci_status = fetch_ci_status(&client, &github, &pr).await?;
+    let mut new_status = patch_status_from_github(&pr);
+
+    if let Err(err) = maybe_post_ci_failure_review_and_close(
+        patch_id,
+        &client,
+        &github,
+        &pr,
+        &ci_status,
+        &mut github_reviews,
+        &mut new_status,
+    )
+    .await
+    {
+        warn!(
+            patch_id = %patch_id,
+            error = %err,
+            "failed to post CI failure review or close PR"
+        );
+    }
 
     let mut latest_patch = {
         let store = state.store.read().await;
@@ -188,7 +210,6 @@ async fn sync_patch_from_github(
     }
 
     let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
-    let new_status = patch_status_from_github(&pr);
     let mut updated_github = latest_patch
         .github
         .clone()
@@ -227,6 +248,108 @@ async fn sync_patch_from_github(
     }
 
     Ok(())
+}
+
+async fn maybe_post_ci_failure_review_and_close(
+    patch_id: &PatchId,
+    client: &Octocrab,
+    github: &metis_common::patches::GithubPr,
+    pr: &PullRequest,
+    ci_status: &GithubCiStatus,
+    reviews: &mut Vec<Review>,
+    new_status: &mut PatchStatus,
+) -> anyhow::Result<()> {
+    let Some(failure) = failure_from_status(ci_status)? else {
+        return Ok(());
+    };
+
+    if !matches!(patch_status_from_github(pr), PatchStatus::Open) {
+        return Ok(());
+    }
+    if has_ci_failure_review(reviews, failure) {
+        return Ok(());
+    }
+
+    let body = ci_failure_review_body(failure);
+    let review: PullRequestReview = client
+        .post(
+            format!(
+                "/repos/{owner}/{repo}/pulls/{number}/reviews",
+                owner = github.owner,
+                repo = github.repo,
+                number = github.number
+            ),
+            Some(&json!({
+                "body": body,
+                "event": ReviewAction::Comment,
+                "commit_id": pr.head.sha,
+                "comments": []
+            })),
+        )
+        .await
+        .with_context(|| format!("posting CI failure review for patch '{patch_id}'"))?;
+    reviews.push(Review {
+        contents: body,
+        is_approved: matches!(
+            review.state,
+            Some(octocrab::models::pulls::ReviewState::Approved)
+        ),
+        author: review
+            .user
+            .as_ref()
+            .map(|user| user.login.clone())
+            .unwrap_or_else(|| "metis".to_string()),
+        submitted_at: review.submitted_at,
+    });
+
+    client
+        .pulls(&github.owner, &github.repo)
+        .update(github.number)
+        .state(State::Closed)
+        .send()
+        .await
+        .with_context(|| format!("closing PR for patch '{patch_id}' after CI failure"))?;
+    *new_status = PatchStatus::Closed;
+
+    Ok(())
+}
+
+fn failure_from_status(ci_status: &GithubCiStatus) -> anyhow::Result<Option<&GithubCiFailure>> {
+    match ci_status.state {
+        GithubCiState::Failed => ci_status
+            .failure
+            .as_ref()
+            .map(Some)
+            .ok_or_else(|| anyhow!("CI reported failed but no failure details were recorded")),
+        _ => Ok(None),
+    }
+}
+
+fn has_ci_failure_review(reviews: &[Review], failure: &GithubCiFailure) -> bool {
+    let expected_body = ci_failure_review_body(failure);
+    reviews
+        .iter()
+        .any(|review| review.contents == expected_body)
+}
+
+fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
+    let summary = failure
+        .summary
+        .as_deref()
+        .unwrap_or("No summary was provided.");
+    let logs = failure
+        .details_url
+        .as_deref()
+        .unwrap_or("No logs URL was provided.");
+
+    format!(
+        "CI failed for this PR.\n\n\
+         Failing check: {name}\n\
+         Summary: {summary}\n\
+         Logs: {logs}\n\n\
+         Please re-merge `main`, fix CI locally, and push a new PR. Closing this PR to keep the queue clean.",
+        name = failure.name,
+    )
 }
 
 fn select_github_token(state: &AppState, service_repo_name: Option<&str>) -> Option<String> {
@@ -655,6 +778,67 @@ mod tests {
 
         assert!(matches!(ci_status.state, GithubCiState::Success));
         assert!(ci_status.failure.is_none());
+    }
+
+    #[test]
+    fn ci_failure_review_body_includes_details() {
+        let failure = GithubCiFailure {
+            name: "build".to_string(),
+            summary: Some("compile error".to_string()),
+            details_url: Some("https://ci.example.com/run/42".to_string()),
+        };
+
+        let body = ci_failure_review_body(&failure);
+
+        assert!(body.contains("build"));
+        assert!(body.contains("compile error"));
+        assert!(body.contains("https://ci.example.com/run/42"));
+        assert!(body.contains("re-merge `main`"));
+        assert!(body.contains("push a new PR"));
+    }
+
+    #[test]
+    fn has_ci_failure_review_detects_existing_body() {
+        let failure = GithubCiFailure {
+            name: "lint".to_string(),
+            summary: Some("lint failed".to_string()),
+            details_url: Some("https://ci.example.com/lint".to_string()),
+        };
+        let existing_body = ci_failure_review_body(&failure);
+        let reviews = vec![Review {
+            contents: existing_body.clone(),
+            is_approved: false,
+            author: "metis".to_string(),
+            submitted_at: None,
+        }];
+
+        assert!(has_ci_failure_review(&reviews, &failure));
+
+        let other_failure = GithubCiFailure {
+            name: "tests".to_string(),
+            summary: Some("tests failed".to_string()),
+            details_url: Some("https://ci.example.com/tests".to_string()),
+        };
+        assert!(!has_ci_failure_review(&reviews, &other_failure));
+    }
+
+    #[test]
+    fn failure_from_status_requires_failure_details() {
+        let missing_details = GithubCiStatus {
+            state: GithubCiState::Failed,
+            failure: None,
+        };
+        assert!(failure_from_status(&missing_details).is_err());
+
+        let success_status = GithubCiStatus {
+            state: GithubCiState::Success,
+            failure: None,
+        };
+        assert!(
+            failure_from_status(&success_status)
+                .expect("success state should be ok")
+                .is_none()
+        );
     }
 
     fn list_check_runs(runs: Vec<serde_json::Value>) -> ListCheckRuns {
