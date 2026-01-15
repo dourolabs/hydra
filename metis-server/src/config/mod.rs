@@ -98,6 +98,8 @@ pub struct BackgroundSection {
     pub agent_queues: Vec<AgentQueueConfig>,
     #[serde(default)]
     pub github_poller: GithubPollerConfig,
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -135,6 +137,32 @@ impl Default for GithubPollerConfig {
     fn default() -> Self {
         Self {
             interval_secs: default_github_poll_interval_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SchedulerConfig {
+    #[serde(default = "default_pending_interval_secs")]
+    pub pending_interval_secs: u64,
+    #[serde(default = "default_monitor_interval_secs")]
+    pub monitor_interval_secs: u64,
+    #[serde(default = "default_spawner_interval_secs")]
+    pub spawner_interval_secs: u64,
+    #[serde(default = "default_retry_backoff_secs")]
+    pub retry_backoff_secs: u64,
+    #[serde(default = "default_max_backoff_secs")]
+    pub max_backoff_secs: u64,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            pending_interval_secs: default_pending_interval_secs(),
+            monitor_interval_secs: default_monitor_interval_secs(),
+            spawner_interval_secs: default_spawner_interval_secs(),
+            retry_backoff_secs: default_retry_backoff_secs(),
+            max_backoff_secs: default_max_backoff_secs(),
         }
     }
 }
@@ -178,5 +206,25 @@ const fn default_agent_max_tries() -> u32 {
 }
 
 const fn default_github_poll_interval_secs() -> u64 {
+    60
+}
+
+const fn default_pending_interval_secs() -> u64 {
+    2
+}
+
+const fn default_monitor_interval_secs() -> u64 {
+    5
+}
+
+const fn default_spawner_interval_secs() -> u64 {
+    3
+}
+
+const fn default_retry_backoff_secs() -> u64 {
+    5
+}
+
+const fn default_max_backoff_secs() -> u64 {
     60
 }

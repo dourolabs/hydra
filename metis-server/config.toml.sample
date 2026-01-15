@@ -44,6 +44,18 @@ image = "metis-worker:latest"
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.
 interval_secs = 60
 
+[background.scheduler]
+# Interval (in seconds) between pending task scans.
+pending_interval_secs = 2
+# Interval (in seconds) between running job monitors.
+monitor_interval_secs = 5
+# Interval (in seconds) between spawner executions.
+spawner_interval_secs = 3
+# Initial backoff (in seconds) after a transient worker error.
+retry_backoff_secs = 5
+# Maximum backoff (in seconds) when retrying workers.
+max_backoff_secs = 60
+
 [kubernetes]
 # Set to true when the server runs inside a Kubernetes cluster and should use
 # its mounted ServiceAccount credentials.
