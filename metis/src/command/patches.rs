@@ -951,26 +951,49 @@ fn open_pull_request(
     let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
     writeln!(body_file, "{description}").context("failed to write pull request description")?;
 
-    let output = Command::new("gh")
+    // Create the PR (gh pr create doesn't support --json)
+    let create_output = Command::new("gh")
         .args(["pr", "create"])
         .args(["--head", branch])
         .args(["--title", title])
         .args(["--body-file"])
         .arg(body_file.path())
-        .args(["--json", "url,number,headRefName,baseRefName"])
         .current_dir(repo_root)
         .output()
         .context("failed to create GitHub pull request")?;
 
-    if output.status.success() {
-        let parsed = serde_json::from_slice::<GhPrCreateResponse>(&output.stdout)
-            .context("failed to decode GitHub pull request metadata")?;
-        return Ok(parsed);
+    if !create_output.status.success() {
+        let stdout = String::from_utf8_lossy(&create_output.stdout);
+        let stderr = String::from_utf8_lossy(&create_output.stderr);
+        bail!("failed to open GitHub pull request for branch '{branch}': {stderr}{stdout}");
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!("failed to open GitHub pull request for branch '{branch}': {stderr}{stdout}");
+    // Extract PR URL from output (gh pr create outputs the URL to stdout)
+    let stdout = String::from_utf8_lossy(&create_output.stdout);
+    let pr_url = stdout
+        .lines()
+        .find(|line| line.contains("github.com") && line.contains("/pull/"))
+        .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
+
+    // Use gh pr view to get structured JSON output
+    let view_output = Command::new("gh")
+        .args(["pr", "view", pr_url.trim()])
+        .args(["--json", "url,number,headRefName,baseRefName"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to fetch GitHub pull request metadata")?;
+
+    if !view_output.status.success() {
+        let stdout = String::from_utf8_lossy(&view_output.stdout);
+        let stderr = String::from_utf8_lossy(&view_output.stderr);
+        bail!("failed to fetch PR metadata: {stderr}{stdout}");
+    }
+
+    let stdout = String::from_utf8_lossy(&view_output.stdout);
+    let trimmed = stdout.trim();
+    let parsed = serde_json::from_str::<GhPrCreateResponse>(trimmed)
+        .context("failed to decode GitHub pull request metadata")?;
+    Ok(parsed)
 }
 
 #[cfg(test)]
