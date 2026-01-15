@@ -23,7 +23,7 @@ pub enum JobsCommand {
         #[arg(long = "repo", value_name = "REPO")]
         repo: Option<String>,
 
-        /// Revision to use with --repo (optional for service repos, required for URLs).
+        /// Revision to use with --repo (defaults to 'main' for service repos and git URLs).
         #[arg(long = "rev", value_name = "REV", requires = "repo")]
         rev: Option<String>,
 
