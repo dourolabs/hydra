@@ -13,7 +13,7 @@ use metis_common::{
     jobs::CreateJobRequest,
     patches::UpsertPatchRequest,
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -297,6 +297,55 @@ impl AppState {
                         metis_id = %task_id,
                         "set task status to Failed (spawn failed)"
                     );
+                }
+            }
+        }
+    }
+
+    pub async fn reap_orphaned_jobs(&self) {
+        let job_engine_jobs = match self.job_engine.list_jobs().await {
+            Ok(jobs) => jobs,
+            Err(err) => {
+                error!(error = %err, "failed to list jobs in job engine");
+                return;
+            }
+        };
+
+        if job_engine_jobs.is_empty() {
+            return;
+        }
+
+        let store_task_ids = {
+            let store = self.store.read().await;
+            match store.list_tasks().await {
+                Ok(ids) => ids,
+                Err(err) => {
+                    error!(error = %err, "failed to list tasks from store for job reconciliation");
+                    return;
+                }
+            }
+        };
+
+        let store_task_set: HashSet<_> = store_task_ids.into_iter().collect();
+        let orphaned_jobs: Vec<_> = job_engine_jobs
+            .into_iter()
+            .filter(|job| !store_task_set.contains(&job.id))
+            .collect();
+
+        if !orphaned_jobs.is_empty() {
+            info!(
+                count = orphaned_jobs.len(),
+                "killing jobs present in engine but missing from store"
+            );
+        }
+
+        for job in orphaned_jobs {
+            match self.job_engine.kill_job(&job.id).await {
+                Ok(()) => {
+                    info!(metis_id = %job.id, "killed job not present in store");
+                }
+                Err(err) => {
+                    warn!(metis_id = %job.id, error = %err, "failed to kill job not present in store");
                 }
             }
         }
@@ -648,12 +697,15 @@ async fn active_tasks_for_issue(
 #[cfg(test)]
 mod tests {
     use crate::{
-        job_engine::{JobStatus, MockJobEngine},
+        job_engine::{JobEngine, JobStatus, MockJobEngine},
         store::{Status, TaskError},
         test::test_state_with_engine,
     };
     use chrono::{Duration, Utc};
-    use metis_common::jobs::{BundleSpec, Task};
+    use metis_common::{
+        TaskId,
+        jobs::{BundleSpec, Task},
+    };
     use std::{collections::HashMap, sync::Arc};
 
     fn sample_task() -> Task {
@@ -686,6 +738,40 @@ mod tests {
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_kills_jobs_missing_from_store() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let tracked_task_id = {
+            let mut store = state.store.write().await;
+            store.add_task(sample_task(), Utc::now()).await.unwrap()
+        };
+        let orphan_task_id = TaskId::new();
+
+        job_engine
+            .insert_job(&tracked_task_id, JobStatus::Running)
+            .await;
+        job_engine
+            .insert_job(&orphan_task_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        let tracked_status = job_engine
+            .find_job_by_metis_id(&tracked_task_id)
+            .await
+            .expect("tracked job should exist")
+            .status;
+        assert_eq!(tracked_status, JobStatus::Running);
+
+        let orphan_status = job_engine
+            .find_job_by_metis_id(&orphan_task_id)
+            .await
+            .expect("orphan job should exist")
+            .status;
+        assert_eq!(orphan_status, JobStatus::Failed);
     }
 
     #[tokio::test]
