@@ -1,10 +1,9 @@
 use crate::{
-    app::AppState,
+    app::{AppState, SetJobStatusError},
     routes::jobs::{ApiError, JobIdPath},
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
-use chrono::Utc;
 use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
 use tracing::{error, info};
 
@@ -15,33 +14,26 @@ pub async fn set_job_status(
 ) -> Result<Json<SetJobStatusResponse>, ApiError> {
     info!(job_id = %job_id, status = ?status, "set_job_status invoked");
 
-    {
-        let mut store = state.store.write().await;
-
-        store.get_task(&job_id).await.map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to get task for status update");
-            ApiError::not_found(format!("Job '{job_id}' not found in store"))
+    let response = state
+        .set_job_status(job_id, status)
+        .await
+        .map_err(|err| match err {
+            SetJobStatusError::NotFound { source, job_id } => {
+                error!(
+                    error = %source,
+                    job_id = %job_id,
+                    "failed to get task for status update"
+                );
+                ApiError::not_found(format!("Job '{job_id}' not found in store"))
+            }
+            SetJobStatusError::Store { source, job_id } => {
+                error!(error = %source, job_id = %job_id, "failed to update task status");
+                ApiError::internal(anyhow!("Failed to update task status: {source}"))
+            }
         })?;
 
-        store
-            .mark_task_complete(
-                &job_id,
-                status.to_result(),
-                status.last_message(),
-                Utc::now(),
-            )
-            .await
-            .map_err(|err| {
-                error!(error = %err, job_id = %job_id, "failed to update task status");
-                ApiError::internal(anyhow!("Failed to update task status: {err}"))
-            })?;
-    }
-
-    info!(job_id = %job_id, "job status stored successfully");
-    Ok(Json(SetJobStatusResponse {
-        job_id,
-        status: status.as_status(),
-    }))
+    info!(job_id = %response.job_id, "job status stored successfully");
+    Ok(Json(response))
 }
 
 pub async fn get_job_status(
