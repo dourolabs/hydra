@@ -58,7 +58,7 @@ enum Commands {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
     },
-    /// Retrieve a job's context and extract/copy it to a directory, then submit the job output.
+    /// [Deprecated] Alias for `metis jobs worker-run`.
     WorkerRun {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
@@ -105,7 +105,10 @@ async fn main() -> Result<()> {
         Commands::Dashboard { username } => command::dashboard::run(&client, username).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
 
-        Commands::WorkerRun { job, path } => command::worker_run::run(&client, job, path).await?,
+        Commands::WorkerRun { job, path } => {
+            eprintln!("Deprecated: use `metis jobs worker-run` instead of the top-level `worker-run` command.");
+            command::worker_run::run(&client, job, path).await?
+        }
         Commands::Chat {
             prompt,
             model,
@@ -114,4 +117,43 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_routing_tests {
+    use super::{Cli, Commands};
+    use crate::command::jobs::JobsCommand;
+    use crate::test_utils::ids::task_id;
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn jobs_worker_run_parses_under_jobs_namespace() {
+        let job_id = "t-routingaaaa";
+        let cli = Cli::parse_from(["metis", "jobs", "worker-run", job_id, "/tmp/output"]);
+
+        match cli.command {
+            Commands::Jobs {
+                command: JobsCommand::WorkerRun { job, path },
+            } => {
+                assert_eq!(job, task_id(job_id));
+                assert_eq!(path, PathBuf::from("/tmp/output"));
+            }
+            _ => panic!("expected jobs worker-run subcommand to parse"),
+        }
+    }
+
+    #[test]
+    fn top_level_worker_run_remains_supported_as_alias() {
+        let job_id = "t-aliasabcd";
+        let cli = Cli::parse_from(["metis", "worker-run", job_id, "/tmp/alias"]);
+
+        match cli.command {
+            Commands::WorkerRun { job, path } => {
+                assert_eq!(job, task_id(job_id));
+                assert_eq!(path, PathBuf::from("/tmp/alias"));
+            }
+            _ => panic!("expected top-level worker-run alias to parse"),
+        }
+    }
 }

@@ -2,6 +2,7 @@ use crate::client::MetisClientInterface;
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{IssueId, TaskId};
+use std::path::PathBuf;
 
 pub mod create;
 pub mod kill;
@@ -73,6 +74,15 @@ pub enum JobsCommand {
         #[arg(value_name = "JOB_ID")]
         job: TaskId,
     },
+    /// Retrieve a job's context locally and run it via Codex.
+    WorkerRun {
+        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
+        #[arg(value_name = "JOB_ID")]
+        job: TaskId,
+        /// Destination directory where the context will be extracted/copied.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Result<()> {
@@ -91,6 +101,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
         } => list::run(client, limit, spawned_from).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
         JobsCommand::Kill { job } => kill::run(client, job).await?,
+        JobsCommand::WorkerRun { job, path } => {
+            crate::command::worker_run::run(client, job, path).await?
+        }
     }
 
     Ok(())
