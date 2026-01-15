@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::jobs::BundleSpec;
+use metis_common::{github::GithubConfig, jobs::BundleSpec};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub service: ServiceSection,
     #[serde(default)]
     pub background: BackgroundSection,
+    #[serde(default)]
+    pub github: GithubConfig,
 }
 
 impl AppConfig {

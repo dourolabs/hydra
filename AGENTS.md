@@ -30,3 +30,4 @@ choice with tradeoffs, and what the alternatives were. Attach screenshots or CLI
 
 ## Configuration & Security Notes
 Never commit secrets. Use the `config.toml.sample` files as templates and load them via `METIS_CONFIG` or env vars such as `OPENAI_API_KEY`. Confirm Docker images reference the intended worker image and namespace before publishing. Add new external integrations to `metis-common` so sensitive values stay centralized and masked.
+Apply any environment-variable overrides to configs at process startup; client helpers should not reach back into env unexpectedly.
