@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{issues::Issue, patches::Patch};
 
+/// Store implementation that always fails; useful for exercising error paths in tests.
 #[derive(Default)]
 pub(crate) struct FailingStore;
 

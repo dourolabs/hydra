@@ -12,6 +12,8 @@ use std::{
 };
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
+pub(crate) mod store;
+
 pub(crate) struct TestServer {
     pub(crate) address: String,
     handle: JoinHandle<anyhow::Result<()>>,
