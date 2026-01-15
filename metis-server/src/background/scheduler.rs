@@ -1,5 +1,13 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
+use crate::{
+    app::AppState,
+    background::{
+        monitor_running_jobs::MonitorRunningJobsWorker,
+        process_pending_jobs::ProcessPendingJobsWorker,
+    },
+    config::WorkerSchedulerConfig,
+};
 use async_trait::async_trait;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle, time::sleep};
@@ -81,6 +89,60 @@ impl BackgroundScheduler {
             let _ = handle.await;
         }
     }
+}
+
+pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
+    let scheduler_config = state.config.background.scheduler.clone();
+    log_worker_config(
+        "process_pending_jobs",
+        &scheduler_config.process_pending_jobs,
+    );
+    log_worker_config(
+        "monitor_running_jobs",
+        &scheduler_config.monitor_running_jobs,
+    );
+
+    let workers = vec![
+        WorkerHandle::new(
+            worker_settings_from_config(
+                "process_pending_jobs",
+                &scheduler_config.process_pending_jobs,
+            ),
+            Arc::new(ProcessPendingJobsWorker::new(state.clone())),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                "monitor_running_jobs",
+                &scheduler_config.monitor_running_jobs,
+            ),
+            Arc::new(MonitorRunningJobsWorker::new(state)),
+        ),
+    ];
+
+    BackgroundScheduler::start(workers)
+}
+
+fn log_worker_config(name: &str, config: &WorkerSchedulerConfig) {
+    debug!(
+        worker = name,
+        interval_secs = config.interval_secs,
+        initial_backoff_secs = config.initial_backoff_secs,
+        max_backoff_secs = config.max_backoff_secs,
+        "scheduler worker configured"
+    );
+}
+
+fn worker_settings_from_config(name: &str, config: &WorkerSchedulerConfig) -> WorkerSettings {
+    WorkerSettings::new(
+        name.to_string(),
+        Duration::from_secs(config.interval_secs.max(1)),
+        Duration::from_secs(config.initial_backoff_secs.max(1)),
+        Duration::from_secs(
+            config
+                .max_backoff_secs
+                .max(config.initial_backoff_secs.max(1)),
+        ),
+    )
 }
 
 fn spawn_worker(handle: WorkerHandle, shutdown_rx: watch::Receiver<bool>) -> JoinHandle<()> {
