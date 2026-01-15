@@ -1,5 +1,6 @@
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
     issues::{
@@ -7,7 +8,7 @@ use metis_common::{
         IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
         UpsertIssueRequest,
     },
-    patches::PatchRecord,
+    patches::{PatchRecord, Review},
     PatchId,
 };
 use serde::Serialize;
@@ -803,10 +804,160 @@ fn write_issue_details_pretty(
                     writeln!(writer, "{indent}      {line}")?;
                 }
             }
+            write_patch_review_summary(&patch.patch.reviews, indent, writer)?;
         }
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PatchReviewSummary {
+    approvals: usize,
+    change_requests: usize,
+    latest_review: ReviewSnapshot,
+    reviewer_statuses: Vec<ReviewSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewSnapshot {
+    author: String,
+    is_approved: bool,
+    submitted_at: Option<DateTime<Utc>>,
+}
+
+fn write_patch_review_summary(
+    reviews: &[Review],
+    indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match build_review_summary(reviews) {
+        Some(summary) => {
+            writeln!(writer, "{indent}    Reviews:")?;
+            writeln!(
+                writer,
+                "{indent}      Latest: {} by {}{}",
+                review_decision(summary.latest_review.is_approved),
+                summary.latest_review.author,
+                format_timestamp(summary.latest_review.submitted_at.as_ref())
+            )?;
+            writeln!(
+                writer,
+                "{indent}      Counts: {} {}, {} {}",
+                summary.approvals,
+                if summary.approvals == 1 {
+                    "approval"
+                } else {
+                    "approvals"
+                },
+                summary.change_requests,
+                if summary.change_requests == 1 {
+                    "change request"
+                } else {
+                    "change requests"
+                }
+            )?;
+            writeln!(writer, "{indent}      Reviewers:")?;
+            for reviewer in summary.reviewer_statuses {
+                writeln!(
+                    writer,
+                    "{indent}        - {}: {}{}",
+                    reviewer.author,
+                    review_decision(reviewer.is_approved),
+                    format_timestamp(reviewer.submitted_at.as_ref())
+                )?;
+            }
+        }
+        None => {
+            writeln!(writer, "{indent}    Reviews: none")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn build_review_summary(reviews: &[Review]) -> Option<PatchReviewSummary> {
+    if reviews.is_empty() {
+        return None;
+    }
+
+    let mut approvals = 0;
+    let mut change_requests = 0;
+    let mut latest_review_index: Option<usize> = None;
+    let mut latest_by_author = HashMap::new();
+
+    for (index, review) in reviews.iter().enumerate() {
+        if review.is_approved {
+            approvals += 1;
+        } else {
+            change_requests += 1;
+        }
+
+        match latest_review_index {
+            Some(current_index) if !is_more_recent_review(current_index, index, reviews) => {}
+            _ => latest_review_index = Some(index),
+        }
+
+        match latest_by_author.get(review.author.as_str()) {
+            Some(&current_index) if !is_more_recent_review(current_index, index, reviews) => {}
+            _ => {
+                latest_by_author.insert(review.author.as_str(), index);
+            }
+        }
+    }
+
+    let mut reviewer_statuses: Vec<ReviewSnapshot> = latest_by_author
+        .into_iter()
+        .map(|(author, index)| {
+            let review = &reviews[index];
+            ReviewSnapshot {
+                author: author.to_string(),
+                is_approved: review.is_approved,
+                submitted_at: review.submitted_at,
+            }
+        })
+        .collect();
+    reviewer_statuses.sort_by(|a, b| a.author.cmp(&b.author));
+
+    let latest_index = latest_review_index.expect("non-empty reviews always set latest index");
+    let latest = &reviews[latest_index];
+
+    Some(PatchReviewSummary {
+        approvals,
+        change_requests,
+        latest_review: ReviewSnapshot {
+            author: latest.author.clone(),
+            is_approved: latest.is_approved,
+            submitted_at: latest.submitted_at,
+        },
+        reviewer_statuses,
+    })
+}
+
+fn is_more_recent_review(current_index: usize, candidate_index: usize, reviews: &[Review]) -> bool {
+    let current = &reviews[current_index];
+    let candidate = &reviews[candidate_index];
+    match (&current.submitted_at, &candidate.submitted_at) {
+        (Some(current_time), Some(candidate_time)) => candidate_time > current_time,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (None, None) => candidate_index > current_index,
+    }
+}
+
+fn review_decision(is_approved: bool) -> &'static str {
+    if is_approved {
+        "approved"
+    } else {
+        "changes requested"
+    }
+}
+
+fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
+    timestamp
+        .map(|value| value.to_rfc3339_opts(SecondsFormat::Secs, true))
+        .map(|value| format!(" @ {value}"))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -814,11 +965,12 @@ mod tests {
     use super::*;
     use crate::client::MockMetisClient;
     use crate::test_utils::ids::{issue_id, patch_id};
+    use chrono::{Duration, TimeZone, Utc};
     use metis_common::issues::{
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchRecord};
+    use metis_common::patches::{Patch, PatchRecord, Review};
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
@@ -1459,6 +1611,75 @@ mod tests {
         assert!(rendered.contains("Children (transitive):"));
         assert!(rendered.contains("main patch (p-main) [open]"));
         assert!(rendered.contains("      Description:\n        desc"));
-        assert!(rendered.contains("none"));
+        assert!(rendered.contains("Reviews: none"));
+    }
+
+    #[test]
+    fn describe_issue_pretty_printer_shows_review_summary() {
+        let main_patch_id = patch_id("p-main");
+        let earliest_review = Utc.with_ymd_and_hms(2024, 5, 1, 11, 50, 0).unwrap();
+        let latest_review = earliest_review + Duration::minutes(10);
+        let patch_reviews = vec![
+            Review {
+                contents: "needs work".to_string(),
+                is_approved: false,
+                author: "alex".to_string(),
+                submitted_at: Some(earliest_review),
+            },
+            Review {
+                contents: "fixed now".to_string(),
+                is_approved: false,
+                author: "sam".to_string(),
+                submitted_at: Some(earliest_review + Duration::minutes(5)),
+            },
+            Review {
+                contents: "ship it".to_string(),
+                is_approved: true,
+                author: "sam".to_string(),
+                submitted_at: Some(latest_review),
+            },
+        ];
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-main"),
+                    issue: Issue {
+                        issue_type: IssueType::Task,
+                        description: "Main issue".into(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: Some("owner".into()),
+                        dependencies: vec![],
+                        patches: vec![main_patch_id.clone()],
+                    },
+                },
+                patches: vec![PatchRecord {
+                    id: main_patch_id,
+                    patch: Patch {
+                        title: "main patch".into(),
+                        description: "desc".into(),
+                        diff: "diff".into(),
+                        status: Default::default(),
+                        is_automatic_backup: false,
+                        reviews: patch_reviews,
+                    },
+                }],
+            },
+            parents: vec![],
+            children: vec![],
+        };
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(
+            rendered.contains("Latest: approved by sam @ 2024-05-01T12:00:00Z"),
+            "latest review should reflect the newest review"
+        );
+        assert!(rendered.contains("Counts: 1 approval, 2 change requests"));
+        assert!(rendered.contains("Reviewers:"));
+        assert!(rendered.contains("- alex: changes requested @ 2024-05-01T11:50:00Z"));
+        assert!(rendered.contains("- sam: approved @ 2024-05-01T12:00:00Z"));
     }
 }
