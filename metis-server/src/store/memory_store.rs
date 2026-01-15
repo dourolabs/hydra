@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::task_status::Event;
 use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{
-    issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
+        IssueGraphWildcard, IssueStatus,
+    },
     patches::Patch,
 };
 
@@ -220,6 +223,129 @@ impl Default for MemoryStore {
     }
 }
 
+struct IssueGraphContext {
+    known_issues: HashSet<IssueId>,
+    forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+    reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
+}
+
+impl IssueGraphContext {
+    fn new(store: &MemoryStore) -> Self {
+        let mut forward = HashMap::new();
+        forward.insert(IssueDependencyType::ChildOf, store.issue_children.clone());
+        forward.insert(
+            IssueDependencyType::BlockedOn,
+            store.issue_blocked_on.clone(),
+        );
+
+        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+
+        for (issue_id, issue) in store.issues.iter() {
+            for dependency in &issue.dependencies {
+                reverse
+                    .entry(dependency.dependency_type)
+                    .or_default()
+                    .entry(issue_id.clone())
+                    .or_default()
+                    .push(dependency.issue_id.clone());
+            }
+        }
+
+        Self {
+            known_issues: store.issues.keys().cloned().collect(),
+            forward,
+            reverse,
+        }
+    }
+
+    fn contains_issue(&self, issue_id: &IssueId) -> bool {
+        self.known_issues.contains(issue_id)
+    }
+
+    fn adjacency(
+        &self,
+        side: IssueGraphFilterSide,
+        dependency_type: IssueDependencyType,
+    ) -> Option<&HashMap<IssueId, Vec<IssueId>>> {
+        match side {
+            IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
+            IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
+        }
+    }
+}
+
+fn apply_graph_filters(
+    context: &IssueGraphContext,
+    filters: &[IssueGraphFilter],
+) -> Result<HashSet<IssueId>, StoreError> {
+    let mut intersection: Option<HashSet<IssueId>> = None;
+
+    for filter in filters {
+        let literal = filter.literal_issue_id();
+        if !context.contains_issue(literal) {
+            return Err(StoreError::IssueNotFound(literal.clone()));
+        }
+
+        let adjacency = context.adjacency(filter.wildcard_position(), filter.dependency_type);
+
+        let matches = collect_matches(adjacency, literal, filter.wildcard_kind());
+
+        match &mut intersection {
+            Some(existing) => existing.retain(|id| matches.contains(id)),
+            None => intersection = Some(matches),
+        }
+
+        if let Some(existing) = &intersection {
+            if existing.is_empty() {
+                break;
+            }
+        }
+    }
+
+    Ok(intersection.unwrap_or_default())
+}
+
+fn collect_matches(
+    adjacency: Option<&HashMap<IssueId, Vec<IssueId>>>,
+    literal: &IssueId,
+    wildcard: IssueGraphWildcard,
+) -> HashSet<IssueId> {
+    let Some(map) = adjacency else {
+        return HashSet::new();
+    };
+
+    match wildcard {
+        IssueGraphWildcard::Immediate => map
+            .get(literal)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        IssueGraphWildcard::Transitive => {
+            let mut matches = HashSet::new();
+            let mut visited = HashSet::new();
+            let mut queue = VecDeque::new();
+
+            visited.insert(literal.clone());
+            queue.push_back(literal.clone());
+
+            while let Some(current) = queue.pop_front() {
+                if let Some(neighbors) = map.get(&current) {
+                    for neighbor in neighbors {
+                        if visited.insert(neighbor.clone()) {
+                            queue.push_back(neighbor.clone());
+                        }
+                        matches.insert(neighbor.clone());
+                    }
+                }
+            }
+
+            matches
+        }
+    }
+}
+
 #[async_trait]
 impl Store for MemoryStore {
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
@@ -284,6 +410,18 @@ impl Store for MemoryStore {
             .iter()
             .map(|(id, issue)| (id.clone(), issue.clone()))
             .collect())
+    }
+
+    async fn search_issue_graph(
+        &self,
+        filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError> {
+        if filters.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let context = IssueGraphContext::new(self);
+        apply_graph_filters(&context, filters)
     }
 
     async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {
@@ -616,7 +754,9 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
-        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+        issues::{
+            Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
+        },
         jobs::BundleSpec,
         patches::{Patch, PatchStatus},
     };
@@ -890,6 +1030,162 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn graph_filter_returns_children() {
+        let mut store = MemoryStore::new();
+
+        let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let child = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent.clone(),
+            }]))
+            .await
+            .unwrap();
+        let _grandchild = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: child.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        let filter: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
+        let matches = store.search_issue_graph(&[filter]).await.unwrap();
+
+        assert_eq!(matches, HashSet::from([child]));
+    }
+
+    #[tokio::test]
+    async fn graph_filter_returns_transitive_children() {
+        let mut store = MemoryStore::new();
+
+        let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let child = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent.clone(),
+            }]))
+            .await
+            .unwrap();
+        let grandchild = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: child.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        let filter: IssueGraphFilter = format!("**:child-of:{parent}").parse().unwrap();
+        let matches = store.search_issue_graph(&[filter]).await.unwrap();
+
+        assert_eq!(matches, HashSet::from([child, grandchild]));
+    }
+
+    #[tokio::test]
+    async fn graph_filter_returns_ancestors_for_right_wildcards() {
+        let mut store = MemoryStore::new();
+
+        let root = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let child = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: root.clone(),
+            }]))
+            .await
+            .unwrap();
+        let grandchild = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: child.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        let filter: IssueGraphFilter = format!("{grandchild}:child-of:**").parse().unwrap();
+        let matches = store.search_issue_graph(&[filter]).await.unwrap();
+
+        assert_eq!(matches, HashSet::from([root, child]));
+    }
+
+    #[tokio::test]
+    async fn graph_filters_intersect_multiple_constraints() {
+        let mut store = MemoryStore::new();
+
+        let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let other_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let other_blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let matching_issue = store
+            .add_issue(sample_issue(vec![
+                IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: parent.clone(),
+                },
+                IssueDependency {
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: blocker.clone(),
+                },
+            ]))
+            .await
+            .unwrap();
+
+        let non_matching_child = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent.clone(),
+            }]))
+            .await
+            .unwrap();
+        let non_matching_blocked = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: blocker.clone(),
+            }]))
+            .await
+            .unwrap();
+        let unrelated_issue = store
+            .add_issue(sample_issue(vec![
+                IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: other_parent,
+                },
+                IssueDependency {
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: other_blocker,
+                },
+            ]))
+            .await
+            .unwrap();
+
+        let filter_a: IssueGraphFilter = format!("*:child-of:{parent}").parse().unwrap();
+        let filter_b: IssueGraphFilter = format!("*:blocked-on:{blocker}").parse().unwrap();
+
+        let matches = store
+            .search_issue_graph(&[filter_a, filter_b])
+            .await
+            .unwrap();
+
+        assert_eq!(matches, HashSet::from([matching_issue]));
+        assert!(!matches.contains(&non_matching_child));
+        assert!(!matches.contains(&non_matching_blocked));
+        assert!(!matches.contains(&unrelated_issue));
+    }
+
+    #[tokio::test]
+    async fn graph_filter_errors_when_literal_missing() {
+        let mut store = MemoryStore::new();
+        let missing = IssueId::new();
+
+        store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let filter: IssueGraphFilter = format!("*:child-of:{missing}").parse().unwrap();
+        let result = store.search_issue_graph(&[filter]).await;
+
+        assert!(matches!(result, Err(StoreError::IssueNotFound(id)) if id == missing));
     }
 
     #[tokio::test]
