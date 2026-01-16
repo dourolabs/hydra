@@ -342,14 +342,22 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     }
 }
 
+fn has_primary_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::META)
+}
+
+fn is_issue_submit_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Enter && has_primary_modifier(key.modifiers)
+}
+
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+    if has_primary_modifier(key.modifiers) && key.code == KeyCode::Char('n') {
         state.issue_draft.editing = !state.issue_draft.editing;
         return None;
     }
 
     if state.issue_draft.is_submitting {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+        if is_issue_submit_key(key) {
             state.issue_draft.info_message =
                 Some("Issue submission already in progress.".to_string());
         }
@@ -368,7 +376,7 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
         _ => {}
     }
 
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+    if is_issue_submit_key(key) {
         return attempt_issue_submit(state);
     }
 
@@ -1664,6 +1672,23 @@ mod tests {
 
         let submission = handle_issue_draft_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            &mut state,
+        )
+        .expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "pm");
+        assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn meta_enter_submits_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.assignees = vec!["pm".to_string()];
+
+        let submission = handle_issue_draft_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::META),
             &mut state,
         )
         .expect("submission missing");
