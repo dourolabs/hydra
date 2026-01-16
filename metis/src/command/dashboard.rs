@@ -197,6 +197,7 @@ async fn run_dashboard_loop(
         username,
         ..DashboardState::default()
     };
+    state.issue_draft.editing = true;
     let mut needs_draw = true;
 
     match refresh_jobs(client, &mut state).await {
