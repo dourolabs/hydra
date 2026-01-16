@@ -1,0 +1,8 @@
+[package]
+name = "metis-dashboard"
+version = "0.1.0"
+edition = "2021"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dioxus = { version = "0.5", features = ["web"] }
+dioxus-web = "0.5"
