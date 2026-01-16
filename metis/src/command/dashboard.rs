@@ -387,6 +387,23 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 submission: handle_issue_draft_key(key, state),
             },
         },
+        Event::Paste(text) => {
+            if state.issue_draft.is_submitting {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
+            if state.issue_draft.editing && state.issue_draft.prompt.insert_str(text) {
+                state.issue_draft.note_edit();
+            }
+
+            EventOutcome {
+                should_quit: false,
+                submission: None,
+            }
+        }
         Event::Resize(_, _) => EventOutcome {
             should_quit: false,
             submission: None,
@@ -465,6 +482,7 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     if prompt.is_empty() {
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = None;
+        state.issue_draft.set_editing(true);
         return None;
     }
 
@@ -1263,6 +1281,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
+    use crossterm::event::Event as CrosstermEvent;
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
@@ -1574,6 +1593,7 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
+        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
@@ -1589,6 +1609,7 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
+        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
@@ -1654,6 +1675,25 @@ mod tests {
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
         assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn paste_event_inserts_prompt_text() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_editing(true);
+        state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
+        state.issue_draft.info_message = Some("old message".to_string());
+
+        let outcome = handle_event(
+            CrosstermEvent::Paste("Ship dashboard\nAdd tests".to_string()),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.prompt_text(), "Ship dashboard\nAdd tests");
+        assert!(state.issue_draft.validation_error.is_none());
+        assert!(state.issue_draft.info_message.is_none());
     }
 
     #[tokio::test]
