@@ -695,6 +695,44 @@ fn build_prompt_render(draft: &IssueDraft, area: ratatui::layout::Rect) -> Promp
     PromptRender { lines, cursor }
 }
 
+fn wrap_prompt_line(line: &str, width: usize) -> Vec<String> {
+    if line.is_empty() {
+        return vec![String::new()];
+    }
+
+    let trimmed = line.trim_end_matches(|ch: char| ch.is_whitespace());
+    let trailing = &line[trimmed.len()..];
+    let mut wrapped: Vec<String> = if trimmed.is_empty() {
+        vec![String::new()]
+    } else {
+        textwrap::wrap(trimmed, width)
+            .into_iter()
+            .map(|chunk| chunk.into_owned())
+            .collect()
+    };
+
+    if trailing.is_empty() {
+        return wrapped;
+    }
+
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+
+    let mut current_width = textwrap::core::display_width(wrapped.last().unwrap());
+    for ch in trailing.chars() {
+        let ch_width = textwrap::core::display_width(&ch.to_string());
+        if current_width + ch_width > width {
+            wrapped.push(String::new());
+            current_width = 0;
+        }
+        wrapped.last_mut().unwrap().push(ch);
+        current_width += ch_width;
+    }
+
+    wrapped
+}
+
 fn prompt_cursor_position(
     prompt_lines: &[&str],
     area: ratatui::layout::Rect,
@@ -707,17 +745,9 @@ fn prompt_cursor_position(
 
     let mut visual_lines = Vec::new();
     for line in prompt_lines {
-        if line.is_empty() {
-            visual_lines.push(String::new());
-            continue;
-        }
-        let wrapped = textwrap::wrap(line, width);
-        if wrapped.is_empty() {
-            visual_lines.push(String::new());
-        } else {
-            for chunk in wrapped {
-                visual_lines.push(chunk.into_owned());
-            }
+        let wrapped = wrap_prompt_line(line, width);
+        for chunk in wrapped {
+            visual_lines.push(chunk);
         }
     }
 
@@ -1323,6 +1353,7 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use ratatui::layout::Rect;
     use std::collections::HashMap;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
@@ -1632,6 +1663,41 @@ mod tests {
             Some("Prompt cannot be empty.")
         );
         assert!(!state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn attempt_issue_submit_rejects_whitespace_only_with_newlines() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "\n  \n".to_string();
+
+        let submission = attempt_issue_submit(&mut state);
+
+        assert!(submission.is_none());
+        assert_eq!(
+            state.issue_draft.validation_error.as_deref(),
+            Some("Prompt cannot be empty.")
+        );
+        assert!(!state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn prompt_cursor_position_counts_trailing_spaces() {
+        let area = Rect::new(0, 0, 10, 4);
+        let prompt_lines = vec!["Ship  "];
+
+        let cursor = prompt_cursor_position(&prompt_lines, area).expect("cursor missing");
+
+        assert_eq!(cursor, (6, 1));
+    }
+
+    #[test]
+    fn prompt_cursor_position_wraps_and_preserves_trailing_spaces() {
+        let area = Rect::new(0, 0, 4, 4);
+        let prompt_lines = vec!["Ship  "];
+
+        let cursor = prompt_cursor_position(&prompt_lines, area).expect("cursor missing");
+
+        assert_eq!(cursor, (2, 2));
     }
 
     #[test]
