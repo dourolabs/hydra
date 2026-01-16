@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
+    agents::ListAgentsResponse,
     issues::{
         IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     },
@@ -69,6 +70,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
+    async fn list_agents(&self) -> Result<ListAgentsResponse>;
 }
 
 impl MetisClient {
@@ -464,6 +466,24 @@ impl MetisClient {
             .context("failed to decode list patches response")
     }
 
+    /// Call `GET /v1/agents` to list available assignee agents.
+    pub async fn list_agents(&self) -> Result<ListAgentsResponse> {
+        let url = self.endpoint("/v1/agents")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch agents list")?
+            .error_for_status()
+            .context("metis-server returned an error while listing agents")?;
+
+        response
+            .json::<ListAgentsResponse>()
+            .await
+            .context("failed to decode list agents response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -647,6 +667,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
         MetisClient::list_patches(self, query).await
+    }
+
+    async fn list_agents(&self) -> Result<ListAgentsResponse> {
+        MetisClient::list_agents(self).await
     }
 }
 

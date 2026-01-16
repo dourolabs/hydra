@@ -3,6 +3,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
+    agents::AgentRecord,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
         IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
@@ -150,6 +151,12 @@ pub enum IssueCommands {
         #[arg(long)]
         pretty: bool,
     },
+    /// List available assignee agents.
+    Assignees {
+        /// Pretty-print the assignees instead of emitting JSONL.
+        #[arg(long)]
+        pretty: bool,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
@@ -226,6 +233,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             .await
         }
         IssueCommands::Describe { id, pretty } => describe_issue(client, id, pretty).await,
+        IssueCommands::Assignees { pretty } => list_assignees(client, pretty).await,
     }
 }
 
@@ -640,6 +648,22 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     })
 }
 
+async fn fetch_assignees(client: &dyn MetisClientInterface) -> Result<Vec<AgentRecord>> {
+    let response = client.list_agents().await?;
+    Ok(response.agents)
+}
+
+async fn list_assignees(client: &dyn MetisClientInterface, pretty: bool) -> Result<()> {
+    let agents = fetch_assignees(client).await?;
+    let mut stdout = io::stdout().lock();
+    if pretty {
+        print_assignees_pretty(&agents, &mut stdout)?;
+    } else {
+        print_assignees_jsonl(&agents, &mut stdout)?;
+    }
+    Ok(())
+}
+
 fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
     for issue in issues {
         serde_json::to_writer(&mut *writer, issue)?;
@@ -697,6 +721,30 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         if index + 1 < issues.len() {
             writeln!(writer)?;
         }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn print_assignees_jsonl(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
+    for agent in agents {
+        serde_json::to_writer(&mut *writer, agent)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn print_assignees_pretty(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
+    if agents.is_empty() {
+        writeln!(writer, "No assignee agents configured.")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    writeln!(writer, "Available assignees:")?;
+    for agent in agents {
+        writeln!(writer, "  - {}", agent.name)?;
     }
     writer.flush()?;
     Ok(())
@@ -976,6 +1024,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
+    use metis_common::agents::{AgentRecord, ListAgentsResponse};
     use metis_common::issues::{
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
@@ -1066,6 +1115,30 @@ mod tests {
         );
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].id, issue_id("i-123"));
+    }
+
+    #[tokio::test]
+    async fn list_assignees_fetches_agents_and_prints_jsonl() {
+        let client = MockMetisClient::default();
+        client.push_list_agents_response(ListAgentsResponse {
+            agents: vec![
+                AgentRecord {
+                    name: "alpha".into(),
+                },
+                AgentRecord {
+                    name: "beta".into(),
+                },
+            ],
+        });
+
+        let agents = fetch_assignees(&client).await.unwrap();
+        assert_eq!(client.recorded_list_agents_calls(), 1);
+
+        let mut output = Vec::new();
+        print_assignees_jsonl(&agents, &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("\"name\":\"alpha\""));
+        assert!(output.contains("\"name\":\"beta\""));
     }
 
     #[tokio::test]
