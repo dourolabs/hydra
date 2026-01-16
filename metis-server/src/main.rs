@@ -39,6 +39,10 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::issues::get_issue).put(routes::issues::update_issue),
         )
         .route(
+            "/v1/issues/:issue_id/details",
+            get(routes::issues::get_issue_details),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )
@@ -161,8 +165,9 @@ mod tests {
         TaskId,
         constants::ENV_GH_TOKEN,
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-            ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+            Issue, IssueDependency, IssueDependencyType, IssueDetailsResponse, IssueRecord,
+            IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest,
+            UpsertIssueResponse,
         },
         job_status::GetJobStatusResponse,
         jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
@@ -1714,6 +1719,104 @@ mod tests {
                 patches: Vec::new(),
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn issue_details_include_subtasks_and_logs() -> anyhow::Result<()> {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let server = spawn_test_server_with_state(state.clone()).await?;
+        let client = test_client();
+
+        let parent: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "parent issue".to_string(),
+                    progress: "parent progress".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let child_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent.issue_id.clone(),
+        }];
+        let child: UpsertIssueResponse = client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest {
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "child issue".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    dependencies: child_dependencies,
+                    patches: Vec::new(),
+                },
+                job_id: None,
+            })
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let task_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_task(
+                    Task {
+                        prompt: "Handle parent".to_string(),
+                        context: BundleSpec::None,
+                        spawned_from: Some(parent.issue_id.clone()),
+                        image: None,
+                        env_vars: HashMap::new(),
+                    },
+                    Utc::now(),
+                )
+                .await?
+        };
+
+        job_engine.insert_job(&task_id, JobStatus::Running).await;
+        job_engine
+            .set_logs(
+                &task_id,
+                vec!["line one".to_string(), "line two".to_string()],
+            )
+            .await;
+
+        let details: IssueDetailsResponse = client
+            .get(format!(
+                "{}/v1/issues/{}/details",
+                server.base_url(),
+                parent.issue_id
+            ))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        assert_eq!(details.issue.id, parent.issue_id);
+        assert_eq!(details.issue.issue.description, "parent issue");
+        assert_eq!(details.subtasks.issue.id, parent.issue_id);
+        assert_eq!(details.subtasks.children.len(), 1);
+        assert_eq!(details.subtasks.children[0].issue.id, child.issue_id);
+        assert_eq!(details.tasks.len(), 1);
+        assert_eq!(details.tasks[0].job.id, task_id);
+        assert_eq!(details.tasks[0].job.task.prompt, "Handle parent");
+        assert_eq!(details.tasks[0].logs.as_deref(), Some("line one\nline two"));
+        assert_eq!(details.status.open_children, vec![child.issue_id]);
+        assert!(details.status.is_ready);
         Ok(())
     }
 

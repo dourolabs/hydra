@@ -1,4 +1,5 @@
 pub use crate::IssueId;
+use crate::jobs::JobRecord;
 use crate::{PatchId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -316,6 +317,40 @@ pub struct IssueRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueStatusDetails {
+    pub status: IssueStatus,
+    pub is_ready: bool,
+    #[serde(default)]
+    pub blockers: Vec<IssueId>,
+    #[serde(default)]
+    pub open_children: Vec<IssueId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueTreeNode {
+    pub issue: IssueRecord,
+    #[serde(default)]
+    pub children: Vec<IssueTreeNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueTaskDetail {
+    pub job: JobRecord,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub logs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub log_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueDetailsResponse {
+    pub issue: IssueRecord,
+    pub status: IssueStatusDetails,
+    pub subtasks: IssueTreeNode,
+    pub tasks: Vec<IssueTaskDetail>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertIssueRequest {
     pub issue: Issue,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +407,12 @@ pub struct SearchIssuesQuery {
         deserialize_with = "deserialize_graph_filters"
     )]
     pub graph_filters: Vec<IssueGraphFilter>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueDetailsQuery {
+    #[serde(default)]
+    pub tail_lines: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

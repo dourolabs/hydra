@@ -222,7 +222,7 @@ where
     }
 }
 
-async fn job_record_with_time(
+pub(crate) async fn job_record_with_time(
     job_id: &TaskId,
     store: &dyn Store,
 ) -> Result<(JobRecord, Option<DateTime<Utc>>), StoreError> {
