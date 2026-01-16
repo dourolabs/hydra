@@ -2,6 +2,7 @@ use crate::{routes::jobs::ApiError, store::StoreError};
 use anyhow::anyhow;
 use tracing::error;
 
+pub mod agents;
 pub mod issues;
 pub mod jobs;
 pub mod patches;

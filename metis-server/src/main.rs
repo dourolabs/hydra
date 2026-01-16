@@ -47,6 +47,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::patches::get_patch).put(routes::patches::update_patch),
         )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
+        .route("/v1/agents", get(routes::agents::list_agents))
         .route(
             "/v1/jobs/:job_id",
             get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
