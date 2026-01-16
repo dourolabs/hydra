@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
     io::{stdout, Stdout},
-    ops::ControlFlow,
     time::Duration,
 };
 
@@ -16,8 +15,8 @@ use crossterm::{
 use futures::StreamExt;
 use metis_common::{
     issues::{
-        IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
-        SearchIssuesQuery,
+        Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
+        IssueType, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
@@ -116,6 +115,7 @@ struct IssueDraft {
     validation_error: Option<String>,
     info_message: Option<String>,
     editing: bool,
+    is_submitting: bool,
 }
 
 impl Default for IssueDraft {
@@ -127,6 +127,7 @@ impl Default for IssueDraft {
             validation_error: None,
             info_message: None,
             editing: false,
+            is_submitting: false,
         }
     }
 }
@@ -168,6 +169,16 @@ struct DashboardState {
     records_error: Option<String>,
     username: Option<String>,
     issue_draft: IssueDraft,
+}
+
+struct IssueSubmission {
+    prompt: String,
+    assignee: String,
+}
+
+struct EventOutcome {
+    should_quit: bool,
+    submission: Option<IssueSubmission>,
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
@@ -242,8 +253,32 @@ async fn run_dashboard_loop(
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        if matches!(handle_event(event, &mut state), ControlFlow::Break(())) {
+                        let outcome = handle_event(event, &mut state);
+                        if outcome.should_quit {
                             break;
+                        }
+                        if let Some(submission) = outcome.submission {
+                            let assignee = submission.assignee.clone();
+                            state.issue_draft.info_message =
+                                Some(format!("Submitting issue for @{assignee}..."));
+                            terminal.draw(|f| render(f, &state))?;
+                            let submission_result = submit_issue(client, &submission).await;
+                            handle_issue_submission_result(
+                                &mut state,
+                                &assignee,
+                                submission_result,
+                            );
+                            if state.issue_draft.validation_error.is_none() {
+                                match refresh_records(client, &mut state).await {
+                                    Ok(_changed) => {
+                                        state.records_error = None;
+                                    }
+                                    Err(err) => {
+                                        state.records_error =
+                                            Some(format!("Failed to refresh issues: {err}"));
+                                    }
+                                }
+                            }
                         }
                         needs_draw = true;
                     }
@@ -279,48 +314,65 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
     terminal.show_cursor().context("failed to show cursor")
 }
 
-fn handle_event(event: Event, state: &mut DashboardState) -> ControlFlow<()> {
+fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => ControlFlow::Break(()),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                ControlFlow::Break(())
-            }
-            _ => {
-                handle_issue_draft_key(key, state);
-                ControlFlow::Continue(())
-            }
+            KeyCode::Char('q') | KeyCode::Esc => EventOutcome {
+                should_quit: true,
+                submission: None,
+            },
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => EventOutcome {
+                should_quit: true,
+                submission: None,
+            },
+            _ => EventOutcome {
+                should_quit: false,
+                submission: handle_issue_draft_key(key, state),
+            },
         },
-        Event::Resize(_, _) => ControlFlow::Continue(()),
-        _ => ControlFlow::Continue(()),
+        Event::Resize(_, _) => EventOutcome {
+            should_quit: false,
+            submission: None,
+        },
+        _ => EventOutcome {
+            should_quit: false,
+            submission: None,
+        },
     }
 }
 
-fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) {
+fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
         state.issue_draft.editing = !state.issue_draft.editing;
-        return;
+        return None;
+    }
+
+    if state.issue_draft.is_submitting {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+            state.issue_draft.info_message =
+                Some("Issue submission already in progress.".to_string());
+        }
+        return None;
     }
 
     match key.code {
         KeyCode::Tab => {
             state.issue_draft.cycle_assignee(true);
-            return;
+            return None;
         }
         KeyCode::BackTab => {
             state.issue_draft.cycle_assignee(false);
-            return;
+            return None;
         }
         _ => {}
     }
 
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
-        attempt_issue_submit(state);
-        return;
+        return attempt_issue_submit(state);
     }
 
     if !state.issue_draft.editing {
-        return;
+        return None;
     }
 
     match key.code {
@@ -340,9 +392,17 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) {
         }
         _ => {}
     }
+
+    None
 }
 
-fn attempt_issue_submit(state: &mut DashboardState) {
+fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
+    if state.issue_draft.is_submitting {
+        state.issue_draft.info_message = Some("Issue submission already in progress.".to_string());
+        state.issue_draft.validation_error = None;
+        return None;
+    }
+
     let prompt = state.issue_draft.prompt.trim();
     let assignee = state
         .issue_draft
@@ -353,13 +413,70 @@ fn attempt_issue_submit(state: &mut DashboardState) {
     if prompt.is_empty() {
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = None;
-        return;
+        return None;
     }
 
     state.issue_draft.validation_error = None;
-    state.issue_draft.info_message = Some(format!(
-        "Draft ready for @{assignee}. Submission not wired yet."
-    ));
+    state.issue_draft.info_message = None;
+    state.issue_draft.is_submitting = true;
+
+    Some(IssueSubmission {
+        prompt: prompt.to_string(),
+        assignee,
+    })
+}
+
+fn handle_issue_submission_result(
+    state: &mut DashboardState,
+    assignee: &str,
+    result: Result<IssueId>,
+) {
+    state.issue_draft.is_submitting = false;
+    match result {
+        Ok(issue_id) => {
+            state.issue_draft.prompt.clear();
+            state.issue_draft.editing = false;
+            state.issue_draft.validation_error = None;
+            state.issue_draft.info_message =
+                Some(format!("Created issue {issue_id} for @{assignee}."));
+        }
+        Err(err) => {
+            state.issue_draft.validation_error =
+                Some(format!("Failed to create issue for @{assignee}: {err}"));
+            state.issue_draft.info_message = None;
+        }
+    }
+}
+
+async fn submit_issue(
+    client: &dyn MetisClientInterface,
+    submission: &IssueSubmission,
+) -> Result<IssueId> {
+    let assignee = submission.assignee.trim();
+    let assignee = if assignee.is_empty() {
+        None
+    } else {
+        Some(assignee.to_string())
+    };
+
+    let request = UpsertIssueRequest {
+        issue: Issue {
+            issue_type: IssueType::Task,
+            description: submission.prompt.trim().to_string(),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee,
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        },
+        job_id: None,
+    };
+
+    let response = client
+        .create_issue(&request)
+        .await
+        .context("failed to create issue")?;
+    Ok(response.issue_id)
 }
 
 fn render(frame: &mut Frame, state: &DashboardState) {
@@ -513,7 +630,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
     ]);
     frame.render_widget(Paragraph::new(assignee_line), sections[1]);
 
-    let footer = if let Some(error) = &draft.validation_error {
+    let footer = if draft.is_submitting {
+        Line::from(Span::styled(
+            "Submitting issue...",
+            Style::default().fg(Color::Yellow),
+        ))
+    } else if let Some(error) = &draft.validation_error {
         Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red)))
     } else if let Some(info) = &draft.info_message {
         Line::from(Span::styled(
@@ -1109,8 +1231,10 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::MockMetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
+    use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
     use std::collections::HashMap;
@@ -1407,5 +1531,61 @@ mod tests {
         assert!(options.contains(&"alice".to_string()));
         assert!(options.contains(&"bob".to_string()));
         assert_eq!(options.len(), 3);
+    }
+
+    #[test]
+    fn attempt_issue_submit_requires_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "   ".to_string();
+
+        let submission = attempt_issue_submit(&mut state);
+
+        assert!(submission.is_none());
+        assert_eq!(
+            state.issue_draft.validation_error.as_deref(),
+            Some("Prompt cannot be empty.")
+        );
+        assert!(!state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn attempt_issue_submit_sets_loading_state() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.assignees = vec!["pm".to_string()];
+
+        let submission = attempt_issue_submit(&mut state).expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "pm");
+        assert!(state.issue_draft.is_submitting);
+    }
+
+    #[tokio::test]
+    async fn submit_issue_sends_task_request() {
+        let client = MockMetisClient::default();
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: issue_id("i-new"),
+        });
+
+        let submission = IssueSubmission {
+            prompt: "Draft release notes".to_string(),
+            assignee: "alice".to_string(),
+        };
+
+        let created = submit_issue(&client, &submission)
+            .await
+            .expect("submission failed");
+
+        assert_eq!(created, issue_id("i-new"));
+
+        let requests = client.recorded_issue_upserts();
+        assert_eq!(requests.len(), 1);
+        let (_, request) = &requests[0];
+        assert_eq!(request.issue.issue_type, IssueType::Task);
+        assert_eq!(request.issue.status, IssueStatus::Open);
+        assert_eq!(request.issue.description, "Draft release notes");
+        assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
+        assert!(request.issue.dependencies.is_empty());
     }
 }
