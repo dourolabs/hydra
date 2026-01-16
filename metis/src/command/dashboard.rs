@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     io::{stdout, Stdout},
     ops::ControlFlow,
     time::Duration,
@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers},
+    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -28,7 +28,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -108,6 +108,56 @@ struct IssueSummary {
     progress: Option<String>,
 }
 
+#[derive(Clone, PartialEq)]
+struct IssueDraft {
+    prompt: String,
+    assignees: Vec<String>,
+    assignee_index: usize,
+    validation_error: Option<String>,
+    info_message: Option<String>,
+    editing: bool,
+}
+
+impl Default for IssueDraft {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            assignees: vec!["pm".to_string()],
+            assignee_index: 0,
+            validation_error: None,
+            info_message: None,
+            editing: false,
+        }
+    }
+}
+
+impl IssueDraft {
+    fn selected_assignee(&self) -> Option<&str> {
+        self.assignees
+            .get(self.assignee_index)
+            .map(|assignee| assignee.as_str())
+    }
+
+    fn cycle_assignee(&mut self, forward: bool) {
+        if self.assignees.is_empty() {
+            return;
+        }
+
+        let total = self.assignees.len();
+        let next = if forward {
+            (self.assignee_index + 1) % total
+        } else {
+            self.assignee_index.saturating_add(total - 1) % total
+        };
+        self.assignee_index = next;
+    }
+
+    fn note_edit(&mut self) {
+        self.validation_error = None;
+        self.info_message = None;
+    }
+}
+
 #[derive(Default, Clone, PartialEq)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
@@ -117,6 +167,7 @@ struct DashboardState {
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: Option<String>,
+    issue_draft: IssueDraft,
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
@@ -191,7 +242,7 @@ async fn run_dashboard_loop(
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        if matches!(handle_event(event), ControlFlow::Break(())) {
+                        if matches!(handle_event(event, &mut state), ControlFlow::Break(())) {
                             break;
                         }
                         needs_draw = true;
@@ -228,28 +279,102 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
     terminal.show_cursor().context("failed to show cursor")
 }
 
-fn handle_event(event: Event) -> ControlFlow<()> {
+fn handle_event(event: Event, state: &mut DashboardState) -> ControlFlow<()> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => ControlFlow::Break(()),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ControlFlow::Break(())
             }
-            _ => ControlFlow::Continue(()),
+            _ => {
+                handle_issue_draft_key(key, state);
+                ControlFlow::Continue(())
+            }
         },
         Event::Resize(_, _) => ControlFlow::Continue(()),
         _ => ControlFlow::Continue(()),
     }
 }
 
+fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+        state.issue_draft.editing = !state.issue_draft.editing;
+        return;
+    }
+
+    match key.code {
+        KeyCode::Tab => {
+            state.issue_draft.cycle_assignee(true);
+            return;
+        }
+        KeyCode::BackTab => {
+            state.issue_draft.cycle_assignee(false);
+            return;
+        }
+        _ => {}
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+        attempt_issue_submit(state);
+        return;
+    }
+
+    if !state.issue_draft.editing {
+        return;
+    }
+
+    match key.code {
+        KeyCode::Char(c)
+            if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT =>
+        {
+            state.issue_draft.prompt.push(c);
+            state.issue_draft.note_edit();
+        }
+        KeyCode::Backspace => {
+            state.issue_draft.prompt.pop();
+            state.issue_draft.note_edit();
+        }
+        KeyCode::Enter => {
+            state.issue_draft.prompt.push('\n');
+            state.issue_draft.note_edit();
+        }
+        _ => {}
+    }
+}
+
+fn attempt_issue_submit(state: &mut DashboardState) {
+    let prompt = state.issue_draft.prompt.trim();
+    let assignee = state
+        .issue_draft
+        .selected_assignee()
+        .unwrap_or("pm")
+        .to_string();
+
+    if prompt.is_empty() {
+        state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
+        state.issue_draft.info_message = None;
+        return;
+    }
+
+    state.issue_draft.validation_error = None;
+    state.issue_draft.info_message = Some(format!(
+        "Draft ready for @{assignee}. Submission not wired yet."
+    ));
+}
+
 fn render(frame: &mut Frame, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(12)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(12),
+            Constraint::Length(8),
+        ])
         .split(frame.size());
 
     render_header(frame, chunks[0], state);
     render_issue_sections(frame, chunks[1], state);
+    render_issue_creator(frame, chunks[2], state);
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -321,6 +446,92 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             "No issues found",
         );
     }
+}
+
+fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+    let draft = &state.issue_draft;
+    let title = if draft.editing {
+        "New issue (editing)"
+    } else {
+        "New issue"
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let prompt_text = if draft.prompt.trim().is_empty() {
+        let hint = if draft.editing {
+            "Type to describe the work for a new issue."
+        } else {
+            "Press Ctrl+N to start editing."
+        };
+        vec![
+            Line::from(Span::styled(
+                "Prompt",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Describe the work to create a new issue.",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+        ]
+    } else {
+        let mut lines = vec![Line::from(Span::styled(
+            "Prompt",
+            Style::default().add_modifier(Modifier::BOLD),
+        ))];
+        lines.extend(
+            draft
+                .prompt
+                .lines()
+                .map(|line| Line::from(Span::raw(line.to_string()))),
+        );
+        lines
+    };
+
+    let prompt = Paragraph::new(prompt_text).wrap(Wrap { trim: false });
+    frame.render_widget(prompt, sections[0]);
+
+    let assignee = draft.selected_assignee().unwrap_or("pm");
+    let assignee_line = Line::from(vec![
+        Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
+        Span::styled("  (Tab to change)", Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(assignee_line), sections[1]);
+
+    let footer = if let Some(error) = &draft.validation_error {
+        Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red)))
+    } else if let Some(info) = &draft.info_message {
+        Line::from(Span::styled(
+            info.clone(),
+            Style::default().fg(Color::Green),
+        ))
+    } else if draft.editing {
+        Line::from(Span::styled(
+            "Ctrl+Enter to validate. Ctrl+N to stop editing.",
+            Style::default().fg(Color::DarkGray),
+        ))
+    } else {
+        Line::from(Span::styled(
+            "Ctrl+N to edit prompt. Ctrl+Enter to validate.",
+            Style::default().fg(Color::DarkGray),
+        ))
+    };
+    frame.render_widget(Paragraph::new(footer), sections[2]);
 }
 
 fn render_issue_list(
@@ -503,16 +714,61 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
     let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
+    let previous_assignee_options = state.issue_draft.assignees.clone();
+    let previous_assignee_index = state.issue_draft.assignee_index;
 
     let issue_lines = build_issue_lines(&state.issues, &state.jobs);
     let assigned_issue_lines =
         build_assigned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
+    update_assignee_options(state);
 
     state.issue_lines = issue_lines;
     state.assigned_issue_lines = assigned_issue_lines;
 
     previous_issue_lines != state.issue_lines
         || previous_assigned_issue_lines != state.assigned_issue_lines
+        || previous_assignee_options != state.issue_draft.assignees
+        || previous_assignee_index != state.issue_draft.assignee_index
+}
+
+fn update_assignee_options(state: &mut DashboardState) {
+    let options = build_assignee_options(&state.issues);
+    if options != state.issue_draft.assignees {
+        state.issue_draft.assignees = options;
+    }
+
+    let fallback = "pm";
+    let preferred = state.issue_draft.selected_assignee().unwrap_or(fallback);
+    let next_index = state
+        .issue_draft
+        .assignees
+        .iter()
+        .position(|assignee| assignee == preferred)
+        .or_else(|| {
+            state
+                .issue_draft
+                .assignees
+                .iter()
+                .position(|assignee| assignee == fallback)
+        })
+        .unwrap_or(0);
+    state.issue_draft.assignee_index = next_index;
+}
+
+fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
+    let mut options = BTreeSet::new();
+    options.insert("pm".to_string());
+
+    for issue in issues {
+        if let Some(assignee) = &issue.assignee {
+            let trimmed = assignee.trim();
+            if !trimmed.is_empty() {
+                options.insert(trimmed.to_string());
+            }
+        }
+    }
+
+    options.into_iter().collect()
 }
 
 fn build_assigned_issue_lines(
@@ -1135,5 +1391,21 @@ mod tests {
             .rows
             .iter()
             .any(|line| line.id == issue_id("i-in-progress").to_string()));
+    }
+
+    #[test]
+    fn build_assignee_options_includes_pm_and_unique_sorted() {
+        let issues = vec![
+            issue_with_assignee("i-1", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-2", IssueStatus::Open, Some("bob")),
+            issue_with_assignee("i-3", IssueStatus::Open, Some("alice")),
+        ];
+
+        let options = build_assignee_options(&issues);
+
+        assert!(options.contains(&"pm".to_string()));
+        assert!(options.contains(&"alice".to_string()));
+        assert!(options.contains(&"bob".to_string()));
+        assert_eq!(options.len(), 3);
     }
 }
