@@ -1562,6 +1562,40 @@ mod tests {
         assert!(state.issue_draft.is_submitting);
     }
 
+    #[test]
+    fn ctrl_enter_submits_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.assignees = vec!["pm".to_string()];
+
+        let submission = handle_issue_draft_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            &mut state,
+        )
+        .expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "pm");
+        assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn ctrl_shift_enter_submits_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.assignees = vec!["pm".to_string()];
+
+        let submission = handle_issue_draft_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            &mut state,
+        )
+        .expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "pm");
+        assert!(state.issue_draft.is_submitting);
+    }
+
     #[tokio::test]
     async fn submit_issue_sends_task_request() {
         let client = MockMetisClient::default();
