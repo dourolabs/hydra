@@ -17,6 +17,14 @@ default_branch = "main"
 default_image = "metis-worker:latest"
 github_token = ""
 
+[service.github_webhook]
+# Enable GitHub webhook registration to receive PR updates.
+enabled = false
+# Public base URL for this service (used to form the webhook URL).
+external_base_url = "https://metis.example.com"
+# Shared secret used to validate GitHub webhook signatures.
+secret = ""
+
 [background]
 # Agent queues automatically enqueue work for assigned issues.
 # Add additional [[background.agent_queues]] tables to run multiple queues.

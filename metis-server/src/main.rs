@@ -3,6 +3,7 @@
 mod app;
 mod background;
 mod config;
+mod github_webhook;
 mod job_engine;
 mod routes;
 mod store;
@@ -12,6 +13,7 @@ mod test;
 use crate::app::{AppState, ServiceState};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, build_kube_client};
+use crate::github_webhook::register_configured_webhooks;
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{MemoryStore, Store};
 use axum::{
@@ -86,6 +88,10 @@ async fn main() -> anyhow::Result<()> {
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::from_config(&app_config.service);
+
+    if let Some(webhook_config) = app_config.service.github_webhook.resolve()? {
+        register_configured_webhooks(&service_state, &webhook_config).await?;
+    }
 
     // Resolve OpenAI API key
     let openai_api_key = env::var(ENV_OPENAI_API_KEY)

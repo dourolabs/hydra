@@ -32,8 +32,20 @@ impl AppConfig {
                 resolved_path.display()
             )
         })?;
-        toml::from_str(&contents)
-            .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))
+        let config: AppConfig = toml::from_str(&contents)
+            .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))?;
+        config.validate().with_context(|| {
+            format!(
+                "Invalid configuration values in '{}'",
+                resolved_path.display()
+            )
+        })?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        self.service.github_webhook.resolve()?;
+        Ok(())
     }
 }
 
@@ -90,6 +102,8 @@ impl Default for KubernetesSection {
 pub struct ServiceSection {
     #[serde(default)]
     pub repositories: HashMap<String, Repository>,
+    #[serde(default)]
+    pub github_webhook: GithubWebhookSection,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -138,6 +152,43 @@ impl Default for GithubPollerConfig {
         Self {
             interval_secs: default_github_poll_interval_secs(),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GithubWebhookSection {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub secret: String,
+    #[serde(default)]
+    pub external_base_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedGithubWebhookConfig {
+    pub secret: String,
+    pub webhook_url: String,
+}
+
+impl GithubWebhookSection {
+    pub fn resolve(&self) -> Result<Option<ResolvedGithubWebhookConfig>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        let secret = non_empty(&self.secret).ok_or_else(|| {
+            anyhow::anyhow!("github_webhook.secret must not be empty when enabled")
+        })?;
+        let base_url = non_empty(&self.external_base_url).ok_or_else(|| {
+            anyhow::anyhow!("github_webhook.external_base_url must not be empty when enabled")
+        })?;
+        let webhook_url = build_webhook_url(base_url);
+
+        Ok(Some(ResolvedGithubWebhookConfig {
+            secret: secret.to_string(),
+            webhook_url,
+        }))
     }
 }
 
@@ -238,6 +289,11 @@ const fn default_scheduler_max_backoff_secs() -> u64 {
     30
 }
 
+fn build_webhook_url(external_base_url: &str) -> String {
+    let trimmed = external_base_url.trim_end_matches('/');
+    format!("{trimmed}/v1/github/webhook")
+}
+
 fn default_process_pending_scheduler() -> WorkerSchedulerConfig {
     WorkerSchedulerConfig {
         interval_secs: 2,
@@ -291,5 +347,64 @@ mod tests {
         assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
+    }
+
+    #[test]
+    fn github_webhook_disabled_allows_empty_fields() -> Result<()> {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service.github_webhook]
+            enabled = false
+            secret = ""
+            external_base_url = ""
+            "#,
+        )?;
+
+        assert!(config.service.github_webhook.resolve()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn github_webhook_enabled_requires_fields() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service.github_webhook]
+            enabled = true
+            secret = ""
+            external_base_url = ""
+            "#,
+        )
+        .expect("config should parse");
+
+        let err = config
+            .service
+            .github_webhook
+            .resolve()
+            .expect_err("missing fields should error");
+        assert!(err.to_string().contains("github_webhook.secret"));
+    }
+
+    #[test]
+    fn github_webhook_enabled_builds_url() -> Result<()> {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service.github_webhook]
+            enabled = true
+            secret = "sekret"
+            external_base_url = "https://metis.example.com/"
+            "#,
+        )?;
+
+        let resolved = config
+            .service
+            .github_webhook
+            .resolve()?
+            .expect("enabled config should resolve");
+        assert_eq!(
+            resolved.webhook_url,
+            "https://metis.example.com/v1/github/webhook"
+        );
+        assert_eq!(resolved.secret, "sekret");
+        Ok(())
     }
 }
