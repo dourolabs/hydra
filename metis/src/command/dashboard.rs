@@ -588,39 +588,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ])
         .split(inner);
 
-    let prompt_text = if draft.prompt.trim().is_empty() {
-        let hint = if draft.editing {
-            "Type to describe the work for a new issue."
-        } else {
-            "Press Ctrl+N to start editing."
-        };
-        vec![
-            Line::from(Span::styled(
-                "Prompt",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Describe the work to create a new issue.",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
-        ]
-    } else {
-        let mut lines = vec![Line::from(Span::styled(
-            "Prompt",
-            Style::default().add_modifier(Modifier::BOLD),
-        ))];
-        lines.extend(
-            draft
-                .prompt
-                .lines()
-                .map(|line| Line::from(Span::raw(line.to_string()))),
-        );
-        lines
-    };
-
-    let prompt = Paragraph::new(prompt_text).wrap(Wrap { trim: false });
+    let prompt_render = build_prompt_render(draft, sections[0]);
+    let prompt = Paragraph::new(prompt_render.lines).wrap(Wrap { trim: false });
     frame.render_widget(prompt, sections[0]);
+    if let Some((x, y)) = prompt_render.cursor {
+        frame.set_cursor(x, y);
+    }
 
     let assignee = draft.selected_assignee().unwrap_or("pm");
     let assignee_line = Line::from(vec![
@@ -654,6 +627,110 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     };
     frame.render_widget(Paragraph::new(footer), sections[2]);
+}
+
+struct PromptRender {
+    lines: Vec<Line<'static>>,
+    cursor: Option<(u16, u16)>,
+}
+
+fn build_prompt_render(draft: &IssueDraft, area: ratatui::layout::Rect) -> PromptRender {
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Prompt",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+
+    if draft.prompt.trim().is_empty() {
+        let hint = if draft.editing {
+            "Type to describe the work for a new issue."
+        } else {
+            "Press Ctrl+N to start editing."
+        };
+
+        if draft.editing {
+            lines.push(Line::from(Span::raw("")));
+        }
+
+        lines.push(Line::from(Span::styled(
+            "Describe the work to create a new issue.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(Span::styled(
+            hint,
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let cursor = if draft.editing {
+            Some((area.x, area.y.saturating_add(1)))
+        } else {
+            None
+        };
+
+        return PromptRender { lines, cursor };
+    }
+
+    let prompt_lines: Vec<&str> = draft.prompt.split('\n').collect();
+    lines.extend(
+        prompt_lines
+            .iter()
+            .map(|line| Line::from(Span::raw((*line).to_string()))),
+    );
+
+    let cursor = if draft.editing {
+        prompt_cursor_position(&prompt_lines, area)
+    } else {
+        None
+    };
+
+    PromptRender { lines, cursor }
+}
+
+fn prompt_cursor_position(
+    prompt_lines: &[&str],
+    area: ratatui::layout::Rect,
+) -> Option<(u16, u16)> {
+    let width = area.width as usize;
+    let height = area.height as usize;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let mut visual_lines = Vec::new();
+    for line in prompt_lines {
+        if line.is_empty() {
+            visual_lines.push(String::new());
+            continue;
+        }
+        let wrapped = textwrap::wrap(line, width);
+        if wrapped.is_empty() {
+            visual_lines.push(String::new());
+        } else {
+            for chunk in wrapped {
+                visual_lines.push(chunk.into_owned());
+            }
+        }
+    }
+
+    if visual_lines.is_empty() {
+        visual_lines.push(String::new());
+    }
+
+    let last_line = visual_lines.last().unwrap();
+    let max_x = area.x.saturating_add(area.width.saturating_sub(1));
+    let max_y = area.y.saturating_add(area.height.saturating_sub(1));
+
+    let cursor_x = area
+        .x
+        .saturating_add(last_line.len().min(width.saturating_sub(1)) as u16)
+        .min(max_x);
+    let cursor_y = area
+        .y
+        .saturating_add(1)
+        .saturating_add(visual_lines.len().saturating_sub(1) as u16)
+        .min(max_y);
+
+    Some((cursor_x, cursor_y))
 }
 
 fn render_issue_list(
