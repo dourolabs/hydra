@@ -42,6 +42,12 @@ enum Commands {
         #[command(subcommand)]
         command: command::jobs::JobsCommand,
     },
+    /// List available agents.
+    Agents {
+        /// Pretty-print the agents instead of emitting JSONL.
+        #[arg(long)]
+        pretty: bool,
+    },
     /// Manage patches.
     Patches {
         #[command(subcommand)]
@@ -92,6 +98,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Jobs { command } => command::jobs::run(&client, command).await?,
+        Commands::Agents { pretty } => command::agents::run(&client, pretty).await?,
         Commands::Patches { command } => command::patches::run(&client, command).await?,
         Commands::Dashboard { username } => command::dashboard::run(&client, username).await?,
         Commands::Issues { command } => command::issues::run(&client, command).await?,
@@ -126,6 +133,16 @@ mod cli_routing_tests {
                 assert_eq!(path, PathBuf::from("/tmp/output"));
             }
             _ => panic!("expected jobs worker-run subcommand to parse"),
+        }
+    }
+
+    #[test]
+    fn agents_parses_as_top_level_command() {
+        let cli = Cli::parse_from(["metis", "agents", "--pretty"]);
+
+        match cli.command {
+            Commands::Agents { pretty } => assert!(pretty),
+            _ => panic!("expected agents subcommand to parse"),
         }
     }
 }
