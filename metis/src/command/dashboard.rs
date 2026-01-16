@@ -27,9 +27,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
+use tui_textarea::TextArea;
 
 use crate::{client::MetisClientInterface, command::jobs};
 
@@ -107,9 +108,9 @@ struct IssueSummary {
     progress: Option<String>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 struct IssueDraft {
-    prompt: String,
+    prompt: TextArea<'static>,
     assignees: Vec<String>,
     assignee_index: usize,
     validation_error: Option<String>,
@@ -120,19 +121,41 @@ struct IssueDraft {
 
 impl Default for IssueDraft {
     fn default() -> Self {
-        Self {
-            prompt: String::new(),
+        let mut draft = Self {
+            prompt: TextArea::default(),
             assignees: vec!["pm".to_string()],
             assignee_index: 0,
             validation_error: None,
             info_message: None,
             editing: false,
             is_submitting: false,
-        }
+        };
+        draft.configure_prompt();
+        draft
     }
 }
 
 impl IssueDraft {
+    fn prompt_text(&self) -> String {
+        self.prompt.lines().join("\n")
+    }
+
+    #[cfg(test)]
+    fn set_prompt(&mut self, prompt: &str) {
+        self.prompt = TextArea::from(prompt.lines());
+        self.configure_prompt();
+    }
+
+    fn clear_prompt(&mut self) {
+        self.prompt = TextArea::default();
+        self.configure_prompt();
+    }
+
+    fn set_editing(&mut self, editing: bool) {
+        self.editing = editing;
+        self.configure_prompt();
+    }
+
     fn selected_assignee(&self) -> Option<&str> {
         self.assignees
             .get(self.assignee_index)
@@ -156,6 +179,39 @@ impl IssueDraft {
     fn note_edit(&mut self) {
         self.validation_error = None;
         self.info_message = None;
+    }
+
+    fn configure_prompt(&mut self) {
+        let placeholder = if self.editing {
+            "Describe the work to create a new issue.\nType to describe the work for a new issue."
+        } else {
+            "Describe the work to create a new issue.\nPress Ctrl+N to start editing."
+        };
+        self.prompt.set_placeholder_text(placeholder);
+        self.prompt
+            .set_placeholder_style(Style::default().fg(Color::DarkGray));
+        self.prompt.set_style(Style::default());
+        if self.editing {
+            self.prompt
+                .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+            self.prompt
+                .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+        } else {
+            self.prompt.set_cursor_line_style(Style::default());
+            self.prompt.set_cursor_style(Style::default());
+        }
+    }
+}
+
+impl PartialEq for IssueDraft {
+    fn eq(&self, other: &Self) -> bool {
+        self.prompt_text() == other.prompt_text()
+            && self.assignees == other.assignees
+            && self.assignee_index == other.assignee_index
+            && self.validation_error == other.validation_error
+            && self.info_message == other.info_message
+            && self.editing == other.editing
+            && self.is_submitting == other.is_submitting
     }
 }
 
@@ -197,7 +253,7 @@ async fn run_dashboard_loop(
         username,
         ..DashboardState::default()
     };
-    state.issue_draft.editing = true;
+    state.issue_draft.set_editing(true);
     let mut needs_draw = true;
 
     match refresh_jobs(client, &mut state).await {
@@ -352,7 +408,7 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
     if has_primary_modifier(key.modifiers) && key.code == KeyCode::Char('n') {
-        state.issue_draft.editing = !state.issue_draft.editing;
+        state.issue_draft.set_editing(!state.issue_draft.editing);
         return None;
     }
 
@@ -384,22 +440,8 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
         return None;
     }
 
-    match key.code {
-        KeyCode::Char(c)
-            if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT =>
-        {
-            state.issue_draft.prompt.push(c);
-            state.issue_draft.note_edit();
-        }
-        KeyCode::Backspace => {
-            state.issue_draft.prompt.pop();
-            state.issue_draft.note_edit();
-        }
-        KeyCode::Enter => {
-            state.issue_draft.prompt.push('\n');
-            state.issue_draft.note_edit();
-        }
-        _ => {}
+    if state.issue_draft.prompt.input(key) {
+        state.issue_draft.note_edit();
     }
 
     None
@@ -412,7 +454,8 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
         return None;
     }
 
-    let prompt = state.issue_draft.prompt.trim();
+    let prompt = state.issue_draft.prompt_text();
+    let prompt = prompt.trim();
     let assignee = state
         .issue_draft
         .selected_assignee()
@@ -443,8 +486,8 @@ fn handle_issue_submission_result(
     state.issue_draft.is_submitting = false;
     match result {
         Ok(issue_id) => {
-            state.issue_draft.prompt.clear();
-            state.issue_draft.editing = false;
+            state.issue_draft.clear_prompt();
+            state.issue_draft.set_editing(false);
             state.issue_draft.validation_error = None;
             state.issue_draft.info_message =
                 Some(format!("Created issue {issue_id} for @{assignee}."));
@@ -597,12 +640,16 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ])
         .split(inner);
 
-    let prompt_render = build_prompt_render(draft, sections[0]);
-    let prompt = Paragraph::new(prompt_render.lines).wrap(Wrap { trim: false });
-    frame.render_widget(prompt, sections[0]);
-    if let Some((x, y)) = prompt_render.cursor {
-        frame.set_cursor(x, y);
-    }
+    let prompt_sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(sections[0]);
+    let prompt_label = Line::from(Span::styled(
+        "Prompt",
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(prompt_label), prompt_sections[0]);
+    frame.render_widget(draft.prompt.widget(), prompt_sections[1]);
 
     let assignee = draft.selected_assignee().unwrap_or("pm");
     let assignee_line = Line::from(vec![
@@ -636,140 +683,6 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     };
     frame.render_widget(Paragraph::new(footer), sections[2]);
-}
-
-struct PromptRender {
-    lines: Vec<Line<'static>>,
-    cursor: Option<(u16, u16)>,
-}
-
-fn build_prompt_render(draft: &IssueDraft, area: ratatui::layout::Rect) -> PromptRender {
-    let mut lines = Vec::new();
-    lines.push(Line::from(Span::styled(
-        "Prompt",
-        Style::default().add_modifier(Modifier::BOLD),
-    )));
-
-    if draft.prompt.trim().is_empty() {
-        let hint = if draft.editing {
-            "Type to describe the work for a new issue."
-        } else {
-            "Press Ctrl+N to start editing."
-        };
-
-        if draft.editing {
-            lines.push(Line::from(Span::raw("")));
-        }
-
-        lines.push(Line::from(Span::styled(
-            "Describe the work to create a new issue.",
-            Style::default().fg(Color::DarkGray),
-        )));
-        lines.push(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )));
-
-        let cursor = if draft.editing {
-            Some((area.x, area.y.saturating_add(1)))
-        } else {
-            None
-        };
-
-        return PromptRender { lines, cursor };
-    }
-
-    let prompt_lines: Vec<&str> = draft.prompt.split('\n').collect();
-    lines.extend(
-        prompt_lines
-            .iter()
-            .map(|line| Line::from(Span::raw((*line).to_string()))),
-    );
-
-    let cursor = if draft.editing {
-        prompt_cursor_position(&prompt_lines, area)
-    } else {
-        None
-    };
-
-    PromptRender { lines, cursor }
-}
-
-fn wrap_prompt_line(line: &str, width: usize) -> Vec<String> {
-    if line.is_empty() {
-        return vec![String::new()];
-    }
-
-    let trimmed = line.trim_end_matches(|ch: char| ch.is_whitespace());
-    let trailing = &line[trimmed.len()..];
-    let mut wrapped: Vec<String> = if trimmed.is_empty() {
-        vec![String::new()]
-    } else {
-        textwrap::wrap(trimmed, width)
-            .into_iter()
-            .map(|chunk| chunk.into_owned())
-            .collect()
-    };
-
-    if trailing.is_empty() {
-        return wrapped;
-    }
-
-    if wrapped.is_empty() {
-        wrapped.push(String::new());
-    }
-
-    let mut current_width = textwrap::core::display_width(wrapped.last().unwrap());
-    for ch in trailing.chars() {
-        let ch_width = textwrap::core::display_width(&ch.to_string());
-        if current_width + ch_width > width {
-            wrapped.push(String::new());
-            current_width = 0;
-        }
-        wrapped.last_mut().unwrap().push(ch);
-        current_width += ch_width;
-    }
-
-    wrapped
-}
-
-fn prompt_cursor_position(
-    prompt_lines: &[&str],
-    area: ratatui::layout::Rect,
-) -> Option<(u16, u16)> {
-    let width = area.width as usize;
-    let height = area.height as usize;
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let mut visual_lines = Vec::new();
-    for line in prompt_lines {
-        let wrapped = wrap_prompt_line(line, width);
-        for chunk in wrapped {
-            visual_lines.push(chunk);
-        }
-    }
-
-    if visual_lines.is_empty() {
-        visual_lines.push(String::new());
-    }
-
-    let last_line = visual_lines.last().unwrap();
-    let max_x = area.x.saturating_add(area.width.saturating_sub(1));
-    let max_y = area.y.saturating_add(area.height.saturating_sub(1));
-
-    let cursor_x = area
-        .x
-        .saturating_add(last_line.len().min(width.saturating_sub(1)) as u16)
-        .min(max_x);
-    let cursor_y = area
-        .y
-        .saturating_add(1)
-        .saturating_add(visual_lines.len().saturating_sub(1) as u16)
-        .min(max_y);
-
-    Some((cursor_x, cursor_y))
 }
 
 fn render_issue_list(
@@ -1353,7 +1266,6 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
-    use ratatui::layout::Rect;
     use std::collections::HashMap;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
@@ -1653,7 +1565,7 @@ mod tests {
     #[test]
     fn attempt_issue_submit_requires_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "   ".to_string();
+        state.issue_draft.set_prompt("   ");
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -1668,7 +1580,7 @@ mod tests {
     #[test]
     fn attempt_issue_submit_rejects_whitespace_only_with_newlines() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "\n  \n".to_string();
+        state.issue_draft.set_prompt("\n  \n");
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -1681,29 +1593,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_cursor_position_counts_trailing_spaces() {
-        let area = Rect::new(0, 0, 10, 4);
-        let prompt_lines = vec!["Ship  "];
-
-        let cursor = prompt_cursor_position(&prompt_lines, area).expect("cursor missing");
-
-        assert_eq!(cursor, (6, 1));
-    }
-
-    #[test]
-    fn prompt_cursor_position_wraps_and_preserves_trailing_spaces() {
-        let area = Rect::new(0, 0, 4, 4);
-        let prompt_lines = vec!["Ship  "];
-
-        let cursor = prompt_cursor_position(&prompt_lines, area).expect("cursor missing");
-
-        assert_eq!(cursor, (2, 2));
-    }
-
-    #[test]
     fn attempt_issue_submit_sets_loading_state() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.set_prompt("Ship dashboard");
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = attempt_issue_submit(&mut state).expect("submission missing");
@@ -1716,7 +1608,7 @@ mod tests {
     #[test]
     fn ctrl_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.set_prompt("Ship dashboard");
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = handle_issue_draft_key(
@@ -1733,7 +1625,7 @@ mod tests {
     #[test]
     fn ctrl_shift_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.set_prompt("Ship dashboard");
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = handle_issue_draft_key(
@@ -1750,7 +1642,7 @@ mod tests {
     #[test]
     fn meta_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.prompt = "Ship dashboard".to_string();
+        state.issue_draft.set_prompt("Ship dashboard");
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = handle_issue_draft_key(
