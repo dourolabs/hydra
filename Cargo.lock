@@ -2557,6 +2557,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-web",
+ "metis-common",
 ]
 
 [[package]]
