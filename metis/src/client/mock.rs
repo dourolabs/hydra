@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::stream;
 use metis_common::{
+    agents::ListAgentsResponse,
     issues::{
         IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     },
@@ -34,6 +35,7 @@ pub struct MockMetisClient {
     pub get_job_responses: Mutex<VecDeque<JobRecord>>,
     pub list_issue_responses: Mutex<VecDeque<ListIssuesResponse>>,
     pub list_patch_responses: Mutex<VecDeque<ListPatchesResponse>>,
+    pub list_agents_responses: Mutex<VecDeque<ListAgentsResponse>>,
     pub issue_upsert_requests: Mutex<Vec<(Option<IssueId>, UpsertIssueRequest)>>,
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
@@ -42,6 +44,7 @@ pub struct MockMetisClient {
     pub list_job_queries: Mutex<Vec<SearchJobsQuery>>,
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
+    pub list_agents_calls: Mutex<usize>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
 }
 
@@ -114,6 +117,13 @@ impl MockMetisClient {
             .push_back(response);
     }
 
+    pub fn push_list_agents_response(&self, response: ListAgentsResponse) {
+        self.list_agents_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
     pub fn recorded_issue_upserts(&self) -> Vec<(Option<IssueId>, UpsertIssueRequest)> {
         self.issue_upsert_requests.lock().unwrap().clone()
     }
@@ -135,6 +145,10 @@ impl MockMetisClient {
 
     pub fn recorded_list_patch_queries(&self) -> Vec<SearchPatchesQuery> {
         self.list_patch_queries.lock().unwrap().clone()
+    }
+
+    pub fn recorded_list_agents_calls(&self) -> usize {
+        *self.list_agents_calls.lock().unwrap()
     }
 }
 
@@ -297,5 +311,15 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for list_patches"))
+    }
+
+    async fn list_agents(&self) -> Result<ListAgentsResponse> {
+        let mut calls = self.list_agents_calls.lock().unwrap();
+        *calls = calls.saturating_add(1);
+        self.list_agents_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for list_agents"))
     }
 }
