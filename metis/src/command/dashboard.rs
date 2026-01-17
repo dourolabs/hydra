@@ -373,20 +373,31 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
 
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => EventOutcome {
-                should_quit: true,
-                submission: None,
-            },
-            KeyCode::Char('c') if has_primary_modifier(key.modifiers) => EventOutcome {
-                should_quit: true,
-                submission: None,
-            },
-            _ => EventOutcome {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            if key.code == KeyCode::Char('c') && has_primary_modifier(key.modifiers) {
+                return EventOutcome {
+                    should_quit: true,
+                    submission: None,
+                };
+            }
+
+            if !state.issue_draft.editing
+                && matches!(
+                    key.code,
+                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
+                )
+            {
+                return EventOutcome {
+                    should_quit: true,
+                    submission: None,
+                };
+            }
+
+            EventOutcome {
                 should_quit: false,
                 submission: handle_issue_draft_key(key, state),
-            },
-        },
+            }
+        }
         Event::Paste(text) => {
             if state.issue_draft.is_submitting {
                 return EventOutcome {
@@ -1692,6 +1703,34 @@ mod tests {
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
         assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn q_quits_when_not_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(outcome.should_quit);
+        assert!(outcome.submission.is_none());
+    }
+
+    #[test]
+    fn q_does_not_quit_when_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_editing(true);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.prompt_text(), "Q");
     }
 
     #[test]
