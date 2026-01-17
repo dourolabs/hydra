@@ -1,5 +1,4 @@
 use std::{
-    env,
     io::Write,
     path::{Path, PathBuf},
     process::Command,
@@ -10,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_GH_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -66,12 +65,16 @@ pub enum PatchesCommand {
         base: GitOid,
 
         /// Associate the patch with a Metis job.
-        #[arg(long = "job", value_name = "METIS_ID", env = "METIS_ID")]
+        #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
         job: Option<TaskId>,
 
         /// Create a GitHub pull request with the patch contents.
         #[arg(long = "github")]
         github: bool,
+
+        /// GitHub token to use when creating pull requests.
+        #[arg(long = "github-token", value_name = "TOKEN", env = ENV_GH_TOKEN)]
+        github_token: Option<String>,
 
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
@@ -167,6 +170,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             description,
             job,
             github,
+            github_token,
             assignee,
             issue_id,
             base,
@@ -177,6 +181,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
                 description,
                 job,
                 github,
+                github_token,
                 assignee,
                 issue_id,
                 base,
@@ -214,8 +219,11 @@ async fn list_patches(
     query: Option<String>,
     pretty: bool,
 ) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    list_patches_with_writer(client, id, query, pretty, &mut stdout).await
+    let mut buffer = Vec::new();
+    list_patches_with_writer(client, id, query, pretty, &mut buffer).await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
 }
 
 async fn list_patches_with_writer(
@@ -270,13 +278,12 @@ async fn create_patch(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
+    github_token: Option<String>,
     assignee: Option<String>,
     issue_id: Option<IssueId>,
     base: GitOid,
     repo_root: Option<&Path>,
 ) -> Result<()> {
-    let job_id = resolve_job_id(job_id)?;
-    let issue_id = resolve_issue_id(issue_id)?;
     let repo_root = match repo_root {
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
@@ -285,6 +292,19 @@ async fn create_patch(
     let head = resolve_head_commit(&repo_root)?;
     ensure_base_is_ancestor(&repo_root, &base, &head)?;
     let commit_range = PatchCommitRange { base, head };
+    let github_token = if create_github_pr {
+        Some(
+            github_token
+                .as_deref()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "{ENV_GH_TOKEN} must be provided via --github-token or environment when using --github"
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
@@ -297,6 +317,7 @@ async fn create_patch(
         patch_description,
         job_id.clone(),
         create_github_pr,
+        github_token,
         is_automatic_backup,
         service_repo_name,
     )
@@ -418,8 +439,11 @@ async fn merge_queue(
     patch_id: Option<PatchId>,
     pretty: bool,
 ) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut stdout).await
+    let mut buffer = Vec::new();
+    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut buffer).await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
 }
 
 async fn merge_queue_with_writer(
@@ -527,44 +551,6 @@ async fn create_merge_request_issue(
     Ok(response.issue_id)
 }
 
-fn resolve_job_id(job_id: Option<TaskId>) -> Result<Option<TaskId>> {
-    if job_id.is_some() {
-        return Ok(job_id);
-    }
-
-    let env_value = match env::var(ENV_METIS_ID) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    let trimmed = env_value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    let task_id = TaskId::from_str(trimmed)
-        .with_context(|| format!("invalid {ENV_METIS_ID} value '{trimmed}'"))?;
-    Ok(Some(task_id))
-}
-
-fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
-    if issue_id.is_some() {
-        return Ok(issue_id);
-    }
-
-    let env_value = match env::var(ENV_METIS_ISSUE_ID) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    let trimmed = env_value.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    let issue_id = IssueId::from_str(trimmed)
-        .with_context(|| format!("invalid {ENV_METIS_ISSUE_ID} value '{trimmed}'"))?;
-    Ok(Some(issue_id))
-}
-
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
@@ -592,6 +578,7 @@ pub async fn create_patch_artifact_from_repo(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
+    github_token: Option<&str>,
     is_automatic_backup: bool,
     service_repo_name: RepoName,
 ) -> Result<UpsertPatchResponse> {
@@ -632,6 +619,7 @@ pub async fn create_patch_artifact_from_repo(
             repo_root,
             &title,
             &description,
+            github_token,
             job_id.as_ref().map(|id| id.as_ref()),
         )
         .await?;
@@ -948,11 +936,15 @@ async fn create_github_pull_request(
     repo_root: &Path,
     title: &str,
     description: &str,
+    github_token: Option<&str>,
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
+    let github_token = github_token
+        .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
     push_branch(repo_root, &branch_name)?;
-    let pr_metadata = open_pull_request(repo_root, title, description, &branch_name).await?;
+    let pr_metadata =
+        open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
         .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
     Ok(GithubPr {
@@ -1113,6 +1105,7 @@ async fn open_pull_request(
     title: &str,
     description: &str,
     branch: &str,
+    github_token: &str,
 ) -> Result<GhPrCreateResponse> {
     let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
     writeln!(body_file, "{description}").context("failed to write pull request description")?;
@@ -1142,9 +1135,8 @@ async fn open_pull_request(
         .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
 
     // Use octocrab to get structured PR metadata
-    let token = env::var("GH_TOKEN").context("GH_TOKEN environment variable is required")?;
     let crab = Octocrab::builder()
-        .personal_token(token)
+        .personal_token(github_token.to_string())
         .build()
         .context("failed to create octocrab client")?;
 
@@ -1192,7 +1184,7 @@ mod tests {
         task_status::TaskStatusLog,
         RepoName,
     };
-    use std::{env, fs, process::Command, str::FromStr};
+    use std::{fs, process::Command, str::FromStr};
 
     fn sample_commit_range() -> PatchCommitRange {
         PatchCommitRange {
@@ -1312,29 +1304,6 @@ mod tests {
         Ok((tempdir, repo_path, base_commit, head_commit))
     }
 
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = env::var(key).ok();
-            env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.original {
-                env::set_var(self.key, value);
-            } else {
-                env::remove_var(self.key);
-            }
-        }
-    }
-
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let client = MockMetisClient::default();
@@ -1367,8 +1336,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
-
         let job_id = task_id("t-job-diff");
         let client = MockMetisClient::default();
         client.push_get_job_response(JobRecord {
@@ -1397,6 +1364,7 @@ mod tests {
             patch_description.clone(),
             Some(job_id),
             false,
+            None,
             None,
             None,
             base_commit,
@@ -1483,6 +1451,7 @@ mod tests {
             false,
             None,
             None,
+            None,
             base_commit,
             Some(&repo_path),
         )
@@ -1504,56 +1473,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_reads_job_id_from_environment() -> Result<()> {
+    async fn create_patch_errors_without_job_id() -> Result<()> {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
-        let env_job_id = task_id("t-job-from-env");
-        let env_job_value = env_job_id.to_string();
-        let _guard = EnvVarGuard::set(ENV_METIS_ID, &env_job_value);
-
         let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-3"),
-        });
-        client.push_get_job_response(JobRecord {
-            id: env_job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
-
-        let title = "patch with env title".to_string();
-        let description = "patch with env job id".to_string();
-
-        create_patch(
+        let result = create_patch(
             &client,
-            title.clone(),
-            description.clone(),
+            "missing job".to_string(),
+            "patch without job id".to_string(),
             None,
             false,
+            None,
             None,
             None,
             base_commit,
             Some(&repo_path),
         )
-        .await?;
+        .await;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected one patch upsert");
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("provide --job or set METIS_ID"),
+            "error should mention missing job id: {error}"
+        );
 
-        let (_, request) = &requests[0];
-        assert_eq!(request.job_id, Some(env_job_id.clone()));
+        Ok(())
+    }
 
-        assert_eq!(request.patch.title, title);
-        assert_eq!(request.patch.description, description);
+    #[tokio::test]
+    async fn create_patch_requires_github_token_when_creating_pr() -> Result<()> {
+        let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
+        let client = MockMetisClient::default();
+
+        let result = create_patch(
+            &client,
+            "pr title".to_string(),
+            "pr description".to_string(),
+            Some(task_id("t-job-gh-token")),
+            true,
+            None,
+            None,
+            None,
+            base_commit,
+            Some(&repo_path),
+        )
+        .await;
+
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains(ENV_GH_TOKEN),
+            "error should reference missing GitHub token: {error}"
+        );
 
         Ok(())
     }
@@ -1561,8 +1530,6 @@ mod tests {
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
-        let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
-
         let job_id = task_id("t-job-merge");
         let client = MockMetisClient::default();
         client.push_get_job_response(JobRecord {
@@ -1598,6 +1565,7 @@ mod tests {
             description.clone(),
             Some(job_id),
             false,
+            None,
             Some("owner-a".to_string()),
             Some(parent_issue.clone()),
             base_commit,
@@ -1653,6 +1621,7 @@ mod tests {
             "backup description".to_string(),
             Some(task_id("t-job-automatic")),
             false,
+            None,
             true,
             sample_repo_name(),
         )
@@ -1694,6 +1663,7 @@ mod tests {
             "backup description".to_string(),
             Some(task_id("t-job-service")),
             false,
+            None,
             None,
             None,
             base_commit,

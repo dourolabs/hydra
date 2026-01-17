@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, ServiceState},
     config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
-    job_engine::{JobEngine, MockJobEngine},
+    job_engine::JobEngine,
     run_with_state,
     store::MemoryStore,
 };
@@ -11,6 +11,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
+
+pub mod job_engine;
+pub mod store;
+
+pub use job_engine::MockJobEngine;
+pub use store::FailingStore;
 
 pub struct TestServer {
     pub address: String,

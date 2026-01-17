@@ -2859,6 +2859,7 @@ name = "metis-integration"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "metis",
  "metis-common",
  "metis-server",

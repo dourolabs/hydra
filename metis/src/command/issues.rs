@@ -165,12 +165,14 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         } => {
             let issues =
                 fetch_issues(client, id, r#type, status, assignee, query, graph_filters).await?;
-            let mut stdout = io::stdout().lock();
+            let mut buffer = Vec::new();
             if pretty {
-                print_issues_pretty(&issues, &mut stdout)?;
+                print_issues_pretty(&issues, &mut buffer)?;
             } else {
-                print_issues_jsonl(&issues, &mut stdout)?;
+                print_issues_jsonl(&issues, &mut buffer)?;
             }
+            io::stdout().write_all(&buffer)?;
+            io::stdout().flush()?;
             Ok(())
         }
         IssueCommands::Create {
@@ -249,14 +251,15 @@ async fn describe_issue(
 ) -> Result<()> {
     let description = collect_issue_description(client, id).await?;
 
-    let mut stdout = io::stdout().lock();
+    let mut buffer = Vec::new();
     if pretty {
-        print_issue_description_pretty(&description, &mut stdout)?;
+        print_issue_description_pretty(&description, &mut buffer)?;
     } else {
-        serde_json::to_writer(&mut stdout, &description)?;
-        stdout.write_all(b"\n")?;
-        stdout.flush()?;
+        serde_json::to_writer(&mut buffer, &description)?;
+        buffer.write_all(b"\n")?;
     }
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
 
     Ok(())
 }

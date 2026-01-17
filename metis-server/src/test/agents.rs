@@ -1,9 +1,8 @@
 use crate::{
     app::{AppState, ServiceState},
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
-    job_engine::MockJobEngine,
     store::MemoryStore,
-    test::{spawn_test_server_with_state, test_app_config, test_client},
+    test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
 };
 use metis_common::{agents::ListAgentsResponse, jobs::BundleSpec};
 use std::{collections::HashMap, sync::Arc};
