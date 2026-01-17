@@ -25,7 +25,7 @@ use metis_common::{
 use octocrab::Octocrab;
 use serde::Deserialize;
 
-use crate::{client::MetisClientInterface, constants};
+use crate::client::MetisClientInterface;
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -613,11 +613,7 @@ fn repository_has_pending_changes(repo_root: &Path) -> Result<bool> {
         bail!("git status failed while validating repository cleanliness");
     }
 
-    let status_output = String::from_utf8_lossy(&output.stdout);
-    let has_changes = status_output
-        .lines()
-        .any(|line| !line.contains(constants::METIS_DIR));
-    Ok(has_changes)
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
 fn ensure_base_is_ancestor(repo_root: &Path, base: &GitOid, head: &GitOid) -> Result<()> {

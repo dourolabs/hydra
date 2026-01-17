@@ -18,7 +18,6 @@ use metis_common::{
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
-use crate::constants;
 use crate::exec::{codex_output_path, run_codex};
 
 pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
@@ -352,17 +351,6 @@ fn stage_pending_changes(dest: &Path) -> Result<()> {
         bail!("git add failed while preparing patch contents");
     }
 
-    if dest.join(constants::METIS_DIR).exists() {
-        let reset_status = Command::new("git")
-            .args(["reset", "-q", "--", constants::METIS_DIR])
-            .current_dir(dest)
-            .status()
-            .context("failed to exclude .metis contents from patch commits")?;
-        if !reset_status.success() {
-            bail!("git reset failed while excluding {}", constants::METIS_DIR);
-        }
-    }
-
     Ok(())
 }
 
@@ -385,6 +373,7 @@ mod tests {
     use super::*;
     use crate::{
         client::MockMetisClient,
+        constants,
         test_utils::ids::{patch_id, task_id},
     };
     use metis_common::patches::UpsertPatchResponse;
@@ -624,24 +613,24 @@ mod tests {
     }
 
     #[test]
-    fn commit_pending_changes_excludes_metis_directory() -> Result<()> {
+    fn commit_pending_changes_includes_hidden_directories() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
 
         setup_git_repo_with_initial_commit(repo_path)?;
 
-        // Create files in .metis directory (should be excluded)
-        let metis_dir = repo_path.join(constants::METIS_DIR);
-        std::fs::create_dir_all(&metis_dir).context("failed to create .metis directory")?;
-        std::fs::write(metis_dir.join("internal_file.txt"), "internal content")
-            .context("failed to write file in .metis")?;
-        std::fs::create_dir_all(metis_dir.join("subdir"))
-            .context("failed to create subdir in .metis")?;
+        // Create files in a hidden directory that should now be included
+        let hidden_dir = repo_path.join(".metis");
+        std::fs::create_dir_all(&hidden_dir).context("failed to create hidden directory")?;
+        std::fs::write(hidden_dir.join("internal_file.txt"), "internal content")
+            .context("failed to write file in hidden directory")?;
+        std::fs::create_dir_all(hidden_dir.join("subdir"))
+            .context("failed to create subdir in hidden directory")?;
         std::fs::write(
-            metis_dir.join("subdir").join("nested.txt"),
+            hidden_dir.join("subdir").join("nested.txt"),
             "nested content",
         )
-        .context("failed to write nested file in .metis")?;
+        .context("failed to write nested file in hidden directory")?;
 
         // Also create a regular file that should be included
         std::fs::write(repo_path.join("regular_file.txt"), "regular content")
@@ -659,20 +648,20 @@ mod tests {
         )?;
 
         assert!(
-            !patch_content.contains(".metis/internal_file.txt"),
-            "patch should not include .metis/internal_file.txt"
+            patch_content.contains(".metis/internal_file.txt"),
+            "patch should include .metis/internal_file.txt"
         );
         assert!(
-            !patch_content.contains("internal content"),
-            "patch should not include content from .metis/internal_file.txt"
+            patch_content.contains("internal content"),
+            "patch should include content from .metis/internal_file.txt"
         );
         assert!(
-            !patch_content.contains(".metis/subdir/nested.txt"),
-            "patch should not include .metis/subdir/nested.txt"
+            patch_content.contains(".metis/subdir/nested.txt"),
+            "patch should include .metis/subdir/nested.txt"
         );
         assert!(
-            !patch_content.contains("nested content"),
-            "patch should not include content from .metis/subdir/nested.txt"
+            patch_content.contains("nested content"),
+            "patch should include content from .metis/subdir/nested.txt"
         );
 
         // Verify regular file is included
@@ -717,11 +706,9 @@ mod tests {
         std::fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
 
-        let output_dir = repo_path
-            .join(constants::METIS_DIR)
-            .join(constants::OUTPUT_DIR);
+        let output_dir = repo_path.join(constants::OUTPUT_DIR);
         std::fs::create_dir_all(&output_dir)
-            .context("failed to create .metis/output for test repo")?;
+            .context("failed to create output directory for test repo")?;
         std::fs::write(
             output_dir.join(constants::OUTPUT_TXT_FILE),
             "final output line",
