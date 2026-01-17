@@ -229,24 +229,74 @@ mod tests {
     use std::{fs, path::Path};
     use tempfile::TempDir;
 
-    const FILE_PATH: &str = "file.txt";
     const BASE_REF: &str = "refs/heads/base";
 
+    struct ScriptedRepo {
+        tempdir: TempDir,
+        repo: Repository,
+        initial: Oid,
+    }
+
+    impl ScriptedRepo {
+        fn new(initial_spec: &str) -> Result<Self> {
+            let tempdir = TempDir::new()?;
+            let repo = Repository::init(tempdir.path())?;
+            let initial = initial_commit(&repo, initial_spec)?;
+
+            Ok(Self {
+                tempdir,
+                repo,
+                initial,
+            })
+        }
+
+        fn base_from<S: AsRef<str>>(
+            &self,
+            changes: impl IntoIterator<Item = S>,
+        ) -> Result<(Oid, Vec<Oid>)> {
+            let history = commit_script(&self.repo, self.initial, changes)?;
+            let base = history.last().copied().unwrap_or(self.initial);
+            self.repo.reference(BASE_REF, base, true, "set base ref")?;
+
+            Ok((base, history))
+        }
+
+        fn commit_chain<S: AsRef<str>>(
+            &self,
+            parent: Oid,
+            changes: impl IntoIterator<Item = S>,
+        ) -> Result<Vec<Oid>> {
+            commit_script(&self.repo, parent, changes)
+        }
+
+        fn queue_repo(&self) -> Result<Repository> {
+            Ok(Repository::open(self.tempdir.path())?)
+        }
+
+        fn repo(&self) -> &Repository {
+            &self.repo
+        }
+    }
+
     #[test]
-    fn try_advance_advances_tip_and_records_patches() -> Result<()> {
-        let (tempdir, repo) = repo_with_base("base\n", "base updated\n")?;
-        let base_commit = resolve_oid(&repo, BASE_REF)?;
+    fn try_append_advances_tip_and_records_patches() -> Result<()> {
+        let scripted = ScriptedRepo::new("file.txt:initial\n")?;
+        let (base_commit, _) =
+            scripted.base_from(["file.txt:base\n", "file.txt:base updated\n"])?;
 
-        let patch1 = commit_with_parent(&repo, base_commit, "from patch1\n", "patch1")?;
-        let patch2 = commit_with_parent(&repo, patch1, "from patch2\n", "patch2")?;
+        let patches = scripted.commit_chain(
+            base_commit,
+            ["file.txt:from patch1\n", "file.txt:from patch2\n"],
+        )?;
+        let patch1 = patches[0];
+        let patch2 = patches[1];
 
-        let queue_repo = Repository::open(tempdir.path())?;
-        let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
+        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
 
-        let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_advance(patch1, Some("first patch".to_string()), author1, committer1)?;
-        let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        queue.try_advance(patch2, None, author2, committer2)?;
+        let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
+        queue.try_append(patch1, Some("first patch".to_string()), author1, committer1)?;
+        let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
+        queue.try_append(patch2, None, author2, committer2)?;
 
         assert_eq!(queue.patches().len(), 2);
         assert!(
@@ -265,28 +315,37 @@ mod tests {
                 .map(|patch| patch.queued_commit)
                 .unwrap()
         );
-        assert_eq!(file_at_commit(&repo, queue.tip())?, "from patch2\n");
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "file.txt")?,
+            "from patch2\n"
+        );
 
         Ok(())
     }
 
     #[test]
-    fn try_advance_rejects_unmergeable_patch() -> Result<()> {
-        let (tempdir, repo) = repo_with_base("base\n", "base updated\n")?;
-        let base_commit = resolve_oid(&repo, BASE_REF)?;
+    fn try_append_rejects_unmergeable_patch() -> Result<()> {
+        let scripted = ScriptedRepo::new("file.txt:initial\n")?;
+        let (base_commit, _) =
+            scripted.base_from(["file.txt:base\n", "file.txt:base updated\n"])?;
 
-        let patch1 = commit_with_parent(&repo, base_commit, "left change\n", "patch1")?;
-        let patch2 = commit_with_parent(&repo, base_commit, "right change\n", "patch2")?;
+        let patch1 = scripted
+            .commit_chain(base_commit, ["file.txt:left change\n"])?
+            .pop()
+            .unwrap();
+        let patch2 = scripted
+            .commit_chain(base_commit, ["file.txt:right change\n"])?
+            .pop()
+            .unwrap();
 
-        let queue_repo = Repository::open(tempdir.path())?;
-        let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
+        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
 
-        let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_advance(patch1, None, author1, committer1)?;
+        let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
+        queue.try_append(patch1, None, author1, committer1)?;
         let tip_after_first = queue.tip();
 
-        let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        let result = queue.try_advance(
+        let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
+        let result = queue.try_append(
             patch2,
             Some("conflicting patch".to_string()),
             author2,
@@ -304,26 +363,78 @@ mod tests {
     }
 
     #[test]
+    fn try_append_handles_divergent_branches_with_additional_files() -> Result<()> {
+        let scripted = ScriptedRepo::new("main.txt:initial\n")?;
+        let (base, base_history) = scripted.base_from([
+            "main.txt:base v1\n",
+            "main.txt:base v2\n",
+            "main.txt:base v3\n",
+        ])?;
+        let feature_commits = scripted.commit_chain(
+            base_history[0],
+            [
+                "feature.txt:branch feature start\n",
+                "feature.txt:branch feature extended\n",
+            ],
+        )?;
+        let hotfix = scripted.commit_chain(base, ["main.txt:base v3 hotfix\n"])?;
+
+        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+
+        let (author1, committer1) = commit_signatures(scripted.repo(), feature_commits[0])?;
+        queue.try_append(
+            feature_commits[0],
+            Some("feature kickoff".to_string()),
+            author1,
+            committer1,
+        )?;
+        let (author2, committer2) = commit_signatures(scripted.repo(), feature_commits[1])?;
+        queue.try_append(
+            feature_commits[1],
+            Some("feature refinement".to_string()),
+            author2,
+            committer2,
+        )?;
+        let (author3, committer3) = commit_signatures(scripted.repo(), hotfix[0])?;
+        queue.try_append(
+            hotfix[0],
+            Some("stability hotfix".to_string()),
+            author3,
+            committer3,
+        )?;
+
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "main.txt")?,
+            "base v3 hotfix\n"
+        );
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "feature.txt")?,
+            "branch feature extended\n"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn evict_removes_patch_and_reapplies_queue() -> Result<()> {
-        let tempdir = TempDir::new()?;
-        let repo = Repository::init(tempdir.path())?;
+        let scripted = ScriptedRepo::new("file.txt:initial\n")?;
+        let (base, _) = scripted.base_from(["file.txt:base branch\n"])?;
 
-        let root = initial_commit(&repo, "initial\n")?;
-        let base = commit_with_parent(&repo, root, "base branch\n", "base")?;
-        repo.reference(BASE_REF, base, true, "set base ref")?;
+        let patch1 = scripted
+            .commit_chain(base, ["file.txt:aligned value\n"])?
+            .pop()
+            .unwrap();
+        let patch2 = scripted
+            .commit_chain(scripted.initial, ["file.txt:aligned value\n"])?
+            .pop()
+            .unwrap();
 
-        let patch1 = commit_with_parent(&repo, base, "aligned value\n", "patch1")?;
+        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
 
-        repo.reset(&repo.find_object(root, None)?, ResetType::Hard, None)?;
-        let patch2 = commit_with_parent(&repo, root, "aligned value\n", "patch2")?;
-
-        let queue_repo = Repository::open(tempdir.path())?;
-        let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
-
-        let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_advance(patch1, Some("kept patch".to_string()), author1, committer1)?;
-        let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        queue.try_advance(
+        let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
+        queue.try_append(patch1, Some("kept patch".to_string()), author1, committer1)?;
+        let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
+        queue.try_append(
             patch2,
             Some("dependent patch".to_string()),
             author2,
@@ -341,29 +452,88 @@ mod tests {
         Ok(())
     }
 
-    fn repo_with_base(initial: &str, base_contents: &str) -> Result<(TempDir, Repository)> {
-        let tempdir = TempDir::new()?;
-        let repo = Repository::init(tempdir.path())?;
+    #[test]
+    fn evict_replays_dependent_branch_and_preserves_predecessors() -> Result<()> {
+        let scripted = ScriptedRepo::new("file.txt:initial\n")?;
+        let (base, _) = scripted.base_from(["file.txt:base v1\n", "file.txt:base v2\n"])?;
 
-        let root = initial_commit(&repo, initial)?;
-        let base = commit_with_parent(&repo, root, base_contents, "base")?;
-        repo.reference(BASE_REF, base, true, "set base ref")?;
+        let feature_patch = scripted
+            .commit_chain(base, ["feature.txt:queue keeps earlier patches\n"])?
+            .pop()
+            .unwrap();
+        let hotfix = scripted
+            .commit_chain(base, ["file.txt:base v2 hotfix\n"])?
+            .pop()
+            .unwrap();
+        let hotfix_follow_up = scripted
+            .commit_chain(hotfix, ["file.txt:base v2 hotfix follow up\n"])?
+            .pop()
+            .unwrap();
 
-        Ok((tempdir, repo))
+        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+
+        let (feature_author, feature_committer) =
+            commit_signatures(scripted.repo(), feature_patch)?;
+        queue.try_append(
+            feature_patch,
+            Some("early queue patch".to_string()),
+            feature_author,
+            feature_committer,
+        )?;
+        let (hotfix_author, hotfix_committer) = commit_signatures(scripted.repo(), hotfix)?;
+        queue.try_append(
+            hotfix,
+            Some("middle hotfix".to_string()),
+            hotfix_author,
+            hotfix_committer,
+        )?;
+        let (follow_author, follow_committer) =
+            commit_signatures(scripted.repo(), hotfix_follow_up)?;
+        queue.try_append(
+            hotfix_follow_up,
+            Some("dependent follow up".to_string()),
+            follow_author,
+            follow_committer,
+        )?;
+
+        let evicted = queue.evict(hotfix)?;
+
+        assert_eq!(evicted.len(), 2);
+        assert!(evicted.iter().any(|entry| entry.commit == hotfix));
+        assert!(evicted.iter().any(|entry| entry.commit == hotfix_follow_up));
+        assert_eq!(queue.patches().len(), 1);
+        assert_eq!(queue.patches()[0].commit, feature_patch);
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "feature.txt")?,
+            "queue keeps earlier patches\n"
+        );
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "file.txt")?,
+            "base v2\n"
+        );
+
+        Ok(())
     }
 
-    fn commit_signatures(repo: &Repository, commit: Oid) -> Result<(SignatureInfo, SignatureInfo)> {
-        let commit = repo.find_commit(commit)?;
-        Ok((
-            SignatureInfo::from_signature(&commit.author()),
-            SignatureInfo::from_signature(&commit.committer()),
-        ))
+    fn commit_script<S: AsRef<str>>(
+        repo: &Repository,
+        parent: Oid,
+        changes: impl IntoIterator<Item = S>,
+    ) -> Result<Vec<Oid>> {
+        let mut current = parent;
+        let mut commits = Vec::new();
+        for change in changes.into_iter() {
+            current = commit_with_parent(repo, current, change.as_ref())?;
+            commits.push(current);
+        }
+        Ok(commits)
     }
 
-    fn initial_commit(repo: &Repository, contents: &str) -> Result<Oid> {
+    fn initial_commit(repo: &Repository, change: &str) -> Result<Oid> {
+        let (path, contents) = parse_change_spec(change)?;
         let mut index = repo.index()?;
-        write_file(repo, contents)?;
-        index.add_path(Path::new(FILE_PATH))?;
+        write_file(repo, path, contents)?;
+        index.add_path(Path::new(path))?;
         let tree_id = index.write_tree()?;
         let tree = repo.find_tree(tree_id)?;
         let signature = test_signature()?;
@@ -372,16 +542,12 @@ mod tests {
             .map_err(Into::into)
     }
 
-    fn commit_with_parent(
-        repo: &Repository,
-        parent: Oid,
-        contents: &str,
-        message: &str,
-    ) -> Result<Oid> {
+    fn commit_with_parent(repo: &Repository, parent: Oid, change: &str) -> Result<Oid> {
+        let (path, contents) = parse_change_spec(change)?;
         repo.reset(&repo.find_object(parent, None)?, ResetType::Hard, None)?;
-        write_file(repo, contents)?;
+        write_file(repo, path, contents)?;
         let mut index = repo.index()?;
-        index.add_path(Path::new(FILE_PATH))?;
+        index.add_path(Path::new(path))?;
         let tree_id = index.write_tree()?;
         let tree = repo.find_tree(tree_id)?;
         let signature = test_signature()?;
@@ -391,33 +557,51 @@ mod tests {
             Some("HEAD"),
             &signature,
             &signature,
-            message,
+            change,
             &tree,
             &[&parent_commit],
         )
         .map_err(Into::into)
     }
 
-    fn write_file(repo: &Repository, contents: &str) -> Result<()> {
+    fn parse_change_spec(change: &str) -> Result<(&str, &str)> {
+        let (path, contents) = change
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("commit spec must be path:contents"))?;
+        let path = path.trim();
+        if path.is_empty() {
+            anyhow::bail!("commit spec must include a file path");
+        }
+        Ok((path, contents))
+    }
+
+    fn write_file(repo: &Repository, path: &str, contents: &str) -> Result<()> {
         let path = repo
             .workdir()
-            .map(|dir| dir.join(FILE_PATH))
+            .map(|dir| dir.join(path))
             .ok_or_else(|| anyhow::anyhow!("repository is bare"))?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(path, contents)?;
         Ok(())
     }
 
-    fn resolve_oid(repo: &Repository, reference: &str) -> Result<Oid> {
-        Ok(repo.revparse_single(reference)?.peel_to_commit()?.id())
-    }
-
-    fn file_at_commit(repo: &Repository, commit: Oid) -> Result<String> {
+    fn file_at_commit(repo: &Repository, commit: Oid, path: &str) -> Result<String> {
         let commit = repo.find_commit(commit)?;
         let tree = commit.tree()?;
-        let entry = tree.get_path(Path::new(FILE_PATH))?;
+        let entry = tree.get_path(Path::new(path))?;
         let blob = repo.find_blob(entry.id())?;
 
         Ok(String::from_utf8_lossy(blob.content()).into_owned())
+    }
+
+    fn commit_signatures(repo: &Repository, commit: Oid) -> Result<(SignatureInfo, SignatureInfo)> {
+        let commit = repo.find_commit(commit)?;
+        Ok((
+            SignatureInfo::from_signature(&commit.author()),
+            SignatureInfo::from_signature(&commit.committer()),
+        ))
     }
 
     fn test_signature() -> Result<Signature<'static>> {
