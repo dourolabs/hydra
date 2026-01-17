@@ -4,6 +4,7 @@ mod app;
 mod background;
 mod config;
 mod job_engine;
+mod merge_queue;
 mod routes;
 mod store;
 #[cfg(test)]
