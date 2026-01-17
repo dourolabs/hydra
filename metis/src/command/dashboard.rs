@@ -38,6 +38,12 @@ const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
+const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
+    IssueStatus::Open,
+    IssueStatus::InProgress,
+    IssueStatus::Closed,
+    IssueStatus::Dropped,
+];
 
 #[derive(Clone, PartialEq)]
 struct JobDetails {
@@ -225,6 +231,7 @@ struct DashboardState {
     records_error: Option<String>,
     username: Option<String>,
     issue_draft: IssueDraft,
+    status_filter: StatusFilterState,
 }
 
 struct IssueSubmission {
@@ -235,6 +242,45 @@ struct IssueSubmission {
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
+}
+
+#[derive(Clone, PartialEq)]
+struct StatusFilterState {
+    selected_index: usize,
+    enabled: [bool; STATUS_FILTER_OPTIONS.len()],
+}
+
+impl Default for StatusFilterState {
+    fn default() -> Self {
+        Self {
+            selected_index: 0,
+            enabled: [false; STATUS_FILTER_OPTIONS.len()],
+        }
+    }
+}
+
+impl StatusFilterState {
+    fn cycle_selection(&mut self) {
+        self.selected_index = (self.selected_index + 1) % STATUS_FILTER_OPTIONS.len();
+    }
+
+    fn toggle_selected(&mut self) {
+        let index = self.selected_index;
+        self.enabled[index] = !self.enabled[index];
+    }
+
+    fn allows(&self, status: IssueStatus) -> bool {
+        if !self.any_enabled() {
+            return true;
+        }
+
+        let index = status_filter_index(status);
+        self.enabled[index]
+    }
+
+    fn any_enabled(&self) -> bool {
+        self.enabled.iter().any(|enabled| *enabled)
+    }
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
@@ -373,20 +419,29 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
 
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => EventOutcome {
-                should_quit: true,
-                submission: None,
-            },
-            KeyCode::Char('c') if has_primary_modifier(key.modifiers) => EventOutcome {
-                should_quit: true,
-                submission: None,
-            },
-            _ => EventOutcome {
-                should_quit: false,
-                submission: handle_issue_draft_key(key, state),
-            },
-        },
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            if handle_status_filter_key(key, state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => EventOutcome {
+                    should_quit: true,
+                    submission: None,
+                },
+                KeyCode::Char('c') if has_primary_modifier(key.modifiers) => EventOutcome {
+                    should_quit: true,
+                    submission: None,
+                },
+                _ => EventOutcome {
+                    should_quit: false,
+                    submission: handle_issue_draft_key(key, state),
+                },
+            }
+        }
         Event::Paste(text) => {
             if state.issue_draft.is_submitting {
                 return EventOutcome {
@@ -423,6 +478,26 @@ fn has_primary_modifier(modifiers: KeyModifiers) -> bool {
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_primary_modifier(key.modifiers)
+}
+
+fn handle_status_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    if !has_primary_modifier(key.modifiers) {
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            state.status_filter.cycle_selection();
+            update_views(state);
+            true
+        }
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            state.status_filter.toggle_selected();
+            update_views(state);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -575,6 +650,8 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
         Span::raw(" — press q or Esc to exit."),
     ])];
 
+    lines.push(status_filter_line(&state.status_filter));
+
     if let Some(error) = &state.jobs_error {
         lines.push(Line::from(Span::styled(
             format!("Jobs: {error}"),
@@ -598,6 +675,51 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     frame.render_widget(paragraph, area);
 }
 
+fn status_filter_line(filter: &StatusFilterState) -> Line {
+    let mut spans = vec![Span::styled(
+        "Status filter: ",
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+
+    for (index, status) in STATUS_FILTER_OPTIONS.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+
+        let enabled = filter.enabled[index];
+        let checkbox_style = if enabled {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(
+            if enabled { "[x]" } else { "[ ]" },
+            checkbox_style,
+        ));
+        spans.push(Span::raw(" "));
+
+        let mut label_style = issue_status_style(*status);
+        if index == filter.selected_index {
+            label_style = label_style.add_modifier(Modifier::UNDERLINED);
+        }
+        spans.push(Span::styled(status.as_str(), label_style));
+    }
+
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        "Alt+S cycle, Alt+T toggle",
+        Style::default().fg(Color::DarkGray),
+    ));
+    if !filter.any_enabled() {
+        spans.push(Span::styled(
+            " (showing all)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    Line::from(spans)
+}
+
 fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
     let has_username = state
         .username
@@ -616,8 +738,8 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             frame,
             panels[0],
             &state.assigned_issue_lines,
-            &format!("Open issues for @{username}"),
-            &format!("No open issues assigned to @{username}"),
+            &format!("Issues for @{username}"),
+            &format!("No issues assigned to @{username}"),
         );
         render_issue_list(
             frame,
@@ -888,9 +1010,13 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
-    let issue_lines = build_issue_lines(&state.issues, &state.jobs);
-    let assigned_issue_lines =
-        build_assigned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
+    let issue_lines = build_issue_lines(&state.issues, &state.jobs, &state.status_filter);
+    let assigned_issue_lines = build_assigned_issue_lines(
+        state.username.as_deref(),
+        &state.issues,
+        &state.jobs,
+        &state.status_filter,
+    );
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
@@ -946,6 +1072,7 @@ fn build_assigned_issue_lines(
     username: Option<&str>,
     issues: &[IssueRecord],
     jobs: &[JobDetails],
+    status_filter: &StatusFilterState,
 ) -> IssueLines {
     let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
         return IssueLines::default();
@@ -953,17 +1080,18 @@ fn build_assigned_issue_lines(
 
     let assigned: Vec<IssueRecord> = issues
         .iter()
-        .filter(|issue| {
-            matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress)
-                && issue.assignee.as_deref() == Some(username)
-        })
+        .filter(|issue| issue.assignee.as_deref() == Some(username))
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs)
+    build_issue_lines(&assigned, jobs, status_filter)
 }
 
-fn build_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> IssueLines {
+fn build_issue_lines(
+    issues: &[IssueRecord],
+    jobs: &[JobDetails],
+    status_filter: &StatusFilterState,
+) -> IssueLines {
     let mut tasks_by_issue: HashMap<IssueId, Vec<JobDisplay>> = HashMap::new();
 
     for job in jobs {
@@ -1023,7 +1151,7 @@ fn build_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> IssueLines 
     let mut rows = Vec::new();
     let mut visited: HashSet<IssueId> = HashSet::new();
     for root in roots {
-        append_issue(&root, 0, &mut rows, &mut visited, &nodes);
+        append_issue(&root, 0, &mut rows, &mut visited, &nodes, status_filter);
     }
 
     IssueLines { rows }
@@ -1035,6 +1163,7 @@ fn append_issue(
     rows: &mut Vec<IssueLine>,
     visited: &mut HashSet<IssueId>,
     nodes: &HashMap<IssueId, IssueNode>,
+    status_filter: &StatusFilterState,
 ) {
     if !visited.insert(id.clone()) {
         return;
@@ -1047,21 +1176,25 @@ fn append_issue(
     let readiness = issue_readiness(node, nodes);
     let issue_summary = issue_summary(&node.record.description, &node.record.progress);
 
-    rows.push(IssueLine {
-        id: node.record.id.to_string(),
-        summary: issue_summary.summary,
-        progress: issue_summary.progress,
-        status: node.record.status,
-        readiness,
-        assignee: node.record.assignee.clone(),
-        task: node.task.clone(),
-        depth,
-    });
+    let is_visible = status_filter.allows(node.record.status);
+    if is_visible {
+        rows.push(IssueLine {
+            id: node.record.id.to_string(),
+            summary: issue_summary.summary,
+            progress: issue_summary.progress,
+            status: node.record.status,
+            readiness,
+            assignee: node.record.assignee.clone(),
+            task: node.task.clone(),
+            depth,
+        });
+    }
 
     let mut children = node.children.clone();
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
-        append_issue(&child, depth + 1, rows, visited, nodes);
+        let child_depth = if is_visible { depth + 1 } else { depth };
+        append_issue(&child, child_depth, rows, visited, nodes, status_filter);
     }
 }
 
@@ -1170,6 +1303,15 @@ fn issue_status_order(status: IssueStatus) -> usize {
         IssueStatus::Open => 1,
         IssueStatus::Dropped => 2,
         IssueStatus::Closed => 3,
+    }
+}
+
+fn status_filter_index(status: IssueStatus) -> usize {
+    match status {
+        IssueStatus::Open => 0,
+        IssueStatus::InProgress => 1,
+        IssueStatus::Closed => 2,
+        IssueStatus::Dropped => 3,
     }
 }
 
@@ -1402,7 +1544,7 @@ mod tests {
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[]);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
 
         assert_eq!(lines.rows.len(), 3);
         assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
@@ -1432,7 +1574,7 @@ mod tests {
             issue("i-open", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[]);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
 
         let blocked_line = lines
             .rows
@@ -1450,7 +1592,7 @@ mod tests {
     #[test]
     fn dropped_issues_render_as_dropped() {
         let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
-        let lines = build_issue_lines(&issues, &[]);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
 
         let line = lines.rows.first().expect("missing issue line");
         assert_eq!(line.readiness, IssueReadiness::Dropped);
@@ -1470,7 +1612,7 @@ mod tests {
             Some("3s"),
         )];
 
-        let lines = build_issue_lines(&issues, &jobs);
+        let lines = build_issue_lines(&issues, &jobs, &StatusFilterState::default());
 
         let line = lines.rows.first().expect("issue line missing");
         let task = line.task.as_ref().expect("task indicator missing");
@@ -1501,7 +1643,7 @@ mod tests {
             dependencies: Vec::new(),
         }];
 
-        let lines = build_issue_lines(&issues, &[]);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
 
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.summary, "investigate logs");
@@ -1530,7 +1672,7 @@ mod tests {
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[]);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
 
         let line = lines
             .rows
@@ -1546,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn assigned_issue_lines_filter_assignee_and_status() {
+    fn assigned_issue_lines_filter_assignee() {
         let issues = vec![
             issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
             issue_with_assignee("i-in-progress", IssueStatus::InProgress, Some("alice")),
@@ -1554,9 +1696,10 @@ mod tests {
             issue_with_assignee("i-other", IssueStatus::Open, Some("bob")),
         ];
 
-        let lines = build_assigned_issue_lines(Some("alice"), &issues, &[]);
+        let lines =
+            build_assigned_issue_lines(Some("alice"), &issues, &[], &StatusFilterState::default());
 
-        assert_eq!(lines.rows.len(), 2);
+        assert_eq!(lines.rows.len(), 3);
         assert!(lines
             .rows
             .iter()
@@ -1565,6 +1708,29 @@ mod tests {
             .rows
             .iter()
             .any(|line| line.id == issue_id("i-in-progress").to_string()));
+        assert!(lines
+            .rows
+            .iter()
+            .any(|line| line.id == issue_id("i-closed").to_string()));
+    }
+
+    #[test]
+    fn status_filter_hides_unselected_statuses() {
+        let issues = vec![
+            issue("i-open", IssueStatus::Open, vec![]),
+            issue("i-closed", IssueStatus::Closed, vec![]),
+        ];
+
+        let mut filter = StatusFilterState {
+            selected_index: status_filter_index(IssueStatus::Closed),
+            ..StatusFilterState::default()
+        };
+        filter.toggle_selected();
+
+        let lines = build_issue_lines(&issues, &[], &filter);
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-closed").to_string());
     }
 
     #[test]
