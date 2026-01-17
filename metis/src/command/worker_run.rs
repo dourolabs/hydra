@@ -7,6 +7,7 @@ use std::{
     str::FromStr,
 };
 
+use crate::constants;
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
@@ -18,7 +19,8 @@ use metis_common::{
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
-use crate::exec::{codex_output_path, run_codex};
+use crate::exec::run_codex;
+use tempfile::Builder;
 
 pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
     let WorkerContext {
@@ -41,17 +43,21 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
             clone_git_repo(&url, &rev, &dest, github_token.as_deref())?;
         }
     }
-    create_output_directory(&dest)?;
+
+    let output_dir = Builder::new()
+        .prefix("codex-output")
+        .tempdir()
+        .context("failed to create temporary codex output directory")?;
+    let output_path = output_dir.path().join(constants::OUTPUT_TXT_FILE);
 
     login_codex()?;
     configure_git_repo(&dest)?;
     let base_commit = resolve_head_oid_if_present(&dest)?;
 
-    run_codex(&prompt, &dest, &execution_env)
+    let last_message = run_codex(&prompt, &dest, &execution_env, &output_path)
         .await
         .with_context(|| "failed to execute codex for worker context")?;
 
-    let last_message = read_last_message(&dest)?;
     submit_patch_artifact_if_present(
         client,
         &job,
@@ -186,16 +192,6 @@ fn login_codex() -> Result<()> {
     Ok(())
 }
 
-fn create_output_directory(dest: &Path) -> Result<()> {
-    let output_dir = codex_output_path(dest)
-        .parent()
-        .ok_or_else(|| anyhow!("failed to compute codex output directory"))?
-        .to_path_buf();
-    fs::create_dir_all(&output_dir)
-        .with_context(|| format!("failed to create output directory at {output_dir:?}"))?;
-    Ok(())
-}
-
 fn ensure_color_output_env(env: &mut HashMap<String, String>) {
     env.entry("TERM".to_string())
         .or_insert_with(|| "xterm-256color".to_string());
@@ -268,20 +264,6 @@ async fn submit_patch_artifact_if_present(
     Ok(())
 }
 
-fn last_message_path(dest: &Path) -> PathBuf {
-    codex_output_path(dest)
-}
-
-fn read_last_message(dest: &Path) -> Result<String> {
-    let last_message_file = last_message_path(dest);
-    fs::read_to_string(&last_message_file).with_context(|| {
-        format!(
-            "failed to read last message output at '{}'",
-            last_message_file.display()
-        )
-    })
-}
-
 fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
     let job_display = job.to_string();
     let trimmed_message = last_message.trim();
@@ -343,7 +325,6 @@ mod tests {
     use super::*;
     use crate::{
         client::MockMetisClient,
-        constants,
         test_utils::ids::{patch_id, task_id},
     };
     use metis_common::patches::UpsertPatchResponse;
@@ -588,15 +569,6 @@ mod tests {
             .success()
             .then_some(())
             .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
-
-        let output_dir = repo_path.join(constants::OUTPUT_DIR);
-        std::fs::create_dir_all(&output_dir)
-            .context("failed to create output directory for test repo")?;
-        std::fs::write(
-            output_dir.join(constants::OUTPUT_TXT_FILE),
-            "final output line",
-        )
-        .context("failed to write output.txt for test repo")?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
