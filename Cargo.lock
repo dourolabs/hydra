@@ -2862,6 +2862,7 @@ dependencies = [
  "metis",
  "metis-common",
  "metis-server",
+ "tempfile",
  "tokio",
 ]
 

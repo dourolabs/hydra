@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -21,6 +21,49 @@ use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::exec::run_codex;
 use tempfile::Builder;
+
+#[derive(Debug, Default)]
+struct WorkerCommands {
+    login_command: Option<String>,
+    run_command: Option<String>,
+}
+
+impl WorkerCommands {
+    fn from_env() -> Self {
+        Self {
+            login_command: env_var_if_set("METIS_WORKER_LOGIN_CMD"),
+            run_command: env_var_if_set("METIS_WORKER_RUN_CMD"),
+        }
+    }
+
+    fn login(&self, env: &HashMap<String, String>) -> Result<()> {
+        if let Some(command) = &self.login_command {
+            run_shell_command(command, None, env)
+                .with_context(|| format!("failed to run METIS_WORKER_LOGIN_CMD '{command}'"))?;
+            return Ok(());
+        }
+
+        login_codex()
+    }
+
+    async fn run(
+        &self,
+        prompt: &str,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+        output_path: &Path,
+    ) -> Result<String> {
+        if let Some(command) = &self.run_command {
+            return run_custom_command(command, working_dir, env)
+                .await
+                .with_context(|| format!("failed to run METIS_WORKER_RUN_CMD '{command}'"));
+        }
+
+        run_codex(prompt, working_dir, env, output_path)
+            .await
+            .with_context(|| "failed to execute codex for worker context")
+    }
+}
 
 pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
     let WorkerContext {
@@ -50,13 +93,19 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(constants::OUTPUT_TXT_FILE);
 
-    login_codex()?;
+    let commands = WorkerCommands::from_env();
+
+    commands.login(&execution_env)?;
     configure_git_repo(&dest)?;
     let base_commit = resolve_head_oid_if_present(&dest)?;
 
-    let last_message = run_codex(&prompt, &dest, &execution_env, &output_path)
-        .await
-        .with_context(|| "failed to execute codex for worker context")?;
+    if let Some(base_commit) = base_commit.as_ref() {
+        execution_env.insert("METIS_BASE_COMMIT".to_string(), base_commit.to_string());
+    }
+
+    let last_message = commands
+        .run(&prompt, &dest, &execution_env, &output_path)
+        .await?;
 
     submit_patch_artifact_if_present(
         client,
@@ -158,6 +207,13 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn env_var_if_set(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn login_codex() -> Result<()> {
@@ -320,6 +376,56 @@ fn create_patch_from_committed_range(
     }))
 }
 
+fn run_shell_command(
+    command: &str,
+    working_dir: Option<&Path>,
+    env: &HashMap<String, String>,
+) -> Result<()> {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .envs(env)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+
+    let status = cmd
+        .status()
+        .context("failed to spawn custom worker command")?;
+    if !status.success() {
+        bail!("custom command '{command}' failed with status {status}");
+    }
+
+    Ok(())
+}
+
+async fn run_custom_command(
+    command: &str,
+    working_dir: &Path,
+    env: &HashMap<String, String>,
+) -> Result<String> {
+    let output = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(working_dir)
+        .envs(env)
+        .output()
+        .await
+        .context("failed to spawn custom run command")?;
+
+    if !output.status.success() {
+        bail!(
+            "custom run command '{command}' failed with status {status}",
+            status = output.status
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +502,40 @@ mod tests {
         let repo_str = init_git_repo(repo_path)?;
         create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
         Ok(repo_str)
+    }
+
+    #[test]
+    fn worker_commands_from_env_filters_empty_values() {
+        env::set_var("METIS_WORKER_LOGIN_CMD", "   ");
+        env::remove_var("METIS_WORKER_RUN_CMD");
+
+        let commands = WorkerCommands::from_env();
+
+        assert!(commands.login_command.is_none());
+        assert!(commands.run_command.is_none());
+
+        env::remove_var("METIS_WORKER_LOGIN_CMD");
+    }
+
+    #[tokio::test]
+    async fn run_custom_command_respects_env_and_workdir() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for custom command")?;
+        let mut env = HashMap::new();
+        env.insert("CUSTOM_MESSAGE".to_string(), "hello world".to_string());
+
+        let output = run_custom_command(
+            "echo \"$CUSTOM_MESSAGE\" > out.txt && cat out.txt",
+            tempdir.path(),
+            &env,
+        )
+        .await?;
+
+        assert_eq!(output.trim(), "hello world");
+        let persisted = std::fs::read_to_string(tempdir.path().join("out.txt"))
+            .context("failed to read custom command output")?;
+        assert_eq!(persisted.trim(), "hello world");
+
+        Ok(())
     }
 
     fn diff_for_range(repo_path: &Path, range: &PatchCommitRange) -> Result<String> {

@@ -9,3 +9,4 @@ tokio = { version = "1.41", features = ["macros", "rt-multi-thread"] }
 metis = { path = "../metis" }
 metis-server = { path = "../metis-server", features = ["test-utils"] }
 metis-common = { path = "../metis-common" }
+tempfile = "3.13"
