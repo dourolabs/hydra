@@ -13,11 +13,12 @@ use metis_common::{
         SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
+    merge_queues::MergeQueue,
     patches::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    IssueId, PatchId, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -36,6 +37,8 @@ pub struct MockMetisClient {
     pub list_issue_responses: Mutex<VecDeque<ListIssuesResponse>>,
     pub list_patch_responses: Mutex<VecDeque<ListPatchesResponse>>,
     pub list_agents_responses: Mutex<VecDeque<ListAgentsResponse>>,
+    pub merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
+    pub enqueue_merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub issue_upsert_requests: Mutex<Vec<(Option<IssueId>, UpsertIssueRequest)>>,
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
@@ -45,6 +48,8 @@ pub struct MockMetisClient {
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
     pub list_agents_calls: Mutex<usize>,
+    pub merge_queue_requests: Mutex<Vec<(RepoName, String)>>,
+    pub enqueue_merge_queue_requests: Mutex<Vec<(RepoName, String, PatchId)>>,
     pub recorded_requests: Mutex<Vec<CreateJobRequest>>,
 }
 
@@ -124,6 +129,20 @@ impl MockMetisClient {
             .push_back(response);
     }
 
+    pub fn push_merge_queue_response(&self, response: MergeQueue) {
+        self.merge_queue_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_enqueue_merge_queue_response(&self, response: MergeQueue) {
+        self.enqueue_merge_queue_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
     pub fn recorded_issue_upserts(&self) -> Vec<(Option<IssueId>, UpsertIssueRequest)> {
         self.issue_upsert_requests.lock().unwrap().clone()
     }
@@ -149,6 +168,14 @@ impl MockMetisClient {
 
     pub fn recorded_list_agents_calls(&self) -> usize {
         *self.list_agents_calls.lock().unwrap()
+    }
+
+    pub fn recorded_merge_queue_requests(&self) -> Vec<(RepoName, String)> {
+        self.merge_queue_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_enqueue_merge_queue_requests(&self) -> Vec<(RepoName, String, PatchId)> {
+        self.enqueue_merge_queue_requests.lock().unwrap().clone()
     }
 }
 
@@ -311,6 +338,36 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for list_patches"))
+    }
+
+    async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
+        self.merge_queue_requests
+            .lock()
+            .unwrap()
+            .push((repo_name.clone(), branch.to_string()));
+        self.merge_queue_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for get_merge_queue"))
+    }
+
+    async fn enqueue_merge_patch(
+        &self,
+        repo_name: &RepoName,
+        branch: &str,
+        patch_id: &PatchId,
+    ) -> Result<MergeQueue> {
+        self.enqueue_merge_queue_requests.lock().unwrap().push((
+            repo_name.clone(),
+            branch.to_string(),
+            patch_id.clone(),
+        ));
+        self.enqueue_merge_queue_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for enqueue_merge_patch"))
     }
 
     async fn list_agents(&self) -> Result<ListAgentsResponse> {

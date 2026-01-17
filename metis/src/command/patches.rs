@@ -16,6 +16,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     jobs::BundleSpec,
+    merge_queues::MergeQueue,
     patches::{
         GitOid, GithubPr, Patch, PatchCommitRange, PatchRecord, PatchStatus, Review,
         SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
@@ -137,6 +138,25 @@ pub enum PatchesCommand {
         #[arg(long = "head", value_name = "OID")]
         head: Option<GitOid>,
     },
+
+    /// Inspect or enqueue merge queue entries for a repository branch.
+    Merge {
+        /// Repository to target, e.g. dourolabs/api.
+        #[arg(long = "repo", value_name = "REPO", required = true)]
+        repo: RepoName,
+
+        /// Branch name for the merge queue.
+        #[arg(long = "branch", value_name = "BRANCH", required = true)]
+        branch: String,
+
+        /// Patch id to enqueue onto the merge queue. Omit to only fetch the queue.
+        #[arg(long = "patch-id", value_name = "PATCH_ID")]
+        patch_id: Option<PatchId>,
+
+        /// Pretty-print the merge queue instead of emitting JSON.
+        #[arg(long = "pretty")]
+        pretty: bool,
+    },
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
@@ -179,6 +199,12 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             base,
             head,
         } => update_patch(client, id, title, description, status, base, head).await,
+        PatchesCommand::Merge {
+            repo,
+            branch,
+            patch_id,
+            pretty,
+        } => merge_queue(client, repo, branch, patch_id, pretty).await,
     }
 }
 
@@ -382,6 +408,67 @@ async fn update_patch(
 
     println!("{}", response.patch_id);
 
+    Ok(())
+}
+
+async fn merge_queue(
+    client: &dyn MetisClientInterface,
+    repo: RepoName,
+    branch: String,
+    patch_id: Option<PatchId>,
+    pretty: bool,
+) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut stdout).await
+}
+
+async fn merge_queue_with_writer(
+    client: &dyn MetisClientInterface,
+    repo: RepoName,
+    branch: String,
+    patch_id: Option<PatchId>,
+    pretty: bool,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let queue = match patch_id {
+        Some(patch_id) => client
+            .enqueue_merge_patch(&repo, &branch, &patch_id)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to enqueue patch '{patch_id}' onto merge queue for '{repo}:{branch}'"
+                )
+            })?,
+        None => client
+            .get_merge_queue(&repo, &branch)
+            .await
+            .with_context(|| format!("failed to fetch merge queue for '{repo}:{branch}'"))?,
+    };
+
+    if pretty {
+        print_merge_queue_pretty(&queue, &repo, &branch, writer)?;
+    } else {
+        serde_json::to_writer(&mut *writer, &queue)?;
+        writeln!(writer)?;
+    }
+
+    Ok(())
+}
+
+fn print_merge_queue_pretty(
+    queue: &MergeQueue,
+    repo: &RepoName,
+    branch: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    writeln!(writer, "Merge queue for {repo}:{branch}")?;
+    if queue.patches.is_empty() {
+        writeln!(writer, "- <empty>")?;
+    } else {
+        for patch_id in &queue.patches {
+            writeln!(writer, "- {patch_id}")?;
+        }
+    }
     Ok(())
 }
 
@@ -1097,6 +1184,7 @@ mod tests {
             IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
         },
         jobs::{BundleSpec, JobRecord, Task},
+        merge_queues::MergeQueue,
         patches::{
             GitOid, ListPatchesResponse, Patch, PatchCommitRange, PatchRecord, Review,
             SearchPatchesQuery, UpsertPatchResponse,
@@ -1841,6 +1929,81 @@ mod tests {
             client.recorded_get_patch_requests().is_empty(),
             "patch should not be fetched when no fields provided"
         );
+    }
+
+    #[tokio::test]
+    async fn merge_queue_fetches_queue_and_writes_json() -> Result<()> {
+        let client = MockMetisClient::default();
+        let repo = sample_repo_name();
+        let branch = "main".to_string();
+        let queued_patch = patch_id("p-queue-001");
+        client.push_merge_queue_response(MergeQueue {
+            patches: vec![queued_patch.clone()],
+        });
+
+        let mut output = Vec::new();
+        merge_queue_with_writer(
+            &client,
+            repo.clone(),
+            branch.clone(),
+            None,
+            false,
+            &mut output,
+        )
+        .await?;
+
+        assert_eq!(
+            client.recorded_merge_queue_requests(),
+            vec![(repo, branch.clone())]
+        );
+        assert_eq!(
+            String::from_utf8(output)?,
+            format!(
+                "{}\n",
+                serde_json::to_string(&MergeQueue {
+                    patches: vec![queued_patch]
+                })?
+            )
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_queue_enqueues_patch_and_pretty_prints() -> Result<()> {
+        let client = MockMetisClient::default();
+        let repo = sample_repo_name();
+        let branch = "feature".to_string();
+        let patch = patch_id("p-queue-002");
+        client.push_enqueue_merge_queue_response(MergeQueue {
+            patches: vec![patch.clone()],
+        });
+
+        let mut output = Vec::new();
+        merge_queue_with_writer(
+            &client,
+            repo.clone(),
+            branch.clone(),
+            Some(patch.clone()),
+            true,
+            &mut output,
+        )
+        .await?;
+
+        assert_eq!(
+            client.recorded_enqueue_merge_queue_requests(),
+            vec![(repo.clone(), branch.clone(), patch.clone())]
+        );
+        assert!(
+            client.recorded_merge_queue_requests().is_empty(),
+            "enqueue should not call fetch endpoint"
+        );
+        assert_eq!(
+            String::from_utf8(output)?,
+            format!("Merge queue for {repo}:{branch}\n- {patch}\n")
+        );
+
+        Ok(())
     }
 
     #[test]
