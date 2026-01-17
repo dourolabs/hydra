@@ -2850,6 +2850,7 @@ dependencies = [
  "metis-common",
  "serde",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
