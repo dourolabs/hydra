@@ -185,7 +185,7 @@ impl IssueDraft {
         let placeholder = if self.editing {
             "Describe the work to create a new issue.\nType to describe the work for a new issue."
         } else {
-            "Describe the work to create a new issue.\nPress Ctrl+N to start editing."
+            "Describe the work to create a new issue.\nPress Alt+N to start editing."
         };
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
@@ -693,12 +693,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     } else if draft.editing {
         Line::from(Span::styled(
-            "Ctrl+Enter to validate. Ctrl+N to stop editing.",
+            "Alt+Enter to validate. Alt+N to stop editing.",
             Style::default().fg(Color::DarkGray),
         ))
     } else {
         Line::from(Span::styled(
-            "Ctrl+N to edit prompt. Ctrl+Enter to validate.",
+            "Alt+N to edit prompt. Alt+Enter to validate.",
             Style::default().fg(Color::DarkGray),
         ))
     };
