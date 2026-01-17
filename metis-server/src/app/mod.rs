@@ -1,9 +1,14 @@
 mod app_state;
 
 use crate::config::{ServiceSection, non_empty};
-use metis_common::jobs::{Bundle, BundleSpec};
-use std::collections::HashMap;
+use metis_common::{
+    PatchId,
+    jobs::{Bundle, BundleSpec},
+    merge_queues::MergeQueue,
+};
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 pub use app_state::{
     AppState, CreateJobError, SetJobStatusError, UpsertIssueError, UpsertPatchError,
@@ -29,10 +34,17 @@ pub struct GitRepository {
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
     pub repositories: HashMap<String, GitRepository>,
+    pub merge_queues: Arc<RwLock<HashMap<String, HashMap<String, MergeQueue>>>>,
 }
 
 #[derive(Debug, Error)]
 pub enum BundleResolutionError {
+    #[error("unknown repository '{0}'")]
+    UnknownRepository(String),
+}
+
+#[derive(Debug, Error)]
+pub enum MergeQueueError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(String),
 }
@@ -70,7 +82,19 @@ impl ServiceState {
             })
             .collect();
 
-        Self { repositories }
+        Self::with_repositories(repositories)
+    }
+
+    pub fn with_repositories(repositories: HashMap<String, GitRepository>) -> Self {
+        let merge_queues = repositories
+            .keys()
+            .map(|name| (name.clone(), HashMap::new()))
+            .collect();
+
+        Self {
+            repositories,
+            merge_queues: Arc::new(RwLock::new(merge_queues)),
+        }
     }
 
     /// Resolve a BundleSpec into a concrete Bundle using server state.
@@ -109,6 +133,51 @@ impl ServiceState {
                     default_image: repo.default_image.clone(),
                 })
             }
+        }
+    }
+
+    pub async fn get_merge_queue(
+        &self,
+        service_repo_name: &str,
+        branch_name: &str,
+    ) -> Result<MergeQueue, MergeQueueError> {
+        self.ensure_repository_exists(service_repo_name)?;
+
+        let mut merge_queues = self.merge_queues.write().await;
+        let repo_queues = merge_queues
+            .entry(service_repo_name.to_string())
+            .or_default();
+        let queue = repo_queues
+            .entry(branch_name.to_string())
+            .or_default()
+            .clone();
+
+        Ok(queue)
+    }
+
+    pub async fn add_patch_to_merge_queue(
+        &self,
+        service_repo_name: &str,
+        branch_name: &str,
+        patch_id: PatchId,
+    ) -> Result<MergeQueue, MergeQueueError> {
+        self.ensure_repository_exists(service_repo_name)?;
+
+        let mut merge_queues = self.merge_queues.write().await;
+        let repo_queues = merge_queues
+            .entry(service_repo_name.to_string())
+            .or_default();
+        let queue = repo_queues.entry(branch_name.to_string()).or_default();
+        queue.patches.push(patch_id);
+
+        Ok(queue.clone())
+    }
+
+    fn ensure_repository_exists(&self, name: &str) -> Result<(), MergeQueueError> {
+        if self.repositories.contains_key(name) {
+            Ok(())
+        } else {
+            Err(MergeQueueError::UnknownRepository(name.to_string()))
         }
     }
 }

@@ -1010,17 +1010,15 @@ mod tests {
     #[test]
     fn select_github_token_uses_service_repo_name() {
         let mut state = test_state();
-        state.service_state = Arc::new(ServiceState {
-            repositories: HashMap::from([(
-                "api".to_string(),
-                GitRepository {
-                    remote_url: "https://github.com/example/api.git".to_string(),
-                    default_branch: None,
-                    github_token: Some("svc-token".to_string()),
-                    default_image: None,
-                },
-            )]),
-        });
+        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+            "api".to_string(),
+            GitRepository {
+                remote_url: "https://github.com/example/api.git".to_string(),
+                default_branch: None,
+                github_token: Some("svc-token".to_string()),
+                default_image: None,
+            },
+        )])));
 
         let token = select_github_token(&state, Some("api"));
 
