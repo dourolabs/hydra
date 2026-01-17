@@ -79,6 +79,21 @@ commands without manual approvals.
 
 ## Local Development
 
+### Running the Dioxus dashboard
+
+The Dioxus CLI is required to run the local dashboard server.
+
+1. **Install the Dioxus CLI**:
+   ```bash
+   cargo install dioxus-cli
+   ```
+
+2. **Start the Dioxus dev server**:
+   ```bash
+   cd metis-dashboard
+   dx serve
+   ```
+
 ### Running metis-server in a kind cluster
 
 For local development with a kind (Kubernetes in Docker) cluster:
