@@ -508,7 +508,9 @@ pub async fn create_patch_artifact_from_repo(
     is_automatic_backup: bool,
     service_repo_name: RepoName,
 ) -> Result<UpsertPatchResponse> {
-    ensure_clean_worktree(repo_root)?;
+    if !is_automatic_backup {
+        ensure_clean_worktree(repo_root)?;
+    }
     ensure_base_is_ancestor(repo_root, &commit_range.base, &commit_range.head)?;
 
     let title = title.trim().to_string();
