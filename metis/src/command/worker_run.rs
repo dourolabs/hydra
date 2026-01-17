@@ -45,7 +45,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
 
     login_codex()?;
     configure_git_repo(&dest)?;
-    let base_commit = resolve_head_oid(&dest)?;
+    let base_commit = resolve_head_oid_if_present(&dest)?;
 
     run_codex(&prompt, &dest, &execution_env)
         .await
@@ -235,27 +235,19 @@ async fn submit_patch_artifact_if_present(
     dest: &Path,
     last_message: &str,
     service_repo_name: &RepoName,
-    base_commit: GitOid,
+    base_commit: Option<GitOid>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
     let is_automatic_backup = true;
 
-    let head_commit = match commit_pending_changes(dest, "Metis patch snapshot")?.or_else(|| {
-        resolve_head_oid(dest)
-            .ok()
-            .filter(|current| current != &base_commit)
-    }) {
-        Some(oid) => oid,
-        None => {
-            println!("No changes detected; skipping patch submission for job '{job}'.");
-            return Ok(());
-        }
+    let Some(base_commit) = base_commit else {
+        println!("No git repository detected; skipping patch submission for job '{job}'.");
+        return Ok(());
     };
-
-    let commit_range = PatchCommitRange {
-        base: base_commit,
-        head: head_commit,
+    let Some(commit_range) = create_patch_from_committed_range(dest, &base_commit)? else {
+        println!("No committed changes detected; skipping patch submission for job '{job}'.");
+        return Ok(());
     };
 
     let response = create_patch_artifact_from_repo(
@@ -309,6 +301,14 @@ fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
     (title, description)
 }
 
+fn resolve_head_oid_if_present(dest: &Path) -> Result<Option<GitOid>> {
+    if !dest.join(".git").exists() {
+        return Ok(None);
+    }
+
+    resolve_head_oid(dest).map(Some)
+}
+
 fn resolve_head_oid(dest: &Path) -> Result<GitOid> {
     let output = Command::new("git")
         .args(["rev-parse", "HEAD^{commit}"])
@@ -323,49 +323,19 @@ fn resolve_head_oid(dest: &Path) -> Result<GitOid> {
     GitOid::from_str(&oid).context("failed to parse HEAD commit oid")
 }
 
-fn commit_pending_changes(dest: &Path, message: &str) -> Result<Option<GitOid>> {
-    stage_pending_changes(dest)?;
-    if !has_staged_changes(dest)? {
+fn create_patch_from_committed_range(
+    dest: &Path,
+    base_commit: &GitOid,
+) -> Result<Option<PatchCommitRange>> {
+    let head_commit = resolve_head_oid(dest)?;
+    if &head_commit == base_commit {
         return Ok(None);
     }
 
-    let commit_status = Command::new("git")
-        .args(["commit", "-m", message])
-        .current_dir(dest)
-        .status()
-        .context("failed to commit repository changes")?;
-    if !commit_status.success() {
-        bail!("git commit failed while preparing patch contents");
-    }
-
-    resolve_head_oid(dest).map(Some)
-}
-
-fn stage_pending_changes(dest: &Path) -> Result<()> {
-    let add_status = Command::new("git")
-        .args(["add", "-A", "--", "."])
-        .current_dir(dest)
-        .status()
-        .context("failed to stage repository changes")?;
-    if !add_status.success() {
-        bail!("git add failed while preparing patch contents");
-    }
-
-    Ok(())
-}
-
-fn has_staged_changes(dest: &Path) -> Result<bool> {
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(dest)
-        .status()
-        .context("failed to check staged changes")?;
-
-    match status.code() {
-        Some(0) => Ok(false),
-        Some(1) => Ok(true),
-        _ => bail!("failed to check staged changes before committing"),
-    }
+    Ok(Some(PatchCommitRange {
+        base: *base_commit,
+        head: head_commit,
+    }))
 }
 
 #[cfg(test)]
@@ -568,130 +538,36 @@ mod tests {
     }
 
     #[test]
-    fn commit_pending_changes_captures_untracked_files() -> Result<()> {
+    fn create_patch_from_committed_range_uses_commit_history() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-
-        setup_git_repo_with_initial_commit(repo_path)?;
-
-        // Create new untracked files
-        std::fs::write(repo_path.join("new_file.txt"), "new content")
-            .context("failed to write new file")?;
-        std::fs::create_dir_all(repo_path.join("src")).context("failed to create src directory")?;
-        std::fs::write(repo_path.join("src").join("main.rs"), "fn main() {}")
-            .context("failed to write main.rs")?;
-
-        let base_commit = resolve_head_oid(repo_path)?;
-        let head_commit = commit_pending_changes(repo_path, "commit new files")?
-            .expect("commit should be created for new files");
-        let patch_content = diff_for_range(
-            repo_path,
-            &PatchCommitRange {
-                base: base_commit,
-                head: head_commit,
-            },
-        )?;
-
-        assert!(
-            patch_content.contains("new_file.txt"),
-            "patch should include new_file.txt"
-        );
-        assert!(
-            patch_content.contains("new content"),
-            "patch should include content of new_file.txt"
-        );
-        assert!(
-            patch_content.contains("src/main.rs"),
-            "patch should include src/main.rs"
-        );
-        assert!(
-            patch_content.contains("fn main() {}"),
-            "patch should include content of src/main.rs"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn commit_pending_changes_includes_hidden_directories() -> Result<()> {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path();
-
-        setup_git_repo_with_initial_commit(repo_path)?;
-
-        // Create files in a hidden directory that should now be included
-        let hidden_dir = repo_path.join(".metis");
-        std::fs::create_dir_all(&hidden_dir).context("failed to create hidden directory")?;
-        std::fs::write(hidden_dir.join("internal_file.txt"), "internal content")
-            .context("failed to write file in hidden directory")?;
-        std::fs::create_dir_all(hidden_dir.join("subdir"))
-            .context("failed to create subdir in hidden directory")?;
-        std::fs::write(
-            hidden_dir.join("subdir").join("nested.txt"),
-            "nested content",
-        )
-        .context("failed to write nested file in hidden directory")?;
-
-        // Also create a regular file that should be included
-        std::fs::write(repo_path.join("regular_file.txt"), "regular content")
-            .context("failed to write regular file")?;
-
-        let base_commit = resolve_head_oid(repo_path)?;
-        let head_commit = commit_pending_changes(repo_path, "commit regular changes")?
-            .expect("commit should be created when repository has changes");
-        let patch_content = diff_for_range(
-            repo_path,
-            &PatchCommitRange {
-                base: base_commit,
-                head: head_commit,
-            },
-        )?;
-
-        assert!(
-            patch_content.contains(".metis/internal_file.txt"),
-            "patch should include .metis/internal_file.txt"
-        );
-        assert!(
-            patch_content.contains("internal content"),
-            "patch should include content from .metis/internal_file.txt"
-        );
-        assert!(
-            patch_content.contains(".metis/subdir/nested.txt"),
-            "patch should include .metis/subdir/nested.txt"
-        );
-        assert!(
-            patch_content.contains("nested content"),
-            "patch should include content from .metis/subdir/nested.txt"
-        );
-
-        // Verify regular file is included
-        assert!(
-            patch_content.contains("regular_file.txt"),
-            "patch should include regular_file.txt"
-        );
-        assert!(
-            patch_content.contains("regular content"),
-            "patch should include content of regular_file.txt"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn commit_pending_changes_returns_none_when_clean() -> Result<()> {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path();
-
-        setup_git_repo_with_initial_commit(repo_path)?;
+        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
         let base_commit = resolve_head_oid(repo_path)?;
 
-        let patch_content = commit_pending_changes(repo_path, "noop commit")?;
+        std::fs::write(repo_path.join("README.md"), "committed change\n")
+            .context("failed to update README.md")?;
+        Command::new("git")
+            .args(["-C", &repo_str, "commit", "-am", "commit change"])
+            .status()
+            .context("failed to commit README change")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
-        assert!(patch_content.is_none(), "expected no commit for clean tree");
-        assert_eq!(
-            resolve_head_oid(repo_path)?,
-            base_commit,
-            "HEAD should remain unchanged when no commit is created"
+        std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")
+            .context("failed to write untracked file")?;
+
+        let commit_range = create_patch_from_committed_range(repo_path, &base_commit)?
+            .expect("commit range should exist when new commits are present");
+        let patch_content = diff_for_range(repo_path, &commit_range)?;
+
+        assert!(
+            patch_content.contains("committed change"),
+            "patch should include committed changes"
+        );
+        assert!(
+            !patch_content.contains("untracked.txt"),
+            "patch should ignore untracked working tree content"
         );
 
         Ok(())
@@ -701,10 +577,17 @@ mod tests {
     async fn submit_patch_artifact_if_present_creates_patch() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        setup_git_repo_with_initial_commit(repo_path)?;
+        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
         let base_commit = resolve_head_oid(repo_path)?;
         std::fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
+        Command::new("git")
+            .args(["-C", &repo_str, "commit", "-am", "update README"])
+            .status()
+            .context("failed to commit README update")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
         let output_dir = repo_path.join(constants::OUTPUT_DIR);
         std::fs::create_dir_all(&output_dir)
@@ -728,7 +611,7 @@ mod tests {
             repo_path,
             "final output line",
             &repo_name,
-            base_commit,
+            Some(base_commit),
         )
         .await?;
 
@@ -771,7 +654,7 @@ mod tests {
             repo_path,
             "done",
             &repo_name,
-            base_commit,
+            Some(base_commit),
         )
         .await?;
 
