@@ -1,12 +1,14 @@
 mod app_state;
 
 use crate::config::{ServiceSection, non_empty};
+use git2::Repository;
 use metis_common::{
     PatchId, RepoName,
     jobs::{Bundle, BundleSpec},
     merge_queues::MergeQueue,
 };
 use std::{collections::HashMap, sync::Arc};
+use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -30,6 +32,19 @@ pub struct GitRepository {
     pub default_image: Option<String>,
 }
 
+#[allow(dead_code)]
+pub struct ConnectedRepository {
+    repository: Repository,
+    _workdir: TempDir,
+}
+
+impl ConnectedRepository {
+    #[allow(dead_code)]
+    pub fn repository(&self) -> &Repository {
+        &self.repository
+    }
+}
+
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
@@ -47,6 +62,29 @@ pub enum BundleResolutionError {
 pub enum MergeQueueError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(RepoName),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Error)]
+pub enum GitRepositoryError {
+    #[error("failed to allocate working directory for repository")]
+    TempDir(#[source] std::io::Error),
+    #[error(transparent)]
+    Git(#[from] git2::Error),
+}
+
+#[allow(dead_code)]
+impl GitRepository {
+    /// Clone the configured remote URL into a temporary workspace and return a git2 repository handle.
+    pub fn connect(&self) -> Result<ConnectedRepository, GitRepositoryError> {
+        let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
+        let repository = Repository::clone(&self.remote_url, workdir.path())?;
+
+        Ok(ConnectedRepository {
+            repository,
+            _workdir: workdir,
+        })
+    }
 }
 
 impl ServiceState {
@@ -175,5 +213,79 @@ impl ServiceState {
         } else {
             Err(MergeQueueError::UnknownRepository(name.clone()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GitRepository;
+    use anyhow::Result;
+    use git2::{Commit, Oid, Repository, Signature};
+    use std::{fs, path::Path};
+    use tempfile::TempDir;
+
+    #[test]
+    fn connect_returns_git2_repository_for_remote_url() -> Result<()> {
+        let remote_dir = TempDir::new()?;
+        let remote_repo = Repository::init(remote_dir.path())?;
+        let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
+
+        let repository = GitRepository {
+            remote_url: remote_dir
+                .path()
+                .to_str()
+                .expect("tempdir path is valid utf-8")
+                .to_string(),
+            default_branch: None,
+            github_token: None,
+            default_image: None,
+        };
+
+        let connected = repository.connect()?;
+        let repo = connected.repository();
+
+        assert_eq!(repo.head()?.target(), Some(expected_head));
+        let origin = repo.find_remote("origin")?;
+        assert_eq!(origin.url(), Some(remote_dir.path().to_str().unwrap()));
+
+        Ok(())
+    }
+
+    fn commit_file(repo: &Repository, name: &str, contents: &str, message: &str) -> Result<Oid> {
+        let signature = Signature::now("Tester", "tester@example.com")?;
+        let workdir = repo
+            .workdir()
+            .expect("repository should be a working tree")
+            .to_path_buf();
+        let relative = Path::new(name);
+        let full_path = workdir.join(relative);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&full_path, contents)?;
+
+        let mut index = repo.index()?;
+        index.add_path(relative)?;
+        let tree_id = index.write_tree()?;
+        let tree = repo.find_tree(tree_id)?;
+
+        let head_commit = repo.head().ok().and_then(|reference| {
+            reference
+                .target()
+                .and_then(|target| repo.find_commit(target).ok())
+        });
+
+        let parents: Vec<&Commit> = head_commit.iter().collect();
+
+        let commit_id = repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents,
+        )?;
+
+        Ok(commit_id)
     }
 }
