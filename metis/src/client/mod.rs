@@ -13,11 +13,12 @@ use metis_common::{
         SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
+    merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    IssueId, PatchId, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
 use serde::Deserialize;
@@ -70,6 +71,13 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
+    async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
+    async fn enqueue_merge_patch(
+        &self,
+        repo_name: &RepoName,
+        branch: &str,
+        patch_id: &PatchId,
+    ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
 }
 
@@ -466,6 +474,58 @@ impl MetisClient {
             .context("failed to decode list patches response")
     }
 
+    /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
+    pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
+        let path = format!(
+            "/v1/merge-queues/{}/{}/{}/patches",
+            repo_name.organization, repo_name.repo, branch
+        );
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch merge queue")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching merge queue")?;
+
+        response
+            .json::<MergeQueue>()
+            .await
+            .context("failed to decode merge queue response")
+    }
+
+    /// Call `POST /v1/merge-queues/:organization/:repo/:branch/patches` to enqueue a patch.
+    pub async fn enqueue_merge_patch(
+        &self,
+        repo_name: &RepoName,
+        branch: &str,
+        patch_id: &PatchId,
+    ) -> Result<MergeQueue> {
+        let path = format!(
+            "/v1/merge-queues/{}/{}/{}/patches",
+            repo_name.organization, repo_name.repo, branch
+        );
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .post(url)
+            .json(&EnqueueMergePatchRequest {
+                patch_id: patch_id.clone(),
+            })
+            .send()
+            .await
+            .context("failed to submit enqueue merge patch request")?
+            .error_for_status()
+            .context("metis-server returned an error while enqueuing merge patch")?;
+
+        response
+            .json::<MergeQueue>()
+            .await
+            .context("failed to decode enqueue merge patch response")
+    }
+
     /// Call `GET /v1/agents` to list available assignee agents.
     pub async fn list_agents(&self) -> Result<ListAgentsResponse> {
         let url = self.endpoint("/v1/agents")?;
@@ -667,6 +727,19 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
         MetisClient::list_patches(self, query).await
+    }
+
+    async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
+        MetisClient::get_merge_queue(self, repo_name, branch).await
+    }
+
+    async fn enqueue_merge_patch(
+        &self,
+        repo_name: &RepoName,
+        branch: &str,
+        patch_id: &PatchId,
+    ) -> Result<MergeQueue> {
+        MetisClient::enqueue_merge_patch(self, repo_name, branch, patch_id).await
     }
 
     async fn list_agents(&self) -> Result<ListAgentsResponse> {
