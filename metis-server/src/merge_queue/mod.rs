@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use git2::{Commit, MergeOptions, Oid, Repository, Signature, Time};
+use metis_common::patches::PatchCommitRange;
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -44,7 +45,6 @@ impl std::fmt::Debug for PatchEntry {
 }
 
 pub struct MergeQueueImpl {
-    repo: Repository,
     base_ref: String,
     base: Oid,
     tip: Oid,
@@ -60,7 +60,7 @@ pub enum MergeQueueError {
 }
 
 impl MergeQueueImpl {
-    pub fn new(repo: Repository, base_ref: impl Into<String>) -> Result<Self, git2::Error> {
+    pub fn new(repo: &Repository, base_ref: impl Into<String>) -> Result<Self, git2::Error> {
         let base_ref = base_ref.into();
         let base = {
             let base_commit = repo.revparse_single(&base_ref)?.peel_to_commit()?;
@@ -68,7 +68,6 @@ impl MergeQueueImpl {
         };
 
         Ok(Self {
-            repo,
             base_ref,
             base,
             tip: base,
@@ -92,17 +91,19 @@ impl MergeQueueImpl {
         &self.patches
     }
 
-    pub fn try_advance(
+    pub fn try_append(
         &mut self,
+        repo: &Repository,
         commit: Oid,
         summary: Option<String>,
         author: SignatureInfo,
         committer: SignatureInfo,
     ) -> Result<(), MergeQueueError> {
-        let patch_commit = self.repo.find_commit(commit)?;
+        let patch_commit = repo.find_commit(commit)?;
         let author_signature = author.to_signature()?;
         let committer_signature = committer.to_signature()?;
-        let new_tip = self.cherry_pick_patch(
+        let new_tip = Self::cherry_pick_patch(
+            repo,
             self.tip,
             summary.as_deref(),
             &author_signature,
@@ -123,17 +124,40 @@ impl MergeQueueImpl {
         Ok(())
     }
 
-    pub fn try_append(
+    pub fn try_squash_append(
         &mut self,
-        commit: Oid,
-        summary: Option<String>,
-        author: SignatureInfo,
-        committer: SignatureInfo,
+        repo: &Repository,
+        commit_range: PatchCommitRange,
     ) -> Result<(), MergeQueueError> {
-        self.try_advance(commit, summary, author, committer)
+        let base_commit = repo.find_commit(commit_range.base.into())?;
+        let head_commit = repo.find_commit(commit_range.head.into())?;
+        let tree = head_commit.tree()?;
+        let author = SignatureInfo::from_signature(&head_commit.author());
+        let committer = SignatureInfo::from_signature(&head_commit.committer());
+        let author_signature = author.to_signature()?;
+        let committer_signature = committer.to_signature()?;
+        let message = head_commit
+            .summary()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("Squash {}..{}", commit_range.base, commit_range.head));
+
+        let squashed_commit = repo.commit(
+            None,
+            &author_signature,
+            &committer_signature,
+            &message,
+            &tree,
+            &[&base_commit],
+        )?;
+
+        self.try_append(repo, squashed_commit, Some(message), author, committer)
     }
 
-    pub fn evict(&mut self, commit_id: Oid) -> Result<Vec<PatchEntry>, MergeQueueError> {
+    pub fn evict(
+        &mut self,
+        repo: &Repository,
+        commit_id: Oid,
+    ) -> Result<Vec<PatchEntry>, MergeQueueError> {
         if !self.patches.iter().any(|entry| entry.commit == commit_id) {
             return Ok(Vec::new());
         }
@@ -156,10 +180,11 @@ impl MergeQueueImpl {
         }
 
         for mut patch in existing_iter {
-            let patch_commit = self.repo.find_commit(patch.commit)?;
+            let patch_commit = repo.find_commit(patch.commit)?;
             let author_signature = patch.author.to_signature()?;
             let committer_signature = patch.committer.to_signature()?;
-            match self.cherry_pick_patch(
+            match Self::cherry_pick_patch(
+                repo,
                 current_tip,
                 patch.summary.as_deref(),
                 &author_signature,
@@ -189,33 +214,30 @@ impl MergeQueueImpl {
     }
 
     fn cherry_pick_patch(
-        &self,
+        repo: &Repository,
         current_tip: Oid,
         summary: Option<&str>,
         author: &Signature<'_>,
         committer: &Signature<'_>,
         patch_commit: &Commit<'_>,
     ) -> Result<Oid, MergeQueueError> {
-        let tip_commit = self.repo.find_commit(current_tip)?;
+        let tip_commit = repo.find_commit(current_tip)?;
         let merge_options = MergeOptions::new();
         let mut index =
-            self.repo
-                .cherrypick_commit(patch_commit, &tip_commit, 0, Some(&merge_options))?;
+            repo.cherrypick_commit(patch_commit, &tip_commit, 0, Some(&merge_options))?;
 
         if index.has_conflicts() {
             return Err(MergeQueueError::Unmergeable(patch_commit.id()));
         }
 
-        let tree_oid = index.write_tree_to(&self.repo)?;
-        let tree = self.repo.find_tree(tree_oid)?;
+        let tree_oid = index.write_tree_to(repo)?;
+        let tree = repo.find_tree(tree_oid)?;
         let message = summary
             .map(str::to_owned)
             .or_else(|| patch_commit.summary().map(str::to_owned))
             .unwrap_or_else(|| format!("Cherry-pick {} onto {}", patch_commit.id(), current_tip));
 
-        let new_tip = self
-            .repo
-            .commit(None, author, committer, &message, &tree, &[&tip_commit])?;
+        let new_tip = repo.commit(None, author, committer, &message, &tree, &[&tip_commit])?;
 
         Ok(new_tip)
     }
@@ -226,6 +248,7 @@ mod tests {
     use super::{MergeQueueError, MergeQueueImpl, SignatureInfo};
     use anyhow::Result;
     use git2::{Oid, Repository, ResetType, Signature};
+    use metis_common::patches::{GitOid, PatchCommitRange};
     use std::{fs, path::Path};
     use tempfile::TempDir;
 
@@ -291,12 +314,19 @@ mod tests {
         let patch1 = patches[0];
         let patch2 = patches[1];
 
-        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
-        queue.try_append(patch1, Some("first patch".to_string()), author1, committer1)?;
+        queue.try_append(
+            &repo,
+            patch1,
+            Some("first patch".to_string()),
+            author1,
+            committer1,
+        )?;
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
-        queue.try_append(patch2, None, author2, committer2)?;
+        queue.try_append(&repo, patch2, None, author2, committer2)?;
 
         assert_eq!(queue.patches().len(), 2);
         assert!(
@@ -338,14 +368,16 @@ mod tests {
             .pop()
             .unwrap();
 
-        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
-        queue.try_append(patch1, None, author1, committer1)?;
+        queue.try_append(&repo, patch1, None, author1, committer1)?;
         let tip_after_first = queue.tip();
 
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
         let result = queue.try_append(
+            &repo,
             patch2,
             Some("conflicting patch".to_string()),
             author2,
@@ -358,6 +390,35 @@ mod tests {
         ));
         assert_eq!(queue.tip(), tip_after_first);
         assert_eq!(queue.patches().len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn try_squash_append_squashes_range_into_queue() -> Result<()> {
+        let scripted = ScriptedRepo::new("file.txt:initial\n")?;
+        let (base, _) = scripted.base_from(["file.txt:base\n"])?;
+
+        let commits = scripted.commit_chain(
+            base,
+            ["file.txt:feature start\n", "file.txt:feature refined\n"],
+        )?;
+        let head = *commits.last().expect("commit chain non-empty");
+        let range = PatchCommitRange {
+            base: GitOid(base),
+            head: GitOid(head),
+        };
+
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+
+        queue.try_squash_append(&repo, range)?;
+
+        assert_eq!(queue.patches().len(), 1);
+        assert_eq!(
+            file_at_commit(scripted.repo(), queue.tip(), "file.txt")?,
+            "feature refined\n"
+        );
 
         Ok(())
     }
@@ -379,10 +440,12 @@ mod tests {
         )?;
         let hotfix = scripted.commit_chain(base, ["main.txt:base v3 hotfix\n"])?;
 
-        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(scripted.repo(), feature_commits[0])?;
         queue.try_append(
+            &repo,
             feature_commits[0],
             Some("feature kickoff".to_string()),
             author1,
@@ -390,6 +453,7 @@ mod tests {
         )?;
         let (author2, committer2) = commit_signatures(scripted.repo(), feature_commits[1])?;
         queue.try_append(
+            &repo,
             feature_commits[1],
             Some("feature refinement".to_string()),
             author2,
@@ -397,6 +461,7 @@ mod tests {
         )?;
         let (author3, committer3) = commit_signatures(scripted.repo(), hotfix[0])?;
         queue.try_append(
+            &repo,
             hotfix[0],
             Some("stability hotfix".to_string()),
             author3,
@@ -429,19 +494,27 @@ mod tests {
             .pop()
             .unwrap();
 
-        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
-        queue.try_append(patch1, Some("kept patch".to_string()), author1, committer1)?;
+        queue.try_append(
+            &repo,
+            patch1,
+            Some("kept patch".to_string()),
+            author1,
+            committer1,
+        )?;
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
         queue.try_append(
+            &repo,
             patch2,
             Some("dependent patch".to_string()),
             author2,
             committer2,
         )?;
 
-        let evicted = queue.evict(patch1)?;
+        let evicted = queue.evict(&repo, patch1)?;
 
         assert_eq!(evicted.len(), 2);
         assert!(evicted.iter().any(|entry| entry.commit == patch1));
@@ -470,11 +543,13 @@ mod tests {
             .pop()
             .unwrap();
 
-        let mut queue = MergeQueueImpl::new(scripted.queue_repo()?, BASE_REF)?;
+        let repo = scripted.queue_repo()?;
+        let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let (feature_author, feature_committer) =
             commit_signatures(scripted.repo(), feature_patch)?;
         queue.try_append(
+            &repo,
             feature_patch,
             Some("early queue patch".to_string()),
             feature_author,
@@ -482,6 +557,7 @@ mod tests {
         )?;
         let (hotfix_author, hotfix_committer) = commit_signatures(scripted.repo(), hotfix)?;
         queue.try_append(
+            &repo,
             hotfix,
             Some("middle hotfix".to_string()),
             hotfix_author,
@@ -490,13 +566,14 @@ mod tests {
         let (follow_author, follow_committer) =
             commit_signatures(scripted.repo(), hotfix_follow_up)?;
         queue.try_append(
+            &repo,
             hotfix_follow_up,
             Some("dependent follow up".to_string()),
             follow_author,
             follow_committer,
         )?;
 
-        let evicted = queue.evict(hotfix)?;
+        let evicted = queue.evict(&repo, hotfix)?;
 
         assert_eq!(evicted.len(), 2);
         assert!(evicted.iter().any(|entry| entry.commit == hotfix));
