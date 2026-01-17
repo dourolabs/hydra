@@ -3,15 +3,44 @@
 use git2::{Commit, MergeOptions, Oid, Repository, Signature};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PatchEntry {
     pub commit: Oid,
+    pub queued_commit: Option<Oid>,
     pub summary: Option<String>,
+    pub author: Signature<'static>,
+    pub committer: Signature<'static>,
+}
+
+impl std::fmt::Debug for PatchEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PatchEntry")
+            .field("commit", &self.commit)
+            .field("queued_commit", &self.queued_commit)
+            .field("summary", &self.summary)
+            .finish()
+    }
+}
+
+impl PatchEntry {
+    pub fn from_commit(
+        repo: &Repository,
+        commit: Oid,
+        summary: Option<String>,
+    ) -> Result<Self, git2::Error> {
+        let commit = repo.find_commit(commit)?;
+        Ok(Self {
+            commit: commit.id(),
+            queued_commit: None,
+            summary,
+            author: commit.author().to_owned(),
+            committer: commit.committer().to_owned(),
+        })
+    }
 }
 
 pub struct MergeQueueImpl {
     repo: Repository,
-    signature: Signature<'static>,
     base_ref: String,
     base: Oid,
     tip: Oid,
@@ -33,11 +62,9 @@ impl MergeQueueImpl {
             let base_commit = repo.revparse_single(&base_ref)?.peel_to_commit()?;
             base_commit.id()
         };
-        let signature = Signature::now("metis-merge-queue", "merge-queue@metis.local")?;
 
         Ok(Self {
             repo,
-            signature,
             base_ref,
             base,
             tip: base,
@@ -61,10 +88,11 @@ impl MergeQueueImpl {
         &self.patches
     }
 
-    pub fn append(&mut self, patch: PatchEntry) -> Result<(), MergeQueueError> {
+    pub fn try_append(&mut self, mut patch: PatchEntry) -> Result<(), MergeQueueError> {
         let patch_commit = self.repo.find_commit(patch.commit)?;
-        let new_tip = self.merge_patch(self.tip, &patch_commit)?;
+        let new_tip = self.cherry_pick_patch(self.tip, &patch, &patch_commit)?;
 
+        patch.queued_commit = Some(new_tip);
         self.tip = new_tip;
         self.patches.push(patch);
 
@@ -77,19 +105,27 @@ impl MergeQueueImpl {
         }
 
         let existing = std::mem::take(&mut self.patches);
-        let mut current_tip = self.base;
-        let mut kept = Vec::new();
+        let mut kept: Vec<PatchEntry> = Vec::new();
         let mut evicted = Vec::new();
 
-        for patch in existing {
+        let mut existing_iter = existing.into_iter().peekable();
+        let mut current_tip = self.base;
+
+        for patch in existing_iter.by_ref() {
             if patch.commit == commit_id {
                 evicted.push(patch);
-                continue;
+                break;
             }
 
+            current_tip = patch.queued_commit.unwrap_or(current_tip);
+            kept.push(patch);
+        }
+
+        for mut patch in existing_iter {
             let patch_commit = self.repo.find_commit(patch.commit)?;
-            match self.merge_patch(current_tip, &patch_commit) {
+            match self.cherry_pick_patch(current_tip, &patch, &patch_commit) {
                 Ok(new_tip) => {
+                    patch.queued_commit = Some(new_tip);
                     current_tip = new_tip;
                     kept.push(patch);
                 }
@@ -110,16 +146,17 @@ impl MergeQueueImpl {
         Ok(evicted)
     }
 
-    fn merge_patch(
+    fn cherry_pick_patch(
         &self,
         current_tip: Oid,
+        patch: &PatchEntry,
         patch_commit: &Commit<'_>,
     ) -> Result<Oid, MergeQueueError> {
         let tip_commit = self.repo.find_commit(current_tip)?;
         let merge_options = MergeOptions::new();
-        let mut index = self
-            .repo
-            .merge_commits(&tip_commit, patch_commit, Some(&merge_options))?;
+        let mut index =
+            self.repo
+                .cherrypick_commit(patch_commit, &tip_commit, 0, Some(&merge_options))?;
 
         if index.has_conflicts() {
             return Err(MergeQueueError::Unmergeable(patch_commit.id()));
@@ -127,15 +164,19 @@ impl MergeQueueImpl {
 
         let tree_oid = index.write_tree_to(&self.repo)?;
         let tree = self.repo.find_tree(tree_oid)?;
-        let message = format!("Merge {} into {}", patch_commit.id(), current_tip);
+        let message = patch
+            .summary
+            .clone()
+            .or_else(|| patch_commit.summary().map(str::to_owned))
+            .unwrap_or_else(|| format!("Cherry-pick {} onto {}", patch_commit.id(), current_tip));
 
         let new_tip = self.repo.commit(
             None,
-            &self.signature,
-            &self.signature,
+            &patch.author,
+            &patch.committer,
             &message,
             &tree,
-            &[&tip_commit, patch_commit],
+            &[&tip_commit],
         )?;
 
         Ok(new_tip)
@@ -164,18 +205,30 @@ mod tests {
         let queue_repo = Repository::open(tempdir.path())?;
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
-        queue.append(PatchEntry {
-            commit: patch1,
-            summary: Some("first patch".to_string()),
-        })?;
-        queue.append(PatchEntry {
-            commit: patch2,
-            summary: None,
-        })?;
+        queue.try_append(PatchEntry::from_commit(
+            &repo,
+            patch1,
+            Some("first patch".to_string()),
+        )?)?;
+        queue.try_append(PatchEntry::from_commit(&repo, patch2, None)?)?;
 
         assert_eq!(queue.patches().len(), 2);
+        assert!(
+            queue
+                .patches()
+                .iter()
+                .all(|entry| entry.queued_commit.is_some())
+        );
         assert_eq!(queue.base(), base_commit);
         assert_ne!(queue.tip(), queue.base());
+        assert_eq!(
+            queue.tip(),
+            queue
+                .patches()
+                .last()
+                .and_then(|patch| patch.queued_commit)
+                .unwrap()
+        );
         assert_eq!(file_at_commit(&repo, queue.tip())?, "from patch2\n");
 
         Ok(())
@@ -192,16 +245,14 @@ mod tests {
         let queue_repo = Repository::open(tempdir.path())?;
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
-        queue.append(PatchEntry {
-            commit: patch1,
-            summary: None,
-        })?;
+        queue.try_append(PatchEntry::from_commit(&repo, patch1, None)?)?;
         let tip_after_first = queue.tip();
 
-        let result = queue.append(PatchEntry {
-            commit: patch2,
-            summary: Some("conflicting patch".to_string()),
-        });
+        let result = queue.try_append(PatchEntry::from_commit(
+            &repo,
+            patch2,
+            Some("conflicting patch".to_string()),
+        )?);
 
         assert!(matches!(
             result,
@@ -230,14 +281,16 @@ mod tests {
         let queue_repo = Repository::open(tempdir.path())?;
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
-        queue.append(PatchEntry {
-            commit: patch1,
-            summary: Some("kept patch".to_string()),
-        })?;
-        queue.append(PatchEntry {
-            commit: patch2,
-            summary: Some("dependent patch".to_string()),
-        })?;
+        queue.try_append(PatchEntry::from_commit(
+            &repo,
+            patch1,
+            Some("kept patch".to_string()),
+        )?)?;
+        queue.try_append(PatchEntry::from_commit(
+            &repo,
+            patch2,
+            Some("dependent patch".to_string()),
+        )?)?;
 
         let evicted = queue.evict(patch1)?;
 
