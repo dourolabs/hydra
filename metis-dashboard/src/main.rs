@@ -1,6 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 mod client;
 
+mod url;
+
 #[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case)]
 mod web_app {

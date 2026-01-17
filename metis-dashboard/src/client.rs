@@ -1,7 +1,11 @@
+use crate::url::join_api_url;
 use gloo_net::http::Request;
-use metis_common::{agents::ListAgentsResponse, jobs::ListJobsResponse};
+use metis_common::{
+    agents::ListAgentsResponse, constants::ENV_METIS_DASHBOARD_API_URL, jobs::ListJobsResponse,
+};
 use serde::de::DeserializeOwned;
 use std::fmt;
+use web_sys::window;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -35,7 +39,8 @@ pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
 }
 
 async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
-    let response = Request::get(path)
+    let url = api_url(path)?;
+    let response = Request::get(&url)
         .send()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))?;
@@ -51,4 +56,26 @@ async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
         .json::<T>()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))
+}
+
+fn api_url(path: &str) -> Result<String, ClientError> {
+    let base_url = api_base_url()?;
+    Ok(join_api_url(&base_url, path))
+}
+
+fn api_base_url() -> Result<String, ClientError> {
+    if let Some(url) = option_env!("METIS_DASHBOARD_API_URL") {
+        return Ok(url.to_string());
+    }
+
+    let window = window().ok_or_else(|| {
+        ClientError::Request("window unavailable for dashboard base URL".to_string())
+    })?;
+    let origin = window.location().origin().map_err(|err| {
+        ClientError::Request(format!(
+            "unable to read window origin; set {ENV_METIS_DASHBOARD_API_URL}: {err:?}"
+        ))
+    })?;
+
+    Ok(origin)
 }
