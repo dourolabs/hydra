@@ -8,6 +8,7 @@ metis-common = { path = "../metis-common" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 dioxus = { version = "0.7.2", features = ["web"] }
-dioxus-web = "0.7.2"
+getrandom = { version = "0.2.16", features = ["js"] }
 gloo-net = { version = "0.5", features = ["http"] }
 serde = { version = "1", features = ["derive"] }
+wasm-bindgen = "=0.2.106"

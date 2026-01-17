@@ -13,6 +13,8 @@ mod web_app {
     };
     use std::collections::{BTreeSet, HashMap};
 
+    static MAIN_CSS: Asset = asset!("/assets/app.css");
+
     pub fn launch() {
         dioxus::launch(App);
     }
@@ -49,7 +51,7 @@ mod web_app {
         };
 
         rsx!(
-            style { include_str!("../assets/app.css") }
+            document::Stylesheet { href: MAIN_CSS }
             div { class: "app-shell",
                 header { class: "app-header",
                     div { class: "brand",
