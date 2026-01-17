@@ -3,6 +3,9 @@ name = "metis-server"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+test-utils = ["reqwest"]
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
@@ -24,6 +27,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 octocrab = "0.49"
 git2 = "0.19"
 tempfile = "3.14"
+reqwest = { version = "0.12", features = ["json"], optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
