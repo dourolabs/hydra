@@ -1,7 +1,7 @@
 use crate::client::MetisClientInterface;
 use anyhow::Result;
 use clap::Subcommand;
-use metis_common::{IssueId, TaskId};
+use metis_common::{constants::ENV_OPENAI_API_KEY, IssueId, TaskId};
 use std::path::PathBuf;
 
 pub mod create;
@@ -85,6 +85,9 @@ pub enum JobsCommand {
         /// Destination directory where the context will be extracted/copied.
         #[arg(value_name = "PATH")]
         path: PathBuf,
+        /// API key to pass to Codex (defaults to OPENAI_API_KEY).
+        #[arg(long = "openai-api-key", value_name = "KEY", env = ENV_OPENAI_API_KEY)]
+        openai_api_key: Option<String>,
     },
 }
 
@@ -105,9 +108,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
         } => list::run(client, limit, spawned_from, json).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
         JobsCommand::Kill { job } => kill::run(client, job).await?,
-        JobsCommand::WorkerRun { job, path } => {
-            crate::command::worker_run::run(client, job, path).await?
-        }
+        JobsCommand::WorkerRun {
+            job,
+            path,
+            openai_api_key,
+        } => crate::command::worker_run::run(client, job, path, openai_api_key).await?,
     }
 
     Ok(())

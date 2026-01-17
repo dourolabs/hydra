@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long, value_name = "FILE", global = true)]
     pub config: Option<PathBuf>,
 
+    /// Override the Metis server URL (also via METIS_SERVER_URL).
+    #[arg(long = "server-url", value_name = "URL", env = ENV_METIS_SERVER_URL, global = true)]
+    pub server_url: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -125,18 +129,24 @@ async fn dispatch(
 }
 
 fn load_app_config(cli: &Cli) -> Result<AppConfig> {
-    match env::var(ENV_METIS_SERVER_URL) {
-        Ok(url) if !url.trim().is_empty() => Ok(AppConfig {
-            server: config::ServerSection { url },
-        }),
-        _ => {
-            let config_path = cli
-                .config
-                .clone()
-                .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
-            AppConfig::load(&config_path)
-        }
+    if let Some(url) = cli
+        .server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    {
+        return Ok(AppConfig {
+            server: config::ServerSection {
+                url: url.to_string(),
+            },
+        });
     }
+
+    let config_path = cli
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
+    AppConfig::load(&config_path)
 }
 
 #[cfg(test)]
@@ -154,7 +164,7 @@ mod cli_routing_tests {
 
         match cli.command {
             Commands::Jobs {
-                command: JobsCommand::WorkerRun { job, path },
+                command: JobsCommand::WorkerRun { job, path, .. },
             } => {
                 assert_eq!(job, task_id(job_id));
                 assert_eq!(path, PathBuf::from("/tmp/output"));
