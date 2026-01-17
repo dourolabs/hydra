@@ -33,14 +33,13 @@ impl TestEnvironment {
 
         let mut words = Vec::new();
         for token in tokens {
-            match token {
-                // Extract word tokens (command and arguments, including quoted strings)
-                // brush-parser handles quoted strings as Word tokens with proper escaping
-                Token::Word(word, _) => words.push(word.to_string()),
-                // Skip operators, redirects, variables, and other control tokens
-                // We only care about the command and its arguments
-                _ => {}
+            // Extract word tokens (command and arguments, including quoted strings)
+            // brush-parser handles quoted strings as Word tokens with proper escaping
+            if let Token::Word(word, _) = token {
+                words.push(word.to_string());
             }
+            // Skip operators, redirects, variables, and other control tokens
+            // We only care about the command and its arguments
         }
 
         Ok(words)
