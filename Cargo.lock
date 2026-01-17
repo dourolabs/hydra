@@ -2855,6 +2855,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "metis-integration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "metis",
+ "metis-common",
+ "metis-server",
+ "tokio",
+]
+
+[[package]]
 name = "metis-server"
 version = "0.1.0"
 dependencies = [

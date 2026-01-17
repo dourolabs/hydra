@@ -7,9 +7,9 @@ mod kubernetes_job_engine;
 pub use kubernetes_job_engine::KubernetesJobEngine;
 pub use metis_common::TaskId;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 mod mock;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub use mock::MockJobEngine;
 
 /// Represents the lifecycle state of a Metis job.
