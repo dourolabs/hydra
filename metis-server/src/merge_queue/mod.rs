@@ -1,15 +1,36 @@
 #![allow(dead_code)]
 
-use git2::{Commit, MergeOptions, Oid, Repository, Signature};
+use git2::{Commit, MergeOptions, Oid, Repository, Signature, Time};
 use thiserror::Error;
+
+#[derive(Clone, Debug)]
+pub struct SignatureInfo {
+    pub name: String,
+    pub email: String,
+    pub time: Time,
+}
+
+impl SignatureInfo {
+    pub fn from_signature(signature: &Signature<'_>) -> Self {
+        Self {
+            name: signature.name().unwrap_or_default().to_string(),
+            email: signature.email().unwrap_or_default().to_string(),
+            time: signature.when(),
+        }
+    }
+
+    pub fn to_signature(&self) -> Result<Signature<'static>, git2::Error> {
+        Signature::new(&self.name, &self.email, &self.time)
+    }
+}
 
 #[derive(Clone)]
 pub struct PatchEntry {
     pub commit: Oid,
     pub queued_commit: Oid,
     pub summary: Option<String>,
-    pub author: Signature<'static>,
-    pub committer: Signature<'static>,
+    pub author: SignatureInfo,
+    pub committer: SignatureInfo,
 }
 
 impl std::fmt::Debug for PatchEntry {
@@ -71,19 +92,21 @@ impl MergeQueueImpl {
         &self.patches
     }
 
-    pub fn try_append(
+    pub fn try_advance(
         &mut self,
         commit: Oid,
         summary: Option<String>,
-        author: Signature<'static>,
-        committer: Signature<'static>,
+        author: SignatureInfo,
+        committer: SignatureInfo,
     ) -> Result<(), MergeQueueError> {
         let patch_commit = self.repo.find_commit(commit)?;
+        let author_signature = author.to_signature()?;
+        let committer_signature = committer.to_signature()?;
         let new_tip = self.cherry_pick_patch(
             self.tip,
             summary.as_deref(),
-            &author,
-            &committer,
+            &author_signature,
+            &committer_signature,
             &patch_commit,
         )?;
 
@@ -98,6 +121,16 @@ impl MergeQueueImpl {
         self.patches.push(patch);
 
         Ok(())
+    }
+
+    pub fn try_append(
+        &mut self,
+        commit: Oid,
+        summary: Option<String>,
+        author: SignatureInfo,
+        committer: SignatureInfo,
+    ) -> Result<(), MergeQueueError> {
+        self.try_advance(commit, summary, author, committer)
     }
 
     pub fn evict(&mut self, commit_id: Oid) -> Result<Vec<PatchEntry>, MergeQueueError> {
@@ -124,11 +157,13 @@ impl MergeQueueImpl {
 
         for mut patch in existing_iter {
             let patch_commit = self.repo.find_commit(patch.commit)?;
+            let author_signature = patch.author.to_signature()?;
+            let committer_signature = patch.committer.to_signature()?;
             match self.cherry_pick_patch(
                 current_tip,
                 patch.summary.as_deref(),
-                &patch.author,
-                &patch.committer,
+                &author_signature,
+                &committer_signature,
                 &patch_commit,
             ) {
                 Ok(new_tip) => {
@@ -157,8 +192,8 @@ impl MergeQueueImpl {
         &self,
         current_tip: Oid,
         summary: Option<&str>,
-        author: &Signature<'static>,
-        committer: &Signature<'static>,
+        author: &Signature<'_>,
+        committer: &Signature<'_>,
         patch_commit: &Commit<'_>,
     ) -> Result<Oid, MergeQueueError> {
         let tip_commit = self.repo.find_commit(current_tip)?;
@@ -188,7 +223,7 @@ impl MergeQueueImpl {
 
 #[cfg(test)]
 mod tests {
-    use super::{MergeQueueError, MergeQueueImpl};
+    use super::{MergeQueueError, MergeQueueImpl, SignatureInfo};
     use anyhow::Result;
     use git2::{Oid, Repository, ResetType, Signature};
     use std::{fs, path::Path};
@@ -198,7 +233,7 @@ mod tests {
     const BASE_REF: &str = "refs/heads/base";
 
     #[test]
-    fn try_append_advances_tip_and_records_patches() -> Result<()> {
+    fn try_advance_advances_tip_and_records_patches() -> Result<()> {
         let (tempdir, repo) = repo_with_base("base\n", "base updated\n")?;
         let base_commit = resolve_oid(&repo, BASE_REF)?;
 
@@ -209,9 +244,9 @@ mod tests {
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_append(patch1, Some("first patch".to_string()), author1, committer1)?;
+        queue.try_advance(patch1, Some("first patch".to_string()), author1, committer1)?;
         let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        queue.try_append(patch2, None, author2, committer2)?;
+        queue.try_advance(patch2, None, author2, committer2)?;
 
         assert_eq!(queue.patches().len(), 2);
         assert!(
@@ -236,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn try_append_rejects_unmergeable_patch() -> Result<()> {
+    fn try_advance_rejects_unmergeable_patch() -> Result<()> {
         let (tempdir, repo) = repo_with_base("base\n", "base updated\n")?;
         let base_commit = resolve_oid(&repo, BASE_REF)?;
 
@@ -247,11 +282,11 @@ mod tests {
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_append(patch1, None, author1, committer1)?;
+        queue.try_advance(patch1, None, author1, committer1)?;
         let tip_after_first = queue.tip();
 
         let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        let result = queue.try_append(
+        let result = queue.try_advance(
             patch2,
             Some("conflicting patch".to_string()),
             author2,
@@ -286,9 +321,9 @@ mod tests {
         let mut queue = MergeQueueImpl::new(queue_repo, BASE_REF)?;
 
         let (author1, committer1) = commit_signatures(&repo, patch1)?;
-        queue.try_append(patch1, Some("kept patch".to_string()), author1, committer1)?;
+        queue.try_advance(patch1, Some("kept patch".to_string()), author1, committer1)?;
         let (author2, committer2) = commit_signatures(&repo, patch2)?;
-        queue.try_append(
+        queue.try_advance(
             patch2,
             Some("dependent patch".to_string()),
             author2,
@@ -317,12 +352,12 @@ mod tests {
         Ok((tempdir, repo))
     }
 
-    fn commit_signatures(
-        repo: &Repository,
-        commit: Oid,
-    ) -> Result<(Signature<'static>, Signature<'static>)> {
+    fn commit_signatures(repo: &Repository, commit: Oid) -> Result<(SignatureInfo, SignatureInfo)> {
         let commit = repo.find_commit(commit)?;
-        Ok((commit.author().to_owned(), commit.committer().to_owned()))
+        Ok((
+            SignatureInfo::from_signature(&commit.author()),
+            SignatureInfo::from_signature(&commit.committer()),
+        ))
     }
 
     fn initial_commit(repo: &Repository, contents: &str) -> Result<Oid> {
