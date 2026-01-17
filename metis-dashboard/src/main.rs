@@ -14,48 +14,41 @@ mod web_app {
     use std::collections::{BTreeSet, HashMap};
 
     pub fn launch() {
-        dioxus_web::launch(App);
+        dioxus::launch(App);
     }
 
-    fn App(cx: Scope) -> Element {
-        let dashboard_state = use_state(&cx, || DashboardState::Loading);
+    #[component]
+    fn App() -> Element {
+        let dashboard = use_resource(|| async move { client::load_dashboard().await });
 
-        use_effect(&cx, (), |_| {
-            to_owned![dashboard_state];
-            async move {
-                let next_state = match client::load_dashboard().await {
-                    Ok(data) => DashboardState::Loaded(map_dashboard(data)),
-                    Err(err) => DashboardState::Error(err.to_string()),
-                };
-                dashboard_state.set(next_state);
-            }
-        });
-
-        let (metrics, jobs, queues, workers, status_message) = match dashboard_state.get() {
-            DashboardState::Loading => (
+        let (metrics, jobs, queues, workers, status_message) = match &*dashboard.read() {
+            None => (
                 loading_metrics(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Some("Loading live data...".to_string()),
             ),
-            DashboardState::Error(err) => (
+            Some(Err(err)) => (
                 loading_metrics(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Some(format!("Unable to load dashboard data: {err}")),
             ),
-            DashboardState::Loaded(data) => (
-                data.metrics.clone(),
-                data.jobs.clone(),
-                data.queues.clone(),
-                data.workers.clone(),
-                None,
-            ),
+            Some(Ok(data)) => {
+                let view_model = map_dashboard(data);
+                (
+                    view_model.metrics,
+                    view_model.jobs,
+                    view_model.queues,
+                    view_model.workers,
+                    None,
+                )
+            }
         };
 
-        cx.render(rsx!(
+        rsx!(
             style { include_str!("../assets/app.css") }
             div { class: "app-shell",
                 header { class: "app-header",
@@ -87,13 +80,13 @@ mod web_app {
                         section { class: "overview",
                             h2 { "Mission pulse" }
                             div { class: "overview-grid",
-                                metrics.iter().map(|metric| rsx!(
+                                for metric in metrics.iter() {
                                     MetricCard {
                                         title: metric.title.clone(),
                                         value: metric.value.clone(),
                                         trend: metric.trend.clone(),
                                     }
-                                ))
+                                }
                             }
                         }
                         section { class: "panel-grid",
@@ -104,14 +97,7 @@ mod web_app {
                     }
                 }
             }
-        ))
-    }
-
-    #[derive(Clone, PartialEq)]
-    enum DashboardState {
-        Loading,
-        Loaded(DashboardViewModel),
-        Error(String),
+        )
     }
 
     #[derive(Clone, PartialEq)]
@@ -163,40 +149,29 @@ mod web_app {
         total: u32,
     }
 
-    #[derive(Props, PartialEq)]
-    struct MetricCardProps {
-        title: String,
-        value: String,
-        trend: String,
-    }
-
-    fn MetricCard(cx: Scope<MetricCardProps>) -> Element {
-        cx.render(rsx!(
+    #[component]
+    fn MetricCard(title: String, value: String, trend: String) -> Element {
+        rsx!(
             div { class: "metric-card",
-                p { class: "metric-title", "{cx.props.title}" }
-                h3 { class: "metric-value", "{cx.props.value}" }
-                p { class: "metric-trend", "{cx.props.trend}" }
+                p { class: "metric-title", "{title}" }
+                h3 { class: "metric-value", "{value}" }
+                p { class: "metric-trend", "{trend}" }
             }
-        ))
+        )
     }
 
-    #[derive(Props, PartialEq)]
-    struct JobPanelProps {
-        jobs: Vec<JobSummary>,
-        status: Option<String>,
-    }
-
-    fn JobPanel(cx: Scope<JobPanelProps>) -> Element {
-        cx.render(rsx!(
+    #[component]
+    fn JobPanel(jobs: Vec<JobSummary>, status: Option<String>) -> Element {
+        rsx!(
             section { class: "panel",
                 header {
                     h3 { "Jobs" }
                     button { class: "ghost", "View all" }
                 }
                 div { class: "panel-table",
-                    if let Some(message) = &cx.props.status {
+                    if let Some(message) = status.as_ref() {
                         p { class: "panel-status", "{message}" }
-                    } else if cx.props.jobs.is_empty() {
+                    } else if jobs.is_empty() {
                         p { class: "panel-status", "No jobs found" }
                     } else {
                         div { class: "table-row table-head",
@@ -205,7 +180,7 @@ mod web_app {
                             span { "Status" }
                             span { "Last run" }
                         }
-                        cx.props.jobs.iter().map(|job| rsx!(
+                        for job in jobs.iter() {
                             div { class: "table-row",
                                 span { class: "table-title",
                                     "{job.name}"
@@ -215,30 +190,25 @@ mod web_app {
                                 span { class: "status-pill", "{job.status}" }
                                 span { "{job.last_run}" }
                             }
-                        ))
+                        }
                     }
                 }
             }
-        ))
+        )
     }
 
-    #[derive(Props, PartialEq)]
-    struct QueuePanelProps {
-        queues: Vec<QueueSummary>,
-        status: Option<String>,
-    }
-
-    fn QueuePanel(cx: Scope<QueuePanelProps>) -> Element {
-        cx.render(rsx!(
+    #[component]
+    fn QueuePanel(queues: Vec<QueueSummary>, status: Option<String>) -> Element {
+        rsx!(
             section { class: "panel",
                 header {
                     h3 { "Queues" }
                     button { class: "ghost", "Tune" }
                 }
                 div { class: "panel-table",
-                    if let Some(message) = &cx.props.status {
+                    if let Some(message) = status.as_ref() {
                         p { class: "panel-status", "{message}" }
-                    } else if cx.props.queues.is_empty() {
+                    } else if queues.is_empty() {
                         p { class: "panel-status", "No queues configured" }
                     } else {
                         div { class: "table-row table-head",
@@ -247,7 +217,7 @@ mod web_app {
                             span { "Workers" }
                             span { "SLA" }
                         }
-                        cx.props.queues.iter().map(|queue| rsx!(
+                        for queue in queues.iter() {
                             div { class: "table-row",
                                 span { class: "table-title",
                                     "{queue.name}"
@@ -257,30 +227,25 @@ mod web_app {
                                 span { "{queue.active_workers}" }
                                 span { "{queue.sla}" }
                             }
-                        ))
+                        }
                     }
                 }
             }
-        ))
+        )
     }
 
-    #[derive(Props, PartialEq)]
-    struct WorkerPanelProps {
-        workers: Vec<WorkerSummary>,
-        status: Option<String>,
-    }
-
-    fn WorkerPanel(cx: Scope<WorkerPanelProps>) -> Element {
-        cx.render(rsx!(
+    #[component]
+    fn WorkerPanel(workers: Vec<WorkerSummary>, status: Option<String>) -> Element {
+        rsx!(
             section { class: "panel",
                 header {
                     h3 { "Workers" }
                     button { class: "ghost", "Scale" }
                 }
                 div { class: "panel-table",
-                    if let Some(message) = &cx.props.status {
+                    if let Some(message) = status.as_ref() {
                         p { class: "panel-status", "{message}" }
-                    } else if cx.props.workers.is_empty() {
+                    } else if workers.is_empty() {
                         p { class: "panel-status", "No workers configured" }
                     } else {
                         div { class: "table-row table-head",
@@ -289,7 +254,7 @@ mod web_app {
                             span { "Active" }
                             span { "Heartbeat" }
                         }
-                        cx.props.workers.iter().map(|worker| rsx!(
+                        for worker in workers.iter() {
                             div { class: "table-row",
                                 span { class: "table-title",
                                     "{worker.name}"
@@ -299,22 +264,22 @@ mod web_app {
                                 span { "{worker.active_jobs}" }
                                 span { "{worker.heartbeat}" }
                             }
-                        ))
+                        }
                     }
                 }
             }
-        ))
+        )
     }
 
-    fn map_dashboard(data: client::DashboardResponse) -> DashboardViewModel {
-        let jobs = data.jobs.jobs;
-        let agents = data.agents.agents;
+    fn map_dashboard(data: &client::DashboardResponse) -> DashboardViewModel {
+        let jobs = &data.jobs.jobs;
+        let agents = &data.agents.agents;
 
         let mut queue_stats: HashMap<String, QueueStats> = HashMap::new();
         let mut running_jobs = 0;
         let mut pending_jobs = 0;
 
-        for job in &jobs {
+        for job in jobs {
             let queue_name = job_queue_name(job);
             let stats = queue_stats.entry(queue_name).or_default();
             stats.total += 1;
