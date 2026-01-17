@@ -229,9 +229,11 @@ struct DashboardState {
     assigned_issue_lines: IssueLines,
     jobs_error: Option<String>,
     records_error: Option<String>,
+    agents_error: Option<String>,
     username: Option<String>,
     issue_draft: IssueDraft,
     status_filter: StatusFilterState,
+    agent_filter: AgentFilterState,
 }
 
 struct IssueSubmission {
@@ -248,6 +250,77 @@ struct EventOutcome {
 struct StatusFilterState {
     selected_index: usize,
     enabled: [bool; STATUS_FILTER_OPTIONS.len()],
+}
+
+#[derive(Clone, PartialEq, Default)]
+struct AgentFilterState {
+    options: Vec<String>,
+    selected_index: usize,
+    enabled: Vec<bool>,
+}
+
+impl AgentFilterState {
+    fn set_options(&mut self, options: Vec<String>) {
+        if options == self.options {
+            return;
+        }
+
+        let mut enabled = Vec::with_capacity(options.len());
+        for option in &options {
+            let previous = self
+                .options
+                .iter()
+                .position(|value| value == option)
+                .and_then(|index| self.enabled.get(index))
+                .copied()
+                .unwrap_or(false);
+            enabled.push(previous);
+        }
+
+        self.options = options;
+        self.enabled = enabled;
+
+        if self.selected_index >= self.options.len() {
+            self.selected_index = 0;
+        }
+    }
+
+    fn cycle_selection(&mut self) {
+        if self.options.is_empty() {
+            return;
+        }
+        self.selected_index = (self.selected_index + 1) % self.options.len();
+    }
+
+    fn toggle_selected(&mut self) {
+        if self.options.is_empty() {
+            return;
+        }
+        let index = self.selected_index;
+        if let Some(enabled) = self.enabled.get_mut(index) {
+            *enabled = !*enabled;
+        }
+    }
+
+    fn allows(&self, assignee: Option<&str>) -> bool {
+        if !self.any_enabled() {
+            return true;
+        }
+
+        let Some(assignee) = assignee else {
+            return false;
+        };
+        self.options
+            .iter()
+            .position(|option| option == assignee)
+            .and_then(|index| self.enabled.get(index))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn any_enabled(&self) -> bool {
+        self.enabled.iter().any(|enabled| *enabled)
+    }
 }
 
 impl Default for StatusFilterState {
@@ -318,6 +391,14 @@ async fn run_dashboard_loop(
         }
     }
 
+    match refresh_agents(client, &mut state).await {
+        Ok(changed) => needs_draw |= changed,
+        Err(err) => {
+            state.agents_error = Some(format!("Failed to load agents: {err}"));
+            needs_draw = true;
+        }
+    }
+
     if needs_draw {
         terminal.draw(|f| render(f, &state))?;
         needs_draw = false;
@@ -349,6 +430,16 @@ async fn run_dashboard_loop(
                     }
                     Err(err) => {
                         state.records_error = Some(format!("Failed to refresh issues: {err}"));
+                        needs_draw = true;
+                    }
+                }
+                match refresh_agents(client, &mut state).await {
+                    Ok(changed) => {
+                        state.agents_error = None;
+                        needs_draw |= changed;
+                    }
+                    Err(err) => {
+                        state.agents_error = Some(format!("Failed to refresh agents: {err}"));
                         needs_draw = true;
                     }
                 }
@@ -434,6 +525,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if handle_agent_filter_key(key, state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
             if !state.issue_draft.editing
                 && matches!(
                     key.code,
@@ -502,6 +600,26 @@ fn handle_status_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             state.status_filter.toggle_selected();
+            update_views(state);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    if !has_primary_modifier(key.modifiers) {
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            state.agent_filter.cycle_selection();
+            update_views(state);
+            true
+        }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            state.agent_filter.toggle_selected();
             update_views(state);
             true
         }
@@ -639,7 +757,7 @@ fn render(frame: &mut Frame, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
+            Constraint::Length(6),
             Constraint::Min(12),
             Constraint::Length(8),
         ])
@@ -660,6 +778,7 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     ])];
 
     lines.push(status_filter_line(&state.status_filter));
+    lines.push(agent_filter_line(&state.agent_filter));
 
     if let Some(error) = &state.jobs_error {
         lines.push(Line::from(Span::styled(
@@ -671,6 +790,13 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     if let Some(error) = &state.records_error {
         lines.push(Line::from(Span::styled(
             format!("Issues: {error}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    if let Some(error) = &state.agents_error {
+        lines.push(Line::from(Span::styled(
+            format!("Agents: {error}"),
             Style::default().fg(Color::Red),
         )));
     }
@@ -717,6 +843,59 @@ fn status_filter_line(filter: &StatusFilterState) -> Line {
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         "Alt+S cycle, Alt+T toggle",
+        Style::default().fg(Color::DarkGray),
+    ));
+    if !filter.any_enabled() {
+        spans.push(Span::styled(
+            " (showing all)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+fn agent_filter_line(filter: &AgentFilterState) -> Line {
+    let mut spans = vec![Span::styled(
+        "Agent filter: ",
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+
+    if filter.options.is_empty() {
+        spans.push(Span::styled(
+            "No agents configured",
+            Style::default().fg(Color::DarkGray),
+        ));
+        return Line::from(spans);
+    }
+
+    for (index, agent) in filter.options.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+
+        let enabled = filter.enabled.get(index).copied().unwrap_or(false);
+        let checkbox_style = if enabled {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(
+            if enabled { "[x]" } else { "[ ]" },
+            checkbox_style,
+        ));
+        spans.push(Span::raw(" "));
+
+        let mut label_style = Style::default().fg(Color::Cyan);
+        if index == filter.selected_index {
+            label_style = label_style.add_modifier(Modifier::UNDERLINED);
+        }
+        spans.push(Span::styled(agent.clone(), label_style));
+    }
+
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        "Alt+A cycle, Alt+G toggle",
         Style::default().fg(Color::DarkGray),
     ));
     if !filter.any_enabled() {
@@ -960,6 +1139,26 @@ async fn refresh_records(
     Ok(changed || derived_changed)
 }
 
+async fn refresh_agents(
+    client: &dyn MetisClientInterface,
+    state: &mut DashboardState,
+) -> Result<bool> {
+    let response = client.list_agents().await?;
+    let mut agents: Vec<String> = response
+        .agents
+        .into_iter()
+        .map(|agent| agent.name)
+        .collect();
+    agents.sort();
+    agents.dedup();
+
+    let previous_filter = state.agent_filter.clone();
+    state.agent_filter.set_options(agents);
+
+    let derived_changed = update_views(state);
+    Ok(previous_filter != state.agent_filter || derived_changed)
+}
+
 fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
     previous_jobs
         .iter()
@@ -1019,12 +1218,18 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
-    let issue_lines = build_issue_lines(&state.issues, &state.jobs, &state.status_filter);
+    let issue_lines = build_issue_lines(
+        &state.issues,
+        &state.jobs,
+        &state.status_filter,
+        &state.agent_filter,
+    );
     let assigned_issue_lines = build_assigned_issue_lines(
         state.username.as_deref(),
         &state.issues,
         &state.jobs,
         &state.status_filter,
+        &state.agent_filter,
     );
     update_assignee_options(state);
 
@@ -1082,6 +1287,7 @@ fn build_assigned_issue_lines(
     issues: &[IssueRecord],
     jobs: &[JobDetails],
     status_filter: &StatusFilterState,
+    agent_filter: &AgentFilterState,
 ) -> IssueLines {
     let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
         return IssueLines::default();
@@ -1093,13 +1299,14 @@ fn build_assigned_issue_lines(
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs, status_filter)
+    build_issue_lines(&assigned, jobs, status_filter, agent_filter)
 }
 
 fn build_issue_lines(
     issues: &[IssueRecord],
     jobs: &[JobDetails],
     status_filter: &StatusFilterState,
+    agent_filter: &AgentFilterState,
 ) -> IssueLines {
     let mut tasks_by_issue: HashMap<IssueId, Vec<JobDisplay>> = HashMap::new();
 
@@ -1160,7 +1367,15 @@ fn build_issue_lines(
     let mut rows = Vec::new();
     let mut visited: HashSet<IssueId> = HashSet::new();
     for root in roots {
-        append_issue(&root, 0, &mut rows, &mut visited, &nodes, status_filter);
+        append_issue(
+            &root,
+            0,
+            &mut rows,
+            &mut visited,
+            &nodes,
+            status_filter,
+            agent_filter,
+        );
     }
 
     IssueLines { rows }
@@ -1173,6 +1388,7 @@ fn append_issue(
     visited: &mut HashSet<IssueId>,
     nodes: &HashMap<IssueId, IssueNode>,
     status_filter: &StatusFilterState,
+    agent_filter: &AgentFilterState,
 ) {
     if !visited.insert(id.clone()) {
         return;
@@ -1185,7 +1401,8 @@ fn append_issue(
     let readiness = issue_readiness(node, nodes);
     let issue_summary = issue_summary(&node.record.description, &node.record.progress);
 
-    let is_visible = status_filter.allows(node.record.status);
+    let is_visible = status_filter.allows(node.record.status)
+        && agent_filter.allows(node.record.assignee.as_deref());
     if is_visible {
         rows.push(IssueLine {
             id: node.record.id.to_string(),
@@ -1203,7 +1420,15 @@ fn append_issue(
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
         let child_depth = if is_visible { depth + 1 } else { depth };
-        append_issue(&child, child_depth, rows, visited, nodes, status_filter);
+        append_issue(
+            &child,
+            child_depth,
+            rows,
+            visited,
+            nodes,
+            status_filter,
+            agent_filter,
+        );
     }
 }
 
@@ -1553,7 +1778,12 @@ mod tests {
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         assert_eq!(lines.rows.len(), 3);
         assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
@@ -1583,7 +1813,12 @@ mod tests {
             issue("i-open", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         let blocked_line = lines
             .rows
@@ -1601,7 +1836,12 @@ mod tests {
     #[test]
     fn dropped_issues_render_as_dropped() {
         let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         let line = lines.rows.first().expect("missing issue line");
         assert_eq!(line.readiness, IssueReadiness::Dropped);
@@ -1621,7 +1861,12 @@ mod tests {
             Some("3s"),
         )];
 
-        let lines = build_issue_lines(&issues, &jobs, &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &jobs,
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         let line = lines.rows.first().expect("issue line missing");
         let task = line.task.as_ref().expect("task indicator missing");
@@ -1652,7 +1897,12 @@ mod tests {
             dependencies: Vec::new(),
         }];
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.summary, "investigate logs");
@@ -1681,7 +1931,12 @@ mod tests {
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default());
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         let line = lines
             .rows
@@ -1705,8 +1960,13 @@ mod tests {
             issue_with_assignee("i-other", IssueStatus::Open, Some("bob")),
         ];
 
-        let lines =
-            build_assigned_issue_lines(Some("alice"), &issues, &[], &StatusFilterState::default());
+        let lines = build_assigned_issue_lines(
+            Some("alice"),
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+        );
 
         assert_eq!(lines.rows.len(), 3);
         assert!(lines
@@ -1736,10 +1996,29 @@ mod tests {
         };
         filter.toggle_selected();
 
-        let lines = build_issue_lines(&issues, &[], &filter);
+        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default());
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-closed").to_string());
+    }
+
+    #[test]
+    fn agent_filter_hides_unselected_assignees() {
+        let issues = vec![
+            issue_with_assignee("i-alpha", IssueStatus::Open, Some("agent-a")),
+            issue_with_assignee("i-beta", IssueStatus::Open, Some("agent-b")),
+            issue_with_assignee("i-unassigned", IssueStatus::Open, None),
+        ];
+
+        let mut filter = AgentFilterState::default();
+        filter.set_options(vec!["agent-a".to_string(), "agent-b".to_string()]);
+        filter.cycle_selection();
+        filter.toggle_selected();
+
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter);
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-beta").to_string());
     }
 
     #[test]
