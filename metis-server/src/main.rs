@@ -46,6 +46,10 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             "/v1/patches/:patch_id",
             get(routes::patches::get_patch).put(routes::patches::update_patch),
         )
+        .route(
+            "/v1/merge-queues/:service_repo/:branch/patches",
+            get(routes::merge_queues::get_merge_queue).post(routes::merge_queues::enqueue_patch),
+        )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/agents", get(routes::agents::list_agents))
         .route(
@@ -245,9 +249,10 @@ mod tests {
             github_token: Some("token-123".to_string()),
             default_image: Some("ghcr.io/example/repo:main".to_string()),
         };
-        state.service_state = Arc::new(ServiceState {
-            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
-        });
+        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+            "private-repo".to_string(),
+            repo.clone(),
+        )])));
         let service_state = state.service_state.clone();
         let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
@@ -330,9 +335,10 @@ mod tests {
             github_token: Some("token-123".to_string()),
             default_image: Some("ghcr.io/example/repo:main".to_string()),
         };
-        state.service_state = Arc::new(ServiceState {
-            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
-        });
+        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+            "private-repo".to_string(),
+            repo.clone(),
+        )])));
         let service_state = state.service_state.clone();
         let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();
@@ -399,9 +405,10 @@ mod tests {
             github_token: Some("token-123".to_string()),
             default_image: Some("ghcr.io/example/repo:main".to_string()),
         };
-        state.service_state = Arc::new(ServiceState {
-            repositories: HashMap::from([("private-repo".to_string(), repo.clone())]),
-        });
+        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+            "private-repo".to_string(),
+            repo.clone(),
+        )])));
         let service_state = state.service_state.clone();
         let fallback_image = state.config.metis.worker_image.clone();
         let store = state.store.clone();

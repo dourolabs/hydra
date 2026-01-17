@@ -11,6 +11,7 @@ use metis_common::{
     issues::{IssueId, IssueStatus, IssueType, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
+    merge_queues::MergeQueue,
     patches::{PatchStatus, UpsertPatchRequest},
 };
 use std::{collections::HashSet, sync::Arc};
@@ -18,7 +19,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use super::ServiceState;
+use super::{MergeQueueError, ServiceState};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -755,6 +756,27 @@ impl AppState {
         info!(issue_id = %issue_id, "issue stored successfully");
 
         Ok(issue_id)
+    }
+
+    pub async fn merge_queue(
+        &self,
+        service_repo_name: &str,
+        branch_name: &str,
+    ) -> Result<MergeQueue, MergeQueueError> {
+        self.service_state
+            .get_merge_queue(service_repo_name, branch_name)
+            .await
+    }
+
+    pub async fn enqueue_merge_queue_patch(
+        &self,
+        service_repo_name: &str,
+        branch_name: &str,
+        patch_id: PatchId,
+    ) -> Result<MergeQueue, MergeQueueError> {
+        self.service_state
+            .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id)
+            .await
     }
 }
 

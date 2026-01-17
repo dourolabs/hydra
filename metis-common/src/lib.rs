@@ -9,5 +9,6 @@ pub mod issues;
 pub mod job_status;
 pub mod jobs;
 pub mod logs;
+pub mod merge_queues;
 pub mod patches;
 pub mod task_status;
