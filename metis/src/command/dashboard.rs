@@ -1724,6 +1724,21 @@ mod tests {
         state.issue_draft.set_editing(true);
 
         let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.prompt_text(), "q");
+    }
+
+    #[test]
+    fn shift_q_does_not_quit_when_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_editing(true);
+
+        let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT)),
             &mut state,
         );
@@ -1731,6 +1746,20 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.prompt_text(), "Q");
+    }
+
+    #[test]
+    fn escape_does_not_quit_when_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_editing(true);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
     }
 
     #[test]
