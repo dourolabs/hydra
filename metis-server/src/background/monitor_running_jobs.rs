@@ -62,9 +62,9 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        job_engine::{JobStatus, MockJobEngine},
+        job_engine::JobStatus,
         store::{Status, Task},
-        test::{store::FailingStore, test_state, test_state_with_engine},
+        test_utils::{FailingStore, MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::Utc;
     use metis_common::jobs::BundleSpec;

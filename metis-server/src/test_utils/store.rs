@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
 #[derive(Default)]
-pub(crate) struct FailingStore;
+pub struct FailingStore;
 
 fn fail<T>() -> Result<T, StoreError> {
     Err(StoreError::Internal("forced failure".to_string()))

@@ -883,9 +883,9 @@ async fn active_tasks_for_issue(
 #[cfg(test)]
 mod tests {
     use crate::{
-        job_engine::{JobEngine, JobStatus, MockJobEngine},
+        job_engine::{JobEngine, JobStatus},
         store::{Status, TaskError},
-        test::test_state_with_engine,
+        test_utils::{MockJobEngine, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
     use metis_common::{

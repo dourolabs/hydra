@@ -59,7 +59,7 @@ mod tests {
     use super::*;
     use crate::{
         store::{Status, Task},
-        test::{store::FailingStore, test_state},
+        test_utils::{FailingStore, test_state},
     };
     use chrono::Utc;
     use metis_common::jobs::BundleSpec;
