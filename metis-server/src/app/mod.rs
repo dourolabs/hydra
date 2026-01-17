@@ -2,7 +2,7 @@ mod app_state;
 
 use crate::config::{ServiceSection, non_empty};
 use metis_common::{
-    PatchId,
+    PatchId, RepoName,
     jobs::{Bundle, BundleSpec},
     merge_queues::MergeQueue,
 };
@@ -33,20 +33,20 @@ pub struct GitRepository {
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
-    pub repositories: HashMap<String, GitRepository>,
-    pub merge_queues: Arc<RwLock<HashMap<String, HashMap<String, MergeQueue>>>>,
+    pub repositories: HashMap<RepoName, GitRepository>,
+    pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueue>>>>,
 }
 
 #[derive(Debug, Error)]
 pub enum BundleResolutionError {
     #[error("unknown repository '{0}'")]
-    UnknownRepository(String),
+    UnknownRepository(RepoName),
 }
 
 #[derive(Debug, Error)]
 pub enum MergeQueueError {
     #[error("unknown repository '{0}'")]
-    UnknownRepository(String),
+    UnknownRepository(RepoName),
 }
 
 impl ServiceState {
@@ -85,7 +85,7 @@ impl ServiceState {
         Self::with_repositories(repositories)
     }
 
-    pub fn with_repositories(repositories: HashMap<String, GitRepository>) -> Self {
+    pub fn with_repositories(repositories: HashMap<RepoName, GitRepository>) -> Self {
         let merge_queues = repositories
             .keys()
             .map(|name| (name.clone(), HashMap::new()))
@@ -138,15 +138,13 @@ impl ServiceState {
 
     pub async fn get_merge_queue(
         &self,
-        service_repo_name: &str,
+        service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
         self.ensure_repository_exists(service_repo_name)?;
 
         let mut merge_queues = self.merge_queues.write().await;
-        let repo_queues = merge_queues
-            .entry(service_repo_name.to_string())
-            .or_default();
+        let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
         let queue = repo_queues
             .entry(branch_name.to_string())
             .or_default()
@@ -157,27 +155,25 @@ impl ServiceState {
 
     pub async fn add_patch_to_merge_queue(
         &self,
-        service_repo_name: &str,
+        service_repo_name: &RepoName,
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
         self.ensure_repository_exists(service_repo_name)?;
 
         let mut merge_queues = self.merge_queues.write().await;
-        let repo_queues = merge_queues
-            .entry(service_repo_name.to_string())
-            .or_default();
+        let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
         let queue = repo_queues.entry(branch_name.to_string()).or_default();
         queue.patches.push(patch_id);
 
         Ok(queue.clone())
     }
 
-    fn ensure_repository_exists(&self, name: &str) -> Result<(), MergeQueueError> {
+    fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
         if self.repositories.contains_key(name) {
             Ok(())
         } else {
-            Err(MergeQueueError::UnknownRepository(name.to_string()))
+            Err(MergeQueueError::UnknownRepository(name.clone()))
         }
     }
 }

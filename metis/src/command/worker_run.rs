@@ -11,7 +11,7 @@ use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_OPENAI_API_KEY},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
-    TaskId,
+    RepoName, TaskId,
 };
 
 use crate::client::MetisClientInterface;
@@ -55,7 +55,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         &job,
         &dest,
         &last_message,
-        service_repo_name.as_deref(),
+        service_repo_name.as_ref(),
     )
     .await?;
     // Submit job status (merge of worker-submit functionality)
@@ -231,7 +231,7 @@ async fn submit_patch_artifact_if_present(
     job: &TaskId,
     dest: &Path,
     last_message: &str,
-    service_repo_name: Option<&str>,
+    service_repo_name: Option<&RepoName>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
@@ -244,7 +244,7 @@ async fn submit_patch_artifact_if_present(
         Some(job.clone()),
         create_github_pr,
         is_automatic_backup,
-        service_repo_name.map(str::to_string),
+        service_repo_name.cloned(),
     )
     .await?
     {

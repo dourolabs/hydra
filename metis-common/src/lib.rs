@@ -11,4 +11,6 @@ pub mod jobs;
 pub mod logs;
 pub mod merge_queues;
 pub mod patches;
+pub mod repo_name;
+pub use repo_name::{RepoName, RepoNameError};
 pub mod task_status;

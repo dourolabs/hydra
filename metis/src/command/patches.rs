@@ -20,7 +20,7 @@ use metis_common::{
         GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    PatchId, TaskId,
+    PatchId, RepoName, TaskId,
 };
 use octocrab::Octocrab;
 use serde::Deserialize;
@@ -484,7 +484,7 @@ fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
-) -> Result<Option<String>> {
+) -> Result<Option<RepoName>> {
     let Some(job_id) = job_id else {
         return Ok(None);
     };
@@ -509,7 +509,7 @@ pub async fn create_patch_artifact_from_repo(
     job_id: Option<TaskId>,
     create_github_pr: bool,
     is_automatic_backup: bool,
-    service_repo_name: Option<String>,
+    service_repo_name: Option<RepoName>,
 ) -> Result<Option<UpsertPatchResponse>> {
     let patch = create_patch_from_repo(repo_root)?;
     if patch.trim().is_empty() {
@@ -1452,7 +1452,7 @@ mod tests {
             task: Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::ServiceRepository {
-                    name: "api".to_string(),
+                    name: RepoName::from_str("dourolabs/api")?,
                     rev: None,
                 },
                 spawned_from: None,
@@ -1482,8 +1482,12 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
         let (_, request) = &requests[0];
         assert_eq!(
-            request.patch.service_repo_name.as_deref(),
-            Some("api"),
+            request
+                .patch
+                .service_repo_name
+                .as_ref()
+                .map(|name| name.to_string()),
+            Some("dourolabs/api".to_string()),
             "service repo name should be derived from the job context"
         );
         Ok(())

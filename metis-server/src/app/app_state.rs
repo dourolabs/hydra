@@ -6,7 +6,7 @@ use crate::{
 };
 use chrono::{Duration, Utc};
 use metis_common::{
-    MetisId, PatchId, TaskId,
+    MetisId, PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
     issues::{IssueId, IssueStatus, IssueType, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
@@ -760,7 +760,7 @@ impl AppState {
 
     pub async fn merge_queue(
         &self,
-        service_repo_name: &str,
+        service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
         self.service_state
@@ -770,7 +770,7 @@ impl AppState {
 
     pub async fn enqueue_merge_queue_patch(
         &self,
-        service_repo_name: &str,
+        service_repo_name: &RepoName,
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {

@@ -121,8 +121,8 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
             || format!("{:?}", patch.status).to_lowercase().contains(term)
             || patch
                 .service_repo_name
-                .as_deref()
-                .map(|name| name.to_lowercase().contains(term))
+                .as_ref()
+                .map(|name| name.to_string().to_lowercase().contains(term))
                 .unwrap_or(false)
             || patch
                 .github

@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::jobs::BundleSpec;
+use metis_common::{RepoName, jobs::BundleSpec};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -89,7 +89,7 @@ impl Default for KubernetesSection {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ServiceSection {
     #[serde(default)]
-    pub repositories: HashMap<String, Repository>,
+    pub repositories: HashMap<RepoName, Repository>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]

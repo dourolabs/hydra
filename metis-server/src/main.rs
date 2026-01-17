@@ -47,7 +47,7 @@ async fn run_with_state(state: AppState, listener: tokio::net::TcpListener) -> a
             get(routes::patches::get_patch).put(routes::patches::update_patch),
         )
         .route(
-            "/v1/merge-queues/:service_repo/:branch/patches",
+            "/v1/merge-queues/:organization/:repo/:branch/patches",
             get(routes::merge_queues::get_merge_queue).post(routes::merge_queues::enqueue_patch),
         )
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
@@ -163,7 +163,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        TaskId,
+        RepoName, TaskId,
         constants::ENV_GH_TOKEN,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
@@ -178,7 +178,7 @@ mod tests {
         task_status::Event,
     };
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     fn default_image() -> String {
         crate::config::MetisSection::default().worker_image
@@ -186,6 +186,22 @@ mod tests {
 
     fn task_id(value: &str) -> TaskId {
         value.parse().expect("task id should be valid")
+    }
+
+    fn service_repo_name() -> RepoName {
+        RepoName::from_str("dourolabs/private-repo").expect("service repo name should parse")
+    }
+
+    fn service_repository() -> (RepoName, GitRepository) {
+        let name = service_repo_name();
+        let repository = GitRepository {
+            remote_url: format!("https://example.com/{}.git", name.as_str()),
+            default_branch: Some("develop".to_string()),
+            github_token: Some("token-123".to_string()),
+            default_image: Some("ghcr.io/example/repo:main".to_string()),
+        };
+
+        (name, repository)
     }
 
     #[tokio::test]
@@ -243,14 +259,9 @@ mod tests {
     #[tokio::test]
     async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
         let mut state = test_state();
-        let repo = GitRepository {
-            remote_url: "https://example.com/private.git".to_string(),
-            default_branch: Some("develop".to_string()),
-            github_token: Some("token-123".to_string()),
-            default_image: Some("ghcr.io/example/repo:main".to_string()),
-        };
+        let (repo_name, repo) = service_repository();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            "private-repo".to_string(),
+            repo_name.clone(),
             repo.clone(),
         )])));
         let service_state = state.service_state.clone();
@@ -263,7 +274,7 @@ mod tests {
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
                 "prompt": "0",
-                "context": { "type": "service_repository", "name": "private-repo" }
+                "context": { "type": "service_repository", "name": repo_name.to_string() }
             }))
             .send()
             .await?;
@@ -277,7 +288,7 @@ mod tests {
         assert_eq!(
             context,
             BundleSpec::ServiceRepository {
-                name: "private-repo".to_string(),
+                name: repo_name.clone(),
                 rev: None
             }
         );
@@ -329,14 +340,9 @@ mod tests {
     #[tokio::test]
     async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         let mut state = test_state();
-        let repo = GitRepository {
-            remote_url: "https://example.com/private.git".to_string(),
-            default_branch: Some("develop".to_string()),
-            github_token: Some("token-123".to_string()),
-            default_image: Some("ghcr.io/example/repo:main".to_string()),
-        };
+        let (repo_name, repo) = service_repository();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            "private-repo".to_string(),
+            repo_name.clone(),
             repo.clone(),
         )])));
         let service_state = state.service_state.clone();
@@ -349,7 +355,7 @@ mod tests {
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
                 "prompt": "0",
-                "context": { "type": "service_repository", "name": "private-repo" },
+                "context": { "type": "service_repository", "name": repo_name.to_string() },
                 "image": "ghcr.io/example/override:main"
             }))
             .send()
@@ -399,14 +405,9 @@ mod tests {
     #[tokio::test]
     async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Result<()> {
         let mut state = test_state();
-        let repo = GitRepository {
-            remote_url: "https://example.com/private.git".to_string(),
-            default_branch: Some("develop".to_string()),
-            github_token: Some("token-123".to_string()),
-            default_image: Some("ghcr.io/example/repo:main".to_string()),
-        };
+        let (repo_name, repo) = service_repository();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            "private-repo".to_string(),
+            repo_name.clone(),
             repo.clone(),
         )])));
         let service_state = state.service_state.clone();
@@ -419,7 +420,7 @@ mod tests {
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
                 "prompt": "0",
-                "context": { "type": "service_repository", "name": "private-repo" },
+                "context": { "type": "service_repository", "name": repo_name.to_string() },
                 "variables": { ENV_GH_TOKEN: "user-supplied" }
             }))
             .send()
@@ -452,14 +453,17 @@ mod tests {
             .post(format!("{}/v1/jobs", server.base_url()))
             .json(&json!({
                 "prompt": "0",
-                "context": { "type": "service_repository", "name": "missing" }
+                "context": { "type": "service_repository", "name": "missing/repo" }
             }))
             .send()
             .await?;
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await?;
-        assert_eq!(body, json!({ "error": "unknown repository 'missing'" }));
+        assert_eq!(
+            body,
+            json!({ "error": "unknown repository 'missing/repo'" })
+        );
         Ok(())
     }
 
