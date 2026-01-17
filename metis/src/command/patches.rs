@@ -261,6 +261,7 @@ async fn create_patch(
         create_github_pr,
         is_automatic_backup,
         service_repo_name,
+        None,
     )
     .await?
     .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
@@ -527,12 +528,16 @@ pub async fn create_patch_artifact_from_repo(
     create_github_pr: bool,
     is_automatic_backup: bool,
     service_repo_name: RepoName,
+    commit_range_override: Option<PatchCommitRange>,
 ) -> Result<Option<UpsertPatchResponse>> {
-    let commit_range = match create_patch_from_repo(repo_root)? {
+    let commit_range = match commit_range_override {
         Some(range) => range,
-        None => {
-            return Ok(None);
-        }
+        None => match create_patch_from_repo(repo_root)? {
+            Some(range) => range,
+            None => {
+                return Ok(None);
+            }
+        },
     };
 
     if git_diff_for_range(repo_root, &commit_range)?
@@ -1545,6 +1550,7 @@ mod tests {
             false,
             true,
             sample_repo_name(),
+            None,
         )
         .await?
         .expect("patch should be created for repository changes");

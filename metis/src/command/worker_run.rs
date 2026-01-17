@@ -46,14 +46,22 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
 
     login_codex()?;
     configure_git_repo(&dest)?;
+    let base_commit = resolve_head_commit_if_present(&dest)?;
 
     run_codex(&prompt, &dest, &execution_env)
         .await
         .with_context(|| "failed to execute codex for worker context")?;
 
     let last_message = read_last_message(&dest)?;
-    submit_patch_artifact_if_present(client, &job, &dest, &last_message, &service_repo_name)
-        .await?;
+    submit_patch_artifact_if_present(
+        client,
+        &job,
+        &dest,
+        &last_message,
+        &service_repo_name,
+        base_commit,
+    )
+    .await?;
     // Submit job status (merge of worker-submit functionality)
     submit_job_status(client, &job, &last_message).await?;
 
@@ -228,10 +236,24 @@ async fn submit_patch_artifact_if_present(
     dest: &Path,
     last_message: &str,
     service_repo_name: &RepoName,
+    base_commit: Option<Oid>,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
     let is_automatic_backup = true;
+    let commit_range_override = if let Some(base_commit) = base_commit {
+        match create_patch_from_committed_range(dest, &base_commit)? {
+            Some(range) => Some(range),
+            None => {
+                println!(
+                    "No committed changes detected; skipping patch submission for job '{job}'."
+                );
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     match create_patch_artifact_from_repo(
         client,
         dest,
@@ -241,6 +263,7 @@ async fn submit_patch_artifact_if_present(
         create_github_pr,
         is_automatic_backup,
         service_repo_name.clone(),
+        commit_range_override,
     )
     .await?
     {
@@ -298,6 +321,21 @@ pub fn create_patch_from_repo(dest: &Path) -> Result<Option<PatchCommitRange>> {
     create_patch_with_index(dest, Some(temp_index_path.as_path()))
 }
 
+fn create_patch_from_committed_range(
+    dest: &Path,
+    base_commit: &Oid,
+) -> Result<Option<PatchCommitRange>> {
+    let head_commit = resolve_head_commit(dest)?;
+    if head_commit == *base_commit {
+        return Ok(None);
+    }
+
+    Ok(Some(PatchCommitRange {
+        base: (*base_commit).into(),
+        head: head_commit.into(),
+    }))
+}
+
 fn create_patch_with_index(
     dest: &Path,
     index_file: Option<&Path>,
@@ -335,6 +373,14 @@ fn stage_changes(dest: &Path, index_file: Option<&Path>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_head_commit_if_present(dest: &Path) -> Result<Option<Oid>> {
+    if !dest.join(".git").exists() {
+        return Ok(None);
+    }
+
+    resolve_head_commit(dest).map(Some)
 }
 
 fn resolve_head_commit(dest: &Path) -> Result<Oid> {
@@ -823,13 +869,57 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn create_patch_from_committed_range_uses_commit_history() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
+        let base_commit = resolve_head_commit(repo_path)?;
+
+        std::fs::write(repo_path.join("README.md"), "committed change\n")
+            .context("failed to update README.md")?;
+        Command::new("git")
+            .args(["-C", &repo_str, "commit", "-am", "commit change"])
+            .status()
+            .context("failed to commit README change")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+
+        std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")
+            .context("failed to write untracked file")?;
+
+        let commit_range = create_patch_from_committed_range(repo_path, &base_commit)?
+            .expect("commit range should exist when new commits are present");
+        let patch_content = diff_for_range(repo_path, &commit_range)?;
+
+        assert!(
+            patch_content.contains("committed change"),
+            "patch should include committed changes"
+        );
+        assert!(
+            !patch_content.contains("untracked.txt"),
+            "patch should ignore untracked working tree content"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn submit_patch_artifact_if_present_creates_patch() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        setup_git_repo_with_initial_commit(repo_path)?;
+        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
+        let base_commit = resolve_head_commit(repo_path)?;
         std::fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
+        Command::new("git")
+            .args(["-C", &repo_str, "commit", "-am", "update README"])
+            .status()
+            .context("failed to commit README update")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
         let output_dir = repo_path
             .join(constants::METIS_DIR)
@@ -855,6 +945,7 @@ mod tests {
             repo_path,
             "final output line",
             &repo_name,
+            Some(base_commit),
         )
         .await?;
 
@@ -886,11 +977,20 @@ mod tests {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         setup_git_repo_with_initial_commit(repo_path)?;
+        let base_commit = resolve_head_commit(repo_path)?;
 
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-456");
         let repo_name = RepoName::from_str("dourolabs/example")?;
-        submit_patch_artifact_if_present(&client, &job_id, repo_path, "done", &repo_name).await?;
+        submit_patch_artifact_if_present(
+            &client,
+            &job_id,
+            repo_path,
+            "done",
+            &repo_name,
+            Some(base_commit),
+        )
+        .await?;
 
         let requests = client.recorded_patch_upserts();
         assert!(
