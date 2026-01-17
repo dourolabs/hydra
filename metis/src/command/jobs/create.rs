@@ -5,10 +5,11 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     task_status::Status,
-    TaskId,
+    RepoName, TaskId,
 };
 use std::{
     io::{self, Write},
+    str::FromStr,
     time::Duration,
 };
 use tokio::time::sleep;
@@ -149,8 +150,10 @@ fn build_context(repo: Option<String>, rev: Option<String>) -> Result<BundleSpec
         });
     }
 
+    let repo_name = RepoName::from_str(&trimmed_repo)
+        .with_context(|| format!("invalid service repository name '{trimmed_repo}'"))?;
     Ok(BundleSpec::ServiceRepository {
-        name: trimmed_repo,
+        name: repo_name,
         rev: Some(trimmed_rev),
     })
 }
@@ -316,7 +319,7 @@ mod tests {
         run(
             &client,
             false,
-            Some("service-repo".into()),
+            Some("dourolabs/service-repo".into()),
             Some("feature".into()),
             None,
             vec![],
@@ -330,7 +333,7 @@ mod tests {
         assert_eq!(
             requests[0].context,
             BundleSpec::ServiceRepository {
-                name: "service-repo".into(),
+                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
                 rev: Some("feature".into())
             }
         );
@@ -347,7 +350,7 @@ mod tests {
         run(
             &client,
             false,
-            Some("service-repo".into()),
+            Some("dourolabs/service-repo".into()),
             None,
             None,
             vec![],
@@ -361,7 +364,7 @@ mod tests {
         assert_eq!(
             requests[0].context,
             BundleSpec::ServiceRepository {
-                name: "service-repo".into(),
+                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
                 rev: Some("main".into())
             }
         );

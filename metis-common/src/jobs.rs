@@ -1,5 +1,4 @@
-use crate::task_status::TaskStatusLog;
-use crate::{IssueId, TaskId};
+use crate::{IssueId, RepoName, TaskId, task_status::TaskStatusLog};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -39,7 +38,7 @@ pub enum BundleSpec {
     },
     ServiceRepository {
         /// Name of a repository configured in the service configuration.
-        name: String,
+        name: RepoName,
         /// Optional git revision (branch, tag, or commit) to checkout after cloning.
         #[serde(default)]
         rev: Option<String>,

@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use metis_common::{
-    PatchId,
+    PatchId, RepoName,
     patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
         UpsertPatchRequest,
@@ -24,6 +24,8 @@ use octocrab::{
     params::{pulls::State, repos::Commitish},
 };
 use serde_json::json;
+#[cfg(test)]
+use std::str::FromStr;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -154,7 +156,7 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, patch.service_repo_name.as_deref()) else {
+    let Some(token) = select_github_token(state, patch.service_repo_name.as_ref()) else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -379,7 +381,7 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-fn select_github_token(state: &AppState, service_repo_name: Option<&str>) -> Option<String> {
+fn select_github_token(state: &AppState, service_repo_name: Option<&RepoName>) -> Option<String> {
     let name = service_repo_name?;
     state
         .service_state
@@ -687,7 +689,7 @@ mod tests {
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: Some("api".to_string()),
+                    service_repo_name: Some(RepoName::from_str("dourolabs/api")?),
                     github: Some(GithubPr {
                         owner: "octo".to_string(),
                         repo: "repo".to_string(),
@@ -1010,17 +1012,18 @@ mod tests {
     #[test]
     fn select_github_token_uses_service_repo_name() {
         let mut state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/api").unwrap();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            "api".to_string(),
+            repo_name.clone(),
             GitRepository {
-                remote_url: "https://github.com/example/api.git".to_string(),
+                remote_url: "https://github.com/dourolabs/api.git".to_string(),
                 default_branch: None,
                 github_token: Some("svc-token".to_string()),
                 default_image: None,
             },
         )])));
 
-        let token = select_github_token(&state, Some("api"));
+        let token = select_github_token(&state, Some(&repo_name));
 
         assert_eq!(token.as_deref(), Some("svc-token"));
     }

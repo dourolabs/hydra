@@ -1,4 +1,4 @@
-use crate::{PatchId, TaskId};
+use crate::{PatchId, RepoName, TaskId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -86,7 +86,7 @@ pub struct Patch {
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_repo_name: Option<String>,
+    pub service_repo_name: Option<RepoName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
 }

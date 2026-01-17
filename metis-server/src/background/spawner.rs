@@ -8,6 +8,8 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 #[cfg(test)]
+use metis_common::RepoName;
+#[cfg(test)]
 use metis_common::constants::ENV_GH_TOKEN;
 #[cfg(test)]
 use metis_common::issues::{IssueDependency, IssueDependencyType, IssueType};
@@ -17,6 +19,8 @@ use metis_common::{
     jobs::BundleSpec,
 };
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::str::FromStr;
 use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
@@ -484,7 +488,7 @@ mod tests {
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
         let mut state = test_state();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            "dourolabs/metis".to_string(),
+            RepoName::from_str("dourolabs/metis")?,
             GitRepository {
                 remote_url: "https://github.com/dourolabs/metis.git".to_string(),
                 default_branch: Some("main".to_string()),
@@ -510,7 +514,7 @@ mod tests {
             name: "agent-a".to_string(),
             prompt: "Do the thing".to_string(),
             context_spec: BundleSpec::ServiceRepository {
-                name: "dourolabs/metis".to_string(),
+                name: RepoName::from_str("dourolabs/metis")?,
                 rev: None,
             },
             image: None,
@@ -527,7 +531,7 @@ mod tests {
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {
-                name: "dourolabs/metis".to_string(),
+                name: RepoName::from_str("dourolabs/metis")?,
                 rev: None
             }
         );

@@ -10,9 +10,9 @@ worker_image = "sha256:36ac58f5eb66885ea504f908fa3637fc807d35ad1d843e8adec412106
 OPENAI_API_KEY = ""
 
 [service.repositories]
-# Example repository configuration; add additional tables per repository name.
-[service.repositories.example]
-remote_url = "https://github.com/example/repo.git"
+# Example repository configuration; add additional tables per organization/repo name.
+[service.repositories."dourolabs/metis"]
+remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
 default_image = "metis-worker:latest"
 github_token = ""
