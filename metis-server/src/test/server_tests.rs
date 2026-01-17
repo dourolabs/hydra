@@ -1,9 +1,9 @@
 use crate::{
     app::{GitRepository, ServiceState},
-    job_engine::{JobEngine, JobStatus, MockJobEngine},
+    job_engine::{JobEngine, JobStatus},
     store::{Status, Task, TaskError, TaskExt},
-    test::{
-        spawn_test_server, spawn_test_server_with_state, test_client, test_state,
+    test_utils::{
+        MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client, test_state,
         test_state_with_engine,
     },
 };

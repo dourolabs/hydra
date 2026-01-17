@@ -670,7 +670,7 @@ mod tests {
 
     use crate::{
         app::{GitRepository, ServiceState},
-        test::{store::FailingStore, test_state},
+        test_utils::{FailingStore, test_state},
     };
 
     fn sample_commit_range() -> PatchCommitRange {

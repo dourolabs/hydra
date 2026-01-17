@@ -1,4 +1,4 @@
-use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
