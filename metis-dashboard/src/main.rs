@@ -1,10 +1,38 @@
 #[cfg(target_arch = "wasm32")]
 mod client;
 
+#[cfg(any(target_arch = "wasm32", test))]
+use metis_common::MetisId;
+
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, PartialEq)]
+struct JobSummary {
+    id: MetisId,
+    name: String,
+    status: String,
+    queue: String,
+    last_run: String,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn filter_jobs(
+    jobs: &[JobSummary],
+    agent_filter: Option<&str>,
+    status_filter: Option<&str>,
+) -> Vec<JobSummary> {
+    jobs.iter()
+        .filter(|job| {
+            agent_filter.is_none_or(|agent| job.queue == agent)
+                && status_filter.is_none_or(|status| job.status == status)
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case)]
 mod web_app {
-    use crate::client;
+    use crate::{client, filter_jobs, JobSummary};
     use dioxus::prelude::*;
     use metis_common::{
         jobs::JobRecord,
@@ -31,29 +59,56 @@ mod web_app {
             }
         });
 
-        let (metrics, jobs, queues, workers, status_message) = match dashboard_state.get() {
-            DashboardState::Loading => (
-                loading_metrics(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Some("Loading live data...".to_string()),
-            ),
-            DashboardState::Error(err) => (
-                loading_metrics(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Some(format!("Unable to load dashboard data: {err}")),
-            ),
-            DashboardState::Loaded(data) => (
-                data.metrics.clone(),
-                data.jobs.clone(),
-                data.queues.clone(),
-                data.workers.clone(),
-                None,
-            ),
-        };
+        let selected_agent = use_state(&cx, || None::<String>);
+        let selected_status = use_state(&cx, || None::<String>);
+
+        let agent_filter = selected_agent.get().clone();
+        let status_filter = selected_status.get().clone();
+        let filters_active = agent_filter.is_some() || status_filter.is_some();
+
+        let (metrics, jobs, queues, workers, status_message, agent_names) =
+            match dashboard_state.get() {
+                DashboardState::Loading => (
+                    loading_metrics(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Some("Loading live data...".to_string()),
+                    Vec::new(),
+                ),
+                DashboardState::Error(err) => (
+                    loading_metrics(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Some(format!("Unable to load dashboard data: {err}")),
+                    Vec::new(),
+                ),
+                DashboardState::Loaded(data) => {
+                    let filtered_jobs = filter_jobs(
+                        &data.jobs,
+                        agent_filter.as_deref(),
+                        status_filter.as_deref(),
+                    );
+                    let (metrics, queues, workers) =
+                        build_panels(&filtered_jobs, &data.agent_names, !filters_active);
+                    (
+                        metrics,
+                        filtered_jobs,
+                        queues,
+                        workers,
+                        None,
+                        data.agent_names.clone(),
+                    )
+                }
+            };
+
+        let selected_agent_handle = selected_agent.clone();
+        let selected_agent_clear = selected_agent.clone();
+        let selected_status_handle = selected_status.clone();
+        let selected_status_clear = selected_status.clone();
+        let selected_reset_agent = selected_agent.clone();
+        let selected_reset_status = selected_status.clone();
 
         cx.render(rsx!(
             style { include_str!("../assets/app.css") }
@@ -97,6 +152,58 @@ mod web_app {
                             }
                         }
                         section { class: "panel-grid",
+                            div { class: "filter-bar",
+                                div { class: "filter-group",
+                                    label { "Agent" }
+                                    select {
+                                        value: "{agent_filter.clone().unwrap_or_default()}",
+                                        onchange: move |event| {
+                                            let value = event.value.clone();
+                                            selected_agent_handle.set(if value.is_empty() { None } else { Some(value) });
+                                        },
+                                        option { value: "", "All agents" }
+                                        agent_names.iter().map(|name| rsx!(
+                                            option { value: "{name}", "{name}" }
+                                        ))
+                                    }
+                                    button {
+                                        class: "ghost filter-clear",
+                                        disabled: agent_filter.is_none(),
+                                        onclick: move |_| selected_agent_clear.set(None),
+                                        "Clear"
+                                    }
+                                }
+                                div { class: "filter-group",
+                                    label { "Status" }
+                                    select {
+                                        value: "{status_filter.clone().unwrap_or_default()}",
+                                        onchange: move |event| {
+                                            let value = event.value.clone();
+                                            selected_status_handle.set(if value.is_empty() { None } else { Some(value) });
+                                        },
+                                        option { value: "", "All statuses" }
+                                        option { value: "pending", "Pending" }
+                                        option { value: "running", "Running" }
+                                        option { value: "complete", "Complete" }
+                                        option { value: "failed", "Failed" }
+                                    }
+                                    button {
+                                        class: "ghost filter-clear",
+                                        disabled: status_filter.is_none(),
+                                        onclick: move |_| selected_status_clear.set(None),
+                                        "Clear"
+                                    }
+                                }
+                                button {
+                                    class: "ghost filter-reset",
+                                    disabled: !filters_active,
+                                    onclick: move |_| {
+                                        selected_reset_agent.set(None);
+                                        selected_reset_status.set(None);
+                                    },
+                                    "Reset all"
+                                }
+                            }
                             JobPanel { jobs: jobs.clone(), status: status_message.clone() }
                             QueuePanel { queues: queues.clone(), status: status_message.clone() }
                             WorkerPanel { workers: workers.clone(), status: status_message.clone() }
@@ -116,10 +223,8 @@ mod web_app {
 
     #[derive(Clone, PartialEq)]
     struct DashboardViewModel {
-        metrics: Vec<MetricCardData>,
         jobs: Vec<JobSummary>,
-        queues: Vec<QueueSummary>,
-        workers: Vec<WorkerSummary>,
+        agent_names: Vec<String>,
     }
 
     #[derive(Clone, PartialEq)]
@@ -127,15 +232,6 @@ mod web_app {
         title: String,
         value: String,
         trend: String,
-    }
-
-    #[derive(Clone, PartialEq)]
-    struct JobSummary {
-        id: MetisId,
-        name: String,
-        status: String,
-        queue: String,
-        last_run: String,
     }
 
     #[derive(Clone, PartialEq)]
@@ -310,33 +406,49 @@ mod web_app {
         let jobs = data.jobs.jobs;
         let agents = data.agents.agents;
 
+        let mut agent_names: BTreeSet<String> =
+            agents.iter().map(|agent| agent.name.clone()).collect();
+        for job in &jobs {
+            agent_names.insert(job_queue_name(job));
+        }
+
+        DashboardViewModel {
+            jobs: jobs.iter().map(job_summary).collect(),
+            agent_names: agent_names.into_iter().collect(),
+        }
+    }
+
+    fn build_panels(
+        jobs: &[JobSummary],
+        agent_names: &[String],
+        include_idle_agents: bool,
+    ) -> (Vec<MetricCardData>, Vec<QueueSummary>, Vec<WorkerSummary>) {
         let mut queue_stats: HashMap<String, QueueStats> = HashMap::new();
         let mut running_jobs = 0;
         let mut pending_jobs = 0;
 
-        for job in &jobs {
-            let queue_name = job_queue_name(job);
-            let stats = queue_stats.entry(queue_name).or_default();
+        for job in jobs {
+            let stats = queue_stats.entry(job.queue.clone()).or_default();
             stats.total += 1;
 
-            match job.status_log.current_status() {
-                Status::Pending => {
+            match job.status.as_str() {
+                "pending" => {
                     stats.pending += 1;
                     pending_jobs += 1;
                 }
-                Status::Running => {
+                "running" => {
                     stats.running += 1;
                     running_jobs += 1;
                 }
-                Status::Complete | Status::Failed => {}
+                _ => {}
             }
         }
 
-        let mut queue_names: BTreeSet<String> =
-            agents.iter().map(|agent| agent.name.clone()).collect();
-        for name in queue_stats.keys() {
-            queue_names.insert(name.clone());
+        let mut queue_names: BTreeSet<String> = BTreeSet::new();
+        if include_idle_agents {
+            queue_names.extend(agent_names.iter().cloned());
         }
+        queue_names.extend(queue_stats.keys().cloned());
 
         let queues = queue_names
             .iter()
@@ -352,14 +464,20 @@ mod web_app {
             })
             .collect::<Vec<_>>();
 
-        let workers = agents
+        let worker_names: BTreeSet<String> = if include_idle_agents {
+            agent_names.iter().cloned().collect()
+        } else {
+            queue_stats.keys().cloned().collect()
+        };
+
+        let workers = worker_names
             .iter()
-            .map(|agent| {
-                let stats = queue_stats.get(&agent.name).cloned().unwrap_or_default();
+            .map(|name| {
+                let stats = queue_stats.get(name).cloned().unwrap_or_default();
                 let state = if stats.running > 0 { "busy" } else { "idle" };
                 WorkerSummary {
-                    id: agent.name.clone(),
-                    name: agent.name.clone(),
+                    id: name.clone(),
+                    name: name.clone(),
                     state: state.to_string(),
                     active_jobs: stats.running,
                     heartbeat: "n/a".to_string(),
@@ -367,7 +485,11 @@ mod web_app {
             })
             .collect::<Vec<_>>();
 
-        let job_summaries = jobs.iter().map(job_summary).collect::<Vec<_>>();
+        let agent_count = if include_idle_agents {
+            agent_names.len()
+        } else {
+            queue_names.len()
+        };
 
         let metrics = vec![
             MetricCardData {
@@ -382,8 +504,8 @@ mod web_app {
             },
             MetricCardData {
                 title: "Agent queues".to_string(),
-                value: agents.len().to_string(),
-                trend: format!("{} configured", agents.len()),
+                value: agent_count.to_string(),
+                trend: format!("{agent_count} configured"),
             },
             MetricCardData {
                 title: "Total jobs".to_string(),
@@ -392,12 +514,7 @@ mod web_app {
             },
         ];
 
-        DashboardViewModel {
-            metrics,
-            jobs: job_summaries,
-            queues,
-            workers,
-        }
+        (metrics, queues, workers)
     }
 
     fn job_summary(job: &JobRecord) -> JobSummary {
@@ -467,4 +584,44 @@ fn main() {
 
     #[cfg(not(target_arch = "wasm32"))]
     println!("metis-dashboard targets wasm32; build with wasm32-unknown-unknown");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{filter_jobs, JobSummary};
+    use metis_common::TaskId;
+
+    fn sample_job(queue: &str, status: &str) -> JobSummary {
+        JobSummary {
+            id: TaskId::new().into(),
+            name: "demo".to_string(),
+            status: status.to_string(),
+            queue: queue.to_string(),
+            last_run: "now".to_string(),
+        }
+    }
+
+    #[test]
+    fn filter_jobs_intersection() {
+        let jobs = vec![
+            sample_job("alpha", "pending"),
+            sample_job("alpha", "running"),
+            sample_job("beta", "pending"),
+        ];
+
+        let filtered = filter_jobs(&jobs, Some("alpha"), Some("running"));
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].queue, "alpha");
+        assert_eq!(filtered[0].status, "running");
+    }
+
+    #[test]
+    fn filter_jobs_allows_empty_filters() {
+        let jobs = vec![sample_job("alpha", "pending"), sample_job("beta", "failed")];
+
+        let filtered = filter_jobs(&jobs, None, None);
+
+        assert_eq!(filtered.len(), 2);
+    }
 }

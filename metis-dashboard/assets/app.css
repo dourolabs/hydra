@@ -188,6 +188,49 @@ button {
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
+.filter-bar {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    padding: 16px;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 180px;
+}
+
+.filter-group label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+}
+
+.filter-group select {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid rgba(27, 27, 27, 0.12);
+    padding: 8px 12px;
+    font-family: "Space Grotesk", "Helvetica Neue", sans-serif;
+}
+
+.filter-clear,
+.filter-reset {
+    padding: 8px 16px;
+}
+
+.filter-reset {
+    align-self: flex-end;
+}
+
 .panel {
     background: var(--panel);
     border-radius: 20px;
