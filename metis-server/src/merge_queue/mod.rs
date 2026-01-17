@@ -46,6 +46,7 @@ impl std::fmt::Debug for PatchEntry {
     }
 }
 
+#[derive(Debug)]
 pub struct MergeQueueImpl {
     base_ref: String,
     base: Oid,

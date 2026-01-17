@@ -2,12 +2,15 @@ use crate::{
     app::{GitRepository, ServiceState},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
+use git2::{Repository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
+    patches::{GitOid, Patch, PatchCommitRange, PatchStatus},
 };
 use reqwest::StatusCode;
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
+use tempfile::TempDir;
 
 fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
@@ -23,6 +26,114 @@ fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     )])));
 
     state
+}
+
+async fn state_with_repo_and_patch(
+    repo_name: &str,
+) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
+    let repo = RepoName::from_str(repo_name)?;
+    let (remote_dir, commit_range) = create_repository_with_patch()?;
+    let repository = GitRepository {
+        remote_url: remote_dir
+            .path()
+            .to_str()
+            .expect("tempdir path is valid utf-8")
+            .to_string(),
+        default_branch: Some("main".to_string()),
+        github_token: None,
+        default_image: None,
+    };
+
+    let mut state = test_state();
+    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        repo.clone(),
+        repository,
+    )])));
+
+    let patch = Patch {
+        title: "Test patch".to_string(),
+        description: "Patch for merge queue enqueue test".to_string(),
+        commit_range,
+        status: PatchStatus::Open,
+        is_automatic_backup: false,
+        reviews: Vec::new(),
+        service_repo_name: repo.clone(),
+        github: None,
+    };
+
+    let patch_id = {
+        let mut store = state.store.write().await;
+        store.add_patch(patch).await?
+    };
+
+    Ok((state, patch_id, remote_dir))
+}
+
+fn create_repository_with_patch() -> anyhow::Result<(TempDir, PatchCommitRange)> {
+    let remote_dir = TempDir::new()?;
+    let repository = Repository::init(remote_dir.path())?;
+    let signature = Signature::now("Tester", "tester@example.com")?;
+
+    let base_commit = commit_file(&repository, "README.md", "base\n", "base", &signature)?;
+    repository.branch("main", &repository.find_commit(base_commit)?, true)?;
+    repository.set_head("refs/heads/main")?;
+    repository.checkout_head(Some(CheckoutBuilder::new().force()))?;
+
+    repository.branch("feature", &repository.find_commit(base_commit)?, true)?;
+    repository.set_head("refs/heads/feature")?;
+    repository.checkout_head(Some(CheckoutBuilder::new().force()))?;
+    let patch_commit = commit_file(
+        &repository,
+        "feature.txt",
+        "change\n",
+        "feature",
+        &signature,
+    )?;
+
+    repository.set_head("refs/heads/main")?;
+    repository.checkout_head(Some(CheckoutBuilder::new().force()))?;
+
+    Ok((
+        remote_dir,
+        PatchCommitRange {
+            base: GitOid(base_commit),
+            head: GitOid(patch_commit),
+        },
+    ))
+}
+
+fn commit_file(
+    repo: &Repository,
+    name: &str,
+    contents: &str,
+    message: &str,
+    signature: &Signature<'_>,
+) -> anyhow::Result<git2::Oid> {
+    let workdir = repo
+        .workdir()
+        .expect("repository should be a working tree")
+        .to_path_buf();
+    let full_path = workdir.join(Path::new(name));
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&full_path, contents)?;
+
+    let mut index = repo.index()?;
+    index.add_path(Path::new(name))?;
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+
+    let head_commit = repo.head().ok().and_then(|reference| {
+        reference
+            .target()
+            .and_then(|target| repo.find_commit(target).ok())
+    });
+    let parents: Vec<&git2::Commit> = head_commit.iter().collect();
+
+    let commit_id = repo.commit(Some("HEAD"), signature, signature, message, &tree, &parents)?;
+
+    Ok(commit_id)
 }
 
 #[tokio::test]
@@ -48,10 +159,9 @@ async fn get_merge_queue_returns_empty_for_new_branch() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
-    let state = state_with_repo("dourolabs/api");
+    let (state, patch_id, _remote_dir) = state_with_repo_and_patch("dourolabs/api").await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
-    let patch_id = PatchId::new();
 
     let response = client
         .post(format!(
