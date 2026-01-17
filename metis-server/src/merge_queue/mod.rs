@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use git2::{Commit, MergeOptions, Oid, Repository, Signature, Time};
-use metis_common::patches::PatchCommitRange;
+use metis_common::{PatchId, patches::PatchCommitRange};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -27,6 +27,7 @@ impl SignatureInfo {
 
 #[derive(Clone)]
 pub struct PatchEntry {
+    pub patch_id: PatchId,
     pub commit: Oid,
     pub queued_commit: Oid,
     pub summary: Option<String>,
@@ -37,6 +38,7 @@ pub struct PatchEntry {
 impl std::fmt::Debug for PatchEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PatchEntry")
+            .field("patch_id", &self.patch_id)
             .field("commit", &self.commit)
             .field("queued_commit", &self.queued_commit)
             .field("summary", &self.summary)
@@ -94,6 +96,7 @@ impl MergeQueueImpl {
     pub fn try_append(
         &mut self,
         repo: &Repository,
+        patch_id: PatchId,
         commit: Oid,
         summary: Option<String>,
         author: SignatureInfo,
@@ -112,6 +115,7 @@ impl MergeQueueImpl {
         )?;
 
         let patch = PatchEntry {
+            patch_id,
             commit,
             queued_commit: new_tip,
             summary,
@@ -127,6 +131,7 @@ impl MergeQueueImpl {
     pub fn try_squash_append(
         &mut self,
         repo: &Repository,
+        patch_id: PatchId,
         commit_range: PatchCommitRange,
     ) -> Result<(), MergeQueueError> {
         let base_commit = repo.find_commit(commit_range.base.into())?;
@@ -150,7 +155,14 @@ impl MergeQueueImpl {
             &[&base_commit],
         )?;
 
-        self.try_append(repo, squashed_commit, Some(message), author, committer)
+        self.try_append(
+            repo,
+            patch_id,
+            squashed_commit,
+            Some(message),
+            author,
+            committer,
+        )
     }
 
     pub fn evict(
@@ -248,7 +260,10 @@ mod tests {
     use super::{MergeQueueError, MergeQueueImpl, SignatureInfo};
     use anyhow::Result;
     use git2::{Oid, Repository, ResetType, Signature};
-    use metis_common::patches::{GitOid, PatchCommitRange};
+    use metis_common::{
+        PatchId,
+        patches::{GitOid, PatchCommitRange},
+    };
     use std::{fs, path::Path};
     use tempfile::TempDir;
 
@@ -316,17 +331,20 @@ mod tests {
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+        let patch1_id = PatchId::new();
+        let patch2_id = PatchId::new();
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
         queue.try_append(
             &repo,
+            patch1_id.clone(),
             patch1,
             Some("first patch".to_string()),
             author1,
             committer1,
         )?;
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
-        queue.try_append(&repo, patch2, None, author2, committer2)?;
+        queue.try_append(&repo, patch2_id.clone(), patch2, None, author2, committer2)?;
 
         assert_eq!(queue.patches().len(), 2);
         assert!(
@@ -334,6 +352,14 @@ mod tests {
                 .patches()
                 .iter()
                 .all(|entry| entry.queued_commit != Oid::zero())
+        );
+        assert_eq!(
+            queue
+                .patches()
+                .iter()
+                .map(|entry| entry.patch_id.clone())
+                .collect::<Vec<_>>(),
+            vec![patch1_id, patch2_id]
         );
         assert_eq!(queue.base(), base_commit);
         assert_ne!(queue.tip(), queue.base());
@@ -370,14 +396,17 @@ mod tests {
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+        let patch1_id = PatchId::new();
+        let patch2_id = PatchId::new();
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
-        queue.try_append(&repo, patch1, None, author1, committer1)?;
+        queue.try_append(&repo, patch1_id, patch1, None, author1, committer1)?;
         let tip_after_first = queue.tip();
 
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
         let result = queue.try_append(
             &repo,
+            patch2_id,
             patch2,
             Some("conflicting patch".to_string()),
             author2,
@@ -412,7 +441,8 @@ mod tests {
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
-        queue.try_squash_append(&repo, range)?;
+        let patch_id = PatchId::new();
+        queue.try_squash_append(&repo, patch_id, range)?;
 
         assert_eq!(queue.patches().len(), 1);
         assert_eq!(
@@ -442,10 +472,13 @@ mod tests {
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+        let feature_patch_ids = [PatchId::new(), PatchId::new()];
+        let hotfix_patch_id = PatchId::new();
 
         let (author1, committer1) = commit_signatures(scripted.repo(), feature_commits[0])?;
         queue.try_append(
             &repo,
+            feature_patch_ids[0].clone(),
             feature_commits[0],
             Some("feature kickoff".to_string()),
             author1,
@@ -454,6 +487,7 @@ mod tests {
         let (author2, committer2) = commit_signatures(scripted.repo(), feature_commits[1])?;
         queue.try_append(
             &repo,
+            feature_patch_ids[1].clone(),
             feature_commits[1],
             Some("feature refinement".to_string()),
             author2,
@@ -462,6 +496,7 @@ mod tests {
         let (author3, committer3) = commit_signatures(scripted.repo(), hotfix[0])?;
         queue.try_append(
             &repo,
+            hotfix_patch_id,
             hotfix[0],
             Some("stability hotfix".to_string()),
             author3,
@@ -496,10 +531,13 @@ mod tests {
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+        let patch1_id = PatchId::new();
+        let patch2_id = PatchId::new();
 
         let (author1, committer1) = commit_signatures(scripted.repo(), patch1)?;
         queue.try_append(
             &repo,
+            patch1_id.clone(),
             patch1,
             Some("kept patch".to_string()),
             author1,
@@ -508,6 +546,7 @@ mod tests {
         let (author2, committer2) = commit_signatures(scripted.repo(), patch2)?;
         queue.try_append(
             &repo,
+            patch2_id.clone(),
             patch2,
             Some("dependent patch".to_string()),
             author2,
@@ -519,6 +558,8 @@ mod tests {
         assert_eq!(evicted.len(), 2);
         assert!(evicted.iter().any(|entry| entry.commit == patch1));
         assert!(evicted.iter().any(|entry| entry.commit == patch2));
+        assert!(evicted.iter().any(|entry| entry.patch_id == patch1_id));
+        assert!(evicted.iter().any(|entry| entry.patch_id == patch2_id));
         assert_eq!(queue.patches().len(), 0);
         assert_eq!(queue.tip(), base);
 
@@ -545,11 +586,15 @@ mod tests {
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
+        let feature_patch_id = PatchId::new();
+        let hotfix_patch_id = PatchId::new();
+        let follow_up_patch_id = PatchId::new();
 
         let (feature_author, feature_committer) =
             commit_signatures(scripted.repo(), feature_patch)?;
         queue.try_append(
             &repo,
+            feature_patch_id.clone(),
             feature_patch,
             Some("early queue patch".to_string()),
             feature_author,
@@ -558,6 +603,7 @@ mod tests {
         let (hotfix_author, hotfix_committer) = commit_signatures(scripted.repo(), hotfix)?;
         queue.try_append(
             &repo,
+            hotfix_patch_id.clone(),
             hotfix,
             Some("middle hotfix".to_string()),
             hotfix_author,
@@ -567,6 +613,7 @@ mod tests {
             commit_signatures(scripted.repo(), hotfix_follow_up)?;
         queue.try_append(
             &repo,
+            follow_up_patch_id.clone(),
             hotfix_follow_up,
             Some("dependent follow up".to_string()),
             follow_author,
@@ -578,8 +625,19 @@ mod tests {
         assert_eq!(evicted.len(), 2);
         assert!(evicted.iter().any(|entry| entry.commit == hotfix));
         assert!(evicted.iter().any(|entry| entry.commit == hotfix_follow_up));
+        assert!(
+            evicted
+                .iter()
+                .any(|entry| entry.patch_id == hotfix_patch_id)
+        );
+        assert!(
+            evicted
+                .iter()
+                .any(|entry| entry.patch_id == follow_up_patch_id)
+        );
         assert_eq!(queue.patches().len(), 1);
         assert_eq!(queue.patches()[0].commit, feature_patch);
+        assert_eq!(queue.patches()[0].patch_id, feature_patch_id);
         assert_eq!(
             file_at_commit(scripted.repo(), queue.tip(), "feature.txt")?,
             "queue keeps earlier patches\n"
