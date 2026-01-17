@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     io::Write,
     path::{Path, PathBuf},
     process::Command,
@@ -17,8 +17,8 @@ use metis_common::{
     },
     jobs::BundleSpec,
     patches::{
-        GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
-        UpsertPatchResponse,
+        GitOid, GithubPr, Patch, PatchCommitRange, PatchRecord, PatchStatus, Review,
+        SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
     },
     PatchId, RepoName, TaskId,
 };
@@ -45,7 +45,7 @@ pub enum PatchesCommand {
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
 
-        /// Pretty-print the matching patch diffs with color coding.
+        /// Pretty-print the matching patch details.
         #[arg(long = "pretty")]
         pretty: bool,
     },
@@ -125,13 +125,13 @@ pub enum PatchesCommand {
         #[arg(long = "status", value_name = "STATUS")]
         status: Option<PatchStatus>,
 
-        /// Updated diff contents for the patch.
-        #[arg(long = "diff", value_name = "DIFF", conflicts_with = "diff_file")]
-        diff: Option<String>,
+        /// Updated base commit for the patch.
+        #[arg(long = "base", value_name = "OID")]
+        base: Option<GitOid>,
 
-        /// Path to a file containing the updated patch diff.
-        #[arg(long = "diff-file", value_name = "PATH", conflicts_with = "diff")]
-        diff_file: Option<PathBuf>,
+        /// Updated head commit for the patch.
+        #[arg(long = "head", value_name = "OID")]
+        head: Option<GitOid>,
     },
 }
 
@@ -170,9 +170,9 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             title,
             description,
             status,
-            diff,
-            diff_file,
-        } => update_patch(client, id, title, description, status, diff, diff_file).await,
+            base,
+            head,
+        } => update_patch(client, id, title, description, status, base, head).await,
     }
 }
 
@@ -248,7 +248,7 @@ async fn create_patch(
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
     };
-    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
+    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref(), &repo_root).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -304,8 +304,8 @@ async fn update_patch(
     title: Option<String>,
     description: Option<String>,
     status: Option<PatchStatus>,
-    diff: Option<String>,
-    diff_file: Option<PathBuf>,
+    base: Option<GitOid>,
+    head: Option<GitOid>,
 ) -> Result<()> {
     let description = match description {
         Some(value) => {
@@ -329,26 +329,12 @@ async fn update_patch(
         None => None,
     };
 
-    let diff = match (diff, diff_file) {
-        (Some(inline), None) => {
-            if inline.trim().is_empty() {
-                bail!("Patch diff must not be empty.");
-            }
-            Some(inline)
-        }
-        (None, Some(path)) => {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read diff from '{}'", path.display()))?;
-            if contents.trim().is_empty() {
-                bail!("Patch diff must not be empty.");
-            }
-            Some(contents)
-        }
-        (None, None) => None,
-        _ => unreachable!("clap should enforce diff/diff-file exclusivity"),
-    };
+    let has_partial_range = base.is_some() ^ head.is_some();
+    if has_partial_range {
+        bail!("--base and --head must be provided together.");
+    }
 
-    let no_changes = title.is_none() && description.is_none() && status.is_none() && diff.is_none();
+    let no_changes = title.is_none() && description.is_none() && status.is_none() && base.is_none();
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -368,8 +354,8 @@ async fn update_patch(
     if let Some(status) = status {
         updated_patch.status = status;
     }
-    if let Some(diff) = diff {
-        updated_patch.diff = diff;
+    if let (Some(base), Some(head)) = (base, head) {
+        updated_patch.commit_range = PatchCommitRange { base, head };
     }
 
     let response = client
@@ -484,21 +470,52 @@ fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
-) -> Result<Option<RepoName>> {
-    let Some(job_id) = job_id else {
-        return Ok(None);
-    };
+    repo_root: &Path,
+) -> Result<RepoName> {
+    if let Some(job_id) = job_id {
+        let job = client
+            .get_job(job_id)
+            .await
+            .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
 
-    let job = match client.get_job(job_id).await {
-        Ok(job) => job,
-        Err(_) => return Ok(None),
-    };
+        if let BundleSpec::ServiceRepository { name, .. } = job.task.context {
+            return Ok(name);
+        }
+    }
 
-    let BundleSpec::ServiceRepository { name, .. } = job.task.context else {
-        return Ok(None);
-    };
+    infer_repo_name_from_origin(repo_root)
+        .context("failed to infer service repository name from git remote")
+}
 
-    Ok(Some(name))
+fn infer_repo_name_from_origin(repo_root: &Path) -> Result<RepoName> {
+    let output = Command::new("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to read origin url from git config")?;
+    if !output.status.success() {
+        bail!("git remote.origin.url is not configured");
+    }
+
+    let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if remote.is_empty() {
+        bail!("git remote origin url is empty");
+    }
+
+    let normalized = remote.trim_end_matches(".git");
+    let repo_segment = parse_repo_name_from_remote(normalized)
+        .ok_or_else(|| anyhow!("unsupported remote url format: {normalized}"))?;
+
+    RepoName::from_str(repo_segment)
+        .with_context(|| format!("failed to parse repo name from remote '{normalized}'"))
+}
+
+fn parse_repo_name_from_remote(remote: &str) -> Option<&str> {
+    remote
+        .strip_prefix("git@github.com:")
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| remote.strip_prefix("https://github.com/"))
+        .or_else(|| remote.strip_prefix("http://github.com/"))
 }
 
 pub async fn create_patch_artifact_from_repo(
@@ -509,10 +526,19 @@ pub async fn create_patch_artifact_from_repo(
     job_id: Option<TaskId>,
     create_github_pr: bool,
     is_automatic_backup: bool,
-    service_repo_name: Option<RepoName>,
+    service_repo_name: RepoName,
 ) -> Result<Option<UpsertPatchResponse>> {
-    let patch = create_patch_from_repo(repo_root)?;
-    if patch.trim().is_empty() {
+    let commit_range = match create_patch_from_repo(repo_root)? {
+        Some(range) => range,
+        None => {
+            return Ok(None);
+        }
+    };
+
+    if git_diff_for_range(repo_root, &commit_range)?
+        .trim()
+        .is_empty()
+    {
         return Ok(None);
     }
 
@@ -527,8 +553,8 @@ pub async fn create_patch_artifact_from_repo(
 
     let mut patch_payload = Patch {
         title: title.clone(),
-        diff: patch,
         description: description.clone(),
+        commit_range,
         status: PatchStatus::Open,
         is_automatic_backup,
         reviews: Vec::new(),
@@ -585,6 +611,23 @@ fn git_repository_root() -> Result<PathBuf> {
     Ok(PathBuf::from(root))
 }
 
+fn git_diff_for_range(repo_root: &Path, range: &PatchCommitRange) -> Result<String> {
+    let diff_range = format_commit_range(range);
+    let output = Command::new("git")
+        .args(["diff", &diff_range])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to compute diff for commit range")?;
+    if !output.status.success() {
+        bail!(
+            "git diff for range {diff_range} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 fn extract_patch_title(record: &PatchRecord) -> &str {
     &record.patch.title
 }
@@ -593,12 +636,12 @@ fn extract_patch_status(record: &PatchRecord) -> PatchStatus {
     record.patch.status
 }
 
-fn extract_patch_diff(record: &PatchRecord) -> &str {
-    &record.patch.diff
-}
-
 fn extract_patch_description(record: &PatchRecord) -> &str {
     &record.patch.description
+}
+
+fn format_commit_range(range: &PatchCommitRange) -> String {
+    format!("{}..{}", range.base, range.head)
 }
 
 fn format_patch_status(status: PatchStatus) -> &'static str {
@@ -619,15 +662,19 @@ fn print_patches_jsonl(patches: &[PatchRecord], writer: &mut impl Write) -> Resu
 }
 
 fn print_patches_pretty(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
+    let repo_root = git_repository_root().ok();
     for patch in patches {
-        write_patch_record_pretty(patch, writer)?;
+        write_patch_record_pretty(patch, repo_root.as_deref(), writer)?;
     }
     writer.flush()?;
     Ok(())
 }
 
-fn write_patch_record_pretty(record: &PatchRecord, writer: &mut impl Write) -> Result<()> {
-    let diff = extract_patch_diff(record);
+fn write_patch_record_pretty(
+    record: &PatchRecord,
+    repo_root: Option<&Path>,
+    writer: &mut impl Write,
+) -> Result<()> {
     let title = extract_patch_title(record);
     let status = extract_patch_status(record);
     let description = extract_patch_description(record);
@@ -638,11 +685,29 @@ fn write_patch_record_pretty(record: &PatchRecord, writer: &mut impl Write) -> R
         format_patch_status(status),
         title
     )?;
+    writeln!(
+        writer,
+        "Repository: {}",
+        record.patch.service_repo_name.as_str()
+    )?;
+    writeln!(
+        writer,
+        "Commit range: {}",
+        format_commit_range(&record.patch.commit_range)
+    )?;
     if !description.trim().is_empty() {
         writeln!(writer, "{description}")?;
     }
-    writeln!(writer)?;
-    pretty_print_patch(diff, writer)?;
+    if let Some(root) = repo_root {
+        match git_diff_for_range(root, &record.patch.commit_range) {
+            Ok(diff) if !diff.trim().is_empty() => {
+                writeln!(writer)?;
+                pretty_print_patch(&diff, writer)?;
+            }
+            Ok(_) => writeln!(writer, "[no diff between commits]")?,
+            Err(_) => writeln!(writer, "[diff unavailable locally]")?,
+        }
+    }
     writeln!(writer)?;
     Ok(())
 }
@@ -666,46 +731,35 @@ async fn apply_patch_record(client: &dyn MetisClientInterface, id: PatchId) -> R
         .get_patch(&id)
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
-    let diff = extract_patch_diff(&patch_record);
     let repo_root = git_repository_root()?;
 
-    apply_patch_to_repo(diff, &repo_root)?;
+    apply_patch_to_repo(&patch_record.patch, &repo_root)?;
     Ok(())
 }
 
-fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
-    if patch.trim().is_empty() {
-        bail!("Patch is empty. Nothing to apply.");
-    }
-
-    println!("Applying patch to current git repository...\n");
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    pretty_print_patch(patch, &mut handle)?;
-
-    let patch_file = NamedTempFile::new().context("Failed to create temporary file for patch")?;
-    fs::write(patch_file.path(), patch).context("Failed to write patch to temporary file")?;
+fn apply_patch_to_repo(patch: &Patch, git_root: &Path) -> Result<()> {
+    let range = format_commit_range(&patch.commit_range);
+    println!("Applying commit range {range} to current git repository...\n");
 
     let output = Command::new("git")
-        .arg("apply")
-        .args(["--3way", "--index"])
-        .arg(patch_file.path())
+        .arg("cherry-pick")
+        .arg(&range)
         .current_dir(git_root)
         .output()
-        .context("Failed to execute git apply with 3-way merge")?;
+        .context("Failed to execute git cherry-pick")?;
 
     if !output.stderr.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("git apply stderr: {stderr}");
+        eprintln!("git cherry-pick stderr: {stderr}");
     }
 
     if !output.stdout.is_empty() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        println!("git apply stdout: {stdout}");
+        println!("git cherry-pick stdout: {stdout}");
     }
 
     if output.status.success() {
-        println!("Patch applied successfully.");
+        println!("Commit range applied successfully.");
         return Ok(());
     }
 
@@ -722,7 +776,7 @@ fn apply_patch_to_repo(patch: &str, git_root: &Path) -> Result<()> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     bail!(
-        "Failed to apply patch. Exit code: {}. Error: {}",
+        "Failed to apply commit range {range}. Exit code: {}. Error: {}",
         output.status.code().unwrap_or(-1),
         stderr
     );
@@ -1069,12 +1123,24 @@ mod tests {
         },
         jobs::{BundleSpec, JobRecord, Task},
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, Review, SearchPatchesQuery,
-            UpsertPatchResponse,
+            GitOid, ListPatchesResponse, Patch, PatchCommitRange, PatchRecord, Review,
+            SearchPatchesQuery, UpsertPatchResponse,
         },
         task_status::TaskStatusLog,
+        RepoName,
     };
-    use std::{env, fs, process::Command};
+    use std::{env, fs, process::Command, str::FromStr};
+
+    fn sample_commit_range() -> PatchCommitRange {
+        PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
+        }
+    }
+
+    fn sample_repo_name() -> RepoName {
+        RepoName::from_str("dourolabs/example").unwrap()
+    }
 
     fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
@@ -1104,6 +1170,20 @@ mod tests {
             .success()
             .then_some(())
             .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/dourolabs/example.git",
+            ])
+            .status()
+            .context("failed to set remote origin")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git remote add returned non-zero exit code"))?;
 
         fs::write(repo_path.join("README.md"), "initial content\n")
             .context("failed to write initial README.md")?;
@@ -1192,6 +1272,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1217,7 +1298,7 @@ mod tests {
         let (_, request) = &requests[0];
         let patch = &request.patch;
         let generated_title = &patch.title;
-        let generated_patch = &patch.diff;
+        let generated_patch = git_diff_for_range(&repo_path, &patch.commit_range)?;
         let generated_description = &patch.description;
         assert!(
             !patch.is_automatic_backup,
@@ -1287,9 +1368,25 @@ mod tests {
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-2"),
         });
+        let job_id = task_id("t-job-1234");
+        client.push_get_job_response(JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
 
         let title = "patch with job title".to_string();
-        let job_id = Some(task_id("t-job-1234"));
+        let job_id = Some(job_id);
         let description = "patch with job id".to_string();
 
         create_patch(
@@ -1330,6 +1427,21 @@ mod tests {
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-3"),
         });
+        client.push_get_job_response(JobRecord {
+            id: env_job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
 
         let title = "patch with env title".to_string();
         let description = "patch with env job id".to_string();
@@ -1361,6 +1473,7 @@ mod tests {
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
         let client = MockMetisClient::default();
         let created_patch_id = patch_id("p-merge");
@@ -1431,7 +1544,7 @@ mod tests {
             Some(task_id("t-job-automatic")),
             false,
             true,
-            None,
+            sample_repo_name(),
         )
         .await?
         .expect("patch should be created for repository changes");
@@ -1482,12 +1595,8 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
         let (_, request) = &requests[0];
         assert_eq!(
-            request
-                .patch
-                .service_repo_name
-                .as_ref()
-                .map(|name| name.to_string()),
-            Some("dourolabs/api".to_string()),
+            request.patch.service_repo_name.to_string(),
+            "dourolabs/api".to_string(),
             "service repo name should be derived from the job context"
         );
         Ok(())
@@ -1508,11 +1617,11 @@ mod tests {
             patch: Patch {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
-                diff: "diff --git a/file b/file\n+example".to_string(),
+                commit_range: sample_commit_range(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         });
@@ -1556,12 +1665,16 @@ mod tests {
     #[tokio::test]
     async fn update_patch_modifies_requested_fields() -> Result<()> {
         let client = MockMetisClient::default();
+        let updated_range = PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000003").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000004").unwrap(),
+        };
         client.push_get_patch_response(PatchRecord {
             id: patch_id("p-update"),
             patch: Patch {
                 title: "Initial title".to_string(),
                 description: "Initial description".to_string(),
-                diff: "diff --git a/file b/file\n+old".to_string(),
+                commit_range: sample_commit_range(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![Review {
@@ -1570,7 +1683,7 @@ mod tests {
                     author: "sam".to_string(),
                     submitted_at: None,
                 }],
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         });
@@ -1584,8 +1697,8 @@ mod tests {
             Some("Updated title".to_string()),
             Some("Updated description".to_string()),
             Some(PatchStatus::Closed),
-            Some("diff --git a/file b/file\n+new".to_string()),
-            None,
+            Some(updated_range.base),
+            Some(updated_range.head),
         )
         .await?;
 
@@ -1601,7 +1714,7 @@ mod tests {
                     patch: Patch {
                         title: "Updated title".to_string(),
                         description: "Updated description".to_string(),
-                        diff: "diff --git a/file b/file\n+new".to_string(),
+                        commit_range: updated_range,
                         status: PatchStatus::Closed,
                         is_automatic_backup: false,
                         reviews: vec![Review {
@@ -1610,7 +1723,7 @@ mod tests {
                             author: "sam".to_string(),
                             submitted_at: None,
                         }],
-                        service_repo_name: None,
+                        service_repo_name: sample_repo_name(),
                         github: None,
                     },
                     job_id: None,
@@ -1622,47 +1735,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_patch_reads_diff_from_file() -> Result<()> {
+    async fn update_patch_requires_full_commit_range() -> Result<()> {
         let client = MockMetisClient::default();
-        client.push_get_patch_response(PatchRecord {
-            id: patch_id("p-file"),
-            patch: Patch {
-                title: "Title".to_string(),
-                description: "Description".to_string(),
-                diff: "diff --git a/file b/file\n+old".to_string(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                reviews: vec![],
-                service_repo_name: None,
-                github: None,
-            },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-file"),
-        });
 
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for diff file")?;
-        let diff_path = tempdir.path().join("patch.diff");
-        let updated_diff = "diff --git a/file b/file\n+from file";
-        fs::write(&diff_path, updated_diff).context("failed to write diff file")?;
-
-        update_patch(
+        let result = update_patch(
             &client,
             patch_id("p-file"),
             None,
             None,
             Some(PatchStatus::Merged),
+            Some(sample_commit_range().base),
             None,
-            Some(diff_path.clone()),
         )
-        .await?;
+        .await;
 
-        let upserts = client.recorded_patch_upserts();
-        assert_eq!(upserts.len(), 1, "expected one patch update");
-        let (id, request) = &upserts[0];
-        assert_eq!(id, &Some(patch_id("p-file")));
-        assert_eq!(request.patch.diff, updated_diff);
-        assert_eq!(request.patch.status, PatchStatus::Merged);
+        assert!(
+            result.is_err(),
+            "expected error when only one commit provided"
+        );
+        assert!(
+            client.recorded_get_patch_requests().is_empty(),
+            "patch should not be fetched when commit range is incomplete"
+        );
 
         Ok(())
     }

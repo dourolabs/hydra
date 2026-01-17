@@ -1,6 +1,7 @@
 use crate::{PatchId, RepoName, TaskId};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use git2::Oid;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,12 +72,67 @@ pub struct GithubPr {
     pub ci: Option<GithubCiStatus>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GitOid(pub Oid);
+
+impl Serialize for GitOid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for GitOid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let oid = Oid::from_str(&value).map_err(de::Error::custom)?;
+        Ok(Self(oid))
+    }
+}
+
+impl FromStr for GitOid {
+    type Err = git2::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Oid::from_str(s).map(Self)
+    }
+}
+
+impl fmt::Display for GitOid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.to_string())
+    }
+}
+
+impl From<Oid> for GitOid {
+    fn from(value: Oid) -> Self {
+        Self(value)
+    }
+}
+
+impl From<GitOid> for Oid {
+    fn from(value: GitOid) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchCommitRange {
+    pub base: GitOid,
+    pub head: GitOid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     #[serde(default)]
     pub title: String,
     pub description: String,
-    pub diff: String,
+    pub commit_range: PatchCommitRange,
     #[serde(default)]
     pub status: PatchStatus,
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
@@ -85,8 +141,7 @@ pub struct Patch {
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_repo_name: Option<RepoName>,
+    pub service_repo_name: RepoName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
 }

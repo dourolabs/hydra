@@ -7,8 +7,8 @@ use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId, RepoName,
     patches::{
-        GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
-        UpsertPatchRequest,
+        GitOid, GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchCommitRange,
+        PatchStatus, Review, UpsertPatchRequest,
     },
 };
 use octocrab::{
@@ -24,9 +24,7 @@ use octocrab::{
     params::{pulls::State, repos::Commitish},
 };
 use serde_json::json;
-#[cfg(test)]
-use std::str::FromStr;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, str::FromStr, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -156,12 +154,12 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, patch.service_repo_name.as_ref()) else {
+    let Some(token) = select_github_token(state, &patch.service_repo_name) else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
             repo = %github.repo,
-            service_repo_name = ?patch.service_repo_name,
+            service_repo_name = %patch.service_repo_name,
             "skipping GitHub sync because no token is configured for the service repository"
         );
         return Ok(());
@@ -172,6 +170,10 @@ async fn sync_patch_from_github(
         .pulls(&github.owner, &github.repo)
         .get(github.number)
         .await?;
+    let github_range = PatchCommitRange {
+        base: GitOid::from_str(&pr.base.sha)?,
+        head: GitOid::from_str(&pr.head.sha)?,
+    };
     let reviews = client
         .all_pages(
             client
@@ -251,6 +253,10 @@ async fn sync_patch_from_github(
     let mut changed = false;
     if merged_reviews != latest_patch.reviews {
         latest_patch.reviews = merged_reviews;
+        changed = true;
+    }
+    if latest_patch.commit_range != github_range {
+        latest_patch.commit_range = github_range;
         changed = true;
     }
     if new_status != latest_patch.status {
@@ -381,12 +387,11 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-fn select_github_token(state: &AppState, service_repo_name: Option<&RepoName>) -> Option<String> {
-    let name = service_repo_name?;
+fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
     state
         .service_state
         .repositories
-        .get(name)
+        .get(service_repo_name)
         .and_then(|repo| repo.github_token.clone())
 }
 
@@ -658,15 +663,22 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use metis_common::patches::GithubPr;
+    use metis_common::patches::{GitOid, GithubPr, PatchCommitRange};
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
     use tokio::sync::RwLock;
 
     use crate::{
         app::{GitRepository, ServiceState},
         test::{store::FailingStore, test_state},
     };
+
+    fn sample_commit_range() -> PatchCommitRange {
+        PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
+        }
+    }
 
     #[tokio::test]
     async fn github_worker_returns_idle_without_open_patches() {
@@ -685,11 +697,11 @@ mod tests {
                 .add_patch(Patch {
                     title: "test".to_string(),
                     description: "desc".to_string(),
-                    diff: String::new(),
+                    commit_range: sample_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: Some(RepoName::from_str("dourolabs/api")?),
+                    service_repo_name: RepoName::from_str("dourolabs/api")?,
                     github: Some(GithubPr {
                         owner: "octo".to_string(),
                         repo: "repo".to_string(),
@@ -1003,10 +1015,11 @@ mod tests {
     }
 
     #[test]
-    fn select_github_token_requires_service_repo_name() {
+    fn select_github_token_returns_none_for_unknown_repo() {
         let state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/api").unwrap();
 
-        assert!(select_github_token(&state, None).is_none());
+        assert!(select_github_token(&state, &repo_name).is_none());
     }
 
     #[test]
@@ -1023,7 +1036,7 @@ mod tests {
             },
         )])));
 
-        let token = select_github_token(&state, Some(&repo_name));
+        let token = select_github_token(&state, &repo_name);
 
         assert_eq!(token.as_deref(), Some("svc-token"));
     }

@@ -2811,6 +2811,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures",
+ "git2",
  "metis-common",
  "octocrab 0.38.0",
  "owo-colors",
@@ -2832,6 +2833,7 @@ name = "metis-common"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "git2",
  "indexmap",
  "rand 0.8.5",
  "reqwest",

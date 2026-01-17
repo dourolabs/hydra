@@ -980,7 +980,20 @@ mod tests {
         Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
         SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchRecord, Review};
+    use metis_common::patches::{GitOid, Patch, PatchCommitRange, PatchRecord, Review};
+    use metis_common::RepoName;
+    use std::str::FromStr;
+
+    fn sample_commit_range() -> PatchCommitRange {
+        PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
+        }
+    }
+
+    fn sample_repo_name() -> RepoName {
+        RepoName::from_str("dourolabs/example").unwrap()
+    }
 
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
@@ -1201,11 +1214,11 @@ mod tests {
             patch: Patch {
                 title: "root patch".into(),
                 description: "desc".into(),
-                diff: "diff".into(),
+                commit_range: sample_commit_range(),
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         };
@@ -1214,11 +1227,11 @@ mod tests {
             patch: Patch {
                 title: "parent patch".into(),
                 description: "desc".into(),
-                diff: "diff".into(),
+                commit_range: sample_commit_range(),
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         };
@@ -1227,11 +1240,11 @@ mod tests {
             patch: Patch {
                 title: "child patch".into(),
                 description: "desc".into(),
-                diff: "diff".into(),
+                commit_range: sample_commit_range(),
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         };
@@ -1578,11 +1591,11 @@ mod tests {
             patch: Patch {
                 title: "main patch".into(),
                 description: "desc".into(),
-                diff: "diff".into(),
+                commit_range: sample_commit_range(),
                 status: Default::default(),
                 is_automatic_backup: false,
                 reviews: Vec::new(),
-                service_repo_name: None,
+                service_repo_name: sample_repo_name(),
                 github: None,
             },
         };
@@ -1735,11 +1748,11 @@ mod tests {
                     patch: Patch {
                         title: "main patch".into(),
                         description: "desc".into(),
-                        diff: "diff".into(),
+                        commit_range: sample_commit_range(),
                         status: Default::default(),
                         is_automatic_backup: false,
                         reviews: patch_reviews,
-                        service_repo_name: None,
+                        service_repo_name: sample_repo_name(),
                         github: None,
                     },
                 }],

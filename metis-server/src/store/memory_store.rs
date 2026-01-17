@@ -754,13 +754,14 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use metis_common::{
+        RepoName,
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
         },
         jobs::BundleSpec,
-        patches::{Patch, PatchStatus},
+        patches::{GitOid, Patch, PatchCommitRange, PatchStatus},
     };
-    use std::collections::HashSet;
+    use std::{collections::HashSet, str::FromStr};
 
     fn spawn_task() -> Task {
         Task {
@@ -772,15 +773,22 @@ mod tests {
         }
     }
 
+    fn dummy_commit_range() -> PatchCommitRange {
+        PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
+        }
+    }
+
     fn sample_patch() -> Patch {
         Patch {
             title: "sample patch".to_string(),
-            diff: "diff --git a/file b/file".to_string(),
             description: "sample patch".to_string(),
+            commit_range: dummy_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
             github: None,
         }
     }
@@ -869,12 +877,12 @@ mod tests {
         let id = store.add_patch(sample_patch()).await.unwrap();
         let updated = Patch {
             title: "new title".to_string(),
-            diff: "noop".to_string(),
             description: "updated patch".to_string(),
+            commit_range: dummy_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
             github: None,
         };
 
@@ -893,12 +901,12 @@ mod tests {
                 &missing,
                 Patch {
                     title: "noop patch".to_string(),
-                    diff: "noop".to_string(),
                     description: "noop patch".to_string(),
+                    commit_range: dummy_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: None,
+                    service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
                     github: None,
                 },
             )

@@ -173,8 +173,8 @@ mod tests {
         job_status::GetJobStatusResponse,
         jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
-            UpsertPatchRequest, UpsertPatchResponse,
+            GitOid, ListPatchesResponse, Patch, PatchCommitRange, PatchRecord, PatchStatus,
+            SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
         },
         task_status::Event,
     };
@@ -191,6 +191,13 @@ mod tests {
 
     fn service_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/private-repo").expect("service repo name should parse")
+    }
+
+    fn patch_commit_range() -> PatchCommitRange {
+        PatchCommitRange {
+            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
+            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
+        }
     }
 
     fn service_repository() -> (RepoName, GitRepository) {
@@ -897,12 +904,12 @@ mod tests {
             patch_id = store_write
                 .add_patch(Patch {
                     title: "done".to_string(),
-                    diff: "diff".to_string(),
                     description: "done".to_string(),
+                    commit_range: patch_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: None,
+                    service_repo_name: service_repo_name(),
                     github: None,
                 })
                 .await?;
@@ -1110,12 +1117,12 @@ mod tests {
             patch_id = store_write
                 .add_patch(Patch {
                     title: "all good".to_string(),
-                    diff: "diff".to_string(),
                     description: "all good".to_string(),
+                    commit_range: patch_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: None,
+                    service_repo_name: service_repo_name(),
                     github: None,
                 })
                 .await?;
@@ -1156,13 +1163,13 @@ mod tests {
         assert_eq!(patch_record.id, patch_id);
         let Patch {
             title,
-            diff,
             description,
+            commit_range,
             ..
         } = patch_record.patch;
         assert_eq!(title, "all good");
-        assert_eq!(diff, "diff");
         assert_eq!(description, "all good");
+        assert_eq!(commit_range, patch_commit_range());
         Ok(())
     }
 
@@ -1235,12 +1242,12 @@ mod tests {
             let parent_patch_id = store_write
                 .add_patch(Patch {
                     title: "done".to_string(),
-                    diff: "patch-content".to_string(),
                     description: "done".to_string(),
+                    commit_range: patch_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: None,
+                    service_repo_name: service_repo_name(),
                     github: None,
                 })
                 .await?;
@@ -1336,12 +1343,12 @@ mod tests {
         let client = test_client();
         let patch = Patch {
             title: "Initial patch".to_string(),
-            diff: "diff --git a/file b/file".to_string(),
             description: "initial patch".to_string(),
+            commit_range: patch_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: service_repo_name(),
             github: None,
         };
 
@@ -1405,12 +1412,12 @@ mod tests {
             .json(&UpsertPatchRequest {
                 patch: Patch {
                     title: "artifact for emit".to_string(),
-                    diff: "diff --git a/file b/file".to_string(),
                     description: "artifact for emit".to_string(),
+                    commit_range: patch_commit_range(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),
-                    service_repo_name: None,
+                    service_repo_name: service_repo_name(),
                     github: None,
                 },
                 job_id: Some(job_id.clone()),
@@ -1439,12 +1446,12 @@ mod tests {
 
         let base_patch = Patch {
             title: "link patch to issue".to_string(),
-            diff: "diff --git a/file b/file".to_string(),
             description: "issue-linked patch".to_string(),
+            commit_range: patch_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: service_repo_name(),
             github: None,
         };
 
@@ -1518,22 +1525,22 @@ mod tests {
 
         let patch = Patch {
             title: "refactor logging".to_string(),
-            diff: "refactor logging".to_string(),
             description: "refactor logging".to_string(),
+            commit_range: patch_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: service_repo_name(),
             github: None,
         };
         let filtered_patch = Patch {
             title: "login retry patch".to_string(),
-            diff: "add login retry handling".to_string(),
             description: "login retry patch".to_string(),
+            commit_range: patch_commit_range(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
-            service_repo_name: None,
+            service_repo_name: service_repo_name(),
             github: None,
         };
 
