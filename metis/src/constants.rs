@@ -3,12 +3,7 @@
 //! These constants centralize path-related strings to ensure consistency
 //! and make it easier to maintain and update paths across the codebase.
 
-/// The output directory name (`output`) where job outputs are stored, including
-/// files like `output.txt` and `changes.patch`.
-pub const OUTPUT_DIR: &str = "output";
-
-/// The output text file name (`output.txt`) stored in the output directory,
-/// containing the last message output from a job execution.
+/// The output text file name (`output.txt`) used when capturing codex output for a job.
 pub const OUTPUT_TXT_FILE: &str = "output.txt";
 
 /// The default configuration file name (`config.toml`) used when no config
