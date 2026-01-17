@@ -1,16 +1,24 @@
 mod app_state;
 
-use crate::config::{ServiceSection, non_empty};
-use git2::Repository;
+use crate::merge_queue::{MergeQueueError as MergeQueueEngineError, MergeQueueImpl, SignatureInfo};
+use crate::{
+    config::{ServiceSection, non_empty},
+    store::StoreError,
+};
+use git2::{Oid, Repository};
 use metis_common::{
     PatchId, RepoName,
     jobs::{Bundle, BundleSpec},
     merge_queues::MergeQueue,
+    patches::Patch,
 };
 use std::{collections::HashMap, sync::Arc};
 use tempfile::TempDir;
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+
+type RepoQueues = HashMap<String, Arc<Mutex<MergeQueueState>>>;
+type MergeQueueMap = HashMap<RepoName, RepoQueues>;
 
 pub use app_state::{
     AppState, CreateJobError, SetJobStatusError, UpsertIssueError, UpsertPatchError,
@@ -43,13 +51,46 @@ impl ConnectedRepository {
     pub fn repository(&self) -> &Repository {
         &self.repository
     }
+
+    pub fn into_parts(self) -> (Repository, TempDir) {
+        (self.repository, self._workdir)
+    }
 }
 
 /// Aggregated state for repositories the service can interact with.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct ServiceState {
     pub repositories: HashMap<RepoName, GitRepository>,
-    pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueue>>>>,
+    merge_queues: Arc<RwLock<MergeQueueMap>>,
+}
+
+struct MergeQueueState {
+    queue: MergeQueueImpl,
+    _workdir: TempDir,
+}
+
+impl MergeQueueState {
+    fn new(queue: MergeQueueImpl, workdir: TempDir) -> Self {
+        Self {
+            queue,
+            _workdir: workdir,
+        }
+    }
+
+    fn as_api_queue(&self) -> MergeQueue {
+        MergeQueue {
+            patches: self.queue.patch_ids(),
+        }
+    }
+}
+
+impl std::fmt::Debug for MergeQueueState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MergeQueueState")
+            .field("base", &self.queue.base())
+            .field("tip", &self.queue.tip())
+            .finish()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -62,6 +103,36 @@ pub enum BundleResolutionError {
 pub enum MergeQueueError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(RepoName),
+    #[error("patch '{patch_id}' not found")]
+    PatchNotFound { patch_id: PatchId },
+    #[error("patch '{patch_id}' targets repository '{patch_repo}', not '{requested_repo}'")]
+    PatchRepositoryMismatch {
+        patch_id: PatchId,
+        patch_repo: RepoName,
+        requested_repo: RepoName,
+    },
+    #[error("failed to load patch '{patch_id}'")]
+    PatchLookup {
+        patch_id: PatchId,
+        #[source]
+        source: StoreError,
+    },
+    #[error("failed to load repository '{repo_name}'")]
+    Repository {
+        repo_name: RepoName,
+        #[source]
+        source: GitRepositoryError,
+    },
+    #[error("failed to initialize merge queue for '{repo_name}'")]
+    QueueInit {
+        repo_name: RepoName,
+        #[source]
+        source: git2::Error,
+    },
+    #[error(transparent)]
+    Queue(#[from] MergeQueueEngineError),
+    #[error(transparent)]
+    Git(#[from] git2::Error),
 }
 
 #[allow(dead_code)]
@@ -181,14 +252,15 @@ impl ServiceState {
     ) -> Result<MergeQueue, MergeQueueError> {
         self.ensure_repository_exists(service_repo_name)?;
 
-        let mut merge_queues = self.merge_queues.write().await;
-        let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
-        let queue = repo_queues
-            .entry(branch_name.to_string())
-            .or_default()
-            .clone();
+        let queue = {
+            let mut merge_queues = self.merge_queues.write().await;
+            let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
+            self.ensure_queue(service_repo_name, branch_name, repo_queues)?
+        };
 
-        Ok(queue)
+        let queue = queue.lock().await;
+
+        Ok(queue.as_api_queue())
     }
 
     pub async fn add_patch_to_merge_queue(
@@ -196,15 +268,45 @@ impl ServiceState {
         service_repo_name: &RepoName,
         branch_name: &str,
         patch_id: PatchId,
+        patch: Patch,
     ) -> Result<MergeQueue, MergeQueueError> {
         self.ensure_repository_exists(service_repo_name)?;
 
-        let mut merge_queues = self.merge_queues.write().await;
-        let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
-        let queue = repo_queues.entry(branch_name.to_string()).or_default();
-        queue.patches.push(patch_id);
+        if patch.service_repo_name != *service_repo_name {
+            return Err(MergeQueueError::PatchRepositoryMismatch {
+                patch_id,
+                patch_repo: patch.service_repo_name,
+                requested_repo: service_repo_name.clone(),
+            });
+        }
 
-        Ok(queue.clone())
+        let queue = {
+            let mut merge_queues = self.merge_queues.write().await;
+            let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
+            self.ensure_queue(service_repo_name, branch_name, repo_queues)?
+        };
+
+        let mut queue = queue.lock().await;
+
+        let patch_commit: Oid = patch.commit_range.head.into();
+        let (commit_id, summary, author, committer) = {
+            let commit = queue.queue.repository().find_commit(patch_commit)?;
+            let author = SignatureInfo::from_signature(&commit.author());
+            let committer = SignatureInfo::from_signature(&commit.committer());
+            let summary = if patch.title.trim().is_empty() {
+                commit.summary().map(str::to_owned)
+            } else {
+                Some(patch.title.clone())
+            };
+
+            (commit.id(), summary, author, committer)
+        };
+
+        queue
+            .queue
+            .try_append(patch_id, commit_id, summary, author, committer)?;
+
+        Ok(queue.as_api_queue())
     }
 
     fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
@@ -213,6 +315,66 @@ impl ServiceState {
         } else {
             Err(MergeQueueError::UnknownRepository(name.clone()))
         }
+    }
+
+    fn ensure_queue(
+        &self,
+        service_repo_name: &RepoName,
+        branch_name: &str,
+        repo_queues: &mut RepoQueues,
+    ) -> Result<Arc<Mutex<MergeQueueState>>, MergeQueueError> {
+        if !repo_queues.contains_key(branch_name) {
+            let queue = self.create_queue(service_repo_name, branch_name)?;
+            repo_queues.insert(branch_name.to_string(), Arc::new(Mutex::new(queue)));
+        }
+
+        repo_queues
+            .get(branch_name)
+            .cloned()
+            .ok_or_else(|| MergeQueueError::UnknownRepository(service_repo_name.clone()))
+    }
+
+    fn create_queue(
+        &self,
+        service_repo_name: &RepoName,
+        branch_name: &str,
+    ) -> Result<MergeQueueState, MergeQueueError> {
+        let (repository, workdir) = self.load_service_repository(service_repo_name)?;
+        let base_ref = merge_queue_base_ref(branch_name);
+        let queue = MergeQueueImpl::new(repository, base_ref).map_err(|source| {
+            MergeQueueError::QueueInit {
+                repo_name: service_repo_name.clone(),
+                source,
+            }
+        })?;
+
+        Ok(MergeQueueState::new(queue, workdir))
+    }
+
+    fn load_service_repository(
+        &self,
+        service_repo_name: &RepoName,
+    ) -> Result<(Repository, TempDir), MergeQueueError> {
+        let repo = self
+            .repositories
+            .get(service_repo_name)
+            .ok_or_else(|| MergeQueueError::UnknownRepository(service_repo_name.clone()))?;
+        let connected = repo
+            .connect()
+            .map_err(|source| MergeQueueError::Repository {
+                repo_name: service_repo_name.clone(),
+                source,
+            })?;
+
+        Ok(connected.into_parts())
+    }
+}
+
+fn merge_queue_base_ref(branch_name: &str) -> String {
+    if branch_name.starts_with("refs/") {
+        branch_name.to_string()
+    } else {
+        format!("refs/heads/{branch_name}")
     }
 }
 

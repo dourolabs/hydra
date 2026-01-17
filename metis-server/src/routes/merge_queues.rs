@@ -59,5 +59,44 @@ fn map_merge_queue_error(err: MergeQueueError) -> ApiError {
             error!(service_repo = %name, "unknown repository for merge queue");
             ApiError::bad_request(format!("unknown repository '{name}'"))
         }
+        MergeQueueError::PatchNotFound { patch_id } => {
+            error!(%patch_id, "patch not found while enqueueing merge queue item");
+            ApiError::not_found(format!("patch '{patch_id}' not found"))
+        }
+        MergeQueueError::PatchRepositoryMismatch {
+            patch_id,
+            patch_repo,
+            requested_repo,
+        } => {
+            error!(
+                %patch_id,
+                service_repo = %requested_repo,
+                patch_repo = %patch_repo,
+                "patch targets different service repository"
+            );
+            ApiError::bad_request(format!(
+                "patch '{patch_id}' targets '{patch_repo}' not '{requested_repo}'"
+            ))
+        }
+        MergeQueueError::Repository { repo_name, source } => {
+            error!(service_repo = %repo_name, error = %source, "failed to load repository");
+            ApiError::internal(source)
+        }
+        MergeQueueError::QueueInit { repo_name, source } => {
+            error!(service_repo = %repo_name, error = %source, "failed to initialize merge queue");
+            ApiError::internal(source)
+        }
+        MergeQueueError::PatchLookup { patch_id, source } => {
+            error!(%patch_id, error = %source, "failed to lookup patch for merge queue");
+            ApiError::internal(source)
+        }
+        MergeQueueError::Queue(err) => {
+            error!(error = %err, "merge queue operation failed");
+            ApiError::internal(err)
+        }
+        MergeQueueError::Git(err) => {
+            error!(error = %err, "git operation failed while handling merge queue");
+            ApiError::internal(err)
+        }
     }
 }

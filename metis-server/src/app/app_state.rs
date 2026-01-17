@@ -774,8 +774,34 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
+        if !self
+            .service_state
+            .repositories
+            .contains_key(service_repo_name)
+        {
+            return Err(MergeQueueError::UnknownRepository(
+                service_repo_name.clone(),
+            ));
+        }
+
+        let patch = {
+            let store = self.store.read().await;
+            store
+                .get_patch(&patch_id)
+                .await
+                .map_err(|source| match source {
+                    StoreError::PatchNotFound(_) => MergeQueueError::PatchNotFound {
+                        patch_id: patch_id.clone(),
+                    },
+                    other => MergeQueueError::PatchLookup {
+                        patch_id: patch_id.clone(),
+                        source: other,
+                    },
+                })?
+        };
+
         self.service_state
-            .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id)
+            .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id, patch)
             .await
     }
 }
