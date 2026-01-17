@@ -10,7 +10,6 @@ use crate::constants;
 
 pub fn codex_output_path(base_dir: &Path) -> PathBuf {
     base_dir
-        .join(constants::METIS_DIR)
         .join(constants::OUTPUT_DIR)
         .join(constants::OUTPUT_TXT_FILE)
 }

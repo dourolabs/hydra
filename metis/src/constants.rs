@@ -3,13 +3,8 @@
 //! These constants centralize path-related strings to ensure consistency
 //! and make it easier to maintain and update paths across the codebase.
 
-/// The main metis directory name (`.metis`) used to store metis-specific files
-/// in the working directory. This directory contains subdirectories like
-/// `output`.
-pub const METIS_DIR: &str = ".metis";
-
-/// The output subdirectory name (`output`) under `.metis` where job outputs
-/// are stored, including files like `output.txt` and `changes.patch`.
+/// The output directory name (`output`) where job outputs are stored, including
+/// files like `output.txt` and `changes.patch`.
 pub const OUTPUT_DIR: &str = "output";
 
 /// The output text file name (`output.txt`) stored in the output directory,

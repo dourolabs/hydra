@@ -589,11 +589,9 @@ mod tests {
             .then_some(())
             .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
-        let output_dir = repo_path
-            .join(constants::METIS_DIR)
-            .join(constants::OUTPUT_DIR);
+        let output_dir = repo_path.join(constants::OUTPUT_DIR);
         std::fs::create_dir_all(&output_dir)
-            .context("failed to create .metis/output for test repo")?;
+            .context("failed to create output directory for test repo")?;
         std::fs::write(
             output_dir.join(constants::OUTPUT_TXT_FILE),
             "final output line",
