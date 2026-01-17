@@ -259,7 +259,7 @@ async fn create_patch(
     let head = resolve_head_commit(&repo_root)?;
     ensure_base_is_ancestor(&repo_root, &base, &head)?;
     let commit_range = PatchCommitRange { base, head };
-    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref(), &repo_root).await?;
+    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -481,52 +481,20 @@ fn resolve_issue_id(issue_id: Option<IssueId>) -> Result<Option<IssueId>> {
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
-    repo_root: &Path,
 ) -> Result<RepoName> {
-    if let Some(job_id) = job_id {
-        let job = client
-            .get_job(job_id)
-            .await
-            .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
+    let job_id = job_id.ok_or_else(|| {
+        anyhow!("service repo name must be resolved from a job; provide --job or set METIS_ID")
+    })?;
+    let job = client
+        .get_job(job_id)
+        .await
+        .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
 
-        if let BundleSpec::ServiceRepository { name, .. } = job.task.context {
-            return Ok(name);
-        }
+    if let BundleSpec::ServiceRepository { name, .. } = job.task.context {
+        return Ok(name);
     }
 
-    infer_repo_name_from_origin(repo_root)
-        .context("failed to infer service repository name from git remote")
-}
-
-fn infer_repo_name_from_origin(repo_root: &Path) -> Result<RepoName> {
-    let output = Command::new("git")
-        .args(["config", "--get", "remote.origin.url"])
-        .current_dir(repo_root)
-        .output()
-        .context("failed to read origin url from git config")?;
-    if !output.status.success() {
-        bail!("git remote.origin.url is not configured");
-    }
-
-    let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if remote.is_empty() {
-        bail!("git remote origin url is empty");
-    }
-
-    let normalized = remote.trim_end_matches(".git");
-    let repo_segment = parse_repo_name_from_remote(normalized)
-        .ok_or_else(|| anyhow!("unsupported remote url format: {normalized}"))?;
-
-    RepoName::from_str(repo_segment)
-        .with_context(|| format!("failed to parse repo name from remote '{normalized}'"))
-}
-
-fn parse_repo_name_from_remote(remote: &str) -> Option<&str> {
-    remote
-        .strip_prefix("git@github.com:")
-        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
-        .or_else(|| remote.strip_prefix("https://github.com/"))
-        .or_else(|| remote.strip_prefix("http://github.com/"))
+    bail!("job '{job_id}' does not reference a service repository")
 }
 
 pub async fn create_patch_artifact_from_repo(
@@ -1378,7 +1346,23 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
+        let job_id = task_id("t-job-diff");
         let client = MockMetisClient::default();
+        client.push_get_job_response(JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-1"),
         });
@@ -1388,7 +1372,7 @@ mod tests {
             &client,
             patch_title.clone(),
             patch_description.clone(),
-            None,
+            Some(job_id),
             false,
             None,
             None,
@@ -1556,7 +1540,23 @@ mod tests {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
         let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
+        let job_id = task_id("t-job-merge");
         let client = MockMetisClient::default();
+        client.push_get_job_response(JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
         let created_patch_id = patch_id("p-merge");
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: created_patch_id.clone(),
@@ -1573,7 +1573,7 @@ mod tests {
             &client,
             title.clone(),
             description.clone(),
-            None,
+            Some(job_id),
             false,
             Some("owner-a".to_string()),
             Some(parent_issue.clone()),
@@ -1685,6 +1685,54 @@ mod tests {
             request.patch.service_repo_name.to_string(),
             "dourolabs/api".to_string(),
             "service repo name should be derived from the job context"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_service_repo_name_requires_job_id() -> Result<()> {
+        let client = MockMetisClient::default();
+
+        let error = resolve_service_repo_name(&client, None).await.unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("service repo name must be resolved from a job"),
+            "error should explain that a job id is required"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_service_repo_name_errors_for_non_service_job() -> Result<()> {
+        let client = MockMetisClient::default();
+        let job_id = task_id("t-job-non-service");
+        client.push_get_job_response(JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::GitRepository {
+                    url: "https://github.com/dourolabs/example".to_string(),
+                    rev: "main".to_string(),
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
+
+        let error = resolve_service_repo_name(&client, Some(&job_id))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not reference a service repository"),
+            "error should indicate missing service repository context"
         );
         Ok(())
     }

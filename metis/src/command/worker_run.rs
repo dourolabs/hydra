@@ -28,7 +28,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         prompt,
         ..
     } = client.get_job_context(&job).await?;
-    let service_repo_name = resolve_service_repo_name(client, Some(&job), &dest).await?;
+    let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
