@@ -116,14 +116,25 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
         }
 
         return patch.title.to_lowercase().contains(term)
-            || patch.diff.to_lowercase().contains(term)
             || patch.description.to_lowercase().contains(term)
             || format!("{:?}", patch.status).to_lowercase().contains(term)
             || patch
+                .commit_range
+                .base
+                .to_string()
+                .to_lowercase()
+                .contains(term)
+            || patch
+                .commit_range
+                .head
+                .to_string()
+                .to_lowercase()
+                .contains(term)
+            || patch
                 .service_repo_name
-                .as_ref()
-                .map(|name| name.to_string().to_lowercase().contains(term))
-                .unwrap_or(false)
+                .to_string()
+                .to_lowercase()
+                .contains(term)
             || patch
                 .github
                 .as_ref()
