@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use brush_parser::{tokenize_str, Token};
 use metis::cli;
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
@@ -25,10 +26,31 @@ pub struct TestEnvironment {
 }
 
 impl TestEnvironment {
+    /// Parse a bash command string into tokens using brush-parser.
+    /// Handles quoted strings, escaping, and other shell syntax correctly.
+    pub fn parse_command_tokens(command: &str) -> Result<Vec<String>> {
+        let tokens = tokenize_str(command)?;
+
+        let mut words = Vec::new();
+        for token in tokens {
+            match token {
+                // Extract word tokens (command and arguments, including quoted strings)
+                // brush-parser handles quoted strings as Word tokens with proper escaping
+                Token::Word(word, _) => words.push(word.to_string()),
+                // Skip operators, redirects, variables, and other control tokens
+                // We only care about the command and its arguments
+                _ => {}
+            }
+        }
+
+        Ok(words)
+    }
+
     /// Run metis commands as a user via the CLI.
     pub async fn run_as_user(&self, commands: Vec<String>) -> Result<()> {
         for command in commands {
-            let tokens: Vec<String> = command.split_whitespace().map(|s| s.to_string()).collect();
+            let tokens =
+                Self::parse_command_tokens(&command).context("failed to tokenize bash command")?;
 
             // Skip if empty
             if tokens.is_empty() {
@@ -56,10 +78,17 @@ impl TestEnvironment {
         commands: Vec<String>,
         job_id: metis_common::TaskId,
     ) -> Result<()> {
-        // Create a tempdir that will be kept alive for the duration of worker_run
         let temp_dir =
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
+
+        // Tokenize all commands before passing to BashCommands
+        let mut tokenized_commands = Vec::new();
+        for command in commands {
+            let tokens =
+                Self::parse_command_tokens(&command).context("failed to tokenize bash command")?;
+            tokenized_commands.push(tokens);
+        }
 
         // Create a new client and config clone for BashCommands
         let client_clone = MetisClient::new(&self.app_config.server.url)?;
@@ -70,12 +99,11 @@ impl TestEnvironment {
         };
 
         let bash_commands = BashCommands {
-            commands,
+            commands: tokenized_commands,
             client: Box::new(client_clone),
             app_config: app_config_clone,
         };
 
-        // Keep temp_dir alive for the duration of worker_run (it will be dropped at end of function)
         metis::command::worker_run::run(&self.client, job_id, worker_dir, None, &bash_commands)
             .await
             .context("failed to run worker commands")?;

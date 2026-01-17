@@ -7,36 +7,25 @@ use metis::{
 };
 
 pub struct BashCommands {
-    pub commands: Vec<String>,
+    pub commands: Vec<Vec<String>>,
     pub client: Box<dyn MetisClientInterface>,
     pub app_config: AppConfig,
 }
 
 impl BashCommands {
-    fn parse_command_tokens(command: &str) -> Vec<String> {
-        // Simple tokenization: split by whitespace
-        // This will work for commands like "metis patches create ..."
-        // Note: this won't handle quoted strings perfectly, but for the use case
-        // where we're checking if the first token is "metis", it should be sufficient
-        command.split_whitespace().map(|s| s.to_string()).collect()
-    }
-
     async fn run_custom_command(
         &self,
-        command: &str,
+        tokens: &[String],
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<String> {
-        let tokens = Self::parse_command_tokens(command);
         let first_token = tokens.first().map(|s| s.as_str());
 
         // If the first token is "metis", use cli::run_with_client_and_config
         if first_token == Some("metis") {
             // Skip the first token ("metis") and use the rest as args
-            let args: Vec<String> = tokens.into_iter().skip(1).collect();
-            // Note: This requires the future to be Send, but cli::run_with_client_and_config
-            // may use stdout locks which are not Send. In practice, this works in test contexts
-            // where the trait is used directly (not spawned across threads).
+            let args: Vec<String> = tokens.iter().skip(1).cloned().collect();
+
             cli::run_with_client_and_config(args, self.client.as_ref(), &self.app_config)
                 .await
                 .context("failed to run metis command via cli")?;
@@ -44,10 +33,12 @@ impl BashCommands {
             return Ok(String::new());
         }
 
-        // Otherwise, run as a shell command
+        // Otherwise, run as a shell command by reconstructing the command from tokens
+        // Join tokens with spaces to reconstruct the command string
+        let command_string = tokens.join(" ");
         let output = tokio::process::Command::new("sh")
             .arg("-c")
-            .arg(command)
+            .arg(&command_string)
             .current_dir(working_dir)
             .envs(env)
             .output()
@@ -56,7 +47,7 @@ impl BashCommands {
 
         if !output.status.success() {
             bail!(
-                "custom run command '{command}' failed with status {status}",
+                "custom run command '{command_string}' failed with status {status}",
                 status = output.status
             );
         }
@@ -76,11 +67,12 @@ impl WorkerCommands for BashCommands {
         _output_path: &Path,
     ) -> Result<String> {
         let mut last_output = String::new();
-        for command in &self.commands {
+        for tokens in &self.commands {
+            let command_str = tokens.join(" ");
             last_output = self
-                .run_custom_command(command, working_dir, env)
+                .run_custom_command(tokens, working_dir, env)
                 .await
-                .with_context(|| format!("failed to run command '{command}'"))?;
+                .with_context(|| format!("failed to run command '{command_str}'"))?;
         }
         Ok(last_output)
     }
