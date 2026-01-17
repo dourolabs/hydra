@@ -25,7 +25,7 @@ use metis_common::{
 use octocrab::Octocrab;
 use serde::Deserialize;
 
-use crate::{client::MetisClientInterface, command::worker_run::create_patch_from_repo, constants};
+use crate::{client::MetisClientInterface, constants};
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -59,6 +59,10 @@ pub enum PatchesCommand {
         /// Description for the patch.
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
+
+        /// Base commit for the patch range.
+        #[arg(long = "base", value_name = "OID", required = true)]
+        base: GitOid,
 
         /// Associate the patch with a Metis job.
         #[arg(long = "job", value_name = "METIS_ID", env = "METIS_ID")]
@@ -145,6 +149,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             github,
             assignee,
             issue_id,
+            base,
         } => {
             create_patch(
                 client,
@@ -154,6 +159,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
                 github,
                 assignee,
                 issue_id,
+                base,
                 None,
             )
             .await
@@ -240,6 +246,7 @@ async fn create_patch(
     create_github_pr: bool,
     assignee: Option<String>,
     issue_id: Option<IssueId>,
+    base: GitOid,
     repo_root: Option<&Path>,
 ) -> Result<()> {
     let job_id = resolve_job_id(job_id)?;
@@ -248,6 +255,10 @@ async fn create_patch(
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
     };
+    ensure_clean_worktree(&repo_root)?;
+    let head = resolve_head_commit(&repo_root)?;
+    ensure_base_is_ancestor(&repo_root, &base, &head)?;
+    let commit_range = PatchCommitRange { base, head };
     let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
@@ -255,6 +266,7 @@ async fn create_patch(
     let response = create_patch_artifact_from_repo(
         client,
         &repo_root,
+        commit_range,
         patch_title,
         patch_description,
         job_id.clone(),
@@ -262,8 +274,7 @@ async fn create_patch(
         is_automatic_backup,
         service_repo_name,
     )
-    .await?
-    .ok_or_else(|| anyhow!("No changes detected. Make edits before creating a patch artifact."))?;
+    .await?;
 
     let mut merge_request_issue_id = None;
     if let Some(assignee) = assignee {
@@ -489,26 +500,16 @@ pub async fn resolve_service_repo_name(
 pub async fn create_patch_artifact_from_repo(
     client: &dyn MetisClientInterface,
     repo_root: &Path,
+    commit_range: PatchCommitRange,
     title: String,
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
     is_automatic_backup: bool,
     service_repo_name: RepoName,
-) -> Result<Option<UpsertPatchResponse>> {
-    let commit_range = match create_patch_from_repo(repo_root)? {
-        Some(range) => range,
-        None => {
-            return Ok(None);
-        }
-    };
-
-    if git_diff_for_range(repo_root, &commit_range)?
-        .trim()
-        .is_empty()
-    {
-        return Ok(None);
-    }
+) -> Result<UpsertPatchResponse> {
+    ensure_clean_worktree(repo_root)?;
+    ensure_base_is_ancestor(repo_root, &commit_range.base, &commit_range.head)?;
 
     let title = title.trim().to_string();
     let description = description.trim().to_string();
@@ -558,7 +559,7 @@ pub async fn create_patch_artifact_from_repo(
             .context("failed to update patch with GitHub metadata")?;
     }
 
-    Ok(Some(response))
+    Ok(response)
 }
 
 fn git_repository_root() -> Result<PathBuf> {
@@ -577,6 +578,71 @@ fn git_repository_root() -> Result<PathBuf> {
     }
 
     Ok(PathBuf::from(root))
+}
+
+fn resolve_head_commit(repo_root: &Path) -> Result<GitOid> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD^{commit}"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to resolve HEAD commit")?;
+    if !output.status.success() {
+        bail!("failed to resolve HEAD commit");
+    }
+
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    GitOid::from_str(&oid).context("failed to parse HEAD commit oid")
+}
+
+fn ensure_clean_worktree(repo_root: &Path) -> Result<()> {
+    if repository_has_pending_changes(repo_root)? {
+        bail!("Repository has uncommitted changes. Commit them before creating a patch.");
+    }
+
+    Ok(())
+}
+
+fn repository_has_pending_changes(repo_root: &Path) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to check repository status")?;
+
+    if !output.status.success() {
+        bail!("git status failed while validating repository cleanliness");
+    }
+
+    let status_output = String::from_utf8_lossy(&output.stdout);
+    let has_changes = status_output
+        .lines()
+        .any(|line| !line.contains(constants::METIS_DIR));
+    Ok(has_changes)
+}
+
+fn ensure_base_is_ancestor(repo_root: &Path, base: &GitOid, head: &GitOid) -> Result<()> {
+    let output = Command::new("git")
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            &base.to_string(),
+            &head.to_string(),
+        ])
+        .current_dir(repo_root)
+        .output()
+        .context("failed to verify patch base relationship")?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    match output.status.code() {
+        Some(1) => bail!("Patch base {base} is not an ancestor of head {head}"),
+        _ => bail!(
+            "failed to validate base ancestry: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
 }
 
 fn git_diff_for_range(repo_root: &Path, range: &PatchCommitRange) -> Result<String> {
@@ -800,9 +866,11 @@ async fn create_github_pull_request(
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    stage_changes_for_pr(repo_root)?;
-    ensure_staged_changes(repo_root)?;
-    commit_changes(repo_root, title)?;
+    if repository_has_pending_changes(repo_root)? {
+        stage_changes_for_pr(repo_root)?;
+        ensure_staged_changes(repo_root)?;
+        commit_changes(repo_root, title)?;
+    }
     push_branch(repo_root, &branch_name)?;
     let pr_metadata = open_pull_request(repo_root, title, description, &branch_name).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
@@ -917,13 +985,17 @@ fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
         bail!("failed to stage changes for GitHub PR");
     }
 
-    let reset_status = Command::new("git")
-        .args(["reset", "-q", "--", constants::METIS_DIR])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to exclude .metis directory from GitHub PR staging")?;
+    if repo_root.join(constants::METIS_DIR).exists() {
+        let reset_status = Command::new("git")
+            .args(["reset", "-q", "--", constants::METIS_DIR])
+            .current_dir(repo_root)
+            .status()
+            .context("failed to exclude .metis directory from GitHub PR staging")?;
 
-    if reset_status.success() {
+        if reset_status.success() {
+            return Ok(());
+        }
+    } else {
         return Ok(());
     }
 
@@ -1110,7 +1182,8 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
-    fn initialize_repo_with_changes() -> Result<(tempfile::TempDir, std::path::PathBuf)> {
+    fn initialize_repo_with_changes(
+    ) -> Result<(tempfile::TempDir, std::path::PathBuf, GitOid, GitOid)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
         let repo_path = tempdir.path().to_path_buf();
         let repo_str = repo_path
@@ -1170,19 +1243,50 @@ mod tests {
             .then_some(())
             .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
+        let base_commit = GitOid::from_str(
+            String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(["-C", repo_str, "rev-parse", "HEAD^{commit}"])
+                    .output()
+                    .context("failed to resolve initial commit")?
+                    .stdout,
+            )
+            .trim(),
+        )
+        .context("failed to parse initial commit oid")?;
+
         fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
         fs::write(repo_path.join("notes.txt"), "new note content\n")
             .context("failed to write notes.txt")?;
-        let metis_internal = repo_path
-            .join(constants::METIS_DIR)
-            .join("should_be_ignored.txt");
-        if let Some(parent) = metis_internal.parent() {
-            fs::create_dir_all(parent).context("failed to create .metis directory")?;
-        }
-        fs::write(&metis_internal, "ignore me").context("failed to write .metis file")?;
+        Command::new("git")
+            .args(["-C", repo_str, "add", "README.md", "notes.txt"])
+            .status()
+            .context("failed to stage modified files")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
+        Command::new("git")
+            .args(["-C", repo_str, "commit", "-m", "apply updates"])
+            .status()
+            .context("failed to commit updated files")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
 
-        Ok((tempdir, repo_path))
+        let head_commit = GitOid::from_str(
+            String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(["-C", repo_str, "rev-parse", "HEAD^{commit}"])
+                    .output()
+                    .context("failed to resolve updated commit")?
+                    .stdout,
+            )
+            .trim(),
+        )
+        .context("failed to parse updated commit oid")?;
+
+        Ok((tempdir, repo_path, base_commit, head_commit))
     }
 
     struct EnvVarGuard {
@@ -1239,7 +1343,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_generates_diff_from_repo_changes() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
         let job_id = task_id("t-job-diff");
@@ -1272,6 +1376,7 @@ mod tests {
             false,
             None,
             None,
+            base_commit,
             Some(&repo_path),
         )
         .await?;
@@ -1288,6 +1393,8 @@ mod tests {
             !patch.is_automatic_backup,
             "manual patch creation should not be marked as an automatic backup"
         );
+        assert_eq!(patch.commit_range.base, base_commit);
+        assert_eq!(patch.commit_range.head, head_commit);
         assert_eq!(
             generated_title, &patch_title,
             "expected provided title to be applied"
@@ -1297,56 +1404,28 @@ mod tests {
             "expected provided description to be applied"
         );
 
-        let add_status = Command::new("git")
-            .args([
-                "add",
-                "-A",
-                "--",
-                ".",
-                &format!(":!{}/**", constants::METIS_DIR),
-            ])
-            .current_dir(&repo_path)
-            .status()
-            .context("failed to stage changes for expected diff")?;
-        assert!(
-            add_status.success(),
-            "git add for expected diff returned non-zero exit code"
-        );
-
         let expected_output = Command::new("git")
             .args([
+                "-C",
+                repo_path
+                    .to_str()
+                    .ok_or_else(|| anyhow!("repo path contains invalid UTF-8"))?,
                 "diff",
-                "--cached",
-                "--",
-                ".",
-                &format!(":!{}/**", constants::METIS_DIR),
+                &format!("{base_commit}..{head_commit}"),
             ])
-            .current_dir(&repo_path)
             .output()
             .context("failed to capture expected diff")?;
-        assert!(
-            expected_output.status.success() || expected_output.status.code() == Some(1),
-            "git diff failed with status {:?}",
-            expected_output.status.code()
-        );
+        assert!(expected_output.status.success(), "git diff failed");
         let expected_patch = String::from_utf8_lossy(&expected_output.stdout).to_string();
 
-        assert_eq!(
-            *generated_patch, expected_patch,
-            "generated patch does not match repository changes"
-        );
-        assert!(
-            !generated_patch.contains(constants::METIS_DIR),
-            "patch should not include files under {}",
-            constants::METIS_DIR
-        );
+        assert_eq!(*generated_patch, expected_patch);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn create_patch_uses_provided_job_id() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -1381,6 +1460,7 @@ mod tests {
             false,
             None,
             None,
+            base_commit,
             Some(&repo_path),
         )
         .await?;
@@ -1402,7 +1482,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_reads_job_id_from_environment() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
         let env_job_id = task_id("t-job-from-env");
         let env_job_value = env_job_id.to_string();
         let _guard = EnvVarGuard::set(ENV_METIS_ID, &env_job_value);
@@ -1438,6 +1518,7 @@ mod tests {
             false,
             None,
             None,
+            base_commit,
             Some(&repo_path),
         )
         .await?;
@@ -1456,7 +1537,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
         let _env_guard = EnvVarGuard::set(ENV_METIS_ID, "");
 
         let job_id = task_id("t-job-merge");
@@ -1496,6 +1577,7 @@ mod tests {
             false,
             Some("owner-a".to_string()),
             Some(parent_issue.clone()),
+            base_commit,
             Some(&repo_path),
         )
         .await?;
@@ -1530,15 +1612,20 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
             patch_id: patch_id("p-automatic"),
         });
+        let commit_range = PatchCommitRange {
+            base: base_commit,
+            head: head_commit,
+        };
 
-        create_patch_artifact_from_repo(
+        let _ = create_patch_artifact_from_repo(
             &client,
             &repo_path,
+            commit_range,
             "backup patch".to_string(),
             "backup description".to_string(),
             Some(task_id("t-job-automatic")),
@@ -1546,8 +1633,7 @@ mod tests {
             true,
             sample_repo_name(),
         )
-        .await?
-        .expect("patch should be created for repository changes");
+        .await?;
 
         let requests = client.recorded_patch_upserts();
         assert_eq!(requests.len(), 1, "expected one patch upsert");
@@ -1558,7 +1644,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_patch_uses_service_repo_name_from_job() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         client.push_get_job_response(JobRecord {
             id: task_id("t-job-service"),
@@ -1587,6 +1673,7 @@ mod tests {
             false,
             None,
             None,
+            base_commit,
             Some(repo_path.as_path()),
         )
         .await?;
@@ -1823,16 +1910,20 @@ mod tests {
 
     #[test]
     fn stage_changes_for_pr_keeps_metis_directory() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _, _) = initialize_repo_with_changes()?;
         let repo_str = repo_path
             .to_str()
             .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
 
+        fs::create_dir_all(repo_path.join(constants::METIS_DIR))
+            .context("failed to create .metis directory for test repo")?;
         fs::write(
             repo_path.join(".gitignore"),
             format!("{}/\n", constants::METIS_DIR),
         )
         .context("failed to write .gitignore for test repo")?;
+        fs::write(repo_path.join("README.md"), "updated twice\n")
+            .context("failed to modify README.md for staging test")?;
 
         stage_changes_for_pr(&repo_path)?;
 
@@ -1862,7 +1953,7 @@ mod tests {
 
     #[test]
     fn ensure_feature_branch_uses_job_id_when_on_main() -> Result<()> {
-        let (_tempdir, repo_path) = initialize_repo_with_changes()?;
+        let (_tempdir, repo_path, _, _) = initialize_repo_with_changes()?;
         let branch = ensure_feature_branch(&repo_path, Some("Job 123"))?;
 
         assert_eq!(branch, "metis-job-123");
