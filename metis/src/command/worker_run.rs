@@ -22,7 +22,12 @@ use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_r
 use crate::exec::run_codex;
 use tempfile::Builder;
 
-pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    job: TaskId,
+    dest: PathBuf,
+    openai_api_key: Option<String>,
+) -> Result<()> {
     let WorkerContext {
         request_context,
         variables,
@@ -50,7 +55,7 @@ pub async fn run(client: &dyn MetisClientInterface, job: TaskId, dest: PathBuf) 
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(constants::OUTPUT_TXT_FILE);
 
-    login_codex()?;
+    login_codex(openai_api_key.as_deref())?;
     configure_git_repo(&dest)?;
     let base_commit = resolve_head_oid_if_present(&dest)?;
 
@@ -160,9 +165,10 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn login_codex() -> Result<()> {
-    let openai_api_key = std::env::var(ENV_OPENAI_API_KEY)
-        .with_context(|| format!("{ENV_OPENAI_API_KEY} is not set; unable to login Codex CLI"))?;
+fn login_codex(openai_api_key: Option<&str>) -> Result<()> {
+    let openai_api_key = openai_api_key.map(str::to_owned).ok_or_else(|| {
+        anyhow!("{ENV_OPENAI_API_KEY} must be provided via --openai-api-key or environment")
+    })?;
 
     let mut login_cmd = Command::new("codex")
         .args(["login", "--with-api-key"])
@@ -254,6 +260,7 @@ async fn submit_patch_artifact_if_present(
         description,
         Some(job.clone()),
         create_github_pr,
+        None,
         is_automatic_backup,
         service_repo_name.clone(),
     )
