@@ -378,7 +378,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: true,
                 submission: None,
             },
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => EventOutcome {
+            KeyCode::Char('c') if has_primary_modifier(key.modifiers) => EventOutcome {
                 should_quit: true,
                 submission: None,
             },
@@ -416,7 +416,9 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
 }
 
 fn has_primary_modifier(modifiers: KeyModifiers) -> bool {
-    modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::META)
+    modifiers.contains(KeyModifiers::CONTROL)
+        || modifiers.contains(KeyModifiers::META)
+        || modifiers.contains(KeyModifiers::ALT)
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
@@ -1671,6 +1673,21 @@ mod tests {
             &mut state,
         )
         .expect("submission missing");
+
+        assert_eq!(submission.prompt, "Ship dashboard");
+        assert_eq!(submission.assignee, "pm");
+        assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn alt_enter_submits_issue_prompt() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.assignees = vec!["pm".to_string()];
+
+        let submission =
+            handle_issue_draft_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), &mut state)
+                .expect("submission missing");
 
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
