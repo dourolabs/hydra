@@ -866,11 +866,6 @@ async fn create_github_pull_request(
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    if repository_has_pending_changes(repo_root)? {
-        stage_changes_for_pr(repo_root)?;
-        ensure_staged_changes(repo_root)?;
-        commit_changes(repo_root, title)?;
-    }
     push_branch(repo_root, &branch_name)?;
     let pr_metadata = open_pull_request(repo_root, title, description, &branch_name).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
@@ -971,63 +966,6 @@ fn current_branch(repo_root: &Path) -> Result<String> {
     }
 
     Ok(branch)
-}
-
-fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
-    let add_status = Command::new("git")
-        .arg("add")
-        .args(["-A", "--", "."])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to stage changes for GitHub PR")?;
-
-    if !add_status.success() {
-        bail!("failed to stage changes for GitHub PR");
-    }
-
-    if repo_root.join(constants::METIS_DIR).exists() {
-        let reset_status = Command::new("git")
-            .args(["reset", "-q", "--", constants::METIS_DIR])
-            .current_dir(repo_root)
-            .status()
-            .context("failed to exclude .metis directory from GitHub PR staging")?;
-
-        if reset_status.success() {
-            return Ok(());
-        }
-    } else {
-        return Ok(());
-    }
-
-    bail!("failed to exclude .metis directory from GitHub PR staging");
-}
-
-fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check staged changes")?;
-
-    match status.code() {
-        Some(0) => bail!("No staged changes to commit for GitHub PR"),
-        Some(1) => Ok(()),
-        _ => bail!("failed to check staged changes before committing"),
-    }
-}
-
-fn commit_changes(repo_root: &Path, title: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["commit", "-m", title])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to commit changes for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to commit changes for GitHub PR");
 }
 
 fn push_branch(repo_root: &Path, branch: &str) -> Result<()> {
@@ -1153,7 +1091,6 @@ mod tests {
     use super::*;
     use crate::{
         client::MockMetisClient,
-        constants,
         test_utils::ids::{issue_id, patch_id, task_id},
     };
     use anyhow::anyhow;
@@ -1906,49 +1843,6 @@ mod tests {
             client.recorded_get_patch_requests().is_empty(),
             "patch should not be fetched when no fields provided"
         );
-    }
-
-    #[test]
-    fn stage_changes_for_pr_keeps_metis_directory() -> Result<()> {
-        let (_tempdir, repo_path, _, _) = initialize_repo_with_changes()?;
-        let repo_str = repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
-
-        fs::create_dir_all(repo_path.join(constants::METIS_DIR))
-            .context("failed to create .metis directory for test repo")?;
-        fs::write(
-            repo_path.join(".gitignore"),
-            format!("{}/\n", constants::METIS_DIR),
-        )
-        .context("failed to write .gitignore for test repo")?;
-        fs::write(repo_path.join("README.md"), "updated twice\n")
-            .context("failed to modify README.md for staging test")?;
-
-        stage_changes_for_pr(&repo_path)?;
-
-        assert!(
-            repo_path.join(constants::METIS_DIR).exists(),
-            ".metis directory should remain after staging PR changes"
-        );
-
-        let staged_output = Command::new("git")
-            .args(["-C", repo_str, "diff", "--cached", "--name-only"])
-            .output()
-            .context("failed to read staged changes")?;
-        let staged_paths = String::from_utf8_lossy(&staged_output.stdout);
-        assert!(
-            staged_paths.contains("README.md"),
-            "expected README.md to be staged for PR creation: {staged_paths}"
-        );
-        assert!(
-            !staged_paths
-                .lines()
-                .any(|line| line.starts_with(constants::METIS_DIR)),
-            ".metis contents should not be staged for PR creation: {staged_paths}"
-        );
-
-        Ok(())
     }
 
     #[test]
