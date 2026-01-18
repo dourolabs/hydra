@@ -18,6 +18,10 @@ use metis_common::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    repositories::{
+        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
+        UpsertRepositoryResponse,
+    },
     IssueId, PatchId, RepoName, TaskId,
 };
 use std::collections::VecDeque;
@@ -36,11 +40,16 @@ pub struct MockMetisClient {
     pub get_job_responses: Mutex<VecDeque<JobRecord>>,
     pub list_issue_responses: Mutex<VecDeque<ListIssuesResponse>>,
     pub list_patch_responses: Mutex<VecDeque<ListPatchesResponse>>,
+    pub list_repository_responses: Mutex<VecDeque<ListRepositoriesResponse>>,
+    pub create_repository_responses: Mutex<VecDeque<UpsertRepositoryResponse>>,
+    pub update_repository_responses: Mutex<VecDeque<UpsertRepositoryResponse>>,
     pub list_agents_responses: Mutex<VecDeque<ListAgentsResponse>>,
     pub merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub enqueue_merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub issue_upsert_requests: Mutex<Vec<(Option<IssueId>, UpsertIssueRequest)>>,
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
+    pub create_repository_requests: Mutex<Vec<CreateRepositoryRequest>>,
+    pub update_repository_requests: Mutex<Vec<(RepoName, UpdateRepositoryRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
     pub patch_get_requests: Mutex<Vec<PatchId>>,
     pub job_get_requests: Mutex<Vec<TaskId>>,
@@ -122,6 +131,27 @@ impl MockMetisClient {
             .push_back(response);
     }
 
+    pub fn push_list_repositories_response(&self, response: ListRepositoriesResponse) {
+        self.list_repository_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_create_repository_response(&self, response: UpsertRepositoryResponse) {
+        self.create_repository_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_update_repository_response(&self, response: UpsertRepositoryResponse) {
+        self.update_repository_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
     pub fn push_list_agents_response(&self, response: ListAgentsResponse) {
         self.list_agents_responses
             .lock()
@@ -149,6 +179,14 @@ impl MockMetisClient {
 
     pub fn recorded_patch_upserts(&self) -> Vec<(Option<PatchId>, UpsertPatchRequest)> {
         self.patch_upsert_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_create_repository_requests(&self) -> Vec<CreateRepositoryRequest> {
+        self.create_repository_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_update_repository_requests(&self) -> Vec<(RepoName, UpdateRepositoryRequest)> {
+        self.update_repository_requests.lock().unwrap().clone()
     }
 
     pub fn recorded_get_issue_requests(&self) -> Vec<IssueId> {
@@ -338,6 +376,45 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for list_patches"))
+    }
+
+    async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
+        self.list_repository_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for list_repositories"))
+    }
+
+    async fn create_repository(
+        &self,
+        request: &CreateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        self.create_repository_requests
+            .lock()
+            .unwrap()
+            .push(request.clone());
+        self.create_repository_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for create_repository"))
+    }
+
+    async fn update_repository(
+        &self,
+        repo_name: &RepoName,
+        request: &UpdateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        self.update_repository_requests
+            .lock()
+            .unwrap()
+            .push((repo_name.clone(), request.clone()));
+        self.update_repository_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for update_repository"))
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {

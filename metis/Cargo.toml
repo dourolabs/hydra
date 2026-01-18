@@ -30,3 +30,6 @@ crossterm = { version = "0.27", features = ["event-stream"] }
 octocrab = "0.38"
 tui-textarea = "0.4"
 git2 = "0.19"
+
+[dev-dependencies]
+httpmock = "0.7"
