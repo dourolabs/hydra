@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{
-    constants::ENV_GH_TOKEN,
+    constants::{ENV_GH_TOKEN, ENV_METIS_BASE_COMMIT, ENV_OPENAI_API_KEY},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::{GitOid, PatchCommitRange},
@@ -57,6 +57,7 @@ pub async fn run(
 
     configure_git_repo(&dest)?;
     let base_commit = resolve_head_oid_if_present(&dest)?;
+    set_base_commit_env(&mut execution_env, base_commit);
 
     let last_message = commands
         .run(
@@ -179,6 +180,12 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
         .or_insert_with(|| "1".to_string());
     env.entry("FORCE_COLOR".to_string())
         .or_insert_with(|| "1".to_string());
+}
+
+fn set_base_commit_env(env: &mut HashMap<String, String>, base_commit: Option<GitOid>) {
+    if let Some(base_commit) = base_commit {
+        env.insert(ENV_METIS_BASE_COMMIT.to_string(), base_commit.to_string());
+    }
 }
 
 async fn submit_job_status(
@@ -495,6 +502,30 @@ mod tests {
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+    }
+
+    #[test]
+    fn set_base_commit_env_sets_value_when_present() -> Result<()> {
+        let mut env = HashMap::new();
+        let commit = GitOid::from_str("0123456789abcdef0123456789abcdef01234567")?;
+
+        set_base_commit_env(&mut env, Some(commit));
+
+        assert_eq!(
+            env.get(ENV_METIS_BASE_COMMIT).map(String::as_str),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn set_base_commit_env_ignores_missing_commit() {
+        let mut env = HashMap::new();
+
+        set_base_commit_env(&mut env, None);
+
+        assert!(!env.contains_key(ENV_METIS_BASE_COMMIT));
     }
 
     #[test]
