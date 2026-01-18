@@ -20,19 +20,13 @@ use tokio::sync::{Mutex, RwLock};
 pub use app_state::{
     AppState, CreateJobError, SetJobStatusError, UpsertIssueError, UpsertPatchError,
 };
+pub use metis_common::repositories::{
+    ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
     pub bundle: Bundle,
-    pub github_token: Option<String>,
-    pub default_image: Option<String>,
-}
-
-/// Connection details for a git repository remote.
-#[derive(Debug, Clone)]
-pub struct GitRepository {
-    pub remote_url: String,
-    pub default_branch: Option<String>,
     pub github_token: Option<String>,
     pub default_image: Option<String>,
 }
@@ -53,7 +47,7 @@ impl ConnectedRepository {
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
-    pub repositories: HashMap<RepoName, GitRepository>,
+    pub repositories: HashMap<RepoName, ServiceRepository>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
 }
@@ -122,18 +116,14 @@ pub enum GitRepositoryError {
     Git(#[from] git2::Error),
 }
 
-#[allow(dead_code)]
-impl GitRepository {
-    /// Clone the configured remote URL into a temporary workspace and return a git2 repository handle.
-    pub fn connect(&self) -> Result<ConnectedRepository, GitRepositoryError> {
-        let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
-        let repository = Repository::clone(&self.remote_url, workdir.path())?;
+fn connect_repository(repo: &ServiceRepository) -> Result<ConnectedRepository, GitRepositoryError> {
+    let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
+    let repository = Repository::clone(&repo.remote_url, workdir.path())?;
 
-        Ok(ConnectedRepository {
-            repository,
-            _workdir: workdir,
-        })
-    }
+    Ok(ConnectedRepository {
+        repository,
+        _workdir: workdir,
+    })
 }
 
 #[allow(clippy::result_large_err)]
@@ -156,7 +146,8 @@ impl ServiceState {
 
                 (
                     name.clone(),
-                    GitRepository {
+                    ServiceRepository {
+                        name: name.clone(),
                         remote_url: repo.remote_url.clone(),
                         default_branch,
                         github_token,
@@ -173,7 +164,14 @@ impl ServiceState {
         Self::with_repositories(repositories)
     }
 
-    pub fn with_repositories(repositories: HashMap<RepoName, GitRepository>) -> Self {
+    pub fn with_repositories(repositories: HashMap<RepoName, ServiceRepository>) -> Self {
+        let repositories: HashMap<RepoName, ServiceRepository> = repositories
+            .into_iter()
+            .map(|(name, mut repository)| {
+                repository.name = name.clone();
+                (name, repository)
+            })
+            .collect();
         let merge_queues = repositories
             .keys()
             .map(|name| (name.clone(), HashMap::new()))
@@ -319,7 +317,7 @@ impl ServiceState {
                 let ConnectedRepository {
                     repository: _,
                     _workdir,
-                } = repo_cfg.connect().map_err(|source| MergeQueueError::Git {
+                } = connect_repository(repo_cfg).map_err(|source| MergeQueueError::Git {
                     repo_name: name.clone(),
                     source: source.into(),
                 })?;
@@ -374,10 +372,11 @@ fn branch_ref(branch_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::GitRepository;
+    use super::{ServiceRepository, connect_repository};
     use anyhow::Result;
     use git2::{Commit, Oid, Repository, Signature};
-    use std::{fs, path::Path};
+    use metis_common::RepoName;
+    use std::{fs, path::Path, str::FromStr};
     use tempfile::TempDir;
 
     #[test]
@@ -386,7 +385,8 @@ mod tests {
         let remote_repo = Repository::init(remote_dir.path())?;
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
-        let repository = GitRepository {
+        let repository = ServiceRepository {
+            name: RepoName::from_str("dourolabs/metis")?,
             remote_url: remote_dir
                 .path()
                 .to_str()
@@ -397,7 +397,7 @@ mod tests {
             default_image: None,
         };
 
-        let connected = repository.connect()?;
+        let connected = connect_repository(&repository)?;
         let repo = connected.repository();
 
         assert_eq!(repo.head()?.target(), Some(expected_head));

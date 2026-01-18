@@ -191,7 +191,7 @@ async fn existing_issue_tasks_for_agent(
 mod tests {
     use super::*;
     use crate::{
-        app::{GitRepository, ServiceState},
+        app::{ServiceRepository, ServiceState},
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
         test::test_state,
     };
@@ -487,9 +487,11 @@ mod tests {
     #[tokio::test]
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
         let mut state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/metis")?;
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            RepoName::from_str("dourolabs/metis")?,
-            GitRepository {
+            repo_name.clone(),
+            ServiceRepository {
+                name: repo_name.clone(),
                 remote_url: "https://github.com/dourolabs/metis.git".to_string(),
                 default_branch: Some("main".to_string()),
                 github_token: Some("token".to_string()),
@@ -514,7 +516,7 @@ mod tests {
             name: "agent-a".to_string(),
             prompt: "Do the thing".to_string(),
             context_spec: BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/metis")?,
+                name: repo_name.clone(),
                 rev: None,
             },
             image: None,
@@ -531,7 +533,7 @@ mod tests {
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/metis")?,
+                name: repo_name.clone(),
                 rev: None
             }
         );

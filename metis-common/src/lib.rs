@@ -12,5 +12,7 @@ pub mod logs;
 pub mod merge_queues;
 pub mod patches;
 pub mod repo_name;
+pub mod repositories;
 pub use repo_name::{RepoName, RepoNameError};
+pub use repositories::{ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo};
 pub mod task_status;

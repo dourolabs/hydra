@@ -661,7 +661,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     use crate::{
-        app::{GitRepository, ServiceState},
+        app::{ServiceRepository, ServiceState},
         test_utils::{FailingStore, test_state},
     };
 
@@ -1017,7 +1017,8 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
             repo_name.clone(),
-            GitRepository {
+            ServiceRepository {
+                name: repo_name.clone(),
                 remote_url: "https://github.com/dourolabs/api.git".to_string(),
                 default_branch: None,
                 github_token: Some("svc-token".to_string()),

@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::{RepoName, jobs::BundleSpec};
+use metis_common::{RepoName, jobs::BundleSpec, repositories::ServiceRepositoryConfig};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -89,7 +89,7 @@ impl Default for KubernetesSection {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ServiceSection {
     #[serde(default)]
-    pub repositories: HashMap<RepoName, Repository>,
+    pub repositories: HashMap<RepoName, ServiceRepositoryConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -100,17 +100,6 @@ pub struct BackgroundSection {
     pub github_poller: GithubPollerConfig,
     #[serde(default)]
     pub scheduler: SchedulerSection,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Repository {
-    pub remote_url: String,
-    #[serde(default)]
-    pub default_branch: Option<String>,
-    #[serde(default)]
-    pub github_token: Option<String>,
-    #[serde(default)]
-    pub default_image: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
