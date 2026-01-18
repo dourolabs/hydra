@@ -6,8 +6,6 @@ use metis_common::{
 use metis_integration::test_helpers::init_test_server_with_remote;
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
-use tokio::process::Command;
-
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {

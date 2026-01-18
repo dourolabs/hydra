@@ -2,7 +2,6 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use brush_parser::{tokenize_str, Token};
 use metis::{client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig};
 
 use escargot::CargoBuild;
@@ -31,17 +30,9 @@ impl BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<String> {
-        // Parse command to check if it starts with "metis"
-        let tokens = tokenize_str(command_string).context("failed to tokenize command")?;
-        let mut words = Vec::new();
-        for token in &tokens {
-            if let Token::Word(word, _) = token {
-                words.push(word.to_string());
-            }
-        }
-
-        // If the first token is "metis", replace it with the metis_bin() path
-        let command_to_run = if words.first().map(|s| s.as_str()) == Some("metis") {
+        // Check if the first token (split on whitespace) is "metis"
+        let first_token = command_string.split_whitespace().next();
+        let command_to_run = if first_token == Some("metis") {
             let metis_path = metis_bin();
             // Simple string replacement: replace first occurrence of "metis" at word boundary
             // This works because we've already verified the first word is "metis"
