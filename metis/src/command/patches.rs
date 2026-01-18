@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_GH_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_GH_TOKEN, ENV_METIS_BASE_COMMIT, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -61,7 +61,12 @@ pub enum PatchesCommand {
         description: String,
 
         /// Base commit for the patch range.
-        #[arg(long = "base", value_name = "OID", required = true)]
+        #[arg(
+            long = "base",
+            value_name = "OID",
+            required = true,
+            env = ENV_METIS_BASE_COMMIT
+        )]
         base: GitOid,
 
         /// Associate the patch with a Metis job.
