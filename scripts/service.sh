@@ -105,7 +105,7 @@ Then, if the issue has been resolved,
 Otherwise, if the issue has not been resolved:
 3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "metis issues update \$METIS_ISSUE_ID --status in-progress
 4. Implement a patch to address the issue.
-5. Submit the patch as a pull request and assign to jayant by running "metis patches create --github --title <title> --description <description> --assignee jayant"
+5. Submit the patch as a pull request and assign to $(whoami) by running "metis patches create --github --title <title> --description <description> --assignee $(whoami)"
 
 """
 
