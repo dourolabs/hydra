@@ -922,6 +922,9 @@ async fn create_github_pull_request(
     let github_token = github_token
         .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
+    stage_changes_for_pr(repo_root)?;
+    ensure_staged_changes(repo_root)?;
+    commit_changes(repo_root, title)?;
     push_branch(repo_root, &branch_name)?;
     let pr_metadata =
         open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
@@ -1005,6 +1008,49 @@ fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
     }
 
     bail!("failed to create branch '{branch}'");
+}
+
+fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
+    let add_status = Command::new("git")
+        .arg("add")
+        .args(["-A", "--", "."])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to stage changes for GitHub PR")?;
+
+    if !add_status.success() {
+        bail!("failed to stage changes for GitHub PR");
+    }
+
+    Ok(())
+}
+
+fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to check staged changes")?;
+
+    match status.code() {
+        Some(0) => bail!("No staged changes to commit for GitHub PR"),
+        Some(1) => Ok(()),
+        _ => bail!("failed to check staged changes before committing"),
+    }
+}
+
+fn commit_changes(repo_root: &Path, title: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["commit", "-m", title])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to commit changes for GitHub PR")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to commit changes for GitHub PR");
 }
 
 fn current_branch(repo_root: &Path) -> Result<String> {
