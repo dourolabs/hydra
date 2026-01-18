@@ -232,7 +232,6 @@ struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
-    assigned_issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
     jobs_error: Option<String>,
@@ -939,18 +938,13 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         .unwrap_or(false);
 
     if has_username {
-        let username = state.username.as_deref().unwrap();
         let show_user_owned =
             should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
 
         if show_user_owned {
             let panels = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(40),
-                ])
+                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
                 .split(area);
             render_issue_list(
                 frame,
@@ -962,38 +956,14 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             render_issue_list(
                 frame,
                 panels[1],
-                &state.assigned_issue_lines,
-                &issue_list_title(
-                    &format!("Issues for @{username}"),
-                    &state.assigned_issue_lines,
-                ),
-                &format!("No issues assigned to @{username}"),
-            );
-            render_issue_list(
-                frame,
-                panels[2],
                 &state.issue_lines,
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
             );
         } else {
-            let panels = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-                .split(area);
             render_issue_list(
                 frame,
-                panels[0],
-                &state.assigned_issue_lines,
-                &issue_list_title(
-                    &format!("Issues for @{username}"),
-                    &state.assigned_issue_lines,
-                ),
-                &format!("No issues assigned to @{username}"),
-            );
-            render_issue_list(
-                frame,
-                panels[1],
+                area,
                 &state.issue_lines,
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
@@ -1281,20 +1251,12 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
-    let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
     let previous_user_unowned_issue_lines = state.user_unowned_issue_lines.clone();
     let previous_completed_issue_lines = state.completed_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
     let issue_lines = build_issue_lines(
-        &state.issues,
-        &state.jobs,
-        &state.status_filter,
-        &state.agent_filter,
-    );
-    let assigned_issue_lines = build_assigned_issue_lines(
-        state.username.as_deref(),
         &state.issues,
         &state.jobs,
         &state.status_filter,
@@ -1311,12 +1273,10 @@ fn update_views(state: &mut DashboardState) -> bool {
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
-    state.assigned_issue_lines = assigned_issue_lines;
     state.user_unowned_issue_lines = user_unowned_issue_lines;
     state.completed_issue_lines = completed_issue_lines;
 
     previous_issue_lines != state.issue_lines
-        || previous_assigned_issue_lines != state.assigned_issue_lines
         || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
@@ -1361,26 +1321,6 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
     }
 
     options.into_iter().collect()
-}
-
-fn build_assigned_issue_lines(
-    username: Option<&str>,
-    issues: &[IssueRecord],
-    jobs: &[JobDetails],
-    status_filter: &StatusFilterState,
-    agent_filter: &AgentFilterState,
-) -> IssueLines {
-    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
-        return IssueLines::default();
-    };
-
-    let assigned: Vec<IssueRecord> = issues
-        .iter()
-        .filter(|issue| issue.assignee.as_deref() == Some(username))
-        .cloned()
-        .collect();
-
-    build_issue_lines(&assigned, jobs, status_filter, agent_filter)
 }
 
 fn build_user_unowned_issue_lines(
@@ -2251,38 +2191,6 @@ mod tests {
     }
 
     #[test]
-    fn assigned_issue_lines_filter_assignee() {
-        let issues = vec![
-            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
-            issue_with_assignee("i-in-progress", IssueStatus::InProgress, Some("alice")),
-            issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
-            issue_with_assignee("i-other", IssueStatus::Open, Some("bob")),
-        ];
-
-        let lines = build_assigned_issue_lines(
-            Some("alice"),
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-        );
-
-        assert_eq!(lines.rows.len(), 3);
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-open").to_string()));
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-in-progress").to_string()));
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-closed").to_string()));
-    }
-
-    #[test]
     fn user_unowned_issue_lines_skip_agent_assignee() {
         let issues = vec![issue_with_assignee(
             "i-open",
@@ -2364,7 +2272,6 @@ mod tests {
             state.issue_lines.rows[0].id,
             issue_id("i-agent").to_string()
         );
-        assert!(state.assigned_issue_lines.rows.is_empty());
         assert_eq!(state.user_unowned_issue_lines.rows.len(), 1);
         assert_eq!(
             state.user_unowned_issue_lines.rows[0].id,
