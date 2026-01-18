@@ -1,5 +1,7 @@
 use gloo_net::http::Request;
-use metis_common::{agents::ListAgentsResponse, jobs::ListJobsResponse};
+use metis_common::{
+    agents::ListAgentsResponse, constants::ENV_METIS_API_ORIGIN, jobs::ListJobsResponse,
+};
 use serde::de::DeserializeOwned;
 use std::fmt;
 
@@ -35,7 +37,8 @@ pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
 }
 
 async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
-    let response = Request::get(path)
+    let url = build_api_url(path);
+    let response = Request::get(&url)
         .send()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))?;
@@ -51,4 +54,36 @@ async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
         .json::<T>()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))
+}
+
+fn build_api_url(path: &str) -> String {
+    match api_origin() {
+        Some(origin) => {
+            let origin = origin.trim_end_matches('/');
+            let normalized_path = path.strip_prefix('/').unwrap_or(path);
+            format!("{origin}/{normalized_path}")
+        }
+        None => path.to_string(),
+    }
+}
+
+fn api_origin() -> Option<String> {
+    let compile_time = option_env!("METIS_API_ORIGIN")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if compile_time.is_some() {
+        return compile_time;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(value) = std::env::var(ENV_METIS_API_ORIGIN) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
 }

@@ -6,3 +6,4 @@ pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_GH_TOKEN: &str = "GH_TOKEN";
 pub const ENV_METIS_BASE_COMMIT: &str = "METIS_BASE_COMMIT";
+pub const ENV_METIS_API_ORIGIN: &str = "METIS_API_ORIGIN";
