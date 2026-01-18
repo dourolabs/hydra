@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
-    env,
     io::{stdout, Stdout},
     time::Duration,
 };
@@ -487,7 +486,12 @@ async fn run_dashboard_loop(
                             state.issue_draft.info_message =
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &state))?;
-                            let submission_result = submit_issue(client, &submission).await;
+                            let submission_result = submit_issue(
+                                client,
+                                &submission,
+                                state.username.as_deref(),
+                            )
+                            .await;
                             handle_issue_submission_result(
                                 &mut state,
                                 &assignee,
@@ -754,6 +758,7 @@ fn handle_issue_submission_result(
 async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
+    creator: Option<&str>,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -761,11 +766,11 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = env::var("METIS_USER")
-        .ok()
-        .map(|value| value.trim().to_string())
+    let creator = creator
+        .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or("unknown")
+        .to_string();
 
     let request = UpsertIssueRequest {
         issue: Issue {
@@ -2767,7 +2772,7 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission)
+        let created = submit_issue(&client, &submission, Some(" metis-user "))
             .await
             .expect("submission failed");
 
@@ -2780,6 +2785,7 @@ mod tests {
         assert_eq!(request.issue.status, IssueStatus::Open);
         assert_eq!(request.issue.description, "Draft release notes");
         assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
+        assert_eq!(request.issue.creator, "metis-user");
         assert!(request.issue.dependencies.is_empty());
     }
 }
