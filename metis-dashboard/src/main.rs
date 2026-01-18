@@ -1,4 +1,5 @@
 mod client;
+mod config;
 
 use dioxus::prelude::*;
 use metis_common::{
@@ -11,6 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 static MAIN_CSS: Asset = asset!("/assets/app.css");
 
 fn main() {
+    config::api_origin();
     dioxus::launch(App);
 }
 

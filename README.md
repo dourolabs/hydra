@@ -91,6 +91,7 @@ The Dioxus CLI is required to run the local dashboard server.
 2. **Start the Dioxus dev server**:
    ```bash
    cd metis-dashboard
+   export METIS_API_ORIGIN="http://localhost:8080"
    dx serve
    ```
 
