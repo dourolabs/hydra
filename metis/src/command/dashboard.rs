@@ -757,15 +757,15 @@ fn render(frame: &mut Frame, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),
-            Constraint::Min(12),
             Constraint::Length(8),
+            Constraint::Min(12),
+            Constraint::Length(6),
         ])
         .split(frame.size());
 
-    render_header(frame, chunks[0], state);
+    render_issue_creator(frame, chunks[0], state);
     render_issue_sections(frame, chunks[1], state);
-    render_issue_creator(frame, chunks[2], state);
+    render_header(frame, chunks[2], state);
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
