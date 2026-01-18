@@ -1382,6 +1382,7 @@ fn build_user_unowned_issue_lines(
     let assigned: Vec<IssueRecord> = issues
         .iter()
         .filter(|issue| issue.assignee.as_deref() == username.map(str::trim))
+        .filter(|issue| issue.status == IssueStatus::Open)
         .cloned()
         .collect();
 
@@ -2276,6 +2277,27 @@ mod tests {
         let issues = vec![
             issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
             issue_with_assignee("i-other", IssueStatus::Open, Some("bot")),
+        ];
+        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
+
+        let lines = build_user_unowned_issue_lines(
+            Some("alice"),
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &agents,
+        );
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
+    }
+
+    #[test]
+    fn user_unowned_issue_lines_only_show_open() {
+        let issues = vec![
+            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-progress", IssueStatus::InProgress, Some("alice")),
+            issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
         ];
         let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
 
