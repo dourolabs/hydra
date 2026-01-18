@@ -398,7 +398,7 @@ fn resolve_branch_commit(repo_root: &Path, branch: &str) -> Result<GitOid> {
         bail!("branch name must not be empty when resolving default base commit");
     }
 
-    let references = [branch.to_string(), format!("origin/{branch}")];
+    let references = [format!("origin/{branch}"), branch.to_string()];
     for reference in &references {
         if let Some(oid) = branch_head_from_log(repo_root, reference)? {
             return Ok(oid);
