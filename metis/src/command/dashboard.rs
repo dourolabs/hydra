@@ -924,32 +924,72 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         .unwrap_or(false);
 
     if has_username {
-        let panels = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-            .split(area);
-
         let username = state.username.as_deref().unwrap();
-        render_issue_list(
-            frame,
-            panels[0],
-            &state.assigned_issue_lines,
-            &format!("Issues for @{username}"),
-            &format!("No issues assigned to @{username}"),
-        );
-        render_issue_list(
-            frame,
-            panels[1],
-            &state.issue_lines,
-            "Running issues",
-            "No issues found",
-        );
+        let show_user_owned =
+            should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
+
+        if show_user_owned {
+            let panels = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(40),
+                ])
+                .split(area);
+            render_issue_list(
+                frame,
+                panels[0],
+                &state.user_unowned_issue_lines,
+                &issue_list_title("Your issues", &state.user_unowned_issue_lines),
+                "No issues assigned to you",
+            );
+            render_issue_list(
+                frame,
+                panels[1],
+                &state.assigned_issue_lines,
+                &issue_list_title(
+                    &format!("Issues for @{username}"),
+                    &state.assigned_issue_lines,
+                ),
+                &format!("No issues assigned to @{username}"),
+            );
+            render_issue_list(
+                frame,
+                panels[2],
+                &state.issue_lines,
+                &issue_list_title("Running issues", &state.issue_lines),
+                "No issues found",
+            );
+        } else {
+            let panels = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .split(area);
+            render_issue_list(
+                frame,
+                panels[0],
+                &state.assigned_issue_lines,
+                &issue_list_title(
+                    &format!("Issues for @{username}"),
+                    &state.assigned_issue_lines,
+                ),
+                &format!("No issues assigned to @{username}"),
+            );
+            render_issue_list(
+                frame,
+                panels[1],
+                &state.issue_lines,
+                &issue_list_title("Running issues", &state.issue_lines),
+                "No issues found",
+            );
+        }
     } else {
         render_issue_list(
             frame,
             area,
             &state.issue_lines,
-            "Running issues",
+            &issue_list_title("Running issues", &state.issue_lines),
             "No issues found",
         );
     }
@@ -1095,6 +1135,10 @@ fn render_issue_list(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::White));
     frame.render_widget(List::new(items).block(block), area);
+}
+
+fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
+    format!("{title} ({})", issue_lines.rows.len())
 }
 
 fn issue_prefix(depth: usize) -> String {
@@ -1331,22 +1375,25 @@ fn build_user_unowned_issue_lines(
     status_filter: &StatusFilterState,
     agent_names: &[String],
 ) -> IssueLines {
-    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
-        return IssueLines::default();
-    };
-
-    let is_agent = agent_names.iter().any(|agent| agent == username);
-    if is_agent {
+    if !should_show_user_owned_panel(username, agent_names) {
         return IssueLines::default();
     }
 
     let assigned: Vec<IssueRecord> = issues
         .iter()
-        .filter(|issue| issue.assignee.as_deref() == Some(username))
+        .filter(|issue| issue.assignee.as_deref() == username.map(str::trim))
         .cloned()
         .collect();
 
     build_issue_lines(&assigned, jobs, status_filter, &AgentFilterState::default())
+}
+
+fn should_show_user_owned_panel(username: Option<&str>, agent_names: &[String]) -> bool {
+    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+
+    !agent_names.iter().any(|agent| agent == username)
 }
 
 fn build_issue_lines(
@@ -2242,6 +2289,24 @@ mod tests {
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
+    }
+
+    #[test]
+    fn user_owned_panel_hidden_for_agent_user() {
+        let agents = vec!["alice".to_string(), "bot".to_string()];
+
+        let show = should_show_user_owned_panel(Some("alice"), &agents);
+
+        assert!(!show);
+    }
+
+    #[test]
+    fn user_owned_panel_shown_for_non_agent_user() {
+        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
+
+        let show = should_show_user_owned_panel(Some("alice"), &agents);
+
+        assert!(show);
     }
 
     #[test]
