@@ -554,18 +554,6 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if !state.issue_draft.editing
-                && matches!(
-                    key.code,
-                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
-                )
-            {
-                return EventOutcome {
-                    should_quit: true,
-                    submission: None,
-                };
-            }
-
             EventOutcome {
                 should_quit: false,
                 submission: handle_issue_draft_key(key, state),
@@ -796,7 +784,7 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
             "Metis Dashboard",
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" — press q or Esc to exit."),
+        Span::raw(" — press Ctrl+C to exit."),
     ])];
 
     lines.push(status_filter_line(&state.status_filter));
@@ -2493,19 +2481,6 @@ mod tests {
     }
 
     #[test]
-    fn q_quits_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
-            &mut state,
-        );
-
-        assert!(outcome.should_quit);
-        assert!(outcome.submission.is_none());
-    }
-
-    #[test]
     fn q_does_not_quit_when_editing_issue_prompt() {
         let mut state = DashboardState::default();
         state.issue_draft.set_editing(true);
@@ -2533,6 +2508,34 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.prompt_text(), "Q");
+    }
+
+    #[test]
+    fn q_does_not_quit_when_not_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert!(state.issue_draft.prompt_text().is_empty());
+    }
+
+    #[test]
+    fn escape_does_not_quit_when_not_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert!(state.issue_draft.prompt_text().is_empty());
     }
 
     #[test]
