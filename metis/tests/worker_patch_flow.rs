@@ -3,9 +3,10 @@ use metis::client::MetisClient;
 use metis_common::{
     jobs::SearchJobsQuery, patches::SearchPatchesQuery, task_status::Status, TaskId,
 };
-use metis_integration::test_helpers::init_test_server_with_remote;
-use std::time::Instant;
-use tokio::time::{sleep, Duration};
+
+mod common;
+
+use common::init_test_server_with_remote;
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {
@@ -76,9 +77,9 @@ async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<TaskId>
 }
 
 async fn wait_for_status(client: &MetisClient, job_id: &TaskId, expected: Status) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        if Instant::now() > deadline {
+        if std::time::Instant::now() > deadline {
             bail!("timed out waiting for job '{job_id}' to reach status {expected:?}");
         }
 
@@ -89,6 +90,6 @@ async fn wait_for_status(client: &MetisClient, job_id: &TaskId, expected: Status
             }
         }
 
-        sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }

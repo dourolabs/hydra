@@ -30,3 +30,7 @@ crossterm = { version = "0.27", features = ["event-stream"] }
 octocrab = "0.38"
 tui-textarea = "0.4"
 git2 = "0.19"
+
+[dev-dependencies]
+metis-server = { path = "../metis-server", features = ["test-utils"] }
+escargot = "0.5"

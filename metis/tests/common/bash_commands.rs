@@ -2,14 +2,12 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use metis::{client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig};
+use metis::command::worker_run::WorkerCommands;
 
-use crate::test_helpers::metis_bin;
+use super::test_helpers::metis_bin;
 
 pub struct BashCommands {
     pub commands: Vec<String>,
-    pub client: Box<dyn MetisClientInterface>,
-    pub app_config: AppConfig,
 }
 
 impl BashCommands {
@@ -19,18 +17,14 @@ impl BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<String> {
-        // Check if the first token (split on whitespace) is "metis"
         let first_token = command_string.split_whitespace().next();
         let command_to_run = if first_token == Some("metis") {
             let metis_path = metis_bin();
-            // Simple string replacement: replace first occurrence of "metis" at word boundary
-            // This works because we've already verified the first word is "metis"
             command_string.replacen("metis", &metis_path.to_string_lossy(), 1)
         } else {
             command_string.to_string()
         };
 
-        // Run as a shell command using bash (preserves redirects like >>)
         let output = tokio::process::Command::new("bash")
             .arg("-c")
             .arg(&command_to_run)

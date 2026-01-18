@@ -2821,9 +2821,11 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "escargot",
  "futures",
  "git2",
  "metis-common",
+ "metis-server",
  "octocrab 0.38.0",
  "owo-colors",
  "ratatui",
@@ -2863,20 +2865,6 @@ dependencies = [
  "metis-common",
  "serde",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "metis-integration"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "escargot",
- "metis",
- "metis-common",
- "metis-server",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
