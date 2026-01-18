@@ -29,11 +29,16 @@ impl BashCommands {
             }
         }
 
-        // If the first token is "metis", use cli::run_with_client_and_config
+        // If the first token is "metis", use cli::run_with_client_and_config_and_env
         if words.first().map(|s| s.as_str()) == Some("metis") {
-            cli::run_with_client_and_config(words, self.client.as_ref(), &self.app_config)
-                .await
-                .context("failed to run metis command via cli")?;
+            cli::run_with_client_and_config_and_env(
+                words,
+                self.client.as_ref(),
+                &self.app_config,
+                Some(env),
+            )
+            .await
+            .context("failed to run metis command via cli")?;
             // Return empty string as metis commands don't produce output to capture
             return Ok(String::new());
         }
