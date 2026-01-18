@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
-use metis_common::RepoName;
+use metis_common::{repositories::ServiceRepositoryConfig, RepoName};
 use metis_server::{
     app::{AppState, ServiceState},
-    config::{Repository as ServiceRepo, ServiceSection},
+    config::ServiceSection,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
 };
@@ -250,7 +250,7 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
     let mut service_section = ServiceSection::default();
     service_section.repositories.insert(
         repo_name.clone(),
-        ServiceRepo {
+        ServiceRepositoryConfig {
             remote_url: remote_url.to_string(),
             default_branch: Some("main".to_string()),
             github_token: None,

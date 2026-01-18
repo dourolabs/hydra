@@ -1,5 +1,5 @@
 use crate::{
-    app::{GitRepository, ServiceState},
+    app::{ServiceRepository, ServiceState},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature, build::CheckoutBuilder};
@@ -15,7 +15,8 @@ use tempfile::TempDir;
 fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let mut state = test_state();
-    let repository = GitRepository {
+    let repository = ServiceRepository {
+        name: repo.clone(),
         remote_url: format!("https://example.com/{}.git", repo.as_str()),
         default_branch: None,
         github_token: None,
@@ -33,7 +34,8 @@ async fn state_with_repo_and_patch(
 ) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
     let (remote_dir, diff) = create_repository_with_patch()?;
-    let repository = GitRepository {
+    let repository = ServiceRepository {
+        name: repo.clone(),
         remote_url: remote_dir
             .path()
             .to_str()

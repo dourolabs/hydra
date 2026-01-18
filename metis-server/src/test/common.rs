@@ -1,4 +1,4 @@
-use crate::app::GitRepository;
+use crate::app::ServiceRepository;
 use metis_common::{RepoName, TaskId};
 use std::str::FromStr;
 
@@ -18,9 +18,10 @@ pub(crate) fn patch_diff() -> String {
     "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
 }
 
-pub(crate) fn service_repository() -> (RepoName, GitRepository) {
+pub(crate) fn service_repository() -> (RepoName, ServiceRepository) {
     let name = service_repo_name();
-    let repository = GitRepository {
+    let repository = ServiceRepository {
+        name: name.clone(),
         remote_url: format!("https://example.com/{}.git", name.as_str()),
         default_branch: Some("develop".to_string()),
         github_token: Some("token-123".to_string()),
