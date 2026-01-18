@@ -14,7 +14,7 @@ use metis_common::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
     },
-    jobs::BundleSpec,
+    jobs::{Bundle, BundleSpec},
     merge_queues::MergeQueue,
     patches::{
         GitOid, GithubPr, Patch, PatchCommitRange, PatchRecord, PatchStatus, Review,
@@ -60,9 +60,9 @@ pub enum PatchesCommand {
         #[arg(long = "description", value_name = "DESCRIPTION", required = true)]
         description: String,
 
-        /// Base commit for the patch range.
-        #[arg(long = "base", value_name = "OID", required = true)]
-        base: GitOid,
+        /// Base commit for the patch range. Defaults to the service repo's default branch head.
+        #[arg(long = "base", value_name = "OID")]
+        base: Option<GitOid>,
 
         /// Associate the patch with a Metis job.
         #[arg(long = "job", value_name = "METIS_ID", env = ENV_METIS_ID)]
@@ -278,7 +278,7 @@ async fn create_patch(
     github_token: Option<String>,
     assignee: Option<String>,
     issue_id: Option<IssueId>,
-    base: GitOid,
+    base: Option<GitOid>,
     repo_root: Option<&Path>,
 ) -> Result<()> {
     let repo_root = match repo_root {
@@ -287,6 +287,10 @@ async fn create_patch(
     };
     ensure_clean_worktree(&repo_root)?;
     let head = resolve_head_commit(&repo_root)?;
+    let base = match base {
+        Some(base) => base,
+        None => resolve_default_base_commit(client, job_id.as_ref(), &repo_root).await?,
+    };
     ensure_base_is_ancestor(&repo_root, &base, &head)?;
     let commit_range = PatchCommitRange { base, head };
     let github_token = if create_github_pr {
@@ -351,6 +355,82 @@ async fn create_patch(
     println!("{}", serde_json::to_string(&output)?);
 
     Ok(())
+}
+
+async fn resolve_default_base_commit(
+    client: &dyn MetisClientInterface,
+    job_id: Option<&TaskId>,
+    repo_root: &Path,
+) -> Result<GitOid> {
+    let job_id = job_id.ok_or_else(|| {
+        anyhow!("--base is required when no job id is provided; supply --job or set {ENV_METIS_ID}")
+    })?;
+    let default_branch = resolve_default_branch_for_job(client, job_id).await?;
+
+    resolve_branch_commit(repo_root, &default_branch).with_context(|| {
+        format!("failed to resolve base commit from default branch '{default_branch}'")
+    })
+}
+
+async fn resolve_default_branch_for_job(
+    client: &dyn MetisClientInterface,
+    job_id: &TaskId,
+) -> Result<String> {
+    let context = client
+        .get_job_context(job_id)
+        .await
+        .with_context(|| format!("failed to fetch context for job '{job_id}'"))?;
+
+    if let Bundle::GitRepository { rev, .. } = context.request_context {
+        let branch = rev.trim();
+        if branch.is_empty() {
+            bail!("job '{job_id}' default branch must not be empty");
+        }
+        return Ok(branch.to_string());
+    }
+
+    bail!("job '{job_id}' context does not reference a repository");
+}
+
+fn resolve_branch_commit(repo_root: &Path, branch: &str) -> Result<GitOid> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        bail!("branch name must not be empty when resolving default base commit");
+    }
+
+    let references = [branch.to_string(), format!("origin/{branch}")];
+    for reference in &references {
+        if let Some(oid) = branch_head_from_log(repo_root, reference)? {
+            return Ok(oid);
+        }
+    }
+
+    bail!(
+        "failed to locate commit for branch '{branch}'. Try fetching the branch or provide --base."
+    )
+}
+
+fn branch_head_from_log(repo_root: &Path, reference: &str) -> Result<Option<GitOid>> {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%H", reference])
+        .current_dir(repo_root)
+        .output()
+        .context(format!(
+            "failed to read git log for reference '{reference}'"
+        ))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if oid.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        GitOid::from_str(&oid).context("failed to parse branch head commit")?,
+    ))
 }
 
 async fn update_patch(
@@ -1169,7 +1249,7 @@ mod tests {
         issues::{
             IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
         },
-        jobs::{BundleSpec, JobRecord, Task},
+        jobs::{Bundle, BundleSpec, JobRecord, Task, WorkerContext},
         merge_queues::MergeQueue,
         patches::{
             GitOid, ListPatchesResponse, Patch, PatchCommitRange, PatchRecord, Review,
@@ -1298,6 +1378,39 @@ mod tests {
         Ok((tempdir, repo_path, base_commit, head_commit))
     }
 
+    fn initialize_repo_with_default_branch_snapshot(
+    ) -> Result<(tempfile::TempDir, std::path::PathBuf, GitOid, GitOid)> {
+        let (tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
+
+        Command::new("git")
+            .args(["-C", repo_str, "checkout", "-b", "feature/default-base"])
+            .status()
+            .context("failed to create feature branch for default branch test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git checkout returned non-zero exit code"))?;
+
+        Command::new("git")
+            .args([
+                "-C",
+                repo_str,
+                "branch",
+                "-f",
+                "main",
+                &base_commit.to_string(),
+            ])
+            .status()
+            .context("failed to reset main to base commit for default branch test")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git branch returned non-zero exit code"))?;
+
+        Ok((tempdir, repo_path, base_commit, head_commit))
+    }
+
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let client = MockMetisClient::default();
@@ -1361,7 +1474,7 @@ mod tests {
             None,
             None,
             None,
-            base_commit,
+            Some(base_commit),
             Some(&repo_path),
         )
         .await?;
@@ -1409,6 +1522,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_patch_defaults_base_from_service_default_branch() -> Result<()> {
+        let (_tempdir, repo_path, base_commit, head_commit) =
+            initialize_repo_with_default_branch_snapshot()?;
+        let job_id = task_id("t-job-default-base");
+        let client = MockMetisClient::default();
+        client.push_get_job_response(JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        });
+        client.push_get_job_context_response(WorkerContext {
+            request_context: Bundle::GitRepository {
+                url: "https://github.com/dourolabs/example.git".to_string(),
+                rev: "main".to_string(),
+            },
+            prompt: "0".to_string(),
+            variables: Default::default(),
+        });
+        client.push_upsert_patch_response(UpsertPatchResponse {
+            patch_id: patch_id("p-default-base"),
+        });
+
+        create_patch(
+            &client,
+            "default base title".to_string(),
+            "default base description".to_string(),
+            Some(job_id.clone()),
+            false,
+            None,
+            None,
+            None,
+            None,
+            Some(&repo_path),
+        )
+        .await?;
+
+        let requests = client.recorded_patch_upserts();
+        assert_eq!(requests.len(), 1, "expected one patch upsert");
+
+        let (_, request) = &requests[0];
+        assert_eq!(request.patch.commit_range.base, base_commit);
+        assert_eq!(request.patch.commit_range.head, head_commit);
+        assert_eq!(
+            client.recorded_job_context_requests(),
+            vec![job_id],
+            "default base should fetch the job context"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn create_patch_uses_provided_job_id() -> Result<()> {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
 
@@ -1446,7 +1621,7 @@ mod tests {
             None,
             None,
             None,
-            base_commit,
+            Some(base_commit),
             Some(&repo_path),
         )
         .await?;
@@ -1479,7 +1654,7 @@ mod tests {
             None,
             None,
             None,
-            base_commit,
+            Some(base_commit),
             Some(&repo_path),
         )
         .await;
@@ -1507,7 +1682,7 @@ mod tests {
             None,
             None,
             None,
-            base_commit,
+            Some(base_commit),
             Some(&repo_path),
         )
         .await;
@@ -1562,7 +1737,7 @@ mod tests {
             None,
             Some("owner-a".to_string()),
             Some(parent_issue.clone()),
-            base_commit,
+            Some(base_commit),
             Some(&repo_path),
         )
         .await?;
@@ -1660,7 +1835,7 @@ mod tests {
             None,
             None,
             None,
-            base_commit,
+            Some(base_commit),
             Some(repo_path.as_path()),
         )
         .await?;

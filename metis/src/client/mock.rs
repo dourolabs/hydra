@@ -34,6 +34,7 @@ pub struct MockMetisClient {
     pub get_issue_responses: Mutex<VecDeque<IssueRecord>>,
     pub get_patch_responses: Mutex<VecDeque<PatchRecord>>,
     pub get_job_responses: Mutex<VecDeque<JobRecord>>,
+    pub get_job_context_responses: Mutex<VecDeque<WorkerContext>>,
     pub list_issue_responses: Mutex<VecDeque<ListIssuesResponse>>,
     pub list_patch_responses: Mutex<VecDeque<ListPatchesResponse>>,
     pub list_agents_responses: Mutex<VecDeque<ListAgentsResponse>>,
@@ -44,6 +45,7 @@ pub struct MockMetisClient {
     pub issue_get_requests: Mutex<Vec<IssueId>>,
     pub patch_get_requests: Mutex<Vec<PatchId>>,
     pub job_get_requests: Mutex<Vec<TaskId>>,
+    pub job_context_requests: Mutex<Vec<TaskId>>,
     pub list_job_queries: Mutex<Vec<SearchJobsQuery>>,
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
@@ -108,6 +110,13 @@ impl MockMetisClient {
         self.get_job_responses.lock().unwrap().push_back(response);
     }
 
+    pub fn push_get_job_context_response(&self, response: WorkerContext) {
+        self.get_job_context_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
     pub fn push_list_issues_response(&self, response: ListIssuesResponse) {
         self.list_issue_responses
             .lock()
@@ -157,6 +166,10 @@ impl MockMetisClient {
 
     pub fn recorded_get_patch_requests(&self) -> Vec<PatchId> {
         self.patch_get_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_job_context_requests(&self) -> Vec<TaskId> {
+        self.job_context_requests.lock().unwrap().clone()
     }
     pub fn recorded_list_issue_queries(&self) -> Vec<SearchIssuesQuery> {
         self.list_issue_queries.lock().unwrap().clone()
@@ -236,10 +249,16 @@ impl MetisClientInterface for MockMetisClient {
         Err(anyhow!("get_job_status not implemented in MockMetisClient"))
     }
 
-    async fn get_job_context(&self, _job_id: &TaskId) -> Result<WorkerContext> {
-        Err(anyhow!(
-            "get_job_context not implemented in MockMetisClient"
-        ))
+    async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext> {
+        self.job_context_requests
+            .lock()
+            .unwrap()
+            .push(job_id.clone());
+        self.get_job_context_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for get_job_context"))
     }
 
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
