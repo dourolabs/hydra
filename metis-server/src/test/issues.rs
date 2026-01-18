@@ -29,6 +29,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "original details".to_string(),
+                creator: String::new(),
                 progress: "Initial progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -52,6 +53,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
+                creator: String::new(),
                 progress: "Updated progress".to_string(),
                 status: IssueStatus::InProgress,
                 assignee: None,
@@ -83,6 +85,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         Issue {
             issue_type: IssueType::Task,
             description: "updated details".to_string(),
+            creator: String::new(),
             progress: "Updated progress".to_string(),
             status: IssueStatus::InProgress,
             assignee: None,
@@ -104,6 +107,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "blocker".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -127,6 +131,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -150,6 +155,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -181,6 +187,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "blocker".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -203,6 +210,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -229,6 +237,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -252,6 +261,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "child".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -275,6 +285,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -306,6 +317,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "child".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -328,6 +340,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
@@ -353,6 +366,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let base_issue = Issue {
         issue_type: IssueType::Task,
         description: "dropped issue".to_string(),
+        creator: String::new(),
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
@@ -422,6 +436,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let issue = Issue {
         issue_type: IssueType::Bug,
         description: "login fails for guests".to_string(),
+        creator: String::new(),
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
@@ -431,6 +446,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let assigned_issue = Issue {
         issue_type: IssueType::Task,
         description: "assigned issue".to_string(),
+        creator: String::new(),
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: Some("owner-1".to_string()),
@@ -440,6 +456,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let closed_issue = Issue {
         issue_type: IssueType::Task,
         description: "retire old endpoint".to_string(),
+        creator: String::new(),
         progress: String::new(),
         status: IssueStatus::Closed,
         assignee: None,

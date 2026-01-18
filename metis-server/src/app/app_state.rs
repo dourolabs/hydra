@@ -927,6 +927,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: description.to_string(),
+            creator: String::new(),
             progress: String::new(),
             status,
             assignee: None,
