@@ -365,10 +365,25 @@ impl StatusFilterState {
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
+    let username = resolve_username(username);
     let mut terminal = setup_terminal()?;
     let dashboard_result = run_dashboard_loop(client, &mut terminal, username).await;
     teardown_terminal(&mut terminal)?;
     dashboard_result
+}
+
+fn resolve_username(username: Option<String>) -> Option<String> {
+    if username.is_some() {
+        return username;
+    }
+
+    let resolved = whoami::username();
+    let trimmed = resolved.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 async fn run_dashboard_loop(
@@ -1921,6 +1936,21 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_username_preserves_explicit_input() {
+        let resolved = resolve_username(Some("explicit".to_string()));
+
+        assert_eq!(resolved, Some("explicit".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_defaults_to_current_user() {
+        let expected = whoami::username();
+        let resolved = resolve_username(None).unwrap_or_default();
+
+        assert_eq!(resolved, expected);
     }
 
     fn job_details_with_issue(
