@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
+    env,
     io::{stdout, Stdout},
     time::Duration,
 };
@@ -380,8 +381,30 @@ pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) ->
 }
 
 fn resolve_username(username: Option<String>) -> Option<String> {
-    if username.is_some() {
-        return username;
+    let arg_username = username.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
+    if arg_username.is_some() {
+        return arg_username;
+    }
+
+    let env_username = env::var("METIS_USER").ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
+    if env_username.is_some() {
+        return env_username;
     }
 
     let resolved = whoami::username();
@@ -1965,6 +1988,10 @@ mod tests {
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
     use std::collections::HashMap;
+    use std::env;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -2024,6 +2051,38 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
         }
+    }
+
+    #[test]
+    fn resolve_username_prefers_arg_over_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = env::var("METIS_USER").ok();
+        env::set_var("METIS_USER", "env-user");
+
+        let resolved = resolve_username(Some("cli-user".to_string()));
+
+        match previous {
+            Some(value) => env::set_var("METIS_USER", value),
+            None => env::remove_var("METIS_USER"),
+        }
+
+        assert_eq!(resolved.as_deref(), Some("cli-user"));
+    }
+
+    #[test]
+    fn resolve_username_uses_env_when_arg_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = env::var("METIS_USER").ok();
+        env::set_var("METIS_USER", "env-user");
+
+        let resolved = resolve_username(None);
+
+        match previous {
+            Some(value) => env::set_var("METIS_USER", value),
+            None => env::remove_var("METIS_USER"),
+        }
+
+        assert_eq!(resolved.as_deref(), Some("env-user"));
     }
 
     #[test]

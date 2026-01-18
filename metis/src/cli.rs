@@ -51,7 +51,7 @@ pub enum Commands {
     /// Launch a live dashboard for jobs, issues, and patches.
     Dashboard {
         /// Only show a dedicated panel for open issues assigned to this user.
-        #[arg(long = "username", value_name = "USERNAME")]
+        #[arg(long = "username", value_name = "USERNAME", env = "METIS_USER")]
         username: Option<String>,
     },
     /// List or create issues.
