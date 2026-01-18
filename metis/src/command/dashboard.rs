@@ -46,6 +46,13 @@ const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
     IssueStatus::Dropped,
 ];
 
+#[derive(Copy, Clone, PartialEq, Default)]
+enum PanelFocus {
+    #[default]
+    NewIssue,
+    Status,
+}
+
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
@@ -242,6 +249,7 @@ struct DashboardState {
     issue_draft: IssueDraft,
     status_filter: StatusFilterState,
     agent_filter: AgentFilterState,
+    selected_panel: PanelFocus,
 }
 
 struct IssueSubmission {
@@ -570,6 +578,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
 
             if state.issue_draft.editing && state.issue_draft.prompt.insert_str(text) {
                 state.issue_draft.note_edit();
+                state.selected_panel = PanelFocus::NewIssue;
             }
 
             EventOutcome {
@@ -607,11 +616,13 @@ fn handle_status_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             state.status_filter.cycle_selection();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             state.status_filter.toggle_selected();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         _ => false,
@@ -627,11 +638,13 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         KeyCode::Char('a') | KeyCode::Char('A') => {
             state.agent_filter.cycle_selection();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         KeyCode::Char('g') | KeyCode::Char('G') => {
             state.agent_filter.toggle_selected();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         _ => false,
@@ -641,6 +654,7 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
     if has_primary_modifier(key.modifiers) && key.code == KeyCode::Char('n') {
         state.issue_draft.set_editing(!state.issue_draft.editing);
+        state.selected_panel = PanelFocus::NewIssue;
         return None;
     }
 
@@ -655,16 +669,19 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     match key.code {
         KeyCode::Tab => {
             state.issue_draft.cycle_assignee(true);
+            state.selected_panel = PanelFocus::NewIssue;
             return None;
         }
         KeyCode::BackTab => {
             state.issue_draft.cycle_assignee(false);
+            state.selected_panel = PanelFocus::NewIssue;
             return None;
         }
         _ => {}
     }
 
     if is_issue_submit_key(key) {
+        state.selected_panel = PanelFocus::NewIssue;
         return attempt_issue_submit(state);
     }
 
@@ -674,6 +691,7 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
 
     if state.issue_draft.prompt.input(key) {
         state.issue_draft.note_edit();
+        state.selected_panel = PanelFocus::NewIssue;
     }
 
     None
@@ -822,7 +840,9 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
         Block::default()
             .title("Status")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::White)),
+            .border_style(panel_border_style(
+                state.selected_panel == PanelFocus::Status,
+            )),
     );
     frame.render_widget(paragraph, area);
 }
@@ -1018,7 +1038,9 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(panel_border_style(
+            state.selected_panel == PanelFocus::NewIssue,
+        ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1104,8 +1126,18 @@ fn render_completed_issue_list(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(List::new(items).block(block), area);
+}
+
+fn panel_border_style(selected: bool) -> Style {
+    if selected {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
