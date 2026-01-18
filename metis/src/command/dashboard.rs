@@ -227,6 +227,7 @@ struct DashboardState {
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
     assigned_issue_lines: IssueLines,
+    user_unowned_issue_lines: IssueLines,
     jobs_error: Option<String>,
     records_error: Option<String>,
     agents_error: Option<String>,
@@ -1215,6 +1216,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
     let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
+    let previous_user_unowned_issue_lines = state.user_unowned_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
@@ -1231,13 +1233,22 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.status_filter,
         &state.agent_filter,
     );
+    let user_unowned_issue_lines = build_user_unowned_issue_lines(
+        state.username.as_deref(),
+        &state.issues,
+        &state.jobs,
+        &state.status_filter,
+        &state.agent_filter.options,
+    );
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
     state.assigned_issue_lines = assigned_issue_lines;
+    state.user_unowned_issue_lines = user_unowned_issue_lines;
 
     previous_issue_lines != state.issue_lines
         || previous_assigned_issue_lines != state.assigned_issue_lines
+        || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
 }
@@ -1300,6 +1311,31 @@ fn build_assigned_issue_lines(
         .collect();
 
     build_issue_lines(&assigned, jobs, status_filter, agent_filter)
+}
+
+fn build_user_unowned_issue_lines(
+    username: Option<&str>,
+    issues: &[IssueRecord],
+    jobs: &[JobDetails],
+    status_filter: &StatusFilterState,
+    agent_names: &[String],
+) -> IssueLines {
+    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
+        return IssueLines::default();
+    };
+
+    let is_agent = agent_names.iter().any(|agent| agent == username);
+    if is_agent {
+        return IssueLines::default();
+    }
+
+    let assigned: Vec<IssueRecord> = issues
+        .iter()
+        .filter(|issue| issue.assignee.as_deref() == Some(username))
+        .cloned()
+        .collect();
+
+    build_issue_lines(&assigned, jobs, status_filter, &AgentFilterState::default())
 }
 
 fn build_issue_lines(
@@ -1981,6 +2017,46 @@ mod tests {
             .rows
             .iter()
             .any(|line| line.id == issue_id("i-closed").to_string()));
+    }
+
+    #[test]
+    fn user_unowned_issue_lines_skip_agent_assignee() {
+        let issues = vec![issue_with_assignee(
+            "i-open",
+            IssueStatus::Open,
+            Some("alice"),
+        )];
+        let agents = vec!["alice".to_string(), "bot".to_string()];
+
+        let lines = build_user_unowned_issue_lines(
+            Some("alice"),
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &agents,
+        );
+
+        assert!(lines.rows.is_empty());
+    }
+
+    #[test]
+    fn user_unowned_issue_lines_include_user_assignee() {
+        let issues = vec![
+            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-other", IssueStatus::Open, Some("bot")),
+        ];
+        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
+
+        let lines = build_user_unowned_issue_lines(
+            Some("alice"),
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &agents,
+        );
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
     }
 
     #[test]
