@@ -698,7 +698,6 @@ mod tests {
                     title: "test".to_string(),
                     description: "desc".to_string(),
                     commit_range: sample_commit_range(),
-                    diff: String::new(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),

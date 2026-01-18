@@ -585,7 +585,6 @@ pub async fn create_patch_artifact_from_repo(
         ensure_clean_worktree(repo_root)?;
     }
     ensure_base_is_ancestor(repo_root, &commit_range.base, &commit_range.head)?;
-    let diff = git_diff_for_range(repo_root, &commit_range)?;
 
     let title = title.trim().to_string();
     let description = description.trim().to_string();
@@ -600,7 +599,6 @@ pub async fn create_patch_artifact_from_repo(
         title: title.clone(),
         description: description.clone(),
         commit_range,
-        diff,
         status: PatchStatus::Open,
         is_automatic_backup,
         reviews: Vec::new(),
@@ -1747,7 +1745,6 @@ mod tests {
                 title: "reviewed patch".to_string(),
                 description: "description".to_string(),
                 commit_range: sample_commit_range(),
-                diff: String::new(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![existing_review.clone()],
@@ -1805,7 +1802,6 @@ mod tests {
                 title: "Initial title".to_string(),
                 description: "Initial description".to_string(),
                 commit_range: sample_commit_range(),
-                diff: String::new(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: vec![Review {
@@ -1846,7 +1842,6 @@ mod tests {
                         title: "Updated title".to_string(),
                         description: "Updated description".to_string(),
                         commit_range: updated_range,
-                        diff: String::new(),
                         status: PatchStatus::Closed,
                         is_automatic_backup: false,
                         reviews: vec![Review {
