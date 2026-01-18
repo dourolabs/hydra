@@ -14,6 +14,7 @@ use metis_common::{
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
+    env,
     io::{self, Write},
     str::FromStr,
 };
@@ -77,6 +78,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
 
+        /// Creator for the issue (defaults to METIS_USER when set).
+        #[arg(long, value_name = "CREATOR", env = "METIS_USER")]
+        creator: Option<String>,
+
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -106,6 +111,10 @@ pub enum IssueCommands {
         /// Remove the current assignee.
         #[arg(long)]
         clear_assignee: bool,
+
+        /// Updated creator.
+        #[arg(long, value_name = "CREATOR")]
+        creator: Option<String>,
 
         /// Updated description.
         #[arg(long, value_name = "DESCRIPTION")]
@@ -181,6 +190,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             dependencies,
             patches,
             assignee,
+            creator,
             description,
             progress,
         } => {
@@ -191,6 +201,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 dependencies,
                 patches,
                 assignee,
+                creator,
                 description,
                 progress,
             )
@@ -202,6 +213,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             status,
             assignee,
             clear_assignee,
+            creator,
             description,
             dependencies,
             clear_dependencies,
@@ -217,6 +229,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 status,
                 assignee,
                 clear_assignee,
+                creator,
                 description,
                 dependencies,
                 clear_dependencies,
@@ -474,6 +487,7 @@ async fn create_issue(
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<String>,
+    creator: Option<String>,
     description: String,
     progress: Option<String>,
 ) -> Result<()> {
@@ -485,6 +499,12 @@ async fn create_issue(
     let progress = progress
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
+
+    let creator = creator
+        .or_else(|| env::var("METIS_USER").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let assignee = match assignee {
         Some(value) => {
@@ -501,6 +521,7 @@ async fn create_issue(
         issue: Issue {
             issue_type,
             description: description.to_string(),
+            creator,
             progress,
             status,
             assignee,
@@ -526,6 +547,7 @@ async fn update_issue(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
+    creator: Option<String>,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
@@ -559,6 +581,16 @@ async fn update_issue(
         None
     };
 
+    let creator = if let Some(value) = creator {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("Creator must not be empty.");
+        }
+        Some(trimmed.to_string())
+    } else {
+        None
+    };
+
     let dependencies_update = if clear_dependencies {
         Some(Vec::new())
     } else if dependencies.is_empty() {
@@ -584,6 +616,7 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && status.is_none()
         && assignee.is_none()
+        && creator.is_none()
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
@@ -600,6 +633,7 @@ async fn update_issue(
     let updated_issue = Issue {
         issue_type: issue_type.unwrap_or(current.issue.issue_type),
         description: description.unwrap_or(current.issue.description),
+        creator: creator.unwrap_or(current.issue.creator),
         progress: progress_update.unwrap_or(current.issue.progress),
         status: status.unwrap_or(current.issue.status),
         assignee: assignee.unwrap_or(current.issue.assignee),
@@ -657,6 +691,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         let Issue {
             issue_type,
             description,
+            creator,
             progress,
             status,
             assignee,
@@ -665,6 +700,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
+        writeln!(writer, "Creator: {creator}")?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -749,6 +785,7 @@ fn write_issue_details_pretty(
     let Issue {
         issue_type,
         description,
+        creator,
         progress,
         status,
         assignee,
@@ -761,6 +798,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
+    writeln!(writer, "{indent}Creator: {creator}")?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1004,6 +1042,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
+                    creator: String::new(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
@@ -1053,6 +1092,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
@@ -1090,6 +1130,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
+                    creator: String::new(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
@@ -1164,6 +1205,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Parent issue".into(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -1177,6 +1219,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Root issue".into(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some("owner".into()),
@@ -1193,6 +1236,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Bug,
                 description: "Child issue".into(),
+                creator: String::new(),
                 progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
@@ -1309,6 +1353,7 @@ mod tests {
         client.push_upsert_issue_response(UpsertIssueResponse {
             issue_id: issue_id("i-456"),
         });
+        std::env::set_var("METIS_USER", "creator-a");
 
         let dependencies = vec![IssueDependency {
             dependency_type: IssueDependencyType::ChildOf,
@@ -1323,6 +1368,7 @@ mod tests {
             dependencies.clone(),
             patch_ids.clone(),
             Some("team-a".into()),
+            None,
             "New issue description".into(),
             Some("Initial notes".into()),
         )
@@ -1338,6 +1384,7 @@ mod tests {
                         issue_type: IssueType::MergeRequest,
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
+                        creator: "creator-a".into(),
                         progress: "Initial notes".into(),
                         assignee: Some("team-a".into()),
                         dependencies,
@@ -1359,6 +1406,7 @@ mod tests {
             vec![],
             Vec::new(),
             None,
+            None,
             "   ".into(),
             None,
         )
@@ -1376,6 +1424,7 @@ mod tests {
             vec![],
             Vec::new(),
             Some("   ".into()),
+            None,
             "Valid description".into(),
             None,
         )
@@ -1413,6 +1462,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
+                creator: String::new(),
                 progress: "Initial note".into(),
                 status: IssueStatus::Open,
                 assignee: Some("owner-a".into()),
@@ -1434,6 +1484,7 @@ mod tests {
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
+            None,
             Some("Updated issue description".into()),
             vec![IssueDependency {
                 dependency_type: IssueDependencyType::BlockedOn,
@@ -1457,6 +1508,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Updated issue description".into(),
+                        creator: String::new(),
                         progress: "New progress".into(),
                         status: IssueStatus::Closed,
                         assignee: Some("owner-b".into()),
@@ -1480,6 +1532,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
+                creator: String::new(),
                 progress: "Started work".into(),
                 status: IssueStatus::InProgress,
                 assignee: Some("owner-a".into()),
@@ -1502,6 +1555,7 @@ mod tests {
             None,
             true,
             None,
+            None,
             vec![],
             true,
             vec![],
@@ -1520,6 +1574,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Existing issue".into(),
+                        creator: String::new(),
                         progress: String::new(),
                         status: IssueStatus::InProgress,
                         assignee: None,
@@ -1540,6 +1595,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
+                    creator: String::new(),
                     progress: "Working on repro".into(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
@@ -1555,6 +1611,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
+                    creator: String::new(),
                     progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: None,
@@ -1606,6 +1663,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
+                        creator: String::new(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
@@ -1621,6 +1679,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
+                        creator: String::new(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -1654,6 +1713,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
+                        creator: String::new(),
                         progress: "Main progress".into(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
@@ -1669,6 +1729,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
+                        creator: String::new(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -1684,6 +1745,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Child".into(),
+                        creator: String::new(),
                         progress: "Child update".into(),
                         status: IssueStatus::InProgress,
                         assignee: None,
@@ -1700,8 +1762,8 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("Progress:\n    Main progress"));
-        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
-        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
+        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Creator: \n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
+        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Creator: \n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
     }
 
     #[test]
@@ -1736,6 +1798,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
+                        creator: String::new(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),

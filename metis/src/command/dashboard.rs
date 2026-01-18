@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
+    env,
     io::{stdout, Stdout},
     time::Duration,
 };
@@ -755,11 +756,17 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
+    let creator = env::var("METIS_USER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let request = UpsertIssueRequest {
         issue: Issue {
             issue_type: IssueType::Task,
             description: submission.prompt.trim().to_string(),
+            creator,
             progress: String::new(),
             status: IssueStatus::Open,
             assignee,
