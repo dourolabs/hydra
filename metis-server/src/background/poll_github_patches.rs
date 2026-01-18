@@ -382,8 +382,7 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
 fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
     state
         .service_state
-        .repositories
-        .get(service_repo_name)
+        .repository(service_repo_name)
         .and_then(|repo| repo.github_token.clone())
 }
 

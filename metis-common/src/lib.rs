@@ -14,5 +14,8 @@ pub mod patches;
 pub mod repo_name;
 pub mod repositories;
 pub use repo_name::{RepoName, RepoNameError};
-pub use repositories::{ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo};
+pub use repositories::{
+    CreateRepositoryRequest, ListRepositoriesResponse, ServiceRepository, ServiceRepositoryConfig,
+    ServiceRepositoryInfo, UpdateRepositoryRequest, UpsertRepositoryResponse,
+};
 pub mod task_status;
