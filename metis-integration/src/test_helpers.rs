@@ -81,14 +81,7 @@ impl TestEnvironment {
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
 
-        // Tokenize all commands before passing to BashCommands
-        let mut tokenized_commands = Vec::new();
-        for command in commands {
-            let tokens =
-                Self::parse_command_tokens(&command).context("failed to tokenize bash command")?;
-            tokenized_commands.push(tokens);
-        }
-
+        // Pass original command strings to BashCommands to preserve redirects and shell operators
         // Create a new client and config clone for BashCommands
         let client_clone = MetisClient::new(&self.app_config.server.url)?;
         let app_config_clone = AppConfig {
@@ -98,7 +91,7 @@ impl TestEnvironment {
         };
 
         let bash_commands = BashCommands {
-            commands: tokenized_commands,
+            commands,
             client: Box::new(client_clone),
             app_config: app_config_clone,
         };
