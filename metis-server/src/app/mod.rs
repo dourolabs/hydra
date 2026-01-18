@@ -12,7 +12,11 @@ use metis_common::{
     merge_queues::MergeQueue,
     patches::Patch,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, RwLock as StdRwLock},
+};
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
@@ -47,7 +51,7 @@ impl ConnectedRepository {
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
-    pub repositories: HashMap<RepoName, ServiceRepository>,
+    pub repositories: Arc<StdRwLock<HashMap<RepoName, ServiceRepository>>>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
 }
@@ -104,6 +108,20 @@ pub enum MergeQueueError {
         branch_name: String,
         #[source]
         source: crate::merge_queue::MergeQueueError,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum RepositoryError {
+    #[error("repository '{0}' already exists")]
+    AlreadyExists(RepoName),
+    #[error("repository '{0}' not found")]
+    NotFound(RepoName),
+    #[error("failed to refresh repository '{repo_name}'")]
+    Git {
+        repo_name: RepoName,
+        #[source]
+        source: MergeQueueError,
     },
 }
 
@@ -178,10 +196,177 @@ impl ServiceState {
             .collect();
 
         Self {
-            repositories,
+            repositories: Arc::new(StdRwLock::new(repositories)),
             merge_queues: Arc::new(RwLock::new(merge_queues)),
             git_cache: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn list_repository_info(&self) -> Vec<ServiceRepositoryInfo> {
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+
+        repositories
+            .values()
+            .map(ServiceRepository::without_secret)
+            .collect()
+    }
+
+    pub fn repository(&self, name: &RepoName) -> Option<ServiceRepository> {
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+
+        repositories.get(name).cloned()
+    }
+
+    pub fn has_repository(&self, name: &RepoName) -> bool {
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+
+        repositories.contains_key(name)
+    }
+
+    pub async fn create_repository(
+        &self,
+        repository: ServiceRepository,
+    ) -> Result<ServiceRepository, RepositoryError> {
+        let name = repository.name.clone();
+
+        {
+            let mut repositories = self
+                .repositories
+                .write()
+                .expect("repositories lock should not be poisoned");
+
+            if repositories.contains_key(&name) {
+                return Err(RepositoryError::AlreadyExists(name));
+            }
+
+            repositories.insert(name.clone(), repository);
+        }
+
+        if let Err(err) = self.refresh_repository(&name).await {
+            {
+                let mut repositories = self
+                    .repositories
+                    .write()
+                    .expect("repositories lock should not be poisoned");
+                repositories.remove(&name);
+            }
+            let mut git_cache = self.git_cache.write().await;
+            git_cache.remove(&name);
+
+            return Err(RepositoryError::Git {
+                repo_name: name,
+                source: err,
+            });
+        }
+
+        self.initialize_merge_queue(&name).await;
+
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+        Ok(repositories
+            .get(&name)
+            .cloned()
+            .expect("repository should exist after creation"))
+    }
+
+    pub async fn update_repository(
+        &self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<ServiceRepository, RepositoryError> {
+        let previous = {
+            let mut repositories = self
+                .repositories
+                .write()
+                .expect("repositories lock should not be poisoned");
+
+            let Some(repository) = repositories.get_mut(&name) else {
+                return Err(RepositoryError::NotFound(name));
+            };
+
+            let previous = repository.clone();
+            repository.remote_url = config.remote_url;
+            repository.default_branch = config.default_branch;
+            repository.github_token = config.github_token;
+            repository.default_image = config.default_image;
+            previous
+        };
+
+        let previous_merge_queues = {
+            let mut merge_queues = self.merge_queues.write().await;
+            merge_queues.insert(name.clone(), HashMap::new())
+        };
+        let previous_cache = {
+            let mut git_cache = self.git_cache.write().await;
+            git_cache.remove(&name)
+        };
+
+        if let Err(err) = self.refresh_repository(&name).await {
+            {
+                let mut repositories = self
+                    .repositories
+                    .write()
+                    .expect("repositories lock should not be poisoned");
+                repositories.insert(name.clone(), previous);
+            }
+
+            {
+                let mut merge_queues = self.merge_queues.write().await;
+                if let Some(existing) = previous_merge_queues {
+                    merge_queues.insert(name.clone(), existing);
+                } else {
+                    merge_queues.remove(&name);
+                }
+            }
+
+            if let Some(cache) = previous_cache {
+                let mut git_cache = self.git_cache.write().await;
+                git_cache.insert(name.clone(), cache);
+            }
+
+            return Err(RepositoryError::Git {
+                repo_name: name,
+                source: err,
+            });
+        }
+
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+        Ok(repositories
+            .get(&name)
+            .cloned()
+            .expect("repository should exist after update"))
+    }
+
+    async fn initialize_merge_queue(&self, name: &RepoName) {
+        let mut merge_queues = self.merge_queues.write().await;
+        merge_queues.insert(name.clone(), HashMap::new());
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn cached_repository_paths(&self) -> HashMap<RepoName, PathBuf> {
+        let git_cache = self.git_cache.read().await;
+        let mut repositories = HashMap::new();
+
+        for (name, repo) in git_cache.iter() {
+            let path = repo.lock().await.path.clone();
+            repositories.insert(name.clone(), path);
+        }
+
+        repositories
     }
 
     /// Resolve a BundleSpec into a concrete Bundle using server state.
@@ -202,8 +387,11 @@ impl ServiceState {
                 default_image: None,
             }),
             BundleSpec::ServiceRepository { name, rev } => {
-                let repo = self
+                let repositories = self
                     .repositories
+                    .read()
+                    .expect("repositories lock should not be poisoned");
+                let repo = repositories
                     .get(&name)
                     .ok_or_else(|| BundleResolutionError::UnknownRepository(name.clone()))?;
 
@@ -297,7 +485,12 @@ impl ServiceState {
     }
 
     fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
-        if self.repositories.contains_key(name) {
+        let repositories = self
+            .repositories
+            .read()
+            .expect("repositories lock should not be poisoned");
+
+        if repositories.contains_key(name) {
             Ok(())
         } else {
             Err(MergeQueueError::UnknownRepository(name.clone()))
@@ -310,14 +503,20 @@ impl ServiceState {
             if let Some(entry) = git_cache.get(name) {
                 entry.clone()
             } else {
-                let repo_cfg = self
-                    .repositories
-                    .get(name)
-                    .expect("refresh_repository called after ensure_repository_exists");
+                let repo_cfg = {
+                    let repositories = self
+                        .repositories
+                        .read()
+                        .expect("repositories lock should not be poisoned");
+                    repositories
+                        .get(name)
+                        .expect("refresh_repository called after ensure_repository_exists")
+                        .clone()
+                };
                 let ConnectedRepository {
                     repository: _,
                     _workdir,
-                } = connect_repository(repo_cfg).map_err(|source| MergeQueueError::Git {
+                } = connect_repository(&repo_cfg).map_err(|source| MergeQueueError::Git {
                     repo_name: name.clone(),
                     source: source.into(),
                 })?;

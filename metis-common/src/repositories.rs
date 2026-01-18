@@ -71,6 +71,29 @@ fn token_present(token: &Option<String>) -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateRepositoryRequest {
+    pub name: RepoName,
+    #[serde(flatten)]
+    pub repository: ServiceRepositoryConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateRepositoryRequest {
+    #[serde(flatten)]
+    pub repository: ServiceRepositoryConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpsertRepositoryResponse {
+    pub repository: ServiceRepositoryInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListRepositoriesResponse {
+    pub repositories: Vec<ServiceRepositoryInfo>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

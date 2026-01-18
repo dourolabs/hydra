@@ -21,7 +21,7 @@ use crate::job_engine::KubernetesJobEngine;
 use crate::store::{MemoryStore, Store};
 use axum::{
     Json, Router,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
 use serde_json::json;
@@ -53,6 +53,15 @@ pub async fn run_with_state(
         .route(
             "/v1/patches/:patch_id",
             get(routes::patches::get_patch).put(routes::patches::update_patch),
+        )
+        .route(
+            "/v1/repositories",
+            get(routes::repositories::list_repositories)
+                .post(routes::repositories::create_repository),
+        )
+        .route(
+            "/v1/repositories/:organization/:repo",
+            put(routes::repositories::update_repository),
         )
         .route(
             "/v1/merge-queues/:organization/:repo/:branch/patches",

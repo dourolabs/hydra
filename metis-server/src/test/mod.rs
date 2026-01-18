@@ -5,5 +5,6 @@ mod issues;
 mod jobs;
 pub(crate) mod merge_queues;
 mod patches;
+mod repositories;
 
 pub(crate) use crate::test_utils::*;

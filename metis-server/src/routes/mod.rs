@@ -7,6 +7,7 @@ pub mod issues;
 pub mod jobs;
 pub mod merge_queues;
 pub mod patches;
+pub mod repositories;
 
 pub(crate) fn map_emit_error(err: StoreError, job_id: &str) -> ApiError {
     match err {

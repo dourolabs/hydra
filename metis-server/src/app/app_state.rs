@@ -774,11 +774,7 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        if !self
-            .service_state
-            .repositories
-            .contains_key(service_repo_name)
-        {
+        if !self.service_state.has_repository(service_repo_name) {
             return Err(MergeQueueError::UnknownRepository(
                 service_repo_name.clone(),
             ));
