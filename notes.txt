@@ -47,6 +47,7 @@ Tasks include a prompt string and a dictionary of `env` variables injected into 
 
 
 ### Input/output
+These notes are also used for simple agent edit tests; minor adjustments here are expected.
 
 Task input/output is stored in files under the .metis directory.
 Tasks will generate their output under .metis/output/.
