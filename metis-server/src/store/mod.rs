@@ -32,8 +32,9 @@ pub enum TaskResolutionError {
     MissingDefaultImage,
 }
 
+#[async_trait]
 pub trait TaskExt {
-    fn resolve_context(
+    async fn resolve_context(
         &self,
         service_state: &ServiceState,
     ) -> Result<ResolvedBundle, BundleResolutionError>;
@@ -46,19 +47,22 @@ pub trait TaskExt {
 
     fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String>;
 
-    fn resolve(
+    async fn resolve(
         &self,
         service_state: &ServiceState,
         fallback_image: &str,
     ) -> Result<ResolvedTask, TaskResolutionError>;
 }
 
+#[async_trait]
 impl TaskExt for Task {
-    fn resolve_context(
+    async fn resolve_context(
         &self,
         service_state: &ServiceState,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
-        service_state.resolve_bundle_spec(self.context.clone())
+        service_state
+            .resolve_bundle_spec(self.context.clone())
+            .await
     }
 
     fn resolve_image(
@@ -99,12 +103,12 @@ impl TaskExt for Task {
         env_vars
     }
 
-    fn resolve(
+    async fn resolve(
         &self,
         service_state: &ServiceState,
         fallback_image: &str,
     ) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = self.resolve_context(service_state)?;
+        let context = self.resolve_context(service_state).await?;
         let image = self.resolve_image(&context, fallback_image)?;
         let env_vars = self.resolve_env_vars(&context);
 

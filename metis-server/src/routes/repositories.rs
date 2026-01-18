@@ -19,7 +19,7 @@ use tracing::{error, info};
 pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
-    let repositories = state.service_state.list_repository_info();
+    let repositories = state.service_state.list_repository_info().await;
     Ok(Json(ListRepositoriesResponse { repositories }))
 }
 

@@ -154,7 +154,7 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, &patch.service_repo_name) else {
+    let Some(token) = select_github_token(state, &patch.service_repo_name).await else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -379,10 +379,11 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
+async fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
     state
         .service_state
         .repository(service_repo_name)
+        .await
         .and_then(|repo| repo.github_token.clone())
 }
 
@@ -1002,16 +1003,16 @@ mod tests {
         })
     }
 
-    #[test]
-    fn select_github_token_returns_none_for_unknown_repo() {
+    #[tokio::test]
+    async fn select_github_token_returns_none_for_unknown_repo() {
         let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
 
-        assert!(select_github_token(&state, &repo_name).is_none());
+        assert!(select_github_token(&state, &repo_name).await.is_none());
     }
 
-    #[test]
-    fn select_github_token_uses_service_repo_name() {
+    #[tokio::test]
+    async fn select_github_token_uses_service_repo_name() {
         let mut state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
@@ -1025,7 +1026,7 @@ mod tests {
             },
         )])));
 
-        let token = select_github_token(&state, &repo_name);
+        let token = select_github_token(&state, &repo_name).await;
 
         assert_eq!(token.as_deref(), Some("svc-token"));
     }
