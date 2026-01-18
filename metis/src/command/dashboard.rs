@@ -1599,7 +1599,7 @@ fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> C
     let mut completed_descendants = HashMap::new();
 
     for root in roots {
-        if !is_closed_tree(&root, &nodes, &mut HashSet::new()) {
+        if !is_completed_tree(&root, &nodes, &mut HashSet::new()) {
             continue;
         }
 
@@ -1708,7 +1708,7 @@ fn collect_issue_lines(
     }
 }
 
-fn is_closed_tree(
+fn is_completed_tree(
     id: &IssueId,
     nodes: &HashMap<IssueId, IssueNode>,
     visited: &mut HashSet<IssueId>,
@@ -1721,13 +1721,16 @@ fn is_closed_tree(
         return false;
     };
 
-    if node.record.status != IssueStatus::Closed {
+    if !matches!(
+        node.record.status,
+        IssueStatus::Closed | IssueStatus::Dropped
+    ) {
         return false;
     }
 
     node.children
         .iter()
-        .all(|child| is_closed_tree(child, nodes, visited))
+        .all(|child| is_completed_tree(child, nodes, visited))
 }
 
 fn issue_summary(description: &str, progress: &str) -> IssueSummary {
@@ -2305,6 +2308,43 @@ mod tests {
             .expect("missing descendants");
         assert_eq!(descendants.len(), 1);
         assert_eq!(descendants[0].id, issue_id("i-child").to_string());
+        assert_eq!(descendants[0].depth, 1);
+    }
+
+    #[test]
+    fn completed_issue_lines_include_dropped_trees() {
+        let issues = vec![
+            issue("i-closed", IssueStatus::Closed, vec![]),
+            issue("i-dropped-root", IssueStatus::Dropped, vec![]),
+            issue(
+                "i-dropped-child",
+                IssueStatus::Dropped,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-dropped-root"),
+                }],
+            ),
+            issue("i-open", IssueStatus::Open, vec![]),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+
+        assert_eq!(lines.roots.len(), 2);
+        assert!(lines
+            .roots
+            .iter()
+            .any(|line| line.id == issue_id("i-closed").to_string()));
+        assert!(lines
+            .roots
+            .iter()
+            .any(|line| line.id == issue_id("i-dropped-root").to_string()));
+
+        let descendants = lines
+            .descendants
+            .get(&issue_id("i-dropped-root"))
+            .expect("missing descendants");
+        assert_eq!(descendants.len(), 1);
+        assert_eq!(descendants[0].id, issue_id("i-dropped-child").to_string());
         assert_eq!(descendants[0].depth, 1);
     }
 
