@@ -1214,7 +1214,7 @@ mod tests {
         task_status::TaskStatusLog,
         RepoName,
     };
-    use std::{fs, process::Command, str::FromStr};
+    use std::{env, fs, process::Command, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1222,6 +1222,55 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_ci_wait_issue_creates_github_assigned_issue() -> Result<()> {
+        let client = MockMetisClient::default();
+        let response_id = issue_id("wait-issue");
+        client.push_upsert_issue_response(UpsertIssueResponse {
+            issue_id: response_id.clone(),
+        });
+
+        let patch = patch_id("patch-ci");
+        let previous_user = env::var("METIS_USER").ok();
+        env::set_var("METIS_USER", "tester");
+
+        let issue_id = create_ci_wait_issue(
+            &client,
+            patch.clone(),
+            "reviewer-a".to_string(),
+            None,
+            "Patch title".to_string(),
+            "Patch description".to_string(),
+        )
+        .await?;
+
+        if let Some(value) = previous_user {
+            env::set_var("METIS_USER", value);
+        } else {
+            env::remove_var("METIS_USER");
+        }
+
+        assert_eq!(issue_id, response_id);
+
+        let recorded = client.recorded_issue_upserts();
+        assert_eq!(recorded.len(), 1);
+        let (_, request) = &recorded[0];
+        assert_eq!(request.issue.assignee.as_deref(), Some("github"));
+        assert_eq!(request.issue.status, IssueStatus::Open);
+        assert_eq!(
+            request.issue.progress,
+            "review-assignee: reviewer-a".to_string()
+        );
+        assert_eq!(
+            request.issue.description,
+            format!("Waiting on CI for patch {}: Patch title", patch.as_ref())
+        );
+        assert_eq!(request.issue.patches, vec![patch]);
+        assert!(request.issue.dependencies.is_empty());
+
+        Ok(())
     }
 
     fn initialize_repo_with_changes(
