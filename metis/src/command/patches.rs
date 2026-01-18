@@ -306,9 +306,9 @@ async fn create_patch(
     )
     .await?;
 
-    let mut merge_request_issue_id = None;
+    let mut ci_wait_issue_id = None;
     if let Some(assignee) = assignee {
-        let merge_issue_id = create_merge_request_issue(
+        let wait_issue_id = create_ci_wait_issue(
             client,
             response.patch_id.clone(),
             assignee,
@@ -317,7 +317,7 @@ async fn create_patch(
             description,
         )
         .await?;
-        merge_request_issue_id = Some(merge_issue_id);
+        ci_wait_issue_id = Some(wait_issue_id);
     }
 
     let mut output = serde_json::json!({
@@ -325,12 +325,9 @@ async fn create_patch(
         "type": "patch"
     });
 
-    if let Some(issue_id) = merge_request_issue_id {
+    if let Some(issue_id) = ci_wait_issue_id {
         if let Some(object) = output.as_object_mut() {
-            object.insert(
-                "merge_request_issue_id".to_string(),
-                serde_json::json!(issue_id),
-            );
+            object.insert("ci_wait_issue_id".to_string(), serde_json::json!(issue_id));
         }
     }
 
@@ -469,16 +466,16 @@ fn print_merge_queue_pretty(
     Ok(())
 }
 
-async fn create_merge_request_issue(
+async fn create_ci_wait_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
-    assignee: String,
+    review_assignee: String,
     parent_issue_id: Option<IssueId>,
     patch_title: String,
     patch_description: String,
 ) -> Result<IssueId> {
-    let assignee = assignee.trim().to_string();
-    if assignee.is_empty() {
+    let review_assignee = review_assignee.trim().to_string();
+    if review_assignee.is_empty() {
         bail!("Assignee must not be empty.");
     }
 
@@ -503,29 +500,29 @@ async fn create_merge_request_issue(
         summary.to_string()
     };
 
-    let description = format!("Review patch {}: {title}", patch_id.as_ref());
     let creator = env::var("METIS_USER")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
+    let progress = format!("review-assignee: {review_assignee}");
 
     let response = client
         .create_issue(&UpsertIssueRequest {
             issue: Issue {
-                issue_type: IssueType::MergeRequest,
-                description,
+                issue_type: IssueType::Task,
+                description: format!("Waiting on CI for patch {}: {title}", patch_id.as_ref()),
                 creator,
-                progress: String::new(),
+                progress,
                 status: IssueStatus::Open,
-                assignee: Some(assignee),
+                assignee: Some("github".to_string()),
                 dependencies,
                 patches: vec![patch_id],
             },
             job_id: None,
         })
         .await
-        .context("failed to create merge-request issue")?;
+        .context("failed to create CI wait issue")?;
 
     Ok(response.issue_id)
 }
@@ -1510,7 +1507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
+    async fn create_patch_creates_ci_wait_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path, _base_commit, _) = initialize_repo_with_changes()?;
         let job_id = task_id("t-job-merge");
         let client = MockMetisClient::default();
@@ -1560,9 +1557,10 @@ mod tests {
         assert_eq!(issue_requests.len(), 1);
         let (issue_id, request) = &issue_requests[0];
         assert!(issue_id.is_none());
-        assert_eq!(request.issue.issue_type, IssueType::MergeRequest);
+        assert_eq!(request.issue.issue_type, IssueType::Task);
         assert_eq!(request.issue.status, IssueStatus::Open);
-        assert_eq!(request.issue.assignee.as_deref(), Some("owner-a"));
+        assert_eq!(request.issue.assignee.as_deref(), Some("github"));
+        assert_eq!(request.issue.progress.as_str(), "review-assignee: owner-a");
         assert_eq!(
             request.issue.dependencies,
             vec![IssueDependency {
