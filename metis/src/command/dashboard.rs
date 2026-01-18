@@ -944,7 +944,11 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         if show_user_owned {
             let panels = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .constraints([
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(35),
+                    Constraint::Percentage(35),
+                ])
                 .split(area);
             render_issue_list(
                 frame,
@@ -960,22 +964,51 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
             );
+            render_completed_issue_list(
+                frame,
+                panels[2],
+                &state.completed_issue_lines,
+                &completed_issue_list_title(&state.completed_issue_lines),
+                "No completed issues",
+            );
         } else {
+            let panels = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .split(area);
             render_issue_list(
                 frame,
-                area,
+                panels[0],
                 &state.issue_lines,
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
             );
+            render_completed_issue_list(
+                frame,
+                panels[1],
+                &state.completed_issue_lines,
+                &completed_issue_list_title(&state.completed_issue_lines),
+                "No completed issues",
+            );
         }
     } else {
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(area);
         render_issue_list(
             frame,
-            area,
+            panels[0],
             &state.issue_lines,
             &issue_list_title("Running issues", &state.issue_lines),
             "No issues found",
+        );
+        render_completed_issue_list(
+            frame,
+            panels[1],
+            &state.completed_issue_lines,
+            &completed_issue_list_title(&state.completed_issue_lines),
+            "No completed issues",
         );
     }
 }
@@ -1055,66 +1088,24 @@ fn render_issue_list(
     title: &str,
     empty_message: &str,
 ) {
-    let items: Vec<ListItem> = if issue_lines.rows.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            empty_message,
-            Style::default().fg(Color::DarkGray),
-        )))]
-    } else {
-        issue_lines
-            .rows
-            .iter()
-            .map(|line| {
-                let mut spans = Vec::new();
-                spans.push(Span::raw(issue_prefix(line.depth)));
-                spans.push(Span::raw(" "));
-                let (issue_status_label, issue_status_style) =
-                    issue_status_display(line.status, &line.readiness);
-                spans.push(Span::styled(
-                    format!("[{issue_status_label}]"),
-                    issue_status_style,
-                ));
+    let items = issue_line_items(&issue_lines.rows, empty_message);
 
-                if let Some(task) = &line.task {
-                    if let Some(runtime) = &task.runtime {
-                        spans.push(Span::raw(" "));
-                        spans.push(Span::styled(
-                            format!("[{runtime}]"),
-                            status_style(task.status),
-                        ));
-                    }
-                }
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    frame.render_widget(List::new(items).block(block), area);
+}
 
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    line.id.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ));
-                if let Some(assignee) = &line.assignee {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("@{assignee}"),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                spans.push(Span::raw(" — "));
-                spans.push(Span::raw(truncate_message(
-                    &line.summary,
-                    MAX_MESSAGE_WIDTH,
-                )));
-                if let Some(progress) = &line.progress {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        truncate_message(progress, MAX_MESSAGE_WIDTH),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-
-                ListItem::new(Line::from(spans))
-            })
-            .collect()
-    };
-
+fn render_completed_issue_list(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    completed_issue_lines: &CompletedIssueLines,
+    title: &str,
+    empty_message: &str,
+) {
+    let rows = completed_issue_rows(completed_issue_lines);
+    let items = issue_line_items(&rows, empty_message);
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -1124,6 +1115,110 @@ fn render_issue_list(
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
     format!("{title} ({})", issue_lines.rows.len())
+}
+
+fn completed_issue_list_title(completed_issue_lines: &CompletedIssueLines) -> String {
+    format!(
+        "Completed Issues ({})",
+        completed_issue_count(completed_issue_lines)
+    )
+}
+
+fn completed_issue_count(completed_issue_lines: &CompletedIssueLines) -> usize {
+    completed_issue_lines.roots.len()
+        + completed_issue_lines
+            .descendants
+            .values()
+            .map(Vec::len)
+            .sum::<usize>()
+}
+
+fn completed_issue_rows(completed_issue_lines: &CompletedIssueLines) -> Vec<IssueLine> {
+    let mut rows = Vec::new();
+    for root in &completed_issue_lines.roots {
+        rows.push(root.clone());
+        if let Some(descendants) = completed_issue_descendants(completed_issue_lines, &root.id) {
+            rows.extend(descendants.iter().cloned());
+        }
+    }
+    rows
+}
+
+fn completed_issue_descendants<'a>(
+    completed_issue_lines: &'a CompletedIssueLines,
+    root_id: &str,
+) -> Option<&'a Vec<IssueLine>> {
+    completed_issue_lines
+        .descendants
+        .iter()
+        .find_map(|(id, descendants)| {
+            if id.to_string() == root_id {
+                Some(descendants)
+            } else {
+                None
+            }
+        })
+}
+
+fn issue_line_items<'a>(issue_lines: &'a [IssueLine], empty_message: &'a str) -> Vec<ListItem<'a>> {
+    if issue_lines.is_empty() {
+        return vec![ListItem::new(Line::from(Span::styled(
+            empty_message,
+            Style::default().fg(Color::DarkGray),
+        )))];
+    }
+
+    issue_lines
+        .iter()
+        .map(|line| {
+            let mut spans = Vec::new();
+            spans.push(Span::raw(issue_prefix(line.depth)));
+            spans.push(Span::raw(" "));
+            let (issue_status_label, issue_status_style) =
+                issue_status_display(line.status, &line.readiness);
+            spans.push(Span::styled(
+                format!("[{issue_status_label}]"),
+                issue_status_style,
+            ));
+
+            if let Some(task) = &line.task {
+                if let Some(runtime) = &task.runtime {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("[{runtime}]"),
+                        status_style(task.status),
+                    ));
+                }
+            }
+
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                line.id.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            if let Some(assignee) = &line.assignee {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!("@{assignee}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            spans.push(Span::raw(" — "));
+            spans.push(Span::raw(truncate_message(
+                &line.summary,
+                MAX_MESSAGE_WIDTH,
+            )));
+            if let Some(progress) = &line.progress {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    truncate_message(progress, MAX_MESSAGE_WIDTH),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect()
 }
 
 fn issue_prefix(depth: usize) -> String {
