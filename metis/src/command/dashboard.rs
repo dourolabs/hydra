@@ -81,6 +81,20 @@ struct CompletedIssueLines {
     descendants: HashMap<IssueId, Vec<IssueLine>>,
 }
 
+#[derive(Default, Clone, PartialEq)]
+struct CompletedIssuePanelState {
+    selected_root: Option<IssueId>,
+    expanded: HashSet<IssueId>,
+}
+
+#[derive(Clone, PartialEq)]
+struct CompletedIssueDisplayRow {
+    line: IssueLine,
+    root_id: Option<IssueId>,
+    is_root: bool,
+    has_children: bool,
+}
+
 #[derive(Clone, PartialEq)]
 struct IssueLine {
     id: String,
@@ -234,6 +248,7 @@ struct DashboardState {
     issue_lines: IssueLines,
     assigned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
+    completed_issue_panel: CompletedIssuePanelState,
     jobs_error: Option<String>,
     records_error: Option<String>,
     agents_error: Option<String>,
@@ -327,6 +342,72 @@ impl AgentFilterState {
 
     fn any_enabled(&self) -> bool {
         self.enabled.iter().any(|enabled| *enabled)
+    }
+}
+
+impl CompletedIssuePanelState {
+    fn sync_with_lines(&mut self, lines: &CompletedIssueLines) {
+        let roots = completed_root_ids(lines);
+        if roots.is_empty() {
+            self.selected_root = None;
+            self.expanded.clear();
+            return;
+        }
+
+        self.expanded.retain(|id| roots.contains(id));
+
+        if self
+            .selected_root
+            .as_ref()
+            .is_some_and(|selected| roots.contains(selected))
+        {
+            return;
+        }
+
+        self.selected_root = Some(roots[0].clone());
+    }
+
+    fn cycle_selection(&mut self, lines: &CompletedIssueLines, forward: bool) {
+        let roots = completed_root_ids(lines);
+        if roots.is_empty() {
+            self.selected_root = None;
+            return;
+        }
+
+        let current_index = self
+            .selected_root
+            .as_ref()
+            .and_then(|selected| roots.iter().position(|id| id == selected))
+            .unwrap_or(0);
+        let next_index = if forward {
+            (current_index + 1) % roots.len()
+        } else if current_index == 0 {
+            roots.len() - 1
+        } else {
+            current_index - 1
+        };
+
+        self.selected_root = Some(roots[next_index].clone());
+    }
+
+    fn toggle_selected(&mut self, lines: &CompletedIssueLines) -> bool {
+        let Some(selected) = self.selected_root.clone() else {
+            self.sync_with_lines(lines);
+            return false;
+        };
+
+        if !completed_root_has_children(lines, &selected) {
+            return false;
+        }
+
+        if !self.expanded.insert(selected.clone()) {
+            self.expanded.remove(&selected);
+        }
+        true
+    }
+
+    fn is_expanded(&self, root_id: &IssueId) -> bool {
+        self.expanded.contains(root_id)
     }
 }
 
@@ -539,6 +620,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if handle_completed_issue_key(key, state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
             if !state.issue_draft.editing
                 && matches!(
                     key.code,
@@ -630,6 +718,39 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
             update_views(state);
             true
         }
+        _ => false,
+    }
+}
+
+fn handle_completed_issue_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    if state.issue_draft.editing {
+        return false;
+    }
+
+    if key.modifiers != KeyModifiers::NONE {
+        return false;
+    }
+
+    if state.completed_issue_lines.roots.is_empty() {
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Up => {
+            state
+                .completed_issue_panel
+                .cycle_selection(&state.completed_issue_lines, false);
+            true
+        }
+        KeyCode::Down => {
+            state
+                .completed_issue_panel
+                .cycle_selection(&state.completed_issue_lines, true);
+            true
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => state
+            .completed_issue_panel
+            .toggle_selected(&state.completed_issue_lines),
         _ => false,
     }
 }
@@ -786,6 +907,10 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
 
     lines.push(status_filter_line(&state.status_filter));
     lines.push(agent_filter_line(&state.agent_filter));
+    lines.push(Line::from(Span::styled(
+        "Completed issues: Up/Down select, Enter/Space toggle",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     if let Some(error) = &state.jobs_error {
         lines.push(Line::from(Span::styled(
@@ -925,7 +1050,11 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
     if has_username {
         let panels = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .constraints([
+                Constraint::Percentage(32),
+                Constraint::Percentage(38),
+                Constraint::Percentage(30),
+            ])
             .split(area);
 
         let username = state.username.as_deref().unwrap();
@@ -943,13 +1072,29 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             "Running issues",
             "No issues found",
         );
+        render_completed_issue_list(
+            frame,
+            panels[2],
+            &state.completed_issue_lines,
+            &state.completed_issue_panel,
+        );
     } else {
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(area);
         render_issue_list(
             frame,
-            area,
+            panels[0],
             &state.issue_lines,
             "Running issues",
             "No issues found",
+        );
+        render_completed_issue_list(
+            frame,
+            panels[1],
+            &state.completed_issue_lines,
+            &state.completed_issue_panel,
         );
     }
 }
@@ -1096,6 +1241,118 @@ fn render_issue_list(
     frame.render_widget(List::new(items).block(block), area);
 }
 
+fn render_completed_issue_list(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    lines: &CompletedIssueLines,
+    panel_state: &CompletedIssuePanelState,
+) {
+    let rows = build_completed_issue_display(lines, &panel_state.expanded);
+    let selected_root = panel_state.selected_root.as_ref();
+
+    let items: Vec<ListItem> = if rows.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "No completed issues",
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        rows.iter()
+            .map(|row| {
+                let mut spans = Vec::new();
+                spans.push(Span::raw(issue_prefix(row.line.depth)));
+                spans.push(Span::raw(" "));
+
+                if row.is_root {
+                    let is_expanded = row
+                        .root_id
+                        .as_ref()
+                        .map(|root| panel_state.is_expanded(root))
+                        .unwrap_or(false);
+                    let toggle = if row.has_children {
+                        if is_expanded {
+                            "[-]"
+                        } else {
+                            "[+]"
+                        }
+                    } else {
+                        "[ ]"
+                    };
+                    let toggle_style = if row.has_children {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    spans.push(Span::styled(toggle, toggle_style));
+                } else {
+                    spans.push(Span::raw("   "));
+                }
+                spans.push(Span::raw(" "));
+
+                let (issue_status_label, issue_status_style) =
+                    issue_status_display(row.line.status, &row.line.readiness);
+                spans.push(Span::styled(
+                    format!("[{issue_status_label}]"),
+                    issue_status_style,
+                ));
+
+                if let Some(task) = &row.line.task {
+                    if let Some(runtime) = &task.runtime {
+                        spans.push(Span::raw(" "));
+                        spans.push(Span::styled(
+                            format!("[{runtime}]"),
+                            status_style(task.status),
+                        ));
+                    }
+                }
+
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    row.line.id.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+                if let Some(assignee) = &row.line.assignee {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("@{assignee}"),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                spans.push(Span::raw(" — "));
+                spans.push(Span::raw(truncate_message(
+                    &row.line.summary,
+                    MAX_MESSAGE_WIDTH,
+                )));
+                if let Some(progress) = &row.line.progress {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        truncate_message(progress, MAX_MESSAGE_WIDTH),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+
+                let is_selected = row.is_root
+                    && row
+                        .root_id
+                        .as_ref()
+                        .is_some_and(|root| Some(root) == selected_root);
+                let item_style = if is_selected {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+
+                ListItem::new(Line::from(spans)).style(item_style)
+            })
+            .collect()
+    };
+
+    let block = Block::default()
+        .title("Completed issues")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    frame.render_widget(List::new(items).block(block), area);
+}
+
 fn issue_prefix(depth: usize) -> String {
     if depth == 0 {
         "|".to_string()
@@ -1223,6 +1480,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
     let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
     let previous_completed_issue_lines = state.completed_issue_lines.clone();
+    let previous_completed_issue_panel = state.completed_issue_panel.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
@@ -1245,10 +1503,14 @@ fn update_views(state: &mut DashboardState) -> bool {
     state.issue_lines = issue_lines;
     state.assigned_issue_lines = assigned_issue_lines;
     state.completed_issue_lines = completed_issue_lines;
+    state
+        .completed_issue_panel
+        .sync_with_lines(&state.completed_issue_lines);
 
     previous_issue_lines != state.issue_lines
         || previous_assigned_issue_lines != state.assigned_issue_lines
         || previous_completed_issue_lines != state.completed_issue_lines
+        || previous_completed_issue_panel != state.completed_issue_panel
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
 }
@@ -1436,6 +1698,56 @@ fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> C
         roots: completed_roots,
         descendants: completed_descendants,
     }
+}
+
+fn build_completed_issue_display(
+    lines: &CompletedIssueLines,
+    expanded: &HashSet<IssueId>,
+) -> Vec<CompletedIssueDisplayRow> {
+    let mut rows = Vec::new();
+
+    for root in &lines.roots {
+        let root_id = root.id.parse::<IssueId>().ok();
+        let descendants = root_id.as_ref().and_then(|id| lines.descendants.get(id));
+        let has_children = descendants.is_some_and(|children| !children.is_empty());
+
+        rows.push(CompletedIssueDisplayRow {
+            line: root.clone(),
+            root_id: root_id.clone(),
+            is_root: true,
+            has_children,
+        });
+
+        if let (Some(root_id), Some(descendants)) = (root_id, descendants) {
+            if expanded.contains(&root_id) {
+                for descendant in descendants {
+                    rows.push(CompletedIssueDisplayRow {
+                        line: descendant.clone(),
+                        root_id: None,
+                        is_root: false,
+                        has_children: false,
+                    });
+                }
+            }
+        }
+    }
+
+    rows
+}
+
+fn completed_root_ids(lines: &CompletedIssueLines) -> Vec<IssueId> {
+    lines
+        .roots
+        .iter()
+        .filter_map(|line| line.id.parse::<IssueId>().ok())
+        .collect()
+}
+
+fn completed_root_has_children(lines: &CompletedIssueLines, root_id: &IssueId) -> bool {
+    lines
+        .descendants
+        .get(root_id)
+        .is_some_and(|children| !children.is_empty())
 }
 
 fn append_issue(
@@ -1777,7 +2089,7 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -2134,6 +2446,45 @@ mod tests {
         assert_eq!(descendants.len(), 2);
         assert_eq!(descendants[0].depth, 1);
         assert_eq!(descendants[1].depth, 2);
+    }
+
+    #[test]
+    fn completed_issue_display_rows_expand_selected_roots() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+        let collapsed = build_completed_issue_display(&lines, &HashSet::new());
+        assert_eq!(collapsed.len(), 1);
+        assert!(collapsed[0].is_root);
+
+        let mut expanded = HashSet::new();
+        expanded.insert(issue_id("i-root"));
+        let expanded_rows = build_completed_issue_display(&lines, &expanded);
+        assert_eq!(expanded_rows.len(), 2);
+        assert_eq!(expanded_rows[1].line.id, issue_id("i-child").to_string());
+    }
+
+    #[test]
+    fn completed_issue_panel_syncs_selection_to_first_root() {
+        let issues = vec![
+            issue("i-a", IssueStatus::Closed, vec![]),
+            issue("i-b", IssueStatus::Closed, vec![]),
+        ];
+        let lines = build_completed_issue_lines(&issues, &[]);
+        let mut panel = CompletedIssuePanelState::default();
+        panel.sync_with_lines(&lines);
+
+        assert_eq!(panel.selected_root, Some(issue_id("i-a")));
     }
 
     #[test]
