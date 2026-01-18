@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use escargot::CargoBuild;
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::RepoName;
@@ -12,23 +13,21 @@ use std::{path::Path, process::Command, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
-use crate::BashCommands;
-use escargot::CargoBuild;
+use super::bash_commands::BashCommands;
 
 pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
     pub app_config: AppConfig,
     pub client: MetisClient,
-    pub tempdir: TempDir,
-    pub remote_url: String,
+    pub _tempdir: TempDir,
     pub service_repo_name: RepoName,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
     CargoBuild::new()
-        .package("metis") // workspace package name
-        .bin("metis") // binary target name
-        .current_release() // optional; or omit for debug build
+        .package("metis")
+        .bin("metis")
+        .current_release()
         .run()
         .unwrap()
         .path()
@@ -39,7 +38,6 @@ impl TestEnvironment {
     /// Run metis commands as a user via bash.
     pub async fn run_as_user(&self, commands: Vec<String>) -> Result<()> {
         for command in commands {
-            // Skip if empty
             if command.trim().is_empty() {
                 continue;
             }
@@ -90,19 +88,7 @@ impl TestEnvironment {
         let worker_dir = temp_dir.path().to_path_buf();
 
         // Pass original command strings to BashCommands to preserve redirects and shell operators
-        // Create a new client and config clone for BashCommands
-        let client_clone = MetisClient::new(&self.app_config.server.url)?;
-        let app_config_clone = AppConfig {
-            server: ServerSection {
-                url: self.app_config.server.url.clone(),
-            },
-        };
-
-        let bash_commands = BashCommands {
-            commands,
-            client: Box::new(client_clone),
-            app_config: app_config_clone,
-        };
+        let bash_commands = BashCommands { commands };
 
         metis::command::worker_run::run(&self.client, job_id, worker_dir, None, &bash_commands)
             .await
@@ -135,8 +121,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         server,
         app_config,
         client,
-        tempdir,
-        remote_url,
+        _tempdir: tempdir,
         service_repo_name,
     })
 }

@@ -2,14 +2,12 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use metis::{client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig};
+use metis::command::worker_run::WorkerCommands;
 
-use crate::test_helpers::metis_bin;
+use super::test_helpers::metis_bin;
 
 pub struct BashCommands {
     pub commands: Vec<String>,
-    pub client: Box<dyn MetisClientInterface>,
-    pub app_config: AppConfig,
 }
 
 impl BashCommands {
