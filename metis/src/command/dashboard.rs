@@ -2286,6 +2286,56 @@ mod tests {
     }
 
     #[test]
+    fn completed_issue_list_title_counts_descendants() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+            issue(
+                "i-grandchild",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-child"),
+                }],
+            ),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+
+        assert_eq!(completed_issue_list_title(&lines), "Completed Issues (3)");
+    }
+
+    #[test]
+    fn completed_issue_rows_include_descendants_after_root() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+        let rows = completed_issue_rows(&lines);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, issue_id("i-root").to_string());
+        assert_eq!(rows[1].id, issue_id("i-child").to_string());
+        assert_eq!(rows[1].depth, 1);
+    }
+
+    #[test]
     fn user_unowned_issue_lines_skip_agent_assignee() {
         let issues = vec![issue_with_assignee(
             "i-open",
