@@ -529,7 +529,9 @@ mod tests {
         assert_eq!(tasks.len(), 1);
 
         let fallback_image = state.config.metis.worker_image.clone();
-        let resolved = tasks[0].resolve(state.service_state.as_ref(), &fallback_image)?;
+        let resolved = tasks[0]
+            .resolve(state.service_state.as_ref(), &fallback_image)
+            .await?;
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {
