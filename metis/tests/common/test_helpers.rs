@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use escargot::CargoBuild;
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::RepoName;
@@ -24,14 +23,8 @@ pub struct TestEnvironment {
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
-    CargoBuild::new()
-        .package("metis")
-        .bin("metis")
-        .current_release()
-        .run()
-        .unwrap()
-        .path()
-        .to_path_buf()
+    // Cargo exposes the compiled binary location to integration tests via CARGO_BIN_EXE_<binname>
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_metis"))
 }
 
 impl TestEnvironment {
