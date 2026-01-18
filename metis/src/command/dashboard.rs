@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
+    env,
     io::{stdout, Stdout},
     time::Duration,
 };
@@ -365,10 +366,30 @@ impl StatusFilterState {
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
+    let username = resolve_username(username);
     let mut terminal = setup_terminal()?;
     let dashboard_result = run_dashboard_loop(client, &mut terminal, username).await;
     teardown_terminal(&mut terminal)?;
     dashboard_result
+}
+
+fn resolve_username(username: Option<String>) -> Option<String> {
+    if username.is_some() {
+        return username;
+    }
+
+    for var in ["USER", "LOGNAME"] {
+        let Some(value) = env::var_os(var) else {
+            continue;
+        };
+        let candidate = value.to_string_lossy();
+        let trimmed = candidate.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
 }
 
 async fn run_dashboard_loop(
@@ -1860,7 +1881,45 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        env,
+        ffi::OsString,
+        sync::{Mutex, OnceLock},
+    };
+
+    struct EnvGuard {
+        var: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(var: &'static str, value: Option<&str>) -> Self {
+            let previous = env::var_os(var);
+            match value {
+                Some(value) => env::set_var(var, value),
+                None => env::remove_var(var),
+            }
+            Self { var, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.var, value),
+                None => env::remove_var(self.var),
+            }
+        }
+    }
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -1958,6 +2017,50 @@ mod tests {
 
         assert_eq!(truncated.len(), 20);
         assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn resolve_username_preserves_explicit_input() {
+        let _lock = env_lock();
+        let _user_guard = EnvGuard::set("USER", Some("env-user"));
+        let _logname_guard = EnvGuard::set("LOGNAME", Some("env-logname"));
+
+        let resolved = resolve_username(Some("explicit".to_string()));
+
+        assert_eq!(resolved, Some("explicit".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_uses_user_env_when_missing_input() {
+        let _lock = env_lock();
+        let _user_guard = EnvGuard::set("USER", Some("alice"));
+        let _logname_guard = EnvGuard::set("LOGNAME", Some("bob"));
+
+        let resolved = resolve_username(None);
+
+        assert_eq!(resolved, Some("alice".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_uses_logname_when_user_empty() {
+        let _lock = env_lock();
+        let _user_guard = EnvGuard::set("USER", Some(""));
+        let _logname_guard = EnvGuard::set("LOGNAME", Some("bob"));
+
+        let resolved = resolve_username(None);
+
+        assert_eq!(resolved, Some("bob".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_returns_none_without_env() {
+        let _lock = env_lock();
+        let _user_guard = EnvGuard::set("USER", None);
+        let _logname_guard = EnvGuard::set("LOGNAME", None);
+
+        let resolved = resolve_username(None);
+
+        assert_eq!(resolved, None);
     }
 
     #[test]
