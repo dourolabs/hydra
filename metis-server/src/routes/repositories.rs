@@ -20,7 +20,7 @@ pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
-    let repositories = state.service_state.list_repository_info();
+    let repositories = state.service_state.list_repository_info().await;
     let response = ListRepositoriesResponse { repositories };
     info!(
         repository_count = response.repositories.len(),

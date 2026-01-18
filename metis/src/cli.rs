@@ -51,13 +51,18 @@ pub enum Commands {
     /// Launch a live dashboard for jobs, issues, and patches.
     Dashboard {
         /// Only show a dedicated panel for open issues assigned to this user.
-        #[arg(long = "username", value_name = "USERNAME")]
+        #[arg(long = "username", value_name = "USERNAME", env = "METIS_USER")]
         username: Option<String>,
     },
     /// List or create issues.
     Issues {
         #[command(subcommand)]
         command: command::issues::IssueCommands,
+    },
+    /// Manage service repositories.
+    Repos {
+        #[command(subcommand)]
+        command: command::repos::ReposCommand,
     },
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
@@ -119,6 +124,7 @@ async fn dispatch(
         Commands::Patches { command } => command::patches::run(client, command).await?,
         Commands::Dashboard { username } => command::dashboard::run(client, username).await?,
         Commands::Issues { command } => command::issues::run(client, command).await?,
+        Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Chat {
             prompt,
             model,

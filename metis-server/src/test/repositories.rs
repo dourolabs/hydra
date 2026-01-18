@@ -83,6 +83,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
     let stored = service_state
         .repository(&name)
+        .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, remote_url);
     assert_eq!(stored.github_token.as_deref(), Some("token-456"));
@@ -148,6 +149,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
 
     let stored = service_state
         .repository(&name)
+        .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, repo_url(&updated_remote));
     assert!(stored.github_token.is_none());

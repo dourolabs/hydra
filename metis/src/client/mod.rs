@@ -18,6 +18,10 @@ use metis_common::{
         ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    repositories::{
+        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
+        UpsertRepositoryResponse,
+    },
     IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
@@ -71,6 +75,16 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
+    async fn list_repositories(&self) -> Result<ListRepositoriesResponse>;
+    async fn create_repository(
+        &self,
+        request: &CreateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse>;
+    async fn update_repository(
+        &self,
+        repo_name: &RepoName,
+        request: &UpdateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -474,6 +488,73 @@ impl MetisClient {
             .context("failed to decode list patches response")
     }
 
+    /// Call `GET /v1/repositories` to list configured repositories.
+    pub async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
+        let url = self.endpoint("/v1/repositories")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch repositories list")?
+            .error_for_status()
+            .context("metis-server returned an error while listing repositories")?;
+
+        response
+            .json::<ListRepositoriesResponse>()
+            .await
+            .context("failed to decode list repositories response")
+    }
+
+    /// Call `POST /v1/repositories` to create a new repository.
+    pub async fn create_repository(
+        &self,
+        request: &CreateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        let url = self.endpoint("/v1/repositories")?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create repository request")?
+            .error_for_status()
+            .context("metis-server rejected create repository request")?;
+
+        response
+            .json::<UpsertRepositoryResponse>()
+            .await
+            .context("failed to decode create repository response")
+    }
+
+    /// Call `PUT /v1/repositories/:organization/:repo` to update a repository config.
+    pub async fn update_repository(
+        &self,
+        repo_name: &RepoName,
+        request: &UpdateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        let path = format!(
+            "/v1/repositories/{}/{}",
+            repo_name.organization, repo_name.repo
+        );
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .put(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update repository request")?
+            .error_for_status()
+            .context("metis-server returned an error while updating repository")?;
+
+        response
+            .json::<UpsertRepositoryResponse>()
+            .await
+            .context("failed to decode update repository response")
+    }
+
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -729,6 +810,25 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_patches(self, query).await
     }
 
+    async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
+        MetisClient::list_repositories(self).await
+    }
+
+    async fn create_repository(
+        &self,
+        request: &CreateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        MetisClient::create_repository(self, request).await
+    }
+
+    async fn update_repository(
+        &self,
+        repo_name: &RepoName,
+        request: &UpdateRepositoryRequest,
+    ) -> Result<UpsertRepositoryResponse> {
+        MetisClient::update_repository(self, repo_name, request).await
+    }
+
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         MetisClient::get_merge_queue(self, repo_name, branch).await
     }
@@ -750,6 +850,138 @@ impl MetisClientInterface for MetisClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use httpmock::prelude::*;
+    use metis_common::repositories::{
+        CreateRepositoryRequest, ServiceRepositoryConfig, ServiceRepositoryInfo,
+        UpdateRepositoryRequest,
+    };
+    use serde_json::json;
+    use std::str::FromStr;
+
+    #[tokio::test]
+    async fn list_repositories_fetches_config_without_secrets() -> Result<()> {
+        let server = MockServer::start();
+        let repositories = vec![ServiceRepositoryInfo {
+            name: RepoName::from_str("dourolabs/metis")?,
+            remote_url: "https://example.com/repo.git".to_string(),
+            default_branch: Some("main".to_string()),
+            default_image: Some("ghcr.io/example/repo:main".to_string()),
+            github_token_present: true,
+        }];
+        let payload = ListRepositoriesResponse { repositories };
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&payload);
+        });
+
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+
+        let response = client.list_repositories().await?;
+
+        mock.assert();
+        assert_eq!(response, payload);
+        assert!(
+            response
+                .repositories
+                .first()
+                .expect("repository response should not be empty")
+                .github_token_present
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_repository_sends_payload_and_parses_response() -> Result<()> {
+        let server = MockServer::start();
+        let repo_name = RepoName::from_str("dourolabs/new-repo")?;
+        let request = CreateRepositoryRequest {
+            name: repo_name.clone(),
+            repository: ServiceRepositoryConfig {
+                remote_url: "https://example.com/new-repo.git".to_string(),
+                default_branch: Some("main".to_string()),
+                github_token: Some("token-123".to_string()),
+                default_image: Some("ghcr.io/example/new-repo:main".to_string()),
+            },
+        };
+        let response_body = UpsertRepositoryResponse {
+            repository: ServiceRepositoryInfo {
+                name: repo_name.clone(),
+                remote_url: request.repository.remote_url.clone(),
+                default_branch: request.repository.default_branch.clone(),
+                default_image: request.repository.default_image.clone(),
+                github_token_present: true,
+            },
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/repositories").json_body(json!({
+                "name": "dourolabs/new-repo",
+                "remote_url": "https://example.com/new-repo.git",
+                "default_branch": "main",
+                "github_token": "token-123",
+                "default_image": "ghcr.io/example/new-repo:main"
+            }));
+            then.status(200).json_body_obj(&response_body);
+        });
+
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+
+        let response = client.create_repository(&request).await?;
+
+        mock.assert();
+        assert_eq!(response.repository.name, repo_name);
+        assert!(response.repository.github_token_present);
+        assert_eq!(
+            response.repository.default_image.as_deref(),
+            Some("ghcr.io/example/new-repo:main")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_repository_includes_repo_and_propagates_errors() -> Result<()> {
+        let server = MockServer::start();
+        let repo_name = RepoName::from_str("dourolabs/missing")?;
+        let request = UpdateRepositoryRequest {
+            repository: ServiceRepositoryConfig {
+                remote_url: "https://example.com/updated.git".to_string(),
+                default_branch: None,
+                github_token: None,
+                default_image: None,
+            },
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/missing")
+                .json_body(json!({
+                    "remote_url": "https://example.com/updated.git",
+                    "default_branch": null,
+                    "github_token": null,
+                    "default_image": null
+                }));
+            then.status(404);
+        });
+
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+
+        let error = client
+            .update_repository(&repo_name, &request)
+            .await
+            .unwrap_err();
+
+        mock.assert();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("metis-server returned an error while updating repository"),
+            "{message}"
+        );
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn stream_sse_logs_preserves_carriage_returns() {

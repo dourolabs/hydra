@@ -6,6 +6,7 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId, RepoName,
+    issues::{Issue, IssueStatus, IssueType},
     patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
         UpsertPatchRequest,
@@ -31,6 +32,7 @@ use tracing::{debug, info, warn};
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
 const WORKER_NAME: &str = "github_poller";
+const REVIEW_ASSIGNEE_PREFIX: &str = "review-assignee:";
 
 #[derive(Clone)]
 pub struct GithubPollerWorker {
@@ -176,7 +178,7 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, &patch.service_repo_name) else {
+    let Some(token) = select_github_token(state, &patch.service_repo_name).await else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -256,6 +258,16 @@ async fn sync_patch_from_github(
     if latest_patch.github.is_none() {
         debug!(patch_id = %patch_id, "skipping GitHub sync for patch without GitHub metadata");
         return Ok(());
+    }
+
+    if let Err(err) =
+        maybe_transition_ci_wait_issue(state, patch_id, &latest_patch, &ci_status).await
+    {
+        warn!(
+            patch_id = %patch_id,
+            error = %err,
+            "failed to transition CI wait issue after CI success"
+        );
     }
 
     let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
@@ -401,10 +413,156 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
+async fn maybe_transition_ci_wait_issue(
+    state: &AppState,
+    patch_id: &PatchId,
+    patch: &Patch,
+    ci_status: &GithubCiStatus,
+) -> anyhow::Result<()> {
+    if !matches!(ci_status.state, GithubCiState::Success) {
+        return Ok(());
+    }
+
+    let previous_state = patch
+        .github
+        .as_ref()
+        .and_then(|github| github.ci.as_ref())
+        .map(|ci| ci.state);
+    if matches!(previous_state, Some(GithubCiState::Success)) {
+        return Ok(());
+    }
+
+    let mut store = state.store.write().await;
+    let issue_ids = store
+        .get_issues_for_patch(patch_id)
+        .await
+        .with_context(|| format!("fetching issues for patch '{patch_id}'"))?;
+
+    if issue_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut ci_wait_issues = Vec::new();
+    let mut existing_review_issue = false;
+    for issue_id in issue_ids {
+        let issue = store
+            .get_issue(&issue_id)
+            .await
+            .with_context(|| format!("fetching issue '{issue_id}'"))?;
+        if let Some(review_assignee) = review_assignee_from_ci_wait_issue(&issue) {
+            ci_wait_issues.push((issue_id, issue, review_assignee));
+            continue;
+        }
+        if is_review_issue_for_patch(&issue, patch_id) {
+            existing_review_issue = true;
+        }
+    }
+
+    if ci_wait_issues.is_empty() {
+        return Ok(());
+    }
+
+    let review_assignee = ci_wait_issues
+        .iter()
+        .find_map(|(_, _, assignee)| {
+            let trimmed = assignee.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .ok_or_else(|| anyhow!("CI wait issue missing review assignee"))?;
+
+    if !existing_review_issue {
+        let description = review_issue_description(patch_id, patch);
+        let (creator, dependencies) = ci_wait_issues
+            .first()
+            .map(|(_, issue, _)| (issue.creator.clone(), issue.dependencies.clone()))
+            .unwrap_or_default();
+        let review_issue = Issue {
+            issue_type: IssueType::Task,
+            description,
+            creator,
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: Some(review_assignee),
+            dependencies,
+            patches: vec![patch_id.clone()],
+        };
+        store
+            .add_issue(review_issue)
+            .await
+            .with_context(|| format!("creating review issue for patch '{patch_id}'"))?;
+    }
+
+    for (issue_id, mut issue, _) in ci_wait_issues {
+        if matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped) {
+            continue;
+        }
+        issue.status = IssueStatus::Closed;
+        store
+            .update_issue(&issue_id, issue)
+            .await
+            .with_context(|| format!("closing CI wait issue '{issue_id}'"))?;
+    }
+
+    Ok(())
+}
+
+fn review_assignee_from_ci_wait_issue(issue: &Issue) -> Option<String> {
+    if issue.assignee.as_deref() != Some("github") {
+        return None;
+    }
+    parse_review_assignee(&issue.progress)
+}
+
+fn parse_review_assignee(progress: &str) -> Option<String> {
+    progress
+        .trim()
+        .strip_prefix(REVIEW_ASSIGNEE_PREFIX)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn review_issue_description(patch_id: &PatchId, patch: &Patch) -> String {
+    let summary = patch.title.trim();
+    let title = if summary.is_empty() {
+        patch
+            .description
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .unwrap_or("Patch review")
+            .to_string()
+    } else {
+        summary.to_string()
+    };
+
+    let mut description = format!("Review patch {patch_id}: {title}");
+    if let Some(github) = patch.github.as_ref() {
+        let pr_ref = github.url.clone().unwrap_or_else(|| {
+            format!(
+                "{owner}/{repo}#{number}",
+                owner = github.owner,
+                repo = github.repo,
+                number = github.number
+            )
+        });
+        description.push_str("\n\nPR: ");
+        description.push_str(&pr_ref);
+    }
+
+    description
+}
+
+fn is_review_issue_for_patch(issue: &Issue, patch_id: &PatchId) -> bool {
+    let expected_prefix = format!("Review patch {patch_id}");
+    issue.description.trim_start().starts_with(&expected_prefix)
+}
+
+async fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
     state
         .service_state
         .repository(service_repo_name)
+        .await
         .and_then(|repo| repo.github_token.clone())
 }
 
@@ -676,6 +834,7 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use metis_common::issues::{Issue, IssueStatus, IssueType};
     use metis_common::patches::GithubPr;
     use serde_json::json;
     use std::{collections::HashMap, str::FromStr, sync::Arc};
@@ -1024,16 +1183,16 @@ mod tests {
         })
     }
 
-    #[test]
-    fn select_github_token_returns_none_for_unknown_repo() {
+    #[tokio::test]
+    async fn select_github_token_returns_none_for_unknown_repo() {
         let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
 
-        assert!(select_github_token(&state, &repo_name).is_none());
+        assert!(select_github_token(&state, &repo_name).await.is_none());
     }
 
-    #[test]
-    fn select_github_token_uses_service_repo_name() {
+    #[tokio::test]
+    async fn select_github_token_uses_service_repo_name() {
         let mut state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
@@ -1047,8 +1206,227 @@ mod tests {
             },
         )])));
 
-        let token = select_github_token(&state, &repo_name);
+        let token = select_github_token(&state, &repo_name).await;
 
         assert_eq!(token.as_deref(), Some("svc-token"));
+    }
+
+    #[tokio::test]
+    async fn ci_pending_leaves_wait_issue_open_without_review_issue() -> anyhow::Result<()> {
+        let state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch = Patch {
+            title: "Add feature".to_string(),
+            description: "Adds feature".to_string(),
+            diff: sample_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+            service_repo_name: repo_name,
+            github: Some(GithubPr {
+                owner: "octo".to_string(),
+                repo: "repo".to_string(),
+                number: 41,
+                head_ref: None,
+                base_ref: None,
+                url: Some("https://github.com/octo/repo/pull/41".to_string()),
+                ci: Some(GithubCiStatus {
+                    state: GithubCiState::Pending,
+                    failure: None,
+                }),
+            }),
+        };
+        let patch_id = {
+            let mut store = state.store.write().await;
+            store.add_patch(patch.clone()).await?
+        };
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: format!("Waiting on CI for patch {patch_id}: Add feature"),
+                    creator: "metis".to_string(),
+                    progress: "review-assignee: reviewer-a".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("github".to_string()),
+                    dependencies: Vec::new(),
+                    patches: vec![patch_id.clone()],
+                })
+                .await?;
+        }
+
+        let ci_status = GithubCiStatus {
+            state: GithubCiState::Pending,
+            failure: None,
+        };
+        maybe_transition_ci_wait_issue(&state, &patch_id, &patch, &ci_status).await?;
+
+        let store = state.store.read().await;
+        let issue_ids = store.get_issues_for_patch(&patch_id).await?;
+        assert_eq!(issue_ids.len(), 1);
+        let issue = store.get_issue(&issue_ids[0]).await?;
+        assert_eq!(issue.assignee.as_deref(), Some("github"));
+        assert_eq!(issue.status, IssueStatus::Open);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ci_success_closes_wait_issue_and_creates_review_issue() -> anyhow::Result<()> {
+        let state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch = Patch {
+            title: "Add feature".to_string(),
+            description: "Adds feature".to_string(),
+            diff: sample_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+            service_repo_name: repo_name,
+            github: Some(GithubPr {
+                owner: "octo".to_string(),
+                repo: "repo".to_string(),
+                number: 42,
+                head_ref: None,
+                base_ref: None,
+                url: Some("https://github.com/octo/repo/pull/42".to_string()),
+                ci: Some(GithubCiStatus {
+                    state: GithubCiState::Pending,
+                    failure: None,
+                }),
+            }),
+        };
+        let patch_id = {
+            let mut store = state.store.write().await;
+            store.add_patch(patch.clone()).await?
+        };
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: format!("Waiting on CI for patch {patch_id}: Add feature"),
+                    creator: "metis".to_string(),
+                    progress: "review-assignee: reviewer-a".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("github".to_string()),
+                    dependencies: Vec::new(),
+                    patches: vec![patch_id.clone()],
+                })
+                .await?;
+        }
+
+        let ci_status = GithubCiStatus {
+            state: GithubCiState::Success,
+            failure: None,
+        };
+        maybe_transition_ci_wait_issue(&state, &patch_id, &patch, &ci_status).await?;
+
+        let store = state.store.read().await;
+        let issue_ids = store.get_issues_for_patch(&patch_id).await?;
+        assert_eq!(issue_ids.len(), 2);
+
+        let mut closed_wait_issue = false;
+        let mut created_review_issue = false;
+        for issue_id in issue_ids {
+            let issue = store.get_issue(&issue_id).await?;
+            if issue.assignee.as_deref() == Some("github") {
+                assert_eq!(issue.status, IssueStatus::Closed);
+                closed_wait_issue = true;
+            }
+            if issue.assignee.as_deref() == Some("reviewer-a") {
+                assert_eq!(issue.status, IssueStatus::Open);
+                assert!(issue.description.contains(patch_id.as_ref()));
+                assert!(issue.description.contains("PR:"));
+                created_review_issue = true;
+            }
+        }
+
+        assert!(closed_wait_issue);
+        assert!(created_review_issue);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ci_success_skips_duplicate_review_issue() -> anyhow::Result<()> {
+        let state = test_state();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch = Patch {
+            title: "Add feature".to_string(),
+            description: "Adds feature".to_string(),
+            diff: sample_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            reviews: Vec::new(),
+            service_repo_name: repo_name,
+            github: Some(GithubPr {
+                owner: "octo".to_string(),
+                repo: "repo".to_string(),
+                number: 43,
+                head_ref: None,
+                base_ref: None,
+                url: Some("https://github.com/octo/repo/pull/43".to_string()),
+                ci: Some(GithubCiStatus {
+                    state: GithubCiState::Pending,
+                    failure: None,
+                }),
+            }),
+        };
+        let patch_id = {
+            let mut store = state.store.write().await;
+            store.add_patch(patch.clone()).await?
+        };
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: format!("Waiting on CI for patch {patch_id}: Add feature"),
+                    creator: "metis".to_string(),
+                    progress: "review-assignee: reviewer-a".to_string(),
+                    status: IssueStatus::Open,
+                    assignee: Some("github".to_string()),
+                    dependencies: Vec::new(),
+                    patches: vec![patch_id.clone()],
+                })
+                .await?;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: review_issue_description(&patch_id, &patch),
+                    creator: "metis".to_string(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("reviewer-a".to_string()),
+                    dependencies: Vec::new(),
+                    patches: vec![patch_id.clone()],
+                })
+                .await?;
+        }
+
+        let ci_status = GithubCiStatus {
+            state: GithubCiState::Success,
+            failure: None,
+        };
+        maybe_transition_ci_wait_issue(&state, &patch_id, &patch, &ci_status).await?;
+
+        let store = state.store.read().await;
+        let issue_ids = store.get_issues_for_patch(&patch_id).await?;
+        assert_eq!(issue_ids.len(), 2);
+
+        let mut closed_wait_issue = false;
+        for issue_id in issue_ids {
+            let issue = store.get_issue(&issue_id).await?;
+            if issue.assignee.as_deref() == Some("github") {
+                assert_eq!(issue.status, IssueStatus::Closed);
+                closed_wait_issue = true;
+            }
+        }
+
+        assert!(closed_wait_issue);
+
+        Ok(())
     }
 }

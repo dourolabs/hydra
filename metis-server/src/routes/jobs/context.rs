@@ -21,6 +21,7 @@ pub async fn get_job_context(
 
     let resolved = task
         .resolve_context(state.service_state.as_ref())
+        .await
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);
 

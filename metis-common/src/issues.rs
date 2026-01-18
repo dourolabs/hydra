@@ -298,6 +298,8 @@ pub struct Issue {
     pub issue_type: IssueType,
     pub description: String,
     #[serde(default)]
+    pub creator: String,
+    #[serde(default)]
     pub progress: String,
     #[serde(default)]
     pub status: IssueStatus,

@@ -41,7 +41,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &default_image)?;
+    let resolved = task.resolve(service_state.as_ref(), &default_image).await?;
     let Task {
         context, prompt, ..
     } = task;
@@ -83,7 +83,9 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+    let resolved = task
+        .resolve(service_state.as_ref(), &fallback_image)
+        .await?;
     let Task { context, .. } = task;
     assert_eq!(
         context,
@@ -130,7 +132,9 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+    let resolved = task
+        .resolve(service_state.as_ref(), &fallback_image)
+        .await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
 
@@ -165,7 +169,9 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+    let resolved = task
+        .resolve(service_state.as_ref(), &fallback_image)
+        .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),
         Some(&"token-123".to_string())
@@ -230,7 +236,9 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &fallback_image)?;
+    let resolved = task
+        .resolve(service_state.as_ref(), &fallback_image)
+        .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),
         Some(&"user-supplied".to_string())

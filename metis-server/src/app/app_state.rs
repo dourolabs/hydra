@@ -187,7 +187,8 @@ impl AppState {
             env_vars,
         };
 
-        task.resolve(self.service_state.as_ref(), &fallback_image)?;
+        task.resolve(self.service_state.as_ref(), &fallback_image)
+            .await?;
 
         let mut store = self.store.write().await;
         store
@@ -242,17 +243,22 @@ impl AppState {
         let resolved = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(task) => match task.resolve(self.service_state.as_ref(), &fallback_image) {
-                    Ok(resolved) => resolved,
-                    Err(err) => {
-                        warn!(
-                            metis_id = %task_id,
-                            error = %err,
-                            "failed to resolve task for spawning"
-                        );
-                        return;
+                Ok(task) => {
+                    match task
+                        .resolve(self.service_state.as_ref(), &fallback_image)
+                        .await
+                    {
+                        Ok(resolved) => resolved,
+                        Err(err) => {
+                            warn!(
+                                metis_id = %task_id,
+                                error = %err,
+                                "failed to resolve task for spawning"
+                            );
+                            return;
+                        }
                     }
-                },
+                }
                 Err(err) => {
                     warn!(
                         metis_id = %task_id,
@@ -774,7 +780,7 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        if !self.service_state.has_repository(service_repo_name) {
+        if !self.service_state.has_repository(service_repo_name).await {
             return Err(MergeQueueError::UnknownRepository(
                 service_repo_name.clone(),
             ));
@@ -921,6 +927,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: description.to_string(),
+            creator: String::new(),
             progress: String::new(),
             status,
             assignee: None,

@@ -45,6 +45,13 @@ const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
     IssueStatus::Dropped,
 ];
 
+#[derive(Copy, Clone, PartialEq, Default)]
+enum PanelFocus {
+    #[default]
+    NewIssue,
+    Status,
+}
+
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
@@ -232,7 +239,6 @@ struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
-    assigned_issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
     jobs_error: Option<String>,
@@ -242,6 +248,7 @@ struct DashboardState {
     issue_draft: IssueDraft,
     status_filter: StatusFilterState,
     agent_filter: AgentFilterState,
+    selected_panel: PanelFocus,
 }
 
 struct IssueSubmission {
@@ -365,10 +372,25 @@ impl StatusFilterState {
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
+    let username = resolve_username(username);
     let mut terminal = setup_terminal()?;
     let dashboard_result = run_dashboard_loop(client, &mut terminal, username).await;
     teardown_terminal(&mut terminal)?;
     dashboard_result
+}
+
+fn resolve_username(username: Option<String>) -> Option<String> {
+    if username.is_some() {
+        return username;
+    }
+
+    let resolved = whoami::username();
+    let trimmed = resolved.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 async fn run_dashboard_loop(
@@ -464,7 +486,12 @@ async fn run_dashboard_loop(
                             state.issue_draft.info_message =
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &state))?;
-                            let submission_result = submit_issue(client, &submission).await;
+                            let submission_result = submit_issue(
+                                client,
+                                &submission,
+                                state.username.as_deref(),
+                            )
+                            .await;
                             handle_issue_submission_result(
                                 &mut state,
                                 &assignee,
@@ -540,18 +567,6 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if !state.issue_draft.editing
-                && matches!(
-                    key.code,
-                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
-                )
-            {
-                return EventOutcome {
-                    should_quit: true,
-                    submission: None,
-                };
-            }
-
             EventOutcome {
                 should_quit: false,
                 submission: handle_issue_draft_key(key, state),
@@ -567,6 +582,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
 
             if state.issue_draft.editing && state.issue_draft.prompt.insert_str(text) {
                 state.issue_draft.note_edit();
+                state.selected_panel = PanelFocus::NewIssue;
             }
 
             EventOutcome {
@@ -604,11 +620,13 @@ fn handle_status_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             state.status_filter.cycle_selection();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             state.status_filter.toggle_selected();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         _ => false,
@@ -624,11 +642,13 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         KeyCode::Char('a') | KeyCode::Char('A') => {
             state.agent_filter.cycle_selection();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         KeyCode::Char('g') | KeyCode::Char('G') => {
             state.agent_filter.toggle_selected();
             update_views(state);
+            state.selected_panel = PanelFocus::Status;
             true
         }
         _ => false,
@@ -638,6 +658,7 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
     if has_primary_modifier(key.modifiers) && key.code == KeyCode::Char('n') {
         state.issue_draft.set_editing(!state.issue_draft.editing);
+        state.selected_panel = PanelFocus::NewIssue;
         return None;
     }
 
@@ -652,16 +673,19 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     match key.code {
         KeyCode::Tab => {
             state.issue_draft.cycle_assignee(true);
+            state.selected_panel = PanelFocus::NewIssue;
             return None;
         }
         KeyCode::BackTab => {
             state.issue_draft.cycle_assignee(false);
+            state.selected_panel = PanelFocus::NewIssue;
             return None;
         }
         _ => {}
     }
 
     if is_issue_submit_key(key) {
+        state.selected_panel = PanelFocus::NewIssue;
         return attempt_issue_submit(state);
     }
 
@@ -671,6 +695,7 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
 
     if state.issue_draft.prompt.input(key) {
         state.issue_draft.note_edit();
+        state.selected_panel = PanelFocus::NewIssue;
     }
 
     None
@@ -733,6 +758,7 @@ fn handle_issue_submission_result(
 async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
+    creator: Option<&str>,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -740,11 +766,17 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
+    let creator = creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
 
     let request = UpsertIssueRequest {
         issue: Issue {
             issue_type: IssueType::Task,
             description: submission.prompt.trim().to_string(),
+            creator,
             progress: String::new(),
             status: IssueStatus::Open,
             assignee,
@@ -782,7 +814,7 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
             "Metis Dashboard",
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" — press q or Esc to exit."),
+        Span::raw(" — press Ctrl+C to exit."),
     ])];
 
     lines.push(status_filter_line(&state.status_filter));
@@ -813,7 +845,9 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
         Block::default()
             .title("Status")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::White)),
+            .border_style(panel_border_style(
+                state.selected_panel == PanelFocus::Status,
+            )),
     );
     frame.render_widget(paragraph, area);
 }
@@ -924,7 +958,6 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         .unwrap_or(false);
 
     if has_username {
-        let username = state.username.as_deref().unwrap();
         let show_user_owned =
             should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
 
@@ -933,8 +966,8 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Percentage(30),
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(40),
+                    Constraint::Percentage(35),
+                    Constraint::Percentage(35),
                 ])
                 .split(area);
             render_issue_list(
@@ -942,55 +975,60 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                 panels[0],
                 &state.user_unowned_issue_lines,
                 &issue_list_title("Your issues", &state.user_unowned_issue_lines),
-                "No issues assigned to you",
+                "No open issues assigned to you",
             );
             render_issue_list(
                 frame,
                 panels[1],
-                &state.assigned_issue_lines,
-                &issue_list_title(
-                    &format!("Issues for @{username}"),
-                    &state.assigned_issue_lines,
-                ),
-                &format!("No issues assigned to @{username}"),
-            );
-            render_issue_list(
-                frame,
-                panels[2],
                 &state.issue_lines,
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
+            );
+            render_completed_issue_list(
+                frame,
+                panels[2],
+                &state.completed_issue_lines,
+                &completed_issue_list_title(&state.completed_issue_lines),
+                "No completed issues",
             );
         } else {
             let panels = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .split(area);
             render_issue_list(
                 frame,
                 panels[0],
-                &state.assigned_issue_lines,
-                &issue_list_title(
-                    &format!("Issues for @{username}"),
-                    &state.assigned_issue_lines,
-                ),
-                &format!("No issues assigned to @{username}"),
-            );
-            render_issue_list(
-                frame,
-                panels[1],
                 &state.issue_lines,
                 &issue_list_title("Running issues", &state.issue_lines),
                 "No issues found",
             );
+            render_completed_issue_list(
+                frame,
+                panels[1],
+                &state.completed_issue_lines,
+                &completed_issue_list_title(&state.completed_issue_lines),
+                "No completed issues",
+            );
         }
     } else {
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(area);
         render_issue_list(
             frame,
-            area,
+            panels[0],
             &state.issue_lines,
             &issue_list_title("Running issues", &state.issue_lines),
             "No issues found",
+        );
+        render_completed_issue_list(
+            frame,
+            panels[1],
+            &state.completed_issue_lines,
+            &completed_issue_list_title(&state.completed_issue_lines),
+            "No completed issues",
         );
     }
 }
@@ -1005,7 +1043,9 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(panel_border_style(
+            state.selected_panel == PanelFocus::NewIssue,
+        ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -1070,65 +1110,7 @@ fn render_issue_list(
     title: &str,
     empty_message: &str,
 ) {
-    let items: Vec<ListItem> = if issue_lines.rows.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            empty_message,
-            Style::default().fg(Color::DarkGray),
-        )))]
-    } else {
-        issue_lines
-            .rows
-            .iter()
-            .map(|line| {
-                let mut spans = Vec::new();
-                spans.push(Span::raw(issue_prefix(line.depth)));
-                spans.push(Span::raw(" "));
-                let (issue_status_label, issue_status_style) =
-                    issue_status_display(line.status, &line.readiness);
-                spans.push(Span::styled(
-                    format!("[{issue_status_label}]"),
-                    issue_status_style,
-                ));
-
-                if let Some(task) = &line.task {
-                    if let Some(runtime) = &task.runtime {
-                        spans.push(Span::raw(" "));
-                        spans.push(Span::styled(
-                            format!("[{runtime}]"),
-                            status_style(task.status),
-                        ));
-                    }
-                }
-
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    line.id.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ));
-                if let Some(assignee) = &line.assignee {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("@{assignee}"),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                spans.push(Span::raw(" — "));
-                spans.push(Span::raw(truncate_message(
-                    &line.summary,
-                    MAX_MESSAGE_WIDTH,
-                )));
-                if let Some(progress) = &line.progress {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        truncate_message(progress, MAX_MESSAGE_WIDTH),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-
-                ListItem::new(Line::from(spans))
-            })
-            .collect()
-    };
+    let items = issue_line_items(&issue_lines.rows, empty_message);
 
     let block = Block::default()
         .title(title)
@@ -1137,8 +1119,138 @@ fn render_issue_list(
     frame.render_widget(List::new(items).block(block), area);
 }
 
+fn render_completed_issue_list(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    completed_issue_lines: &CompletedIssueLines,
+    title: &str,
+    empty_message: &str,
+) {
+    let rows = completed_issue_rows(completed_issue_lines);
+    let items = issue_line_items(&rows, empty_message);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(List::new(items).block(block), area);
+}
+
+fn panel_border_style(selected: bool) -> Style {
+    if selected {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
     format!("{title} ({})", issue_lines.rows.len())
+}
+
+fn completed_issue_list_title(completed_issue_lines: &CompletedIssueLines) -> String {
+    format!(
+        "Completed Issues ({})",
+        completed_issue_count(completed_issue_lines)
+    )
+}
+
+fn completed_issue_count(completed_issue_lines: &CompletedIssueLines) -> usize {
+    completed_issue_lines.roots.len()
+        + completed_issue_lines
+            .descendants
+            .values()
+            .map(Vec::len)
+            .sum::<usize>()
+}
+
+fn completed_issue_rows(completed_issue_lines: &CompletedIssueLines) -> Vec<IssueLine> {
+    let mut rows = Vec::new();
+    for root in &completed_issue_lines.roots {
+        rows.push(root.clone());
+        if let Some(descendants) = completed_issue_descendants(completed_issue_lines, &root.id) {
+            rows.extend(descendants.iter().cloned());
+        }
+    }
+    rows
+}
+
+fn completed_issue_descendants<'a>(
+    completed_issue_lines: &'a CompletedIssueLines,
+    root_id: &str,
+) -> Option<&'a Vec<IssueLine>> {
+    completed_issue_lines
+        .descendants
+        .iter()
+        .find_map(|(id, descendants)| {
+            if id.to_string() == root_id {
+                Some(descendants)
+            } else {
+                None
+            }
+        })
+}
+
+fn issue_line_items<'a>(issue_lines: &'a [IssueLine], empty_message: &'a str) -> Vec<ListItem<'a>> {
+    if issue_lines.is_empty() {
+        return vec![ListItem::new(Line::from(Span::styled(
+            empty_message,
+            Style::default().fg(Color::DarkGray),
+        )))];
+    }
+
+    issue_lines
+        .iter()
+        .map(|line| {
+            let mut spans = Vec::new();
+            spans.push(Span::raw(issue_prefix(line.depth)));
+            spans.push(Span::raw(" "));
+            let (issue_status_label, issue_status_style) =
+                issue_status_display(line.status, &line.readiness);
+            spans.push(Span::styled(
+                format!("[{issue_status_label}]"),
+                issue_status_style,
+            ));
+
+            if let Some(task) = &line.task {
+                if let Some(runtime) = &task.runtime {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("[{runtime}]"),
+                        status_style(task.status),
+                    ));
+                }
+            }
+
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                line.id.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            if let Some(assignee) = &line.assignee {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!("@{assignee}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            spans.push(Span::raw(" — "));
+            spans.push(Span::raw(truncate_message(
+                &line.summary,
+                MAX_MESSAGE_WIDTH,
+            )));
+            if let Some(progress) = &line.progress {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    truncate_message(progress, MAX_MESSAGE_WIDTH),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect()
 }
 
 fn issue_prefix(depth: usize) -> String {
@@ -1266,7 +1378,6 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
-    let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
     let previous_user_unowned_issue_lines = state.user_unowned_issue_lines.clone();
     let previous_completed_issue_lines = state.completed_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
@@ -1277,13 +1388,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.jobs,
         &state.status_filter,
         &state.agent_filter,
-    );
-    let assigned_issue_lines = build_assigned_issue_lines(
-        state.username.as_deref(),
-        &state.issues,
-        &state.jobs,
-        &state.status_filter,
-        &state.agent_filter,
+        true,
     );
     let user_unowned_issue_lines = build_user_unowned_issue_lines(
         state.username.as_deref(),
@@ -1296,12 +1401,10 @@ fn update_views(state: &mut DashboardState) -> bool {
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
-    state.assigned_issue_lines = assigned_issue_lines;
     state.user_unowned_issue_lines = user_unowned_issue_lines;
     state.completed_issue_lines = completed_issue_lines;
 
     previous_issue_lines != state.issue_lines
-        || previous_assigned_issue_lines != state.assigned_issue_lines
         || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
@@ -1348,26 +1451,6 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
     options.into_iter().collect()
 }
 
-fn build_assigned_issue_lines(
-    username: Option<&str>,
-    issues: &[IssueRecord],
-    jobs: &[JobDetails],
-    status_filter: &StatusFilterState,
-    agent_filter: &AgentFilterState,
-) -> IssueLines {
-    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
-        return IssueLines::default();
-    };
-
-    let assigned: Vec<IssueRecord> = issues
-        .iter()
-        .filter(|issue| issue.assignee.as_deref() == Some(username))
-        .cloned()
-        .collect();
-
-    build_issue_lines(&assigned, jobs, status_filter, agent_filter)
-}
-
 fn build_user_unowned_issue_lines(
     username: Option<&str>,
     issues: &[IssueRecord],
@@ -1382,10 +1465,17 @@ fn build_user_unowned_issue_lines(
     let assigned: Vec<IssueRecord> = issues
         .iter()
         .filter(|issue| issue.assignee.as_deref() == username.map(str::trim))
+        .filter(|issue| issue.status == IssueStatus::Open)
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs, status_filter, &AgentFilterState::default())
+    build_issue_lines(
+        &assigned,
+        jobs,
+        status_filter,
+        &AgentFilterState::default(),
+        false,
+    )
 }
 
 fn should_show_user_owned_panel(username: Option<&str>, agent_names: &[String]) -> bool {
@@ -1401,6 +1491,7 @@ fn build_issue_lines(
     jobs: &[JobDetails],
     status_filter: &StatusFilterState,
     agent_filter: &AgentFilterState,
+    exclude_inactive_roots: bool,
 ) -> IssueLines {
     let nodes = build_issue_nodes(issues, jobs);
 
@@ -1414,6 +1505,16 @@ fn build_issue_lines(
     let mut rows = Vec::new();
     let mut visited: HashSet<IssueId> = HashSet::new();
     for root in roots {
+        if exclude_inactive_roots {
+            if let Some(node) = nodes.get(&root) {
+                if matches!(
+                    node.record.status,
+                    IssueStatus::Closed | IssueStatus::Dropped
+                ) {
+                    continue;
+                }
+            }
+        }
         append_issue(
             &root,
             0,
@@ -1498,7 +1599,7 @@ fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> C
     let mut completed_descendants = HashMap::new();
 
     for root in roots {
-        if !is_closed_tree(&root, &nodes, &mut HashSet::new()) {
+        if !is_completed_tree(&root, &nodes, &mut HashSet::new()) {
             continue;
         }
 
@@ -1607,7 +1708,7 @@ fn collect_issue_lines(
     }
 }
 
-fn is_closed_tree(
+fn is_completed_tree(
     id: &IssueId,
     nodes: &HashMap<IssueId, IssueNode>,
     visited: &mut HashSet<IssueId>,
@@ -1620,13 +1721,16 @@ fn is_closed_tree(
         return false;
     };
 
-    if node.record.status != IssueStatus::Closed {
+    if !matches!(
+        node.record.status,
+        IssueStatus::Closed | IssueStatus::Dropped
+    ) {
         return false;
     }
 
     node.children
         .iter()
-        .all(|child| is_closed_tree(child, nodes, visited))
+        .all(|child| is_completed_tree(child, nodes, visited))
 }
 
 fn issue_summary(description: &str, progress: &str) -> IssueSummary {
@@ -1922,6 +2026,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resolve_username_preserves_explicit_input() {
+        let resolved = resolve_username(Some("explicit".to_string()));
+
+        assert_eq!(resolved, Some("explicit".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_defaults_to_current_user() {
+        let expected = whoami::username();
+        let resolved = resolve_username(None).unwrap_or_default();
+
+        assert_eq!(resolved, expected);
+    }
+
     fn job_details_with_issue(
         id: &str,
         status: Status,
@@ -1980,6 +2099,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         assert_eq!(lines.rows.len(), 3);
@@ -2015,6 +2135,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let blocked_line = lines
@@ -2038,6 +2159,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("missing issue line");
@@ -2063,6 +2185,7 @@ mod tests {
             &jobs,
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("issue line missing");
@@ -2099,6 +2222,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("issue line missing");
@@ -2133,6 +2257,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines
@@ -2187,6 +2312,43 @@ mod tests {
     }
 
     #[test]
+    fn completed_issue_lines_include_dropped_trees() {
+        let issues = vec![
+            issue("i-closed", IssueStatus::Closed, vec![]),
+            issue("i-dropped-root", IssueStatus::Dropped, vec![]),
+            issue(
+                "i-dropped-child",
+                IssueStatus::Dropped,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-dropped-root"),
+                }],
+            ),
+            issue("i-open", IssueStatus::Open, vec![]),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+
+        assert_eq!(lines.roots.len(), 2);
+        assert!(lines
+            .roots
+            .iter()
+            .any(|line| line.id == issue_id("i-closed").to_string()));
+        assert!(lines
+            .roots
+            .iter()
+            .any(|line| line.id == issue_id("i-dropped-root").to_string()));
+
+        let descendants = lines
+            .descendants
+            .get(&issue_id("i-dropped-root"))
+            .expect("missing descendants");
+        assert_eq!(descendants.len(), 1);
+        assert_eq!(descendants[0].id, issue_id("i-dropped-child").to_string());
+        assert_eq!(descendants[0].depth, 1);
+    }
+
+    #[test]
     fn completed_issue_lines_track_nested_depth() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
@@ -2220,35 +2382,53 @@ mod tests {
     }
 
     #[test]
-    fn assigned_issue_lines_filter_assignee() {
+    fn completed_issue_list_title_counts_descendants() {
         let issues = vec![
-            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
-            issue_with_assignee("i-in-progress", IssueStatus::InProgress, Some("alice")),
-            issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
-            issue_with_assignee("i-other", IssueStatus::Open, Some("bob")),
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+            issue(
+                "i-grandchild",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-child"),
+                }],
+            ),
         ];
 
-        let lines = build_assigned_issue_lines(
-            Some("alice"),
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-        );
+        let lines = build_completed_issue_lines(&issues, &[]);
 
-        assert_eq!(lines.rows.len(), 3);
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-open").to_string()));
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-in-progress").to_string()));
-        assert!(lines
-            .rows
-            .iter()
-            .any(|line| line.id == issue_id("i-closed").to_string()));
+        assert_eq!(completed_issue_list_title(&lines), "Completed Issues (3)");
+    }
+
+    #[test]
+    fn completed_issue_rows_include_descendants_after_root() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+        let rows = completed_issue_rows(&lines);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, issue_id("i-root").to_string());
+        assert_eq!(rows[1].id, issue_id("i-child").to_string());
+        assert_eq!(rows[1].depth, 1);
     }
 
     #[test]
@@ -2292,6 +2472,27 @@ mod tests {
     }
 
     #[test]
+    fn user_unowned_issue_lines_only_show_open() {
+        let issues = vec![
+            issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-progress", IssueStatus::InProgress, Some("alice")),
+            issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
+        ];
+        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
+
+        let lines = build_user_unowned_issue_lines(
+            Some("alice"),
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &agents,
+        );
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
+    }
+
+    #[test]
     fn user_unowned_issue_lines_ignore_agent_filter() {
         let issues = vec![
             issue_with_assignee("i-user", IssueStatus::Open, Some("alice")),
@@ -2312,7 +2513,6 @@ mod tests {
             state.issue_lines.rows[0].id,
             issue_id("i-agent").to_string()
         );
-        assert!(state.assigned_issue_lines.rows.is_empty());
         assert_eq!(state.user_unowned_issue_lines.rows.len(), 1);
         assert_eq!(
             state.user_unowned_issue_lines.rows[0].id,
@@ -2351,6 +2551,33 @@ mod tests {
     }
 
     #[test]
+    fn running_issue_lines_exclude_closed_root_tree() {
+        let issues = vec![
+            issue("i-closed-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child-open",
+                IssueStatus::Open,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-closed-root"),
+                }],
+            ),
+            issue("i-open-root", IssueStatus::Open, vec![]),
+        ];
+
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+            true,
+        );
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-open-root").to_string());
+    }
+
+    #[test]
     fn user_owned_panel_hidden_for_agent_user() {
         let agents = vec!["alice".to_string(), "bot".to_string()];
 
@@ -2381,7 +2608,7 @@ mod tests {
         };
         filter.toggle_selected();
 
-        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default());
+        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default(), false);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-closed").to_string());
@@ -2400,7 +2627,7 @@ mod tests {
         filter.cycle_selection();
         filter.toggle_selected();
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter, false);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-beta").to_string());
@@ -2534,19 +2761,6 @@ mod tests {
     }
 
     #[test]
-    fn q_quits_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
-            &mut state,
-        );
-
-        assert!(outcome.should_quit);
-        assert!(outcome.submission.is_none());
-    }
-
-    #[test]
     fn q_does_not_quit_when_editing_issue_prompt() {
         let mut state = DashboardState::default();
         state.issue_draft.set_editing(true);
@@ -2574,6 +2788,34 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.prompt_text(), "Q");
+    }
+
+    #[test]
+    fn q_does_not_quit_when_not_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert!(state.issue_draft.prompt_text().is_empty());
+    }
+
+    #[test]
+    fn escape_does_not_quit_when_not_editing_issue_prompt() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert!(state.issue_draft.prompt_text().is_empty());
     }
 
     #[test]
@@ -2621,7 +2863,7 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission)
+        let created = submit_issue(&client, &submission, Some(" metis-user "))
             .await
             .expect("submission failed");
 
@@ -2634,6 +2876,7 @@ mod tests {
         assert_eq!(request.issue.status, IssueStatus::Open);
         assert_eq!(request.issue.description, "Draft release notes");
         assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
+        assert_eq!(request.issue.creator, "metis-user");
         assert!(request.issue.dependencies.is_empty());
     }
 }

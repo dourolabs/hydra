@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
-use metis_common::{repositories::ServiceRepositoryConfig, RepoName};
+use metis_common::RepoName;
 use metis_server::{
     app::{AppState, ServiceState},
     config::ServiceSection,
@@ -12,52 +12,37 @@ use std::{path::Path, process::Command, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
-use crate::BashCommands;
-use escargot::CargoBuild;
+use super::bash_commands::BashCommands;
 
 pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
     pub app_config: AppConfig,
     pub client: MetisClient,
-    pub tempdir: TempDir,
-    pub remote_url: String,
+    pub _tempdir: TempDir,
     pub service_repo_name: RepoName,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
-    CargoBuild::new()
-        .package("metis") // workspace package name
-        .bin("metis") // binary target name
-        .current_release() // optional; or omit for debug build
-        .run()
-        .unwrap()
-        .path()
-        .to_path_buf()
+    // Cargo exposes the compiled binary location to integration tests via CARGO_BIN_EXE_<binname>
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_metis"))
 }
 
 impl TestEnvironment {
-    /// Run metis commands as a user via bash.
     pub async fn run_as_user(&self, commands: Vec<String>) -> Result<()> {
         for command in commands {
-            // Skip if empty
             if command.trim().is_empty() {
                 continue;
             }
 
-            // Check if the first token (split on whitespace) is "metis"
             let first_token = command.split_whitespace().next();
             let command_to_run = if first_token == Some("metis") {
                 let metis_path = metis_bin();
-                // Simple string replacement: replace first occurrence of "metis" at word boundary
-                // This works because we've already verified the first word is "metis"
                 command.replacen("metis", &metis_path.to_string_lossy(), 1)
             } else {
-                // Prepend "metis" if not already present
                 let metis_path = metis_bin();
                 format!("{} {}", metis_path.to_string_lossy(), command)
             };
 
-            // Run as a shell command using bash (preserves redirects like >>)
             let output = tokio::process::Command::new("bash")
                 .arg("-c")
                 .arg(&command_to_run)
@@ -79,7 +64,6 @@ impl TestEnvironment {
         Ok(())
     }
 
-    /// Run commands as a worker using BashCommands and worker-run functionality.
     pub async fn run_as_worker(
         &self,
         commands: Vec<String>,
@@ -89,20 +73,7 @@ impl TestEnvironment {
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
 
-        // Pass original command strings to BashCommands to preserve redirects and shell operators
-        // Create a new client and config clone for BashCommands
-        let client_clone = MetisClient::new(&self.app_config.server.url)?;
-        let app_config_clone = AppConfig {
-            server: ServerSection {
-                url: self.app_config.server.url.clone(),
-            },
-        };
-
-        let bash_commands = BashCommands {
-            commands,
-            client: Box::new(client_clone),
-            app_config: app_config_clone,
-        };
+        let bash_commands = BashCommands { commands };
 
         metis::command::worker_run::run(&self.client, job_id, worker_dir, None, &bash_commands)
             .await
@@ -112,7 +83,6 @@ impl TestEnvironment {
     }
 }
 
-/// Initialize a test server with a remote repository and return the test environment.
 pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnvironment> {
     let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
     let remote_url = init_service_remote(tempdir.path())?;
@@ -135,8 +105,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         server,
         app_config,
         client,
-        tempdir,
-        remote_url,
+        _tempdir: tempdir,
         service_repo_name,
     })
 }
@@ -250,7 +219,7 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
     let mut service_section = ServiceSection::default();
     service_section.repositories.insert(
         repo_name.clone(),
-        ServiceRepositoryConfig {
+        metis_common::repositories::ServiceRepositoryConfig {
             remote_url: remote_url.to_string(),
             default_branch: Some("main".to_string()),
             github_token: None,

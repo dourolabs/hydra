@@ -12,11 +12,7 @@ use metis_common::{
     merge_queues::MergeQueue,
     patches::Patch,
 };
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, RwLock as StdRwLock},
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
@@ -51,7 +47,7 @@ impl ConnectedRepository {
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
-    pub repositories: Arc<StdRwLock<HashMap<RepoName, ServiceRepository>>>,
+    pub repositories: Arc<RwLock<HashMap<RepoName, ServiceRepository>>>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
 }
@@ -196,17 +192,14 @@ impl ServiceState {
             .collect();
 
         Self {
-            repositories: Arc::new(StdRwLock::new(repositories)),
+            repositories: Arc::new(RwLock::new(repositories)),
             merge_queues: Arc::new(RwLock::new(merge_queues)),
             git_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn list_repository_info(&self) -> Vec<ServiceRepositoryInfo> {
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+    pub async fn list_repository_info(&self) -> Vec<ServiceRepositoryInfo> {
+        let repositories = self.repositories.read().await;
 
         repositories
             .values()
@@ -214,20 +207,14 @@ impl ServiceState {
             .collect()
     }
 
-    pub fn repository(&self, name: &RepoName) -> Option<ServiceRepository> {
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+    pub async fn repository(&self, name: &RepoName) -> Option<ServiceRepository> {
+        let repositories = self.repositories.read().await;
 
         repositories.get(name).cloned()
     }
 
-    pub fn has_repository(&self, name: &RepoName) -> bool {
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+    pub async fn has_repository(&self, name: &RepoName) -> bool {
+        let repositories = self.repositories.read().await;
 
         repositories.contains_key(name)
     }
@@ -239,10 +226,7 @@ impl ServiceState {
         let name = repository.name.clone();
 
         {
-            let mut repositories = self
-                .repositories
-                .write()
-                .expect("repositories lock should not be poisoned");
+            let mut repositories = self.repositories.write().await;
 
             if repositories.contains_key(&name) {
                 return Err(RepositoryError::AlreadyExists(name));
@@ -253,10 +237,7 @@ impl ServiceState {
 
         if let Err(err) = self.refresh_repository(&name).await {
             {
-                let mut repositories = self
-                    .repositories
-                    .write()
-                    .expect("repositories lock should not be poisoned");
+                let mut repositories = self.repositories.write().await;
                 repositories.remove(&name);
             }
             let mut git_cache = self.git_cache.write().await;
@@ -270,10 +251,7 @@ impl ServiceState {
 
         self.initialize_merge_queue(&name).await;
 
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+        let repositories = self.repositories.read().await;
         Ok(repositories
             .get(&name)
             .cloned()
@@ -286,10 +264,7 @@ impl ServiceState {
         config: ServiceRepositoryConfig,
     ) -> Result<ServiceRepository, RepositoryError> {
         let previous = {
-            let mut repositories = self
-                .repositories
-                .write()
-                .expect("repositories lock should not be poisoned");
+            let mut repositories = self.repositories.write().await;
 
             let Some(repository) = repositories.get_mut(&name) else {
                 return Err(RepositoryError::NotFound(name));
@@ -314,10 +289,7 @@ impl ServiceState {
 
         if let Err(err) = self.refresh_repository(&name).await {
             {
-                let mut repositories = self
-                    .repositories
-                    .write()
-                    .expect("repositories lock should not be poisoned");
+                let mut repositories = self.repositories.write().await;
                 repositories.insert(name.clone(), previous);
             }
 
@@ -341,10 +313,7 @@ impl ServiceState {
             });
         }
 
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+        let repositories = self.repositories.read().await;
         Ok(repositories
             .get(&name)
             .cloned()
@@ -371,7 +340,7 @@ impl ServiceState {
 
     /// Resolve a BundleSpec into a concrete Bundle using server state.
     /// Returns the instantiated bundle and an optional GitHub token to surface to the worker.
-    pub fn resolve_bundle_spec(
+    pub async fn resolve_bundle_spec(
         &self,
         spec: BundleSpec,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
@@ -387,10 +356,7 @@ impl ServiceState {
                 default_image: None,
             }),
             BundleSpec::ServiceRepository { name, rev } => {
-                let repositories = self
-                    .repositories
-                    .read()
-                    .expect("repositories lock should not be poisoned");
+                let repositories = self.repositories.read().await;
                 let repo = repositories
                     .get(&name)
                     .ok_or_else(|| BundleResolutionError::UnknownRepository(name.clone()))?;
@@ -416,7 +382,7 @@ impl ServiceState {
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_repository_exists(service_repo_name)?;
+        self.ensure_repository_exists(service_repo_name).await?;
 
         let merge_queues = self.merge_queues.read().await;
         let queue = merge_queues
@@ -435,7 +401,7 @@ impl ServiceState {
         patch_id: PatchId,
         patch: &Patch,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_repository_exists(service_repo_name)?;
+        self.ensure_repository_exists(service_repo_name).await?;
 
         if patch.service_repo_name != *service_repo_name {
             return Err(MergeQueueError::PatchRepositoryMismatch {
@@ -484,11 +450,8 @@ impl ServiceState {
         Ok(merge_queue_response(queue))
     }
 
-    fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
-        let repositories = self
-            .repositories
-            .read()
-            .expect("repositories lock should not be poisoned");
+    async fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
+        let repositories = self.repositories.read().await;
 
         if repositories.contains_key(name) {
             Ok(())
@@ -504,10 +467,7 @@ impl ServiceState {
                 entry.clone()
             } else {
                 let repo_cfg = {
-                    let repositories = self
-                        .repositories
-                        .read()
-                        .expect("repositories lock should not be poisoned");
+                    let repositories = self.repositories.read().await;
                     repositories
                         .get(name)
                         .expect("refresh_repository called after ensure_repository_exists")
