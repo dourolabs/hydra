@@ -6,6 +6,8 @@ use crate::{
 use async_trait::async_trait;
 use tracing::{error, info};
 
+const WORKER_NAME: &str = "process_pending_jobs";
+
 /// Scheduled worker that processes pending jobs once per iteration.
 ///
 /// A successful iteration returns `Progress`, empty queues return `Idle`,
@@ -24,12 +26,17 @@ impl ProcessPendingJobsWorker {
 #[async_trait]
 impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
+        info!(worker = WORKER_NAME, "worker iteration started");
         let pending_ids = {
             let store = self.state.store.read().await;
             match store.list_tasks_with_status(Status::Pending).await {
                 Ok(ids) => ids,
                 Err(err) => {
                     error!(error = %err, "failed to list pending tasks");
+                    info!(
+                        worker = WORKER_NAME,
+                        "worker iteration completed with transient error"
+                    );
                     return WorkerOutcome::TransientError {
                         reason: err.to_string(),
                     };
@@ -38,14 +45,25 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
         };
 
         if pending_ids.is_empty() {
+            info!(worker = WORKER_NAME, "no pending tasks found; worker idle");
             return WorkerOutcome::Idle;
         }
 
-        info!(count = pending_ids.len(), "found pending tasks to process");
+        info!(
+            worker = WORKER_NAME,
+            count = pending_ids.len(),
+            "found pending tasks to process"
+        );
 
         for metis_id in &pending_ids {
             self.state.start_pending_task(metis_id.clone()).await;
         }
+
+        info!(
+            worker = WORKER_NAME,
+            processed = pending_ids.len(),
+            "worker iteration completed successfully"
+        );
 
         WorkerOutcome::Progress {
             processed: pending_ids.len(),

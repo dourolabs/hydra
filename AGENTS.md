@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`, while routes, job engines, and the in-memory store live in `metis-server/src`. Copy each `config.toml.sample` to `config.toml` for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
+Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers), and `metis-common` (shared models). CLI subcommands stay under `metis/src/command`; see `metis-server/AGENTS.md` for detailed route and background layout expectations. Copy each `config.toml.sample` to `config.toml` for overrides. Dockerfiles live in `images/`; automation scripts are in `scripts/`.
 
 ## Build, Test, and Development Commands
 - `cargo check --workspace` quickly verifies the entire workspace compiles.
@@ -18,7 +18,7 @@ Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings
 - Use the `MetisId` type alias for all Metis identifiers instead of raw `String` values.
 
 ## Testing Guidelines
-Run `cargo test --workspace` before opening a pull request. Keep tests near their code (routes under `metis-server/src/routes`, shared helpers in `metis-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
+Run `cargo test --workspace` before opening a pull request. Keep tests near their code (shared helpers belong in `metis-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
 
 ## Final Task Checklist
 Before finishing any task, you **must** run and fix all issues from these commands:

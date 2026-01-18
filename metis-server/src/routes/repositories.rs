@@ -19,8 +19,14 @@ use tracing::{error, info};
 pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
+    info!("list_repositories invoked");
     let repositories = state.service_state.list_repository_info().await;
-    Ok(Json(ListRepositoriesResponse { repositories }))
+    let response = ListRepositoriesResponse { repositories };
+    info!(
+        repository_count = response.repositories.len(),
+        "list_repositories completed"
+    );
+    Ok(Json(response))
 }
 
 pub async fn create_repository(
@@ -35,6 +41,7 @@ pub async fn create_repository(
         .await
         .map_err(map_repository_error)?;
 
+    info!(repository = %created.name, "create_repository completed");
     Ok(Json(UpsertRepositoryResponse {
         repository: created.without_secret(),
     }))
@@ -56,6 +63,7 @@ pub async fn update_repository(
         .await
         .map_err(map_repository_error)?;
 
+    info!(repository = %name, "update_repository completed");
     Ok(Json(UpsertRepositoryResponse {
         repository: updated.without_secret(),
     }))

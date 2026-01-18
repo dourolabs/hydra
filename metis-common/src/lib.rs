@@ -19,3 +19,15 @@ pub use repositories::{
     ServiceRepositoryInfo, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub mod task_status;
+
+#[cfg(test)]
+pub mod test_helpers {
+    use serde::Serialize;
+
+    pub fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
+        let encoded =
+            serde_urlencoded::to_string(value).expect("failed to encode query parameters");
+        serde_urlencoded::from_str(&encoded)
+            .expect("failed to decode encoded query parameters into key/value pairs")
+    }
+}

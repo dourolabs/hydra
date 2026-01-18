@@ -10,6 +10,8 @@ use tracing::{error, info};
 ///
 /// A successful iteration returns `Progress`, empty queues return `Idle`,
 /// and store failures map to `TransientError` so the scheduler can back off.
+const WORKER_NAME: &str = "monitor_running_jobs";
+
 #[derive(Clone)]
 pub struct MonitorRunningJobsWorker {
     state: AppState,
@@ -24,6 +26,7 @@ impl MonitorRunningJobsWorker {
 #[async_trait]
 impl ScheduledWorker for MonitorRunningJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
+        info!(worker = WORKER_NAME, "worker iteration started");
         // Kill any jobs that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
@@ -33,6 +36,10 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
                 Ok(ids) => ids,
                 Err(err) => {
                     error!(error = %err, "failed to list running tasks");
+                    info!(
+                        worker = WORKER_NAME,
+                        "worker iteration completed with transient error"
+                    );
                     return WorkerOutcome::TransientError {
                         reason: err.to_string(),
                     };
@@ -41,15 +48,26 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         };
 
         if running_ids.is_empty() {
+            info!(worker = WORKER_NAME, "no running tasks found; worker idle");
             return WorkerOutcome::Idle;
         }
 
-        info!(count = running_ids.len(), "found running tasks to monitor");
+        info!(
+            worker = WORKER_NAME,
+            count = running_ids.len(),
+            "found running tasks to monitor"
+        );
 
         // Check each running job's status
         for metis_id in &running_ids {
             self.state.reconcile_running_task(metis_id.clone()).await;
         }
+
+        info!(
+            worker = WORKER_NAME,
+            processed = running_ids.len(),
+            "worker iteration completed successfully"
+        );
 
         WorkerOutcome::Progress {
             processed: running_ids.len(),

@@ -47,6 +47,7 @@ pub async fn create_patch(
         .await
         .map_err(map_upsert_patch_error)?;
 
+    info!(patch_id = %patch_id, "create_patch completed");
     Ok(Json(UpsertPatchResponse { patch_id }))
 }
 
@@ -61,6 +62,7 @@ pub async fn update_patch(
         .await
         .map_err(map_upsert_patch_error)?;
 
+    info!(patch_id = %patch_id, "update_patch completed");
     Ok(Json(UpsertPatchResponse { patch_id }))
 }
 
@@ -75,6 +77,7 @@ pub async fn get_patch(
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
+    info!(patch_id = %patch_id, "get_patch completed");
     Ok(Json(PatchRecord {
         id: patch_id,
         patch,
@@ -105,7 +108,13 @@ pub async fn list_patches(
         .map(|(id, patch)| PatchRecord { id, patch })
         .collect();
 
-    Ok(Json(ListPatchesResponse { patches: filtered }))
+    let response = ListPatchesResponse { patches: filtered };
+    info!(
+        query = ?query.q,
+        returned = response.patches.len(),
+        "list_patches completed"
+    );
+    Ok(Json(response))
 }
 
 fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {

@@ -195,6 +195,8 @@ pub struct ListPatchesResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::serialize_query_params;
+    use std::collections::HashMap;
 
     #[test]
     fn search_patches_query_serializes_with_reqwest() {
@@ -202,26 +204,21 @@ mod tests {
             q: Some("test query".to_string()),
         };
 
-        // Test that reqwest can serialize the query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/patches")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize SearchPatchesQuery with reqwest");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("q").map(String::as_str), Some("test query"));
     }
 
     #[test]
     fn search_patches_query_serializes_empty_query() {
         let query = SearchPatchesQuery::default();
 
-        // Test that reqwest can serialize an empty query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/patches")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize empty SearchPatchesQuery");
+        let params = serialize_query_params(&query);
+        assert!(
+            params.is_empty(),
+            "expected empty SearchPatchesQuery to produce no parameters"
+        );
     }
 
     #[test]

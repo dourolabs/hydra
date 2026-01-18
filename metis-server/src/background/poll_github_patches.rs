@@ -31,6 +31,7 @@ use tracing::{debug, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
+const WORKER_NAME: &str = "github_poller";
 const REVIEW_ASSIGNEE_PREFIX: &str = "review-assignee:";
 
 #[derive(Clone)]
@@ -56,18 +57,39 @@ impl GithubPollerWorker {
 #[async_trait::async_trait]
 impl ScheduledWorker for GithubPollerWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
+        info!(worker = WORKER_NAME, "worker iteration started");
         let mut start_from = self.start_from.lock().await;
 
-        match sync_open_patches(&self.state, self.max_patches_per_cycle, &mut start_from).await {
-            Ok(stats) if stats.processed == 0 && stats.failed == 0 => WorkerOutcome::Idle,
-            Ok(stats) => WorkerOutcome::Progress {
-                processed: stats.processed,
-                failed: stats.failed,
-            },
-            Err(err) => WorkerOutcome::TransientError {
-                reason: err.to_string(),
-            },
+        let outcome =
+            match sync_open_patches(&self.state, self.max_patches_per_cycle, &mut start_from).await
+            {
+                Ok(stats) if stats.processed == 0 && stats.failed == 0 => WorkerOutcome::Idle,
+                Ok(stats) => WorkerOutcome::Progress {
+                    processed: stats.processed,
+                    failed: stats.failed,
+                },
+                Err(err) => WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                },
+            };
+
+        match &outcome {
+            WorkerOutcome::Idle => info!(
+                worker = WORKER_NAME,
+                "no GitHub patches required syncing; worker idle"
+            ),
+            WorkerOutcome::Progress { processed, failed } => info!(
+                worker = WORKER_NAME,
+                processed, failed, "worker iteration completed successfully"
+            ),
+            WorkerOutcome::TransientError { reason } => info!(
+                worker = WORKER_NAME,
+                error = reason,
+                "worker iteration completed with transient error"
+            ),
         }
+
+        outcome
     }
 }
 
