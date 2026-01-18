@@ -52,6 +52,13 @@ enum PanelFocus {
     Status,
 }
 
+#[derive(Copy, Clone, PartialEq, Default)]
+enum StatusPanelFocus {
+    #[default]
+    StatusFilter,
+    AgentFilter,
+}
+
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
@@ -249,6 +256,7 @@ struct DashboardState {
     status_filter: StatusFilterState,
     agent_filter: AgentFilterState,
     selected_panel: PanelFocus,
+    status_panel_focus: StatusPanelFocus,
 }
 
 struct IssueSubmission {
@@ -300,11 +308,17 @@ impl AgentFilterState {
         }
     }
 
-    fn cycle_selection(&mut self) {
+    fn cycle_selection(&mut self, forward: bool) {
         if self.options.is_empty() {
             return;
         }
-        self.selected_index = (self.selected_index + 1) % self.options.len();
+        let total = self.options.len();
+        let next = if forward {
+            (self.selected_index + 1) % total
+        } else {
+            self.selected_index.saturating_add(total - 1) % total
+        };
+        self.selected_index = next;
     }
 
     fn toggle_selected(&mut self) {
@@ -348,8 +362,14 @@ impl Default for StatusFilterState {
 }
 
 impl StatusFilterState {
-    fn cycle_selection(&mut self) {
-        self.selected_index = (self.selected_index + 1) % STATUS_FILTER_OPTIONS.len();
+    fn cycle_selection(&mut self, forward: bool) {
+        let total = STATUS_FILTER_OPTIONS.len();
+        let next = if forward {
+            (self.selected_index + 1) % total
+        } else {
+            self.selected_index.saturating_add(total - 1) % total
+        };
+        self.selected_index = next;
     }
 
     fn toggle_selected(&mut self) {
@@ -546,30 +566,40 @@ fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Resul
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
-            if key.code == KeyCode::Char('c') && has_primary_modifier(key.modifiers) {
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 return EventOutcome {
                     should_quit: true,
                     submission: None,
                 };
             }
 
-            if handle_status_filter_key(key, state) {
+            if is_issue_edit_toggle_key(key) {
                 return EventOutcome {
                     should_quit: false,
-                    submission: None,
+                    submission: handle_issue_draft_key(key, state),
                 };
             }
 
-            if handle_agent_filter_key(key, state) {
-                return EventOutcome {
-                    should_quit: false,
-                    submission: None,
-                };
+            match state.selected_panel {
+                PanelFocus::Status => {
+                    if handle_status_panel_key(key, state) {
+                        return EventOutcome {
+                            should_quit: false,
+                            submission: None,
+                        };
+                    }
+                }
+                PanelFocus::NewIssue => {
+                    return EventOutcome {
+                        should_quit: false,
+                        submission: handle_issue_draft_key(key, state),
+                    };
+                }
             }
 
             EventOutcome {
                 should_quit: false,
-                submission: handle_issue_draft_key(key, state),
+                submission: None,
             }
         }
         Event::Paste(text) => {
@@ -601,54 +631,73 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
     }
 }
 
-fn has_primary_modifier(modifiers: KeyModifiers) -> bool {
-    modifiers.contains(KeyModifiers::CONTROL)
-        || modifiers.contains(KeyModifiers::META)
-        || modifiers.contains(KeyModifiers::ALT)
+fn has_alt_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::ALT)
+        && !modifiers.contains(KeyModifiers::CONTROL)
+        && !modifiers.contains(KeyModifiers::META)
+}
+
+fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
+    matches!(key.code, KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&target))
+        && has_alt_modifier(key.modifiers)
+}
+
+fn is_issue_edit_toggle_key(key: KeyEvent) -> bool {
+    is_alt_char_key(key, 'n')
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Enter && has_primary_modifier(key.modifiers)
+    key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
 }
 
-fn handle_status_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
-    if !has_primary_modifier(key.modifiers) {
+fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    if !key.modifiers.is_empty() {
         return false;
     }
 
     match key.code {
-        KeyCode::Char('s') | KeyCode::Char('S') => {
-            state.status_filter.cycle_selection();
+        KeyCode::Left | KeyCode::Char('h') => {
+            match state.status_panel_focus {
+                StatusPanelFocus::StatusFilter => {
+                    state.status_filter.cycle_selection(false);
+                }
+                StatusPanelFocus::AgentFilter => {
+                    state.agent_filter.cycle_selection(false);
+                }
+            }
             update_views(state);
-            state.selected_panel = PanelFocus::Status;
             true
         }
-        KeyCode::Char('t') | KeyCode::Char('T') => {
-            state.status_filter.toggle_selected();
+        KeyCode::Right | KeyCode::Char('l') => {
+            match state.status_panel_focus {
+                StatusPanelFocus::StatusFilter => {
+                    state.status_filter.cycle_selection(true);
+                }
+                StatusPanelFocus::AgentFilter => {
+                    state.agent_filter.cycle_selection(true);
+                }
+            }
             update_views(state);
-            state.selected_panel = PanelFocus::Status;
             true
         }
-        _ => false,
-    }
-}
-
-fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
-    if !has_primary_modifier(key.modifiers) {
-        return false;
-    }
-
-    match key.code {
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            state.agent_filter.cycle_selection();
-            update_views(state);
-            state.selected_panel = PanelFocus::Status;
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.status_panel_focus = StatusPanelFocus::StatusFilter;
             true
         }
-        KeyCode::Char('g') | KeyCode::Char('G') => {
-            state.agent_filter.toggle_selected();
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.status_panel_focus = StatusPanelFocus::AgentFilter;
+            true
+        }
+        KeyCode::Enter => {
+            match state.status_panel_focus {
+                StatusPanelFocus::StatusFilter => {
+                    state.status_filter.toggle_selected();
+                }
+                StatusPanelFocus::AgentFilter => {
+                    state.agent_filter.toggle_selected();
+                }
+            }
             update_views(state);
-            state.selected_panel = PanelFocus::Status;
             true
         }
         _ => false,
@@ -656,9 +705,14 @@ fn handle_agent_filter_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
-    if has_primary_modifier(key.modifiers) && key.code == KeyCode::Char('n') {
-        state.issue_draft.set_editing(!state.issue_draft.editing);
-        state.selected_panel = PanelFocus::NewIssue;
+    if is_issue_edit_toggle_key(key) {
+        let next_editing = !state.issue_draft.editing;
+        state.issue_draft.set_editing(next_editing);
+        state.selected_panel = if next_editing {
+            PanelFocus::NewIssue
+        } else {
+            PanelFocus::Status
+        };
         return None;
     }
 
@@ -670,18 +724,10 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
         return None;
     }
 
-    match key.code {
-        KeyCode::Tab => {
-            state.issue_draft.cycle_assignee(true);
-            state.selected_panel = PanelFocus::NewIssue;
-            return None;
-        }
-        KeyCode::BackTab => {
-            state.issue_draft.cycle_assignee(false);
-            state.selected_panel = PanelFocus::NewIssue;
-            return None;
-        }
-        _ => {}
+    if is_alt_char_key(key, 'a') {
+        state.issue_draft.cycle_assignee(true);
+        state.selected_panel = PanelFocus::NewIssue;
+        return None;
     }
 
     if is_issue_submit_key(key) {
@@ -743,6 +789,7 @@ fn handle_issue_submission_result(
         Ok(issue_id) => {
             state.issue_draft.clear_prompt();
             state.issue_draft.set_editing(false);
+            state.selected_panel = PanelFocus::Status;
             state.issue_draft.validation_error = None;
             state.issue_draft.info_message =
                 Some(format!("Created issue {issue_id} for @{assignee}."));
@@ -817,8 +864,14 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
         Span::raw(" — press Ctrl+C to exit."),
     ])];
 
-    lines.push(status_filter_line(&state.status_filter));
-    lines.push(agent_filter_line(&state.agent_filter));
+    lines.push(status_filter_line(
+        &state.status_filter,
+        state.status_panel_focus == StatusPanelFocus::StatusFilter,
+    ));
+    lines.push(agent_filter_line(
+        &state.agent_filter,
+        state.status_panel_focus == StatusPanelFocus::AgentFilter,
+    ));
 
     if let Some(error) = &state.jobs_error {
         lines.push(Line::from(Span::styled(
@@ -852,11 +905,12 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &Dashboa
     frame.render_widget(paragraph, area);
 }
 
-fn status_filter_line(filter: &StatusFilterState) -> Line {
-    let mut spans = vec![Span::styled(
-        "Status filter: ",
-        Style::default().add_modifier(Modifier::BOLD),
-    )];
+fn status_filter_line(filter: &StatusFilterState, active: bool) -> Line {
+    let mut label_style = Style::default().add_modifier(Modifier::BOLD);
+    if active {
+        label_style = label_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let mut spans = vec![Span::styled("Status filter: ", label_style)];
 
     for (index, status) in STATUS_FILTER_OPTIONS.iter().enumerate() {
         if index > 0 {
@@ -884,7 +938,7 @@ fn status_filter_line(filter: &StatusFilterState) -> Line {
 
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        "Alt+S cycle, Alt+T toggle",
+        "Arrows/hjkl move, Enter toggles",
         Style::default().fg(Color::DarkGray),
     ));
     if !filter.any_enabled() {
@@ -897,11 +951,12 @@ fn status_filter_line(filter: &StatusFilterState) -> Line {
     Line::from(spans)
 }
 
-fn agent_filter_line(filter: &AgentFilterState) -> Line {
-    let mut spans = vec![Span::styled(
-        "Agent filter: ",
-        Style::default().add_modifier(Modifier::BOLD),
-    )];
+fn agent_filter_line(filter: &AgentFilterState, active: bool) -> Line {
+    let mut label_style = Style::default().add_modifier(Modifier::BOLD);
+    if active {
+        label_style = label_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let mut spans = vec![Span::styled("Agent filter: ", label_style)];
 
     if filter.options.is_empty() {
         spans.push(Span::styled(
@@ -937,7 +992,7 @@ fn agent_filter_line(filter: &AgentFilterState) -> Line {
 
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        "Alt+A cycle, Alt+G toggle",
+        "Arrows/hjkl move, Enter toggles",
         Style::default().fg(Color::DarkGray),
     ));
     if !filter.any_enabled() {
@@ -1073,7 +1128,7 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
     let assignee_line = Line::from(vec![
         Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
-        Span::styled("  (Tab to change)", Style::default().fg(Color::DarkGray)),
+        Span::styled("  (Alt+A to change)", Style::default().fg(Color::DarkGray)),
     ]);
     frame.render_widget(Paragraph::new(assignee_line), sections[1]);
 
@@ -1091,12 +1146,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     } else if draft.editing {
         Line::from(Span::styled(
-            "Alt+Enter to validate. Alt+N to stop editing.",
+            "Alt+A to cycle assignee. Alt+Enter to validate. Alt+N to stop editing.",
             Style::default().fg(Color::DarkGray),
         ))
     } else {
         Line::from(Span::styled(
-            "Alt+N to edit prompt. Alt+Enter to validate.",
+            "Alt+N to edit prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
             Style::default().fg(Color::DarkGray),
         ))
     };
@@ -2624,7 +2679,7 @@ mod tests {
 
         let mut filter = AgentFilterState::default();
         filter.set_options(vec!["agent-a".to_string(), "agent-b".to_string()]);
-        filter.cycle_selection();
+        filter.cycle_selection(true);
         filter.toggle_selected();
 
         let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter, false);
@@ -2695,54 +2750,53 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_enter_submits_issue_prompt() {
+    fn alt_a_cycles_assignee_in_new_issue_panel() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
-        state.issue_draft.assignees = vec!["pm".to_string()];
+        state.issue_draft.assignees = vec!["pm".to_string(), "alice".to_string()];
 
-        let submission = handle_issue_draft_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
             &mut state,
-        )
-        .expect("submission missing");
+        );
 
-        assert_eq!(submission.prompt, "Ship dashboard");
-        assert_eq!(submission.assignee, "pm");
-        assert!(state.issue_draft.is_submitting);
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.selected_assignee(), Some("alice"));
     }
 
     #[test]
-    fn ctrl_shift_enter_submits_issue_prompt() {
-        let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
-        state.issue_draft.assignees = vec!["pm".to_string()];
+    fn alt_a_does_not_cycle_assignee_in_status_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Status,
+            ..DashboardState::default()
+        };
+        state.issue_draft.assignees = vec!["pm".to_string(), "alice".to_string()];
 
-        let submission = handle_issue_draft_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
             &mut state,
-        )
-        .expect("submission missing");
+        );
 
-        assert_eq!(submission.prompt, "Ship dashboard");
-        assert_eq!(submission.assignee, "pm");
-        assert!(state.issue_draft.is_submitting);
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
     }
 
     #[test]
-    fn meta_enter_submits_issue_prompt() {
-        let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
-        state.issue_draft.assignees = vec!["pm".to_string()];
+    fn status_panel_right_arrow_cycles_status_filter() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Status,
+            ..DashboardState::default()
+        };
 
-        let submission = handle_issue_draft_key(
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::META),
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
             &mut state,
-        )
-        .expect("submission missing");
+        );
 
-        assert_eq!(submission.prompt, "Ship dashboard");
-        assert_eq!(submission.assignee, "pm");
-        assert!(state.issue_draft.is_submitting);
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.status_filter.selected_index, 1);
     }
 
     #[test]
@@ -2758,6 +2812,27 @@ mod tests {
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
         assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn status_panel_enter_toggles_agent_filter_when_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Status,
+            status_panel_focus: StatusPanelFocus::AgentFilter,
+            ..DashboardState::default()
+        };
+        state
+            .agent_filter
+            .set_options(vec!["pm".to_string(), "alice".to_string()]);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.agent_filter.enabled.first(), Some(&true));
     }
 
     #[test]
