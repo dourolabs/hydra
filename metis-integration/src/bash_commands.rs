@@ -36,6 +36,7 @@ impl BashCommands {
                 self.client.as_ref(),
                 &self.app_config,
                 Some(env),
+                Some(working_dir),
             )
             .await
             .context("failed to run metis command via cli")?;

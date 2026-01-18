@@ -28,11 +28,8 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     let job_id_clone = job_id.clone();
     env.run_as_worker(
         vec![
-            "git checkout -b metis-worker".to_string(),
             "echo \"worker content\" >> README.md".to_string(),
             "git add README.md".to_string(),
-            "git commit -m \"worker update\" ".to_string(),
-            "git push origin HEAD ".to_string(),
             "metis patches create --title \"integration worker patch\" --description \"created by worker override\"".to_string(),
             "echo \"worker run finished\"".to_string(),
         ],

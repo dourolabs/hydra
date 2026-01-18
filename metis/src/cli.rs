@@ -4,10 +4,16 @@ use crate::{
     config::{self, AppConfig},
     constants,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use metis_common::constants::ENV_METIS_SERVER_URL;
-use std::{collections::HashMap, env, ffi::OsString, path::PathBuf, sync::{Mutex, OnceLock}};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+};
 
 /// Top-level CLI options for the metis tool.
 #[derive(Parser)]
@@ -87,7 +93,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    run_with_client_and_config_and_env(args, client, app_config, None).await
+    run_with_client_and_config_and_env(args, client, app_config, None, None).await
 }
 
 /// Global mutex to guard environment variable modifications during CLI parsing.
@@ -98,11 +104,13 @@ static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 /// Execute the metis CLI using the provided CLI arguments, client, and environment variables.
 /// Environment variables from `env` are set before parsing CLI arguments so they can be used
 /// to fill in values for CLI command structs with `env` attributes.
+/// If `working_dir` is provided, the current directory is changed before dispatch and restored after.
 pub async fn run_with_client_and_config_and_env<I, T>(
     args: I,
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
     env: Option<&HashMap<String, String>>,
+    working_dir: Option<&Path>,
 ) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -111,11 +119,20 @@ where
     // Collect args before acquiring lock to minimize lock duration
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
 
+    // Save original working directory if we need to change it
+    let original_dir = if working_dir.is_some() {
+        Some(env::current_dir().context("failed to get current directory")?)
+    } else {
+        None
+    };
+
     // Acquire guard to serialize environment variable modifications, parsing, and restoration
     // This prevents race conditions during concurrent CLI parsing operations in tests
     let guard = ENV_GUARD.get_or_init(|| Mutex::new(()));
     let cli = {
-        let _lock = guard.lock().expect("env guard mutex should not be poisoned");
+        let _lock = guard
+            .lock()
+            .expect("env guard mutex should not be poisoned");
 
         // Save existing env var values and set new ones if provided
         let mut saved_vars: HashMap<String, Option<String>> = HashMap::new();
@@ -142,7 +159,23 @@ where
         cli
     };
 
-    dispatch(cli, client, app_config).await
+    // Change working directory if specified
+    if let Some(dir) = working_dir {
+        env::set_current_dir(dir)
+            .with_context(|| format!("failed to change directory to {dir:?}"))?;
+    }
+
+    // Dispatch command and restore working directory after
+    let result = dispatch(cli, client, app_config).await;
+
+    // Restore original working directory if we changed it
+    if let Some(original) = original_dir {
+        if let Err(e) = env::set_current_dir(&original) {
+            eprintln!("warning: failed to restore working directory to {original:?}: {e}");
+        }
+    }
+
+    result
 }
 
 /// Execute the metis CLI using injected arguments and a default client constructed from config.
