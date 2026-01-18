@@ -2292,6 +2292,65 @@ mod tests {
     }
 
     #[test]
+    fn user_unowned_issue_lines_ignore_agent_filter() {
+        let issues = vec![
+            issue_with_assignee("i-user", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
+        ];
+        let mut state = DashboardState {
+            username: Some("alice".to_string()),
+            issues,
+            ..Default::default()
+        };
+        state.agent_filter.set_options(vec!["bot".to_string()]);
+        state.agent_filter.toggle_selected();
+
+        update_views(&mut state);
+
+        assert_eq!(state.issue_lines.rows.len(), 1);
+        assert_eq!(
+            state.issue_lines.rows[0].id,
+            issue_id("i-agent").to_string()
+        );
+        assert!(state.assigned_issue_lines.rows.is_empty());
+        assert_eq!(state.user_unowned_issue_lines.rows.len(), 1);
+        assert_eq!(
+            state.user_unowned_issue_lines.rows[0].id,
+            issue_id("i-user").to_string()
+        );
+    }
+
+    #[test]
+    fn running_issue_lines_include_user_and_agent_assignments() {
+        let issues = vec![
+            issue_with_assignee("i-user", IssueStatus::Open, Some("alice")),
+            issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
+        ];
+        let mut state = DashboardState {
+            username: Some("alice".to_string()),
+            issues,
+            ..Default::default()
+        };
+        state
+            .agent_filter
+            .set_options(vec!["agent-a".to_string(), "agent-b".to_string()]);
+
+        update_views(&mut state);
+
+        assert_eq!(state.issue_lines.rows.len(), 2);
+        assert!(state
+            .issue_lines
+            .rows
+            .iter()
+            .any(|line| line.id == issue_id("i-user").to_string()));
+        assert!(state
+            .issue_lines
+            .rows
+            .iter()
+            .any(|line| line.id == issue_id("i-agent").to_string()));
+    }
+
+    #[test]
     fn user_owned_panel_hidden_for_agent_user() {
         let agents = vec!["alice".to_string(), "bot".to_string()];
 
