@@ -1,5 +1,7 @@
 use gloo_net::http::Request;
-use metis_common::{agents::ListAgentsResponse, jobs::ListJobsResponse};
+use metis_common::{
+    agents::ListAgentsResponse, constants::ENV_METIS_API_ORIGIN, jobs::ListJobsResponse,
+};
 use serde::de::DeserializeOwned;
 use std::fmt;
 
@@ -27,6 +29,8 @@ pub struct DashboardResponse {
     pub agents: ListAgentsResponse,
 }
 
+const _: &str = ENV_METIS_API_ORIGIN;
+
 pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
     let jobs = get_json("/v1/jobs/").await?;
     let agents = get_json("/v1/agents").await?;
@@ -35,7 +39,8 @@ pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
 }
 
 async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
-    let response = Request::get(path)
+    let url = build_api_url(path);
+    let response = Request::get(&url)
         .send()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))?;
@@ -51,4 +56,19 @@ async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
         .json::<T>()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))
+}
+
+fn build_api_url(path: &str) -> String {
+    let origin = option_env!("METIS_API_ORIGIN")
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match origin {
+        Some(origin) => {
+            let origin = origin.trim_end_matches('/');
+            let normalized_path = path.strip_prefix('/').unwrap_or(path);
+            format!("{origin}/{normalized_path}")
+        }
+        None => path.to_string(),
+    }
 }
