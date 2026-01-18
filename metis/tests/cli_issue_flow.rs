@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use metis::{
     cli,
     client::MetisClient,
@@ -33,7 +33,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let created = issues
         .iter()
         .find(|issue| issue.issue.description == description)
-        .ok_or_else(|| anyhow::anyhow!("expected issue to be created"))?;
+        .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
     cli::run_with_client_and_config(["metis", "issues", "list"], &client, &app_config).await?;
 

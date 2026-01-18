@@ -33,3 +33,5 @@ git2 = "0.19"
 
 [dev-dependencies]
 httpmock = "0.7"
+metis-server = { path = "../metis-server", features = ["test-utils"] }
+escargot = "0.5"
