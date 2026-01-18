@@ -75,6 +75,12 @@ struct IssueLines {
     rows: Vec<IssueLine>,
 }
 
+#[derive(Default, Clone, PartialEq)]
+struct CompletedIssueLines {
+    roots: Vec<IssueLine>,
+    descendants: HashMap<IssueId, Vec<IssueLine>>,
+}
+
 #[derive(Clone, PartialEq)]
 struct IssueLine {
     id: String,
@@ -227,6 +233,7 @@ struct DashboardState {
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
     assigned_issue_lines: IssueLines,
+    completed_issue_lines: CompletedIssueLines,
     jobs_error: Option<String>,
     records_error: Option<String>,
     agents_error: Option<String>,
@@ -1215,6 +1222,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 fn update_views(state: &mut DashboardState) -> bool {
     let previous_issue_lines = state.issue_lines.clone();
     let previous_assigned_issue_lines = state.assigned_issue_lines.clone();
+    let previous_completed_issue_lines = state.completed_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
@@ -1231,13 +1239,16 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.status_filter,
         &state.agent_filter,
     );
+    let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
     state.assigned_issue_lines = assigned_issue_lines;
+    state.completed_issue_lines = completed_issue_lines;
 
     previous_issue_lines != state.issue_lines
         || previous_assigned_issue_lines != state.assigned_issue_lines
+        || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
 }
@@ -1308,6 +1319,33 @@ fn build_issue_lines(
     status_filter: &StatusFilterState,
     agent_filter: &AgentFilterState,
 ) -> IssueLines {
+    let nodes = build_issue_nodes(issues, jobs);
+
+    let mut roots: Vec<IssueId> = nodes
+        .iter()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(id, _)| id.clone())
+        .collect();
+    roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
+
+    let mut rows = Vec::new();
+    let mut visited: HashSet<IssueId> = HashSet::new();
+    for root in roots {
+        append_issue(
+            &root,
+            0,
+            &mut rows,
+            &mut visited,
+            &nodes,
+            status_filter,
+            agent_filter,
+        );
+    }
+
+    IssueLines { rows }
+}
+
+fn build_issue_nodes(issues: &[IssueRecord], jobs: &[JobDetails]) -> HashMap<IssueId, IssueNode> {
     let mut tasks_by_issue: HashMap<IssueId, Vec<JobDisplay>> = HashMap::new();
 
     for job in jobs {
@@ -1357,6 +1395,15 @@ fn build_issue_lines(
         }
     }
 
+    nodes
+}
+
+fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> CompletedIssueLines {
+    let nodes = build_issue_nodes(issues, jobs);
+    if nodes.is_empty() {
+        return CompletedIssueLines::default();
+    }
+
     let mut roots: Vec<IssueId> = nodes
         .iter()
         .filter(|(_, node)| node.parent.is_none())
@@ -1364,21 +1411,31 @@ fn build_issue_lines(
         .collect();
     roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
 
-    let mut rows = Vec::new();
-    let mut visited: HashSet<IssueId> = HashSet::new();
+    let mut completed_roots = Vec::new();
+    let mut completed_descendants = HashMap::new();
+
     for root in roots {
-        append_issue(
-            &root,
-            0,
-            &mut rows,
-            &mut visited,
-            &nodes,
-            status_filter,
-            agent_filter,
-        );
+        if !is_closed_tree(&root, &nodes, &mut HashSet::new()) {
+            continue;
+        }
+
+        let mut lines = Vec::new();
+        let mut visited = HashSet::new();
+        collect_issue_lines(&root, 0, &mut lines, &mut visited, &nodes);
+        if let Some(root_line) = lines.first().cloned() {
+            completed_roots.push(root_line);
+        }
+        if lines.len() > 1 {
+            completed_descendants.insert(root.clone(), lines[1..].to_vec());
+        } else {
+            completed_descendants.insert(root.clone(), Vec::new());
+        }
     }
 
-    IssueLines { rows }
+    CompletedIssueLines {
+        roots: completed_roots,
+        descendants: completed_descendants,
+    }
 }
 
 fn append_issue(
@@ -1430,6 +1487,63 @@ fn append_issue(
             agent_filter,
         );
     }
+}
+
+fn collect_issue_lines(
+    id: &IssueId,
+    depth: usize,
+    rows: &mut Vec<IssueLine>,
+    visited: &mut HashSet<IssueId>,
+    nodes: &HashMap<IssueId, IssueNode>,
+) {
+    if !visited.insert(id.clone()) {
+        return;
+    }
+
+    let Some(node) = nodes.get(id) else {
+        return;
+    };
+
+    let readiness = issue_readiness(node, nodes);
+    let issue_summary = issue_summary(&node.record.description, &node.record.progress);
+    rows.push(IssueLine {
+        id: node.record.id.to_string(),
+        summary: issue_summary.summary,
+        progress: issue_summary.progress,
+        status: node.record.status,
+        readiness,
+        assignee: node.record.assignee.clone(),
+        task: node.task.clone(),
+        depth,
+    });
+
+    let mut children = node.children.clone();
+    children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
+    for child in children {
+        collect_issue_lines(&child, depth + 1, rows, visited, nodes);
+    }
+}
+
+fn is_closed_tree(
+    id: &IssueId,
+    nodes: &HashMap<IssueId, IssueNode>,
+    visited: &mut HashSet<IssueId>,
+) -> bool {
+    if !visited.insert(id.clone()) {
+        return false;
+    }
+
+    let Some(node) = nodes.get(id) else {
+        return false;
+    };
+
+    if node.record.status != IssueStatus::Closed {
+        return false;
+    }
+
+    node.children
+        .iter()
+        .all(|child| is_closed_tree(child, nodes, visited))
 }
 
 fn issue_summary(description: &str, progress: &str) -> IssueSummary {
@@ -1949,6 +2063,77 @@ mod tests {
         let (label, style) = issue_status_display(line.status, &line.readiness);
         assert_eq!(label, "in-progress");
         assert_eq!(style, issue_status_style(IssueStatus::InProgress));
+    }
+
+    #[test]
+    fn completed_issue_lines_include_closed_roots_with_closed_descendants() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+            issue("i-root-open", IssueStatus::Open, vec![]),
+            issue(
+                "i-child-open",
+                IssueStatus::Open,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root-closed-with-open-child"),
+                }],
+            ),
+            issue("i-root-closed-with-open-child", IssueStatus::Closed, vec![]),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+
+        assert_eq!(lines.roots.len(), 1);
+        assert_eq!(lines.roots[0].id, issue_id("i-root").to_string());
+
+        let descendants = lines
+            .descendants
+            .get(&issue_id("i-root"))
+            .expect("missing descendants");
+        assert_eq!(descendants.len(), 1);
+        assert_eq!(descendants[0].id, issue_id("i-child").to_string());
+        assert_eq!(descendants[0].depth, 1);
+    }
+
+    #[test]
+    fn completed_issue_lines_track_nested_depth() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-root"),
+                }],
+            ),
+            issue(
+                "i-grandchild",
+                IssueStatus::Closed,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-child"),
+                }],
+            ),
+        ];
+
+        let lines = build_completed_issue_lines(&issues, &[]);
+
+        let descendants = lines
+            .descendants
+            .get(&issue_id("i-root"))
+            .expect("missing descendants");
+        assert_eq!(descendants.len(), 2);
+        assert_eq!(descendants[0].depth, 1);
+        assert_eq!(descendants[1].depth, 2);
     }
 
     #[test]
