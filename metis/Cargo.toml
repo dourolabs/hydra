@@ -32,4 +32,5 @@ tui-textarea = "0.4"
 git2 = "0.19"
 
 [dev-dependencies]
+httpmock = "0.7"
 metis-server = { path = "../metis-server", features = ["test-utils"] }
