@@ -3,6 +3,8 @@ use metis_common::{agents::ListAgentsResponse, jobs::ListJobsResponse};
 use serde::de::DeserializeOwned;
 use std::fmt;
 
+use crate::config;
+
 #[derive(Debug)]
 pub enum ClientError {
     Request(String),
@@ -28,14 +30,14 @@ pub struct DashboardResponse {
 }
 
 pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
-    let jobs = get_json("/v1/jobs/").await?;
-    let agents = get_json("/v1/agents").await?;
+    let jobs = get_json(api_url("/v1/jobs/")).await?;
+    let agents = get_json(api_url("/v1/agents")).await?;
 
     Ok(DashboardResponse { jobs, agents })
 }
 
-async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
-    let response = Request::get(path)
+async fn get_json<T: DeserializeOwned>(url: String) -> Result<T, ClientError> {
+    let response = Request::get(&url)
         .send()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))?;
@@ -51,4 +53,36 @@ async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
         .json::<T>()
         .await
         .map_err(|err| ClientError::Request(err.to_string()))
+}
+
+fn api_url(path: &str) -> String {
+    build_api_url(config::api_origin(), path)
+}
+
+fn build_api_url(origin: &str, path: &str) -> String {
+    let base = origin.trim_end_matches('/');
+    let path = path.strip_prefix('/').unwrap_or(path);
+
+    if path.is_empty() {
+        return base.to_string();
+    }
+
+    format!("{base}/{path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_api_url;
+
+    #[test]
+    fn build_api_url_removes_duplicate_slashes() {
+        let url = build_api_url("http://localhost:8080/", "/v1/jobs");
+        assert_eq!(url, "http://localhost:8080/v1/jobs");
+    }
+
+    #[test]
+    fn build_api_url_preserves_base_path() {
+        let url = build_api_url("https://example.com/api", "v1/jobs");
+        assert_eq!(url, "https://example.com/api/v1/jobs");
+    }
 }
