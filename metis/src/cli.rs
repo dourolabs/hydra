@@ -7,11 +7,7 @@ use crate::{
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use metis_common::constants::ENV_METIS_SERVER_URL;
-use std::{
-    env,
-    ffi::OsString,
-    path::PathBuf,
-};
+use std::{env, ffi::OsString, path::PathBuf};
 
 /// Top-level CLI options for the metis tool.
 #[derive(Parser)]

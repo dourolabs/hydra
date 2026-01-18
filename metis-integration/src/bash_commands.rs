@@ -4,18 +4,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use metis::{client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig};
 
-use escargot::CargoBuild;
-
-fn metis_bin() -> std::path::PathBuf {
-    CargoBuild::new()
-        .package("metis")     // workspace package name
-        .bin("metis")         // binary target name
-        .current_release()    // optional; or omit for debug build
-        .run()
-        .unwrap()
-        .path()
-        .to_path_buf()
-}
+use crate::test_helpers::metis_bin;
 
 pub struct BashCommands {
     pub commands: Vec<String>,

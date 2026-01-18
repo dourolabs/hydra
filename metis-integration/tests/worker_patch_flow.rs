@@ -67,7 +67,6 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     Ok(())
 }
 
-
 async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<TaskId> {
     let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
     jobs.into_iter()
