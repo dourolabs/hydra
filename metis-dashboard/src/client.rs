@@ -29,8 +29,6 @@ pub struct DashboardResponse {
     pub agents: ListAgentsResponse,
 }
 
-const _: &str = ENV_METIS_API_ORIGIN;
-
 pub async fn load_dashboard() -> Result<DashboardResponse, ClientError> {
     let jobs = get_json("/v1/jobs/").await?;
     let agents = get_json("/v1/agents").await?;
@@ -61,7 +59,18 @@ async fn get_json<T: DeserializeOwned>(path: &str) -> Result<T, ClientError> {
 fn build_api_url(path: &str) -> String {
     let origin = option_env!("METIS_API_ORIGIN")
         .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let origin = origin.or_else(|| {
+        std::env::var(ENV_METIS_API_ORIGIN)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    });
+
+    let origin = origin.as_deref();
 
     match origin {
         Some(origin) => {
