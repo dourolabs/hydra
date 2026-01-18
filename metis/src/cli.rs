@@ -85,7 +85,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let cli = Cli::parse_from(args);
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let cli = Cli::parse_from(&args);
     dispatch(cli, client, app_config).await
 }
 

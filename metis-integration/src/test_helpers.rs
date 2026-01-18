@@ -1,6 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use brush_parser::{tokenize_str, Token};
-use metis::cli;
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::RepoName;
@@ -15,6 +13,7 @@ use tempfile::TempDir;
 use tokio::sync::RwLock;
 
 use crate::BashCommands;
+use escargot::CargoBuild;
 
 pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
@@ -25,47 +24,56 @@ pub struct TestEnvironment {
     pub service_repo_name: RepoName,
 }
 
+pub fn metis_bin() -> std::path::PathBuf {
+    CargoBuild::new()
+        .package("metis") // workspace package name
+        .bin("metis") // binary target name
+        .current_release() // optional; or omit for debug build
+        .run()
+        .unwrap()
+        .path()
+        .to_path_buf()
+}
+
 impl TestEnvironment {
-    /// Parse a bash command string into tokens using brush-parser.
-    /// Handles quoted strings, escaping, and other shell syntax correctly.
-    pub fn parse_command_tokens(command: &str) -> Result<Vec<String>> {
-        let tokens = tokenize_str(command)?;
-
-        let mut words = Vec::new();
-        for token in tokens {
-            // Extract word tokens (command and arguments, including quoted strings)
-            // brush-parser handles quoted strings as Word tokens with proper escaping
-            if let Token::Word(word, _) = token {
-                words.push(word.to_string());
-            }
-            // Skip operators, redirects, variables, and other control tokens
-            // We only care about the command and its arguments
-        }
-
-        Ok(words)
-    }
-
-    /// Run metis commands as a user via the CLI.
+    /// Run metis commands as a user via bash.
     pub async fn run_as_user(&self, commands: Vec<String>) -> Result<()> {
         for command in commands {
-            let tokens =
-                Self::parse_command_tokens(&command).context("failed to tokenize bash command")?;
-
             // Skip if empty
-            if tokens.is_empty() {
+            if command.trim().is_empty() {
                 continue;
             }
 
-            // Build args starting with "metis" if not already present
-            let args: Vec<&str> = if tokens.first().map(|s| s.as_str()) == Some("metis") {
-                tokens.iter().map(|s| s.as_str()).collect()
+            // Check if the first token (split on whitespace) is "metis"
+            let first_token = command.split_whitespace().next();
+            let command_to_run = if first_token == Some("metis") {
+                let metis_path = metis_bin();
+                // Simple string replacement: replace first occurrence of "metis" at word boundary
+                // This works because we've already verified the first word is "metis"
+                command.replacen("metis", &metis_path.to_string_lossy(), 1)
             } else {
-                let mut args = vec!["metis"];
-                args.extend(tokens.iter().map(|s| s.as_str()));
-                args
+                // Prepend "metis" if not already present
+                let metis_path = metis_bin();
+                format!("{} {}", metis_path.to_string_lossy(), command)
             };
 
-            cli::run_with_client_and_config(args, &self.client, &self.app_config).await?;
+            // Run as a shell command using bash (preserves redirects like >>)
+            let output = tokio::process::Command::new("bash")
+                .arg("-c")
+                .arg(&command_to_run)
+                .env("METIS_SERVER_URL", &self.app_config.server.url)
+                .output()
+                .await
+                .context("failed to spawn metis command")?;
+
+            if !output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!(
+                    "metis command '{command_to_run}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    status = output.status
+                ));
+            }
         }
 
         Ok(())

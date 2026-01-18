@@ -2,10 +2,9 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use brush_parser::{tokenize_str, Token};
-use metis::{
-    cli, client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig,
-};
+use metis::{client::MetisClientInterface, command::worker_run::WorkerCommands, config::AppConfig};
+
+use crate::test_helpers::metis_bin;
 
 pub struct BashCommands {
     pub commands: Vec<String>,
@@ -20,28 +19,21 @@ impl BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<String> {
-        // Parse command to check if it starts with "metis"
-        let tokens = tokenize_str(command_string).context("failed to tokenize command")?;
-        let mut words = Vec::new();
-        for token in tokens {
-            if let Token::Word(word, _) = token {
-                words.push(word.to_string());
-            }
-        }
+        // Check if the first token (split on whitespace) is "metis"
+        let first_token = command_string.split_whitespace().next();
+        let command_to_run = if first_token == Some("metis") {
+            let metis_path = metis_bin();
+            // Simple string replacement: replace first occurrence of "metis" at word boundary
+            // This works because we've already verified the first word is "metis"
+            command_string.replacen("metis", &metis_path.to_string_lossy(), 1)
+        } else {
+            command_string.to_string()
+        };
 
-        // If the first token is "metis", use cli::run_with_client_and_config
-        if words.first().map(|s| s.as_str()) == Some("metis") {
-            cli::run_with_client_and_config(words, self.client.as_ref(), &self.app_config)
-                .await
-                .context("failed to run metis command via cli")?;
-            // Return empty string as metis commands don't produce output to capture
-            return Ok(String::new());
-        }
-
-        // Otherwise, run as a shell command using bash (preserves redirects like >>)
+        // Run as a shell command using bash (preserves redirects like >>)
         let output = tokio::process::Command::new("bash")
             .arg("-c")
-            .arg(command_string)
+            .arg(&command_to_run)
             .current_dir(working_dir)
             .envs(env)
             .output()
@@ -52,7 +44,7 @@ impl BashCommands {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!(
-                "custom run command '{command_string}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                "custom run command '{command_to_run}' failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
                 status = output.status,
                 stdout = stdout,
                 stderr = stderr
