@@ -121,18 +121,12 @@ impl From<GitOid> for Oid {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchCommitRange {
-    pub base: GitOid,
-    pub head: GitOid,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Patch {
     #[serde(default)]
     pub title: String,
     pub description: String,
-    pub commit_range: PatchCommitRange,
+    pub diff: String,
     #[serde(default)]
     pub status: PatchStatus,
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.

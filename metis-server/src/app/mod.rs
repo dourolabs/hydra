@@ -282,7 +282,12 @@ impl ServiceState {
             }
         };
         queue
-            .try_squash_append(&repository, queue_patch_id.clone(), patch.commit_range)
+            .try_squash_append_diff(
+                &repository,
+                queue_patch_id.clone(),
+                &patch.diff,
+                Some(&patch.title),
+            )
             .map_err(|source| MergeQueueError::QueueUpdate {
                 patch_id: queue_patch_id,
                 repo_name: service_repo_name.clone(),

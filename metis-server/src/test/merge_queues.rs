@@ -6,7 +6,7 @@ use git2::{Repository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
-    patches::{GitOid, Patch, PatchCommitRange, PatchStatus},
+    patches::{Patch, PatchStatus},
 };
 use reqwest::StatusCode;
 use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
@@ -32,7 +32,7 @@ async fn state_with_repo_and_patch(
     repo_name: &str,
 ) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
-    let (remote_dir, commit_range) = create_repository_with_patch()?;
+    let (remote_dir, diff) = create_repository_with_patch()?;
     let repository = GitRepository {
         remote_url: remote_dir
             .path()
@@ -53,7 +53,7 @@ async fn state_with_repo_and_patch(
     let patch = Patch {
         title: "Test patch".to_string(),
         description: "Patch for merge queue enqueue test".to_string(),
-        commit_range,
+        diff,
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),
@@ -69,7 +69,7 @@ async fn state_with_repo_and_patch(
     Ok((state, patch_id, remote_dir))
 }
 
-fn create_repository_with_patch() -> anyhow::Result<(TempDir, PatchCommitRange)> {
+fn create_repository_with_patch() -> anyhow::Result<(TempDir, String)> {
     let remote_dir = TempDir::new()?;
     let repository = Repository::init(remote_dir.path())?;
     let signature = Signature::now("Tester", "tester@example.com")?;
@@ -93,13 +93,9 @@ fn create_repository_with_patch() -> anyhow::Result<(TempDir, PatchCommitRange)>
     repository.set_head("refs/heads/main")?;
     repository.checkout_head(Some(CheckoutBuilder::new().force()))?;
 
-    Ok((
-        remote_dir,
-        PatchCommitRange {
-            base: GitOid(base_commit),
-            head: GitOid(patch_commit),
-        },
-    ))
+    let diff = git_diff_for_commits(remote_dir.path(), base_commit, patch_commit)?;
+
+    Ok((remote_dir, diff))
 }
 
 fn commit_file(
@@ -134,6 +130,27 @@ fn commit_file(
     let commit_id = repo.commit(Some("HEAD"), signature, signature, message, &tree, &parents)?;
 
     Ok(commit_id)
+}
+
+fn git_diff_for_commits(
+    repo_path: &Path,
+    base: git2::Oid,
+    head: git2::Oid,
+) -> anyhow::Result<String> {
+    let repo_str = repo_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid repo path"))?;
+    let output = std::process::Command::new("git")
+        .args(["-C", repo_str, "diff", &format!("{base}..{head}")])
+        .output()?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+
+    anyhow::bail!(
+        "git diff failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 #[tokio::test]
