@@ -1,4 +1,4 @@
-use super::common::{default_image, patch_commit_range, service_repo_name};
+use super::common::{default_image, patch_diff, service_repo_name};
 use crate::{
     store::Task,
     test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
@@ -20,7 +20,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
     let patch = Patch {
         title: "Initial patch".to_string(),
         description: "initial patch".to_string(),
-        commit_range: patch_commit_range(),
+        diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),
@@ -89,7 +89,7 @@ async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
             patch: Patch {
                 title: "artifact for emit".to_string(),
                 description: "artifact for emit".to_string(),
-                commit_range: patch_commit_range(),
+                diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: Vec::new(),
@@ -123,7 +123,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
     let base_patch = Patch {
         title: "link patch to issue".to_string(),
         description: "issue-linked patch".to_string(),
-        commit_range: patch_commit_range(),
+        diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),
@@ -202,7 +202,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     let patch = Patch {
         title: "refactor logging".to_string(),
         description: "refactor logging".to_string(),
-        commit_range: patch_commit_range(),
+        diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),
@@ -212,7 +212,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     let filtered_patch = Patch {
         title: "login retry patch".to_string(),
         description: "login retry patch".to_string(),
-        commit_range: patch_commit_range(),
+        diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),

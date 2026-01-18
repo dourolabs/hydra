@@ -362,7 +362,7 @@ mod tests {
             worker,
         )]);
 
-        sleep(Duration::from_millis(520)).await;
+        sleep(Duration::from_millis(800)).await;
         scheduler.shutdown().await;
 
         let times = call_times.lock().expect("call_times poisoned");

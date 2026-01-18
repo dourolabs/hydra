@@ -1,6 +1,4 @@
-use super::common::{
-    default_image, patch_commit_range, service_repo_name, service_repository, task_id,
-};
+use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
 use crate::{
     app::ServiceState,
     job_engine::JobStatus,
@@ -699,7 +697,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             .add_patch(Patch {
                 title: "done".to_string(),
                 description: "done".to_string(),
-                commit_range: patch_commit_range(),
+                diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: Vec::new(),
@@ -912,7 +910,7 @@ async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<
             .add_patch(Patch {
                 title: "all good".to_string(),
                 description: "all good".to_string(),
-                commit_range: patch_commit_range(),
+                diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: Vec::new(),
@@ -958,12 +956,12 @@ async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<
     let metis_common::patches::Patch {
         title,
         description,
-        commit_range,
+        diff,
         ..
     } = patch_record.patch;
     assert_eq!(title, "all good");
     assert_eq!(description, "all good");
-    assert_eq!(commit_range, patch_commit_range());
+    assert_eq!(diff, patch_diff());
     Ok(())
 }
 
@@ -1037,7 +1035,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             .add_patch(Patch {
                 title: "done".to_string(),
                 description: "done".to_string(),
-                commit_range: patch_commit_range(),
+                diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
                 reviews: Vec::new(),
