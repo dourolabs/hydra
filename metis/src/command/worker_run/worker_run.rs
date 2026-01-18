@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     str::FromStr,
 };
 
-use crate::constants;
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_METIS_BASE_COMMIT, ENV_OPENAI_API_KEY},
@@ -19,14 +17,16 @@ use metis_common::{
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
-use crate::exec::run_codex;
 use tempfile::Builder;
+
+use super::worker_commands::WorkerCommands;
 
 pub async fn run(
     client: &dyn MetisClientInterface,
     job: TaskId,
     dest: PathBuf,
     openai_api_key: Option<String>,
+    commands: &dyn WorkerCommands,
 ) -> Result<()> {
     let WorkerContext {
         request_context,
@@ -53,16 +53,21 @@ pub async fn run(
         .prefix("codex-output")
         .tempdir()
         .context("failed to create temporary codex output directory")?;
-    let output_path = output_dir.path().join(constants::OUTPUT_TXT_FILE);
+    let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
-    login_codex(openai_api_key.as_deref())?;
     configure_git_repo(&dest)?;
     let base_commit = resolve_head_oid_if_present(&dest)?;
     set_base_commit_env(&mut execution_env, base_commit);
 
-    let last_message = run_codex(&prompt, &dest, &execution_env, &output_path)
-        .await
-        .with_context(|| "failed to execute codex for worker context")?;
+    let last_message = commands
+        .run(
+            &prompt,
+            openai_api_key.clone(),
+            &dest,
+            &execution_env,
+            &output_path,
+        )
+        .await?;
 
     submit_patch_artifact_if_present(
         client,
@@ -161,39 +166,6 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
         .context("failed to set git user.email")?;
     if !status.success() {
         return Err(anyhow!("git config user.email failed with status {status}"));
-    }
-
-    Ok(())
-}
-
-fn login_codex(openai_api_key: Option<&str>) -> Result<()> {
-    let openai_api_key = openai_api_key.map(str::to_owned).ok_or_else(|| {
-        anyhow!("{ENV_OPENAI_API_KEY} must be provided via --openai-api-key or environment")
-    })?;
-
-    let mut login_cmd = Command::new("codex")
-        .args(["login", "--with-api-key"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("failed to spawn codex login")?;
-
-    {
-        let mut stdin = login_cmd
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("failed to open stdin for codex login"))?;
-        stdin
-            .write_all(format!("{openai_api_key}\n").as_bytes())
-            .with_context(|| format!("failed to write {ENV_OPENAI_API_KEY} to codex login"))?;
-    }
-
-    let status = login_cmd
-        .wait()
-        .context("failed waiting for codex login to finish")?;
-    if !status.success() {
-        return Err(anyhow!("codex login failed with status {status}"));
     }
 
     Ok(())

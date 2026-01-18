@@ -112,7 +112,10 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             job,
             path,
             openai_api_key,
-        } => crate::command::worker_run::run(client, job, path, openai_api_key).await?,
+        } => {
+            let commands = crate::command::worker_run::CodexCommands {};
+            crate::command::worker_run::run(client, job, path, openai_api_key, &commands).await?
+        }
     }
 
     Ok(())

@@ -224,8 +224,11 @@ async fn list_patches(
     query: Option<String>,
     pretty: bool,
 ) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    list_patches_with_writer(client, id, query, pretty, &mut stdout).await
+    let mut buffer = Vec::new();
+    list_patches_with_writer(client, id, query, pretty, &mut buffer).await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
 }
 
 async fn list_patches_with_writer(
@@ -441,8 +444,11 @@ async fn merge_queue(
     patch_id: Option<PatchId>,
     pretty: bool,
 ) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut stdout).await
+    let mut buffer = Vec::new();
+    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut buffer).await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
 }
 
 async fn merge_queue_with_writer(

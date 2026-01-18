@@ -5,7 +5,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 tokio = { version = "1.41", features = ["macros", "rt-multi-thread"] }
 metis = { path = "../metis" }
 metis-server = { path = "../metis-server", features = ["test-utils"] }
 metis-common = { path = "../metis-common" }
+tempfile = "3.13"
+brush-parser = "0.3"
