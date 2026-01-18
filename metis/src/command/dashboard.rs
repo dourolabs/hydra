@@ -951,7 +951,7 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
                 panels[0],
                 &state.user_unowned_issue_lines,
                 &issue_list_title("Your issues", &state.user_unowned_issue_lines),
-                "No issues assigned to you",
+                "No open issues assigned to you",
             );
             render_issue_list(
                 frame,
