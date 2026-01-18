@@ -1388,6 +1388,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.jobs,
         &state.status_filter,
         &state.agent_filter,
+        true,
     );
     let user_unowned_issue_lines = build_user_unowned_issue_lines(
         state.username.as_deref(),
@@ -1468,7 +1469,13 @@ fn build_user_unowned_issue_lines(
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs, status_filter, &AgentFilterState::default())
+    build_issue_lines(
+        &assigned,
+        jobs,
+        status_filter,
+        &AgentFilterState::default(),
+        false,
+    )
 }
 
 fn should_show_user_owned_panel(username: Option<&str>, agent_names: &[String]) -> bool {
@@ -1484,6 +1491,7 @@ fn build_issue_lines(
     jobs: &[JobDetails],
     status_filter: &StatusFilterState,
     agent_filter: &AgentFilterState,
+    exclude_inactive_roots: bool,
 ) -> IssueLines {
     let nodes = build_issue_nodes(issues, jobs);
 
@@ -1497,6 +1505,16 @@ fn build_issue_lines(
     let mut rows = Vec::new();
     let mut visited: HashSet<IssueId> = HashSet::new();
     for root in roots {
+        if exclude_inactive_roots {
+            if let Some(node) = nodes.get(&root) {
+                if matches!(
+                    node.record.status,
+                    IssueStatus::Closed | IssueStatus::Dropped
+                ) {
+                    continue;
+                }
+            }
+        }
         append_issue(
             &root,
             0,
@@ -2078,6 +2096,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         assert_eq!(lines.rows.len(), 3);
@@ -2113,6 +2132,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let blocked_line = lines
@@ -2136,6 +2156,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("missing issue line");
@@ -2161,6 +2182,7 @@ mod tests {
             &jobs,
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("issue line missing");
@@ -2197,6 +2219,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines.rows.first().expect("issue line missing");
@@ -2231,6 +2254,7 @@ mod tests {
             &[],
             &StatusFilterState::default(),
             &AgentFilterState::default(),
+            false,
         );
 
         let line = lines
@@ -2487,6 +2511,33 @@ mod tests {
     }
 
     #[test]
+    fn running_issue_lines_exclude_closed_root_tree() {
+        let issues = vec![
+            issue("i-closed-root", IssueStatus::Closed, vec![]),
+            issue(
+                "i-child-open",
+                IssueStatus::Open,
+                vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: issue_id("i-closed-root"),
+                }],
+            ),
+            issue("i-open-root", IssueStatus::Open, vec![]),
+        ];
+
+        let lines = build_issue_lines(
+            &issues,
+            &[],
+            &StatusFilterState::default(),
+            &AgentFilterState::default(),
+            true,
+        );
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-open-root").to_string());
+    }
+
+    #[test]
     fn user_owned_panel_hidden_for_agent_user() {
         let agents = vec!["alice".to_string(), "bot".to_string()];
 
@@ -2517,7 +2568,7 @@ mod tests {
         };
         filter.toggle_selected();
 
-        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default());
+        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default(), false);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-closed").to_string());
@@ -2536,7 +2587,7 @@ mod tests {
         filter.cycle_selection();
         filter.toggle_selected();
 
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter);
+        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter, false);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-beta").to_string());
