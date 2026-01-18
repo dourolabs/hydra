@@ -54,6 +54,7 @@ async fn state_with_repo_and_patch(
         title: "Test patch".to_string(),
         description: "Patch for merge queue enqueue test".to_string(),
         commit_range,
+        diff: String::new(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
         reviews: Vec::new(),

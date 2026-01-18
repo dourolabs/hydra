@@ -134,6 +134,8 @@ pub struct Patch {
     pub description: String,
     pub commit_range: PatchCommitRange,
     #[serde(default)]
+    pub diff: String,
+    #[serde(default)]
     pub status: PatchStatus,
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
     #[serde(default)]
