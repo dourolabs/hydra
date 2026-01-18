@@ -22,6 +22,7 @@ pub async fn get_job_logs(
     Query(query): Query<LogsQuery>,
 ) -> Result<Response, ApiError> {
     let watch_requested = query.watch.unwrap_or(false);
+    let tail_lines = query.tail_lines;
     info!(
         job_id = %job_id,
         watch = watch_requested,
@@ -58,13 +59,25 @@ pub async fn get_job_logs(
             follow = follow,
             "streaming job logs via SSE"
         );
-        stream_logs_sse(state.job_engine.as_ref(), &job_id, follow).await
+        let response = stream_logs_sse(state.job_engine.as_ref(), &job_id, follow).await?;
+        info!(
+            job_id = %job_id,
+            follow = follow,
+            "get_job_logs streaming response ready"
+        );
+        Ok(response)
     } else {
         info!(
             job_id = %job_id,
             "fetching job logs once"
         );
-        fetch_logs(state.job_engine.as_ref(), &job_id, query.tail_lines).await
+        let response = fetch_logs(state.job_engine.as_ref(), &job_id, tail_lines).await?;
+        info!(
+            job_id = %job_id,
+            tail_lines = ?tail_lines,
+            "get_job_logs returning log snapshot"
+        );
+        Ok(response)
     }
 }
 
@@ -85,6 +98,14 @@ async fn fetch_logs(
                 err => ApiError::internal(err),
             }
         })?;
+
+    let byte_len = logs.len();
+    info!(
+        job_id = %job_id,
+        tail_lines = ?tail_lines,
+        byte_len,
+        "prepared single-shot log response"
+    );
 
     Ok((
         [(
@@ -128,5 +149,11 @@ async fn stream_logs_sse(
     let sse_stream = rx;
     let sse = Sse::new(sse_stream).keep_alive(KeepAlive::default());
 
-    Ok(sse.into_response())
+    let response = sse.into_response();
+    info!(
+        job_id = %job_id,
+        follow = follow,
+        "prepared SSE log response"
+    );
+    Ok(response)
 }

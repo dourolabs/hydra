@@ -382,6 +382,8 @@ pub struct ListIssuesResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::serialize_query_params;
+    use std::collections::HashMap;
 
     fn issue_id(value: &str) -> IssueId {
         value.parse().unwrap()
@@ -435,13 +437,13 @@ mod tests {
             graph_filters: vec![],
         };
 
-        // Test that reqwest can serialize the query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/issues")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize SearchIssuesQuery with reqwest");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("issue_type").map(String::as_str), Some("bug"));
+        assert_eq!(params.get("status").map(String::as_str), Some("open"));
+        assert_eq!(params.get("assignee").map(String::as_str), Some("alice"));
+        assert_eq!(params.get("q").map(String::as_str), Some("test query"));
     }
 
     #[test]
@@ -456,25 +458,27 @@ mod tests {
             graph_filters: vec![filter1, filter2],
         };
 
-        // Test that reqwest can serialize the query with graph_filters when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/issues")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize SearchIssuesQuery with graph_filters");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("graph").map(String::as_str),
+            Some("*:child-of:i-abcd,i-efgh:blocked-on:**")
+        );
     }
 
     #[test]
     fn search_issues_query_serializes_empty_query() {
         let query = SearchIssuesQuery::default();
 
-        // Test that reqwest can serialize an empty query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/issues")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize empty SearchIssuesQuery");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("graph").map(String::as_str), Some(""));
+        assert_eq!(
+            params.len(),
+            1,
+            "only the graph filter key should exist when no filters are provided"
+        );
     }
 }

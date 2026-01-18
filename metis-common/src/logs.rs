@@ -11,6 +11,8 @@ pub struct LogsQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::serialize_query_params;
+    use std::collections::HashMap;
 
     #[test]
     fn logs_query_serializes_with_reqwest() {
@@ -19,13 +21,11 @@ mod tests {
             tail_lines: Some(100),
         };
 
-        // Test that reqwest can serialize the query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/jobs/job-id/logs")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize LogsQuery with reqwest");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("watch").map(String::as_str), Some("true"));
+        assert_eq!(params.get("tail_lines").map(String::as_str), Some("100"));
     }
 
     #[test]
@@ -35,25 +35,24 @@ mod tests {
             tail_lines: None,
         };
 
-        // Test that reqwest can serialize the query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/jobs/job-id/logs")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize LogsQuery with false watch");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("watch").map(String::as_str), Some("false"));
+        assert!(
+            !params.contains_key("tail_lines"),
+            "tail_lines should not be serialized when absent"
+        );
     }
 
     #[test]
     fn logs_query_serializes_empty_query() {
         let query = LogsQuery::default();
 
-        // Test that reqwest can serialize an empty query when building the request
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/jobs/job-id/logs")
-            .query(&query)
-            .build();
-        result.expect("Failed to serialize empty LogsQuery");
+        let params = serialize_query_params(&query);
+        assert!(
+            params.is_empty(),
+            "expected default LogsQuery to produce no parameters"
+        );
     }
 }

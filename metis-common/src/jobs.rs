@@ -117,7 +117,7 @@ pub struct KillJobResponse {
 #[cfg(test)]
 mod tests {
     use super::SearchJobsQuery;
-    use crate::IssueId;
+    use crate::{IssueId, test_helpers::serialize_query_params};
     use std::collections::HashMap;
 
     #[test]
@@ -128,20 +128,9 @@ mod tests {
             spawned_from: Some(issue_id.clone()),
         };
 
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/jobs")
-            .query(&query)
-            .build()
-            .map(|request| {
-                request
-                    .url()
-                    .query_pairs()
-                    .into_owned()
-                    .collect::<HashMap<_, _>>()
-            });
-
-        let params = result.expect("Failed to serialize SearchJobsQuery with reqwest");
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
         assert_eq!(params.get("q").map(String::as_str), Some("test query"));
         assert_eq!(
             params.get("spawned_from").map(String::as_str),
@@ -153,12 +142,10 @@ mod tests {
     fn search_jobs_query_serializes_empty_query() {
         let query = SearchJobsQuery::default();
 
-        let client = reqwest::Client::new();
-        let result = client
-            .get("http://example.com/v1/jobs")
-            .query(&query)
-            .build();
-
-        result.expect("Failed to serialize empty SearchJobsQuery");
+        let params = serialize_query_params(&query);
+        assert!(
+            params.is_empty(),
+            "expected no query params for empty SearchJobsQuery"
+        );
     }
 }

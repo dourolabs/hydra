@@ -28,6 +28,12 @@ pub async fn get_merge_queue(
         .await
         .map_err(map_merge_queue_error)?;
 
+    info!(
+        service_repo = %repo_name,
+        branch = %branch_name,
+        queue_len = queue.patches.len(),
+        "get_merge_queue completed"
+    );
     Ok(Json(queue))
 }
 
@@ -50,6 +56,12 @@ pub async fn enqueue_patch(
         .await
         .map_err(map_merge_queue_error)?;
 
+    info!(
+        service_repo = %repo_name,
+        branch = %branch_name,
+        queue_len = queue.patches.len(),
+        "enqueue_merge_patch completed"
+    );
     Ok(Json(queue))
 }
 

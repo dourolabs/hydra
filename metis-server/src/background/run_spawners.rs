@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use tracing::{info, warn};
 
+const WORKER_NAME: &str = "run_spawners";
+
 /// Scheduled worker that runs configured spawners once per iteration.
 #[derive(Clone)]
 pub struct RunSpawnersWorker {
@@ -21,7 +23,9 @@ impl RunSpawnersWorker {
 #[async_trait]
 impl ScheduledWorker for RunSpawnersWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
+        info!(worker = WORKER_NAME, "worker iteration started");
         if self.state.spawners.is_empty() {
+            info!(worker = WORKER_NAME, "no spawners configured; worker idle");
             return WorkerOutcome::Idle;
         }
 
@@ -36,6 +40,7 @@ impl ScheduledWorker for RunSpawnersWorker {
                     }
 
                     info!(
+                        worker = WORKER_NAME,
                         spawner = spawner.name(),
                         count = tasks.len(),
                         "spawner produced tasks"
@@ -47,6 +52,7 @@ impl ScheduledWorker for RunSpawnersWorker {
                             Ok(metis_id) => {
                                 processed += 1;
                                 info!(
+                                    worker = WORKER_NAME,
                                     spawner = spawner.name(),
                                     metis_id = %metis_id,
                                     "added task produced by spawner"
@@ -58,6 +64,7 @@ impl ScheduledWorker for RunSpawnersWorker {
                                 }
                                 warn!(
                                     spawner = spawner.name(),
+                                    worker = WORKER_NAME,
                                     error = %err,
                                     "failed to add task from spawner"
                                 );
@@ -69,18 +76,35 @@ impl ScheduledWorker for RunSpawnersWorker {
                     if failure_reason.is_none() {
                         failure_reason = Some(err.to_string());
                     }
-                    warn!(spawner = spawner.name(), error = %err, "spawner run failed");
+                    warn!(
+                        worker = WORKER_NAME,
+                        spawner = spawner.name(),
+                        error = %err,
+                        "spawner run failed"
+                    );
                 }
             }
         }
 
         if let Some(reason) = failure_reason {
+            info!(
+                worker = WORKER_NAME,
+                "worker iteration completed with transient error"
+            );
             return WorkerOutcome::TransientError { reason };
         }
 
         if processed == 0 {
+            info!(
+                worker = WORKER_NAME,
+                "spawners produced no tasks; worker idle"
+            );
             WorkerOutcome::Idle
         } else {
+            info!(
+                worker = WORKER_NAME,
+                processed, "worker iteration completed successfully"
+            );
             WorkerOutcome::Progress {
                 processed,
                 failed: 0,

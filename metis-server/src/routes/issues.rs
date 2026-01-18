@@ -45,6 +45,7 @@ pub async fn create_issue(
         .await
         .map_err(map_upsert_issue_error)?;
 
+    info!(issue_id = %issue_id, "create_issue completed");
     Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
@@ -59,6 +60,7 @@ pub async fn update_issue(
         .await
         .map_err(map_upsert_issue_error)?;
 
+    info!(issue_id = %issue_id, "update_issue completed");
     Ok(Json(UpsertIssueResponse { issue_id }))
 }
 
@@ -73,6 +75,7 @@ pub async fn get_issue(
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
+    info!(issue_id = %issue_id, "get_issue completed");
     Ok(Json(IssueRecord {
         id: issue_id,
         issue,
@@ -141,7 +144,15 @@ pub async fn list_issues(
         })
         .collect();
 
-    Ok(Json(ListIssuesResponse { issues: filtered }))
+    let response = ListIssuesResponse { issues: filtered };
+    info!(
+        issue_type = ?query.issue_type,
+        status = ?query.status,
+        assignee = ?query.assignee,
+        returned = response.issues.len(),
+        "list_issues completed"
+    );
+    Ok(Json(response))
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {

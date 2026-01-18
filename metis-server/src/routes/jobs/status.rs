@@ -57,5 +57,6 @@ pub async fn get_job_status(
         ApiError::internal(anyhow!("Failed to load status log: {err}"))
     })?;
 
+    info!(job_id = %job_id, "get_job_status completed");
     Ok(Json(GetJobStatusResponse { job_id, status_log }))
 }

@@ -17,5 +17,7 @@ pub async fn list_agents(
         })
         .collect();
 
-    Ok(Json(ListAgentsResponse { agents }))
+    let response = ListAgentsResponse { agents };
+    info!(agent_count = response.agents.len(), "list_agents completed");
+    Ok(Json(response))
 }

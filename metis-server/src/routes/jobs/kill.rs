@@ -9,6 +9,7 @@ pub async fn kill_job(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
 ) -> Result<Json<KillJobResponse>, ApiError> {
+    info!(job_id = %job_id, "kill_job invoked");
     state
         .job_engine
         .kill_job(&job_id)
@@ -34,7 +35,7 @@ pub async fn kill_job(
             }
         })?;
 
-    info!(job_id = %job_id, "job killed successfully");
+    info!(job_id = %job_id, "kill_job completed successfully");
 
     Ok(Json(KillJobResponse {
         job_id,
