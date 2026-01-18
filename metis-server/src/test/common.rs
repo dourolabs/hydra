@@ -1,8 +1,5 @@
 use crate::app::GitRepository;
-use metis_common::{
-    RepoName, TaskId,
-    patches::{GitOid, PatchCommitRange},
-};
+use metis_common::{RepoName, TaskId};
 use std::str::FromStr;
 
 pub(crate) fn default_image() -> String {
@@ -17,11 +14,8 @@ pub(crate) fn service_repo_name() -> RepoName {
     RepoName::from_str("dourolabs/private-repo").expect("service repo name should parse")
 }
 
-pub(crate) fn patch_commit_range() -> PatchCommitRange {
-    PatchCommitRange {
-        base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
-        head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
-    }
+pub(crate) fn patch_diff() -> String {
+    "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
 }
 
 pub(crate) fn service_repository() -> (RepoName, GitRepository) {

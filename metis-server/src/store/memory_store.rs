@@ -759,7 +759,7 @@ mod tests {
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
         },
         jobs::BundleSpec,
-        patches::{GitOid, Patch, PatchCommitRange, PatchStatus},
+        patches::{Patch, PatchStatus},
     };
     use std::{collections::HashSet, str::FromStr};
 
@@ -773,18 +773,15 @@ mod tests {
         }
     }
 
-    fn dummy_commit_range() -> PatchCommitRange {
-        PatchCommitRange {
-            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
-            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
-        }
+    fn dummy_diff() -> String {
+        "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
     }
 
     fn sample_patch() -> Patch {
         Patch {
             title: "sample patch".to_string(),
             description: "sample patch".to_string(),
-            commit_range: dummy_commit_range(),
+            diff: dummy_diff(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
@@ -878,7 +875,7 @@ mod tests {
         let updated = Patch {
             title: "new title".to_string(),
             description: "updated patch".to_string(),
-            commit_range: dummy_commit_range(),
+            diff: dummy_diff(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
             reviews: Vec::new(),
@@ -902,7 +899,7 @@ mod tests {
                 Patch {
                     title: "noop patch".to_string(),
                     description: "noop patch".to_string(),
-                    commit_range: dummy_commit_range(),
+                    diff: dummy_diff(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),

@@ -11,12 +11,14 @@ use metis_common::{
     constants::ENV_GH_TOKEN,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
-    patches::{GitOid, PatchCommitRange},
+    patches::GitOid,
     RepoName, TaskId,
 };
 
 use crate::client::MetisClientInterface;
-use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
+use crate::command::patches::{
+    create_patch_artifact_from_repo, git_workdir_diff, resolve_service_repo_name,
+};
 use tempfile::Builder;
 
 use crate::command::worker_run::worker_commands::WorkerCommands;
@@ -215,19 +217,20 @@ async fn submit_patch_artifact_if_present(
     let create_github_pr = false;
     let is_automatic_backup = true;
 
-    let Some(base_commit) = base_commit else {
+    let Some(_) = base_commit else {
         println!("No git repository detected; skipping patch submission for job '{job}'.");
         return Ok(());
     };
-    let Some(commit_range) = create_patch_from_committed_range(dest, &base_commit)? else {
-        println!("No committed changes detected; skipping patch submission for job '{job}'.");
+    let diff = git_workdir_diff(dest)?;
+    if diff.trim().is_empty() {
+        println!("No uncommitted changes detected; skipping patch submission for job '{job}'.");
         return Ok(());
-    };
+    }
 
     let response = create_patch_artifact_from_repo(
         client,
         dest,
-        commit_range,
+        diff,
         title,
         description,
         Some(job.clone()),
@@ -282,21 +285,6 @@ fn resolve_head_oid(dest: &Path) -> Result<GitOid> {
 
     let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     GitOid::from_str(&oid).context("failed to parse HEAD commit oid")
-}
-
-fn create_patch_from_committed_range(
-    dest: &Path,
-    base_commit: &GitOid,
-) -> Result<Option<PatchCommitRange>> {
-    let head_commit = resolve_head_oid(dest)?;
-    if &head_commit == base_commit {
-        return Ok(None);
-    }
-
-    Ok(Some(PatchCommitRange {
-        base: *base_commit,
-        head: head_commit,
-    }))
 }
 
 #[cfg(test)]
@@ -375,22 +363,6 @@ mod tests {
         let repo_str = init_git_repo(repo_path)?;
         create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
         Ok(repo_str)
-    }
-
-    fn diff_for_range(repo_path: &Path, range: &PatchCommitRange) -> Result<String> {
-        let output = Command::new("git")
-            .args(["diff", &format!("{}..{}", range.base, range.head)])
-            .current_dir(repo_path)
-            .output()
-            .context("failed to generate diff for commit range")?;
-        if !output.status.success() {
-            bail!(
-                "git diff failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     #[test]
@@ -497,57 +469,15 @@ mod tests {
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
     }
 
-    #[test]
-    fn create_patch_from_committed_range_uses_commit_history() -> Result<()> {
-        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
-        let repo_path = tempdir.path();
-        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit = resolve_head_oid(repo_path)?;
-
-        std::fs::write(repo_path.join("README.md"), "committed change\n")
-            .context("failed to update README.md")?;
-        Command::new("git")
-            .args(["-C", &repo_str, "commit", "-am", "commit change"])
-            .status()
-            .context("failed to commit README change")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
-
-        std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")
-            .context("failed to write untracked file")?;
-
-        let commit_range = create_patch_from_committed_range(repo_path, &base_commit)?
-            .expect("commit range should exist when new commits are present");
-        let patch_content = diff_for_range(repo_path, &commit_range)?;
-
-        assert!(
-            patch_content.contains("committed change"),
-            "patch should include committed changes"
-        );
-        assert!(
-            !patch_content.contains("untracked.txt"),
-            "patch should ignore untracked working tree content"
-        );
-
-        Ok(())
-    }
-
     #[tokio::test]
-    async fn submit_patch_artifact_if_present_creates_patch() -> Result<()> {
+    async fn submit_patch_artifact_if_present_creates_patch_from_uncommitted_changes() -> Result<()>
+    {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        let repo_str = setup_git_repo_with_initial_commit(repo_path)?;
+        setup_git_repo_with_initial_commit(repo_path)?;
         let base_commit = resolve_head_oid(repo_path)?;
-        std::fs::write(repo_path.join("README.md"), "updated content\n")
-            .context("failed to update README.md")?;
-        Command::new("git")
-            .args(["-C", &repo_str, "commit", "-am", "update README"])
-            .status()
-            .context("failed to commit README update")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        std::fs::write(repo_path.join("README.md"), "updated content\n")?;
+        std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
         let client = MockMetisClient::default();
         client.push_upsert_patch_response(UpsertPatchResponse {
@@ -580,10 +510,13 @@ mod tests {
             request.patch.service_repo_name, repo_name,
             "patch should record the provided service repository"
         );
-        let diff = diff_for_range(repo_path, &request.patch.commit_range)?;
         assert!(
-            diff.contains("updated content"),
+            request.patch.diff.contains("updated content"),
             "patch should include modifications made by the worker"
+        );
+        assert!(
+            request.patch.diff.contains("untracked.txt"),
+            "patch should include untracked files"
         );
 
         Ok(())

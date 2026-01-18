@@ -7,8 +7,8 @@ use chrono::{DateTime, Utc};
 use metis_common::{
     PatchId, RepoName,
     patches::{
-        GitOid, GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchCommitRange,
-        PatchStatus, Review, UpsertPatchRequest,
+        GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
+        UpsertPatchRequest,
     },
 };
 use octocrab::{
@@ -24,7 +24,7 @@ use octocrab::{
     params::{pulls::State, repos::Commitish},
 };
 use serde_json::json;
-use std::{collections::HashSet, str::FromStr, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -170,10 +170,6 @@ async fn sync_patch_from_github(
         .pulls(&github.owner, &github.repo)
         .get(github.number)
         .await?;
-    let github_range = PatchCommitRange {
-        base: GitOid::from_str(&pr.base.sha)?,
-        head: GitOid::from_str(&pr.head.sha)?,
-    };
     let reviews = client
         .all_pages(
             client
@@ -253,10 +249,6 @@ async fn sync_patch_from_github(
     let mut changed = false;
     if merged_reviews != latest_patch.reviews {
         latest_patch.reviews = merged_reviews;
-        changed = true;
-    }
-    if latest_patch.commit_range != github_range {
-        latest_patch.commit_range = github_range;
         changed = true;
     }
     if new_status != latest_patch.status {
@@ -663,7 +655,7 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use metis_common::patches::{GitOid, GithubPr, PatchCommitRange};
+    use metis_common::patches::GithubPr;
     use serde_json::json;
     use std::{collections::HashMap, str::FromStr, sync::Arc};
     use tokio::sync::RwLock;
@@ -673,11 +665,8 @@ mod tests {
         test_utils::{FailingStore, test_state},
     };
 
-    fn sample_commit_range() -> PatchCommitRange {
-        PatchCommitRange {
-            base: GitOid::from_str("0000000000000000000000000000000000000001").unwrap(),
-            head: GitOid::from_str("0000000000000000000000000000000000000002").unwrap(),
-        }
+    fn sample_diff() -> String {
+        "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
     }
 
     #[tokio::test]
@@ -697,7 +686,7 @@ mod tests {
                 .add_patch(Patch {
                     title: "test".to_string(),
                     description: "desc".to_string(),
-                    commit_range: sample_commit_range(),
+                    diff: sample_diff(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
                     reviews: Vec::new(),

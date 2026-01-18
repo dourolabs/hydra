@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use git2::{Commit, MergeOptions, Oid, Repository, Signature, Time};
-use metis_common::{PatchId, patches::PatchCommitRange};
+use git2::{Commit, Diff, MergeOptions, Oid, Repository, Signature, Time};
+use metis_common::PatchId;
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -129,23 +129,39 @@ impl MergeQueueImpl {
         Ok(())
     }
 
-    pub fn try_squash_append(
+    pub fn try_squash_append_diff(
         &mut self,
         repo: &Repository,
         patch_id: PatchId,
-        commit_range: PatchCommitRange,
+        diff: &str,
+        summary: Option<&str>,
     ) -> Result<(), MergeQueueError> {
-        let base_commit = repo.find_commit(commit_range.base.into())?;
-        let head_commit = repo.find_commit(commit_range.head.into())?;
-        let tree = head_commit.tree()?;
-        let author = SignatureInfo::from_signature(&head_commit.author());
-        let committer = SignatureInfo::from_signature(&head_commit.committer());
-        let author_signature = author.to_signature()?;
-        let committer_signature = committer.to_signature()?;
-        let message = head_commit
-            .summary()
+        let tip_commit = repo.find_commit(self.tip)?;
+        let tip_tree = tip_commit.tree()?;
+        let git_diff = Diff::from_buffer(diff.as_bytes())?;
+        let mut index = match repo.apply_to_tree(&tip_tree, &git_diff, None) {
+            Ok(index) => index,
+            Err(err) => {
+                if err.class() == git2::ErrorClass::Patch {
+                    return Err(MergeQueueError::Unmergeable(tip_commit.id()));
+                }
+                return Err(err.into());
+            }
+        };
+        if index.has_conflicts() {
+            return Err(MergeQueueError::Unmergeable(tip_commit.id()));
+        }
+
+        let tree_oid = index.write_tree_to(repo)?;
+        let tree = repo.find_tree(tree_oid)?;
+        let default_signature =
+            Signature::now("metis", "metis@localhost").map_err(MergeQueueError::Git)?;
+        let author_signature = repo.signature().unwrap_or(default_signature.clone());
+        let committer_signature = repo.signature().unwrap_or(default_signature);
+        let message = summary
+            .filter(|value| !value.trim().is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("Squash {}..{}", commit_range.base, commit_range.head));
+            .unwrap_or_else(|| format!("Apply patch {patch_id}"));
 
         let squashed_commit = repo.commit(
             None,
@@ -153,8 +169,11 @@ impl MergeQueueImpl {
             &committer_signature,
             &message,
             &tree,
-            &[&base_commit],
+            &[&tip_commit],
         )?;
+
+        let author = SignatureInfo::from_signature(&author_signature);
+        let committer = SignatureInfo::from_signature(&committer_signature);
 
         self.try_append(
             repo,
@@ -261,10 +280,7 @@ mod tests {
     use super::{MergeQueueError, MergeQueueImpl, SignatureInfo};
     use anyhow::Result;
     use git2::{Oid, Repository, ResetType, Signature};
-    use metis_common::{
-        PatchId,
-        patches::{GitOid, PatchCommitRange},
-    };
+    use metis_common::PatchId;
     use std::{fs, path::Path};
     use tempfile::TempDir;
 
@@ -434,16 +450,17 @@ mod tests {
             ["file.txt:feature start\n", "file.txt:feature refined\n"],
         )?;
         let head = *commits.last().expect("commit chain non-empty");
-        let range = PatchCommitRange {
-            base: GitOid(base),
-            head: GitOid(head),
-        };
+        let repo_path = scripted
+            .repo()
+            .workdir()
+            .expect("scripted repo should have a workdir");
+        let diff = diff_for_commits(repo_path, base, head)?;
 
         let repo = scripted.queue_repo()?;
         let mut queue = MergeQueueImpl::new(&repo, BASE_REF)?;
 
         let patch_id = PatchId::new();
-        queue.try_squash_append(&repo, patch_id, range)?;
+        queue.try_squash_append_diff(&repo, patch_id, &diff, Some("feature refined"))?;
 
         assert_eq!(queue.patches().len(), 1);
         assert_eq!(
@@ -649,6 +666,23 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    fn diff_for_commits(repo_path: &Path, base: Oid, head: Oid) -> Result<String> {
+        let repo_str = repo_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid repo path"))?;
+        let output = std::process::Command::new("git")
+            .args(["-C", repo_str, "diff", &format!("{base}..{head}")])
+            .output()?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+
+        anyhow::bail!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
     }
 
     fn commit_script<S: AsRef<str>>(
