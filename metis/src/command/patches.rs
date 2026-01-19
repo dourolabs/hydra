@@ -1011,7 +1011,7 @@ mod tests {
         task_status::TaskStatusLog,
         RepoName,
     };
-    use std::{env, fs, path::Path, str::FromStr};
+    use std::{fs, path::Path, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
