@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, worker_commands::CodexCommands};
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{constants::ENV_OPENAI_API_KEY, IssueId, TaskId};
@@ -8,6 +8,7 @@ pub mod create;
 pub mod kill;
 pub mod list;
 pub mod logs;
+pub mod worker_run;
 
 pub(crate) use list::format_runtime;
 pub use list::DEFAULT_JOB_LIMIT;
@@ -113,8 +114,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             path,
             openai_api_key,
         } => {
-            let commands = crate::command::worker_run::CodexCommands {};
-            crate::command::worker_run::run(client, job, path, openai_api_key, &commands).await?
+            let commands = CodexCommands;
+            worker_run::run(client, job, path, openai_api_key, &commands).await?
         }
     }
 

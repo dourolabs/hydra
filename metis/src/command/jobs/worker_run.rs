@@ -6,21 +6,18 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use metis_common::{
-    constants::{ENV_GH_TOKEN, ENV_METIS_BASE_COMMIT, ENV_OPENAI_API_KEY},
+    constants::ENV_GH_TOKEN,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
     RepoName, TaskId,
 };
+use tempfile::Builder;
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
-use crate::git::{
-    clone_repo, configure_repo, resolve_head_oid, workdir_diff as git_workdir_diff,
-};
-use tempfile::Builder;
-
-use super::worker_commands::WorkerCommands;
+use crate::git::{clone_repo, configure_repo, resolve_head_oid, workdir_diff};
+use crate::worker_commands::WorkerCommands;
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -36,29 +33,29 @@ pub async fn run(
         ..
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
-    // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    match request_context {
+    let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
+            None
         }
         Bundle::GitRepository { url, rev } => {
-            clone_git_repo(&url, &rev, &dest, github_token.as_deref())?;
+            clone_repo(&url, &rev, &dest, github_token.as_deref())
+                .context("failed to clone repository")?;
+            configure_repo(&dest, "Metis Worker", "metis-worker@example.com")
+                .context("failed to configure git repository")?;
+            resolve_head_oid(&dest).context("failed to resolve HEAD commit")?
         }
-    }
+    };
 
     let output_dir = Builder::new()
         .prefix("codex-output")
         .tempdir()
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
-
-    configure_git_repo(&dest)?;
-    let base_commit = resolve_head_oid_if_present(&dest)?;
-    set_base_commit_env(&mut execution_env, base_commit);
 
     let last_message = commands
         .run(
@@ -79,7 +76,6 @@ pub async fn run(
         base_commit,
     )
     .await?;
-    // Submit job status (merge of worker-submit functionality)
     submit_job_status(client, &job, &last_message).await?;
 
     Ok(())
@@ -100,20 +96,6 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
     }
 }
 
-fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
-    clone_repo(url, rev, dest, github_token).context("failed to clone repository")?;
-    Ok(())
-}
-
-fn configure_git_repo(dest: &Path) -> Result<()> {
-    let git_dir = dest.join(".git");
-    if !git_dir.exists() {
-        return Ok(());
-    }
-
-    configure_repo(dest, "Metis Worker", "metis-worker@example.com")
-}
-
 fn ensure_color_output_env(env: &mut HashMap<String, String>) {
     env.entry("TERM".to_string())
         .or_insert_with(|| "xterm-256color".to_string());
@@ -123,12 +105,6 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
         .or_insert_with(|| "1".to_string());
     env.entry("FORCE_COLOR".to_string())
         .or_insert_with(|| "1".to_string());
-}
-
-fn set_base_commit_env(env: &mut HashMap<String, String>, base_commit: Option<GitOid>) {
-    if let Some(base_commit) = base_commit {
-        env.insert(ENV_METIS_BASE_COMMIT.to_string(), base_commit.to_string());
-    }
 }
 
 async fn submit_job_status(
@@ -169,7 +145,7 @@ async fn submit_patch_artifact_if_present(
         println!("No git repository detected; skipping patch submission for job '{job}'.");
         return Ok(());
     };
-    let diff = git_workdir_diff(dest)?;
+    let diff = workdir_diff(dest)?;
     if diff.trim().is_empty() {
         println!("No uncommitted changes detected; skipping patch submission for job '{job}'.");
         return Ok(());
@@ -213,14 +189,6 @@ fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
     (title, description)
 }
 
-fn resolve_head_oid_if_present(dest: &Path) -> Result<Option<GitOid>> {
-    if !dest.join(".git").exists() {
-        return Ok(None);
-    }
-
-    resolve_head_oid(dest)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,11 +215,7 @@ mod tests {
         Ok(repo_str.to_string())
     }
 
-    fn create_initial_commit(
-        repo_path: &Path,
-        filename: &str,
-        content: &str,
-    ) -> Result<()> {
+    fn create_initial_commit(repo_path: &Path, filename: &str, content: &str) -> Result<()> {
         std::fs::write(repo_path.join(filename), content)
             .with_context(|| format!("failed to write initial file {filename}"))?;
 
@@ -262,12 +226,9 @@ mod tests {
     }
 
     fn setup_git_repo_with_initial_commit(repo_path: &Path) -> Result<String> {
-        init_git_repo(repo_path)?;
+        let repo_str = init_git_repo(repo_path)?;
         create_initial_commit(repo_path, "README.md", "initial content")?;
-        Ok(repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("repo path contains invalid UTF-8"))?
-            .to_string())
+        Ok(repo_str)
     }
 
     #[test]
@@ -292,7 +253,7 @@ mod tests {
         git_stage_all_changes(repo_path)?;
         git_commit_changes(repo_path, "init")?;
 
-        configure_git_repo(repo_path)?;
+        git_configure_repo(repo_path, "Metis Worker", "metis-worker@example.com")?;
 
         let repo = Repository::open(repo_path).context("failed to reopen repo for assertions")?;
         let config = repo
@@ -331,38 +292,14 @@ mod tests {
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
     }
 
-    #[test]
-    fn set_base_commit_env_sets_value_when_present() -> Result<()> {
-        let mut env = HashMap::new();
-        let commit = GitOid::from_str("0123456789abcdef0123456789abcdef01234567")?;
-
-        set_base_commit_env(&mut env, Some(commit));
-
-        assert_eq!(
-            env.get(ENV_METIS_BASE_COMMIT).map(String::as_str),
-            Some("0123456789abcdef0123456789abcdef01234567")
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn set_base_commit_env_ignores_missing_commit() {
-        let mut env = HashMap::new();
-
-        set_base_commit_env(&mut env, None);
-
-        assert!(!env.contains_key(ENV_METIS_BASE_COMMIT));
-    }
-
     #[tokio::test]
-    async fn submit_patch_artifact_if_present_creates_patch_from_uncommitted_changes(
-    ) -> Result<()> {
+    async fn submit_patch_artifact_if_present_creates_patch_from_uncommitted_changes() -> Result<()>
+    {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit = resolve_head_oid(repo_path)?
-            .expect("expected HEAD commit after initial setup");
+        let base_commit =
+            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
         std::fs::write(repo_path.join("README.md"), "updated content\n")?;
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
@@ -414,8 +351,8 @@ mod tests {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit = resolve_head_oid(repo_path)?
-            .expect("expected HEAD commit after initial setup");
+        let base_commit =
+            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
 
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-456");

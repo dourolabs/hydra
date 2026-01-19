@@ -1,15 +1,9 @@
-use std::{
-    collections::HashMap,
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{collections::HashMap, path::Path, process::Stdio};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use metis_common::constants::ENV_OPENAI_API_KEY;
-
-use crate::exec::run_codex;
+use tokio::{fs, io::AsyncWriteExt, process::Command};
 
 #[async_trait]
 pub trait WorkerCommands: Send + Sync {
@@ -23,9 +17,10 @@ pub trait WorkerCommands: Send + Sync {
     ) -> Result<String>;
 }
 
-pub struct CodexCommands {}
+pub struct CodexCommands;
+
 impl CodexCommands {
-    fn login(&self, openai_api_key: Option<&str>) -> Result<()> {
+    async fn login(&self, openai_api_key: Option<&str>) -> Result<()> {
         let openai_api_key = openai_api_key.map(str::to_owned).ok_or_else(|| {
             anyhow!("{ENV_OPENAI_API_KEY} must be provided via --openai-api-key or environment")
         })?;
@@ -45,17 +40,61 @@ impl CodexCommands {
                 .ok_or_else(|| anyhow!("failed to open stdin for codex login"))?;
             stdin
                 .write_all(format!("{openai_api_key}\n").as_bytes())
+                .await
                 .with_context(|| format!("failed to write {ENV_OPENAI_API_KEY} to codex login"))?;
         }
 
         let status = login_cmd
             .wait()
+            .await
             .context("failed waiting for codex login to finish")?;
         if !status.success() {
             return Err(anyhow!("codex login failed with status {status}"));
         }
 
         Ok(())
+    }
+
+    async fn run_codex(
+        prompt: &str,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+        output_path: &Path,
+    ) -> Result<String> {
+        if let Some(dir) = output_path.parent() {
+            fs::create_dir_all(dir)
+                .await
+                .with_context(|| format!("failed to create codex output directory {dir:?}"))?;
+        }
+
+        let mut command = Command::new("codex");
+        command
+            .args([
+                "exec",
+                "--color",
+                "always",
+                "-o",
+                output_path
+                    .to_str()
+                    .expect("codex output path should be valid UTF-8"),
+                "--dangerously-bypass-approvals-and-sandbox",
+                prompt,
+            ])
+            .current_dir(working_dir)
+            .envs(env);
+
+        let status = command
+            .status()
+            .await
+            .context("failed to spawn codex command")?;
+
+        if !status.success() {
+            return Err(anyhow!("codex command failed with status {status}"));
+        }
+
+        fs::read_to_string(output_path)
+            .await
+            .with_context(|| format!("failed to read codex output from {output_path:?}"))
     }
 }
 
@@ -69,8 +108,8 @@ impl WorkerCommands for CodexCommands {
         env: &HashMap<String, String>,
         output_path: &Path,
     ) -> Result<String> {
-        self.login(openai_api_key.as_deref())?;
-        run_codex(prompt, working_dir, env, output_path)
+        self.login(openai_api_key.as_deref()).await?;
+        Self::run_codex(prompt, working_dir, env, output_path)
             .await
             .with_context(|| "failed to execute codex for worker context")
     }

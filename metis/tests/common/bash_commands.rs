@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use metis::command::worker_run::WorkerCommands;
+use metis::worker_commands::WorkerCommands;
 
 use super::test_helpers::metis_bin;
 
