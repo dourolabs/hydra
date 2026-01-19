@@ -33,6 +33,8 @@ Use ```cargo check --workspace``` for a quick compile pass before full builds.
 
 `./scripts/service.sh destroy` -- tear down the services in the cluster.
 
+Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` before submitting changes.
+
 
 ## Task system
 
