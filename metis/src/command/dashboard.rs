@@ -27,10 +27,12 @@ use metis_common::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, ScrollbarState},
+    widgets::{
+        Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    },
     Frame, Terminal,
 };
 use tui_textarea::TextArea;
@@ -288,6 +290,7 @@ struct DashboardState {
     issue_scroll: ListScrollState,
     user_unowned_issue_scroll: ListScrollState,
     completed_issue_scroll: ListScrollState,
+    issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
     agents_error: Option<String>,
@@ -1082,6 +1085,7 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
             &issue_list_title("Your issues", &state.user_unowned_issue_lines),
             "No open issues assigned to you",
             state.user_unowned_issue_scroll.offset,
+            state.user_unowned_issue_scroll.scrollbar_state,
         );
     }
 
@@ -1092,6 +1096,7 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         &issue_list_title("Running issues", &state.issue_lines),
         "No issues found",
         state.issue_scroll.offset,
+        state.issue_scroll.scrollbar_state,
     );
     render_completed_issue_list(
         frame,
@@ -1100,6 +1105,7 @@ fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: 
         &completed_issue_list_title(&state.completed_issue_lines),
         "No completed issues",
         state.completed_issue_scroll.offset,
+        state.completed_issue_scroll.scrollbar_state,
     );
 }
 
@@ -1116,28 +1122,20 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         .border_style(panel_border_style(
             state.selected_panel == PanelFocus::NewIssue,
         ));
-    let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-
-    let prompt_sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(sections[0]);
+    let sections = issue_creator_layout(area);
     let prompt_label = Line::from(Span::styled(
         "Prompt",
         Style::default().add_modifier(Modifier::BOLD),
     ));
-    frame.render_widget(Paragraph::new(prompt_label), prompt_sections[0]);
-    frame.render_widget(draft.prompt.widget(), prompt_sections[1]);
+    frame.render_widget(Paragraph::new(prompt_label), sections.prompt_label);
+    frame.render_widget(draft.prompt.widget(), sections.prompt_input);
+    render_panel_scrollbar(
+        frame,
+        sections.prompt_input,
+        state.issue_draft_scroll.scrollbar_state,
+    );
 
     let assignee = draft.selected_assignee().unwrap_or("pm");
     let assignee_line = Line::from(vec![
@@ -1145,7 +1143,7 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
         Span::styled("  (Alt+A to change)", Style::default().fg(Color::DarkGray)),
     ]);
-    frame.render_widget(Paragraph::new(assignee_line), sections[1]);
+    frame.render_widget(Paragraph::new(assignee_line), sections.assignee);
 
     let footer = if draft.is_submitting {
         Line::from(Span::styled(
@@ -1170,7 +1168,7 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
             Style::default().fg(Color::DarkGray),
         ))
     };
-    frame.render_widget(Paragraph::new(footer), sections[2]);
+    frame.render_widget(Paragraph::new(footer), sections.footer);
 }
 
 fn render_issue_list(
@@ -1180,6 +1178,7 @@ fn render_issue_list(
     title: &str,
     empty_message: &str,
     scroll_offset: usize,
+    scrollbar_state: ScrollbarState,
 ) {
     let view_height = list_view_height(area);
     let items =
@@ -1190,6 +1189,7 @@ fn render_issue_list(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(List::new(items).block(block), area);
+    render_panel_scrollbar(frame, panel_scrollbar_area(area), scrollbar_state);
 }
 
 fn render_completed_issue_list(
@@ -1199,6 +1199,7 @@ fn render_completed_issue_list(
     title: &str,
     empty_message: &str,
     scroll_offset: usize,
+    scrollbar_state: ScrollbarState,
 ) {
     let rows = completed_issue_rows(completed_issue_lines);
     let view_height = list_view_height(area);
@@ -1208,6 +1209,7 @@ fn render_completed_issue_list(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(List::new(items).block(block), area);
+    render_panel_scrollbar(frame, panel_scrollbar_area(area), scrollbar_state);
 }
 
 fn panel_border_style(selected: bool) -> Style {
@@ -1283,6 +1285,13 @@ struct IssuePanelLayout {
     completed: Rect,
 }
 
+struct IssueCreatorLayout {
+    prompt_label: Rect,
+    prompt_input: Rect,
+    assignee: Rect,
+    footer: Rect,
+}
+
 fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
     let has_username = state
         .username
@@ -1318,6 +1327,33 @@ fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
         user_owned: None,
         running: panels[0],
         completed: panels[1],
+    }
+}
+
+fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
+    let inner = area.inner(&Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let prompt_sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(sections[0]);
+
+    IssueCreatorLayout {
+        prompt_label: prompt_sections[0],
+        prompt_input: prompt_sections[1],
+        assignee: sections[1],
+        footer: sections[2],
     }
 }
 
@@ -1402,6 +1438,23 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
     state
         .completed_issue_scroll
         .sync(completed_rows.len(), completed_view_height);
+
+    let creator_layout = issue_creator_layout(layout.issue_creator);
+    let prompt_view_height = creator_layout.prompt_input.height as usize;
+    let prompt_lines = state.issue_draft.prompt.lines().len();
+    let cursor_row = state.issue_draft.prompt.cursor().0;
+    let max_offset = max_scroll_offset(prompt_lines, prompt_view_height);
+    state.issue_draft_scroll.offset = next_scroll_top(
+        state.issue_draft_scroll.offset,
+        cursor_row,
+        prompt_view_height,
+    )
+    .min(max_offset);
+    state.issue_draft_scroll.scrollbar_state = list_scrollbar_state(
+        prompt_lines,
+        prompt_view_height,
+        state.issue_draft_scroll.offset,
+    );
 }
 
 fn completed_issue_descendants<'a>(
@@ -1504,11 +1557,31 @@ fn list_view_height(area: Rect) -> usize {
     area.height.saturating_sub(2) as usize
 }
 
+fn panel_scrollbar_area(area: Rect) -> Rect {
+    area.inner(&Margin {
+        vertical: 1,
+        horizontal: 1,
+    })
+}
+
 fn max_scroll_offset(total_items: usize, view_height: usize) -> usize {
     if view_height == 0 {
         return 0;
     }
     total_items.saturating_sub(view_height)
+}
+
+fn next_scroll_top(prev_top: usize, cursor_row: usize, view_height: usize) -> usize {
+    if view_height == 0 {
+        return 0;
+    }
+    if cursor_row < prev_top {
+        cursor_row
+    } else if prev_top.saturating_add(view_height) <= cursor_row {
+        cursor_row.saturating_add(1).saturating_sub(view_height)
+    } else {
+        prev_top
+    }
 }
 
 fn list_scrollbar_state(
@@ -1521,6 +1594,18 @@ fn list_scrollbar_state(
     ScrollbarState::new(total_items)
         .position(position)
         .viewport_content_length(view_height)
+}
+
+fn render_panel_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: ScrollbarState) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let mut state = scrollbar_state;
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .thumb_style(Style::default().fg(Color::White))
+        .track_style(Style::default().fg(Color::DarkGray));
+    frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 fn issue_prefix(depth: usize) -> String {
