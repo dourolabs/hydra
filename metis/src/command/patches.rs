@@ -1,9 +1,4 @@
-use std::{
-    env,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::{env, io::Write, path::Path, path::PathBuf, process::Command};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -26,6 +21,11 @@ use octocrab::Octocrab;
 use serde::Deserialize;
 
 use crate::client::MetisClientInterface;
+use crate::git;
+use crate::git::{
+    apply_patch, branch_exists, checkout_new_branch, commit_changes, current_branch,
+    ensure_staged_changes, push_branch, stage_all_changes, workdir_diff as git_workdir_diff,
+};
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -614,120 +614,7 @@ pub async fn create_patch_artifact_from_repo(
 }
 
 fn git_repository_root() -> Result<PathBuf> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .context("failed to find git repository root")?;
-
-    if !output.status.success() {
-        bail!("Current directory is not inside a git repository.");
-    }
-
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.is_empty() {
-        bail!("Failed to resolve git repository root.");
-    }
-
-    Ok(PathBuf::from(root))
-}
-
-pub fn git_workdir_diff(repo_root: &Path) -> Result<String> {
-    let tracked = tracked_diff(repo_root)?;
-    let untracked = untracked_diff(repo_root)?;
-    if tracked.trim().is_empty() {
-        return Ok(untracked);
-    }
-    if untracked.trim().is_empty() {
-        return Ok(tracked);
-    }
-    Ok(format!("{tracked}\n{untracked}"))
-}
-
-fn tracked_diff(repo_root: &Path) -> Result<String> {
-    if has_head_commit(repo_root)? {
-        return run_git_diff(repo_root, &["diff", "HEAD"], true);
-    }
-
-    let staged = run_git_diff(repo_root, &["diff", "--cached"], true)?;
-    let unstaged = run_git_diff(repo_root, &["diff"], true)?;
-    if staged.trim().is_empty() {
-        return Ok(unstaged);
-    }
-    if unstaged.trim().is_empty() {
-        return Ok(staged);
-    }
-    Ok(format!("{staged}\n{unstaged}"))
-}
-
-fn has_head_commit(repo_root: &Path) -> Result<bool> {
-    let status = Command::new("git")
-        .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check for HEAD commit")?;
-    Ok(status.success())
-}
-
-fn run_git_diff(repo_root: &Path, args: &[&str], allow_diff_exit: bool) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo_root)
-        .output()
-        .with_context(|| format!("failed to run git {}", args.join(" ")))?;
-    if output.status.success() || (allow_diff_exit && output.status.code() == Some(1)) {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-    }
-
-    bail!(
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
-
-fn untracked_diff(repo_root: &Path) -> Result<String> {
-    let files = untracked_files(repo_root)?;
-    let mut combined = String::new();
-    for file in files {
-        let file = file.trim();
-        if file.is_empty() {
-            continue;
-        }
-        let output = Command::new("git")
-            .args(["diff", "--no-index", "--binary", "/dev/null", file])
-            .current_dir(repo_root)
-            .output()
-            .with_context(|| format!("failed to diff untracked file '{file}'"))?;
-        if output.status.success() || output.status.code() == Some(1) {
-            combined.push_str(&String::from_utf8_lossy(&output.stdout));
-            combined.push('\n');
-        } else {
-            bail!(
-                "git diff for untracked file {file} failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-    }
-    Ok(combined)
-}
-
-fn untracked_files(repo_root: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(repo_root)
-        .output()
-        .context("failed to list untracked files")?;
-    if !output.status.success() {
-        bail!(
-            "git ls-files failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_string)
-        .collect())
+    git::repository_root(None)
 }
 
 fn extract_patch_title(record: &PatchRecord) -> &str {
@@ -827,50 +714,10 @@ fn apply_patch_to_repo(patch: &Patch, git_root: &Path) -> Result<()> {
         patch.title
     );
 
-    let mut child = Command::new("git")
-        .args(["apply", "--whitespace=fix"])
-        .current_dir(git_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to execute git apply")?;
+    apply_patch(git_root, &patch.diff).context("failed to apply patch to repository")?;
 
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| anyhow!("failed to open stdin for git apply"))?;
-        stdin
-            .write_all(patch.diff.as_bytes())
-            .context("failed to write patch diff to git apply")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("failed to run git apply")?;
-
-    if !output.stderr.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("git apply stderr: {stderr}");
-    }
-
-    if !output.stdout.is_empty() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        println!("git apply stdout: {stdout}");
-    }
-
-    if output.status.success() {
-        println!("Patch applied successfully.");
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!(
-        "Failed to apply patch. Exit code: {}. Error: {}",
-        output.status.code().unwrap_or(-1),
-        stderr
-    );
+    println!("Patch applied successfully.");
+    Ok(())
 }
 
 async fn review_patch(
@@ -926,10 +773,10 @@ async fn create_github_pull_request(
     let github_token = github_token
         .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    stage_changes_for_pr(repo_root)?;
+    stage_all_changes(repo_root)?;
     ensure_staged_changes(repo_root)?;
     commit_changes(repo_root, title)?;
-    push_branch(repo_root, &branch_name)?;
+    push_branch(repo_root, &branch_name, Some(github_token))?;
     let pr_metadata =
         open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
@@ -988,105 +835,6 @@ fn sanitize_branch_segment(input: &str) -> String {
     }
 
     normalized.trim_matches('-').to_string()
-}
-
-fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool> {
-    let status = Command::new("git")
-        .args(["show-ref", "--verify", &format!("refs/heads/{branch}")])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check for existing branch")?;
-
-    Ok(status.success())
-}
-
-fn checkout_new_branch(repo_root: &Path, branch: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["checkout", "-b", branch])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to create feature branch for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to create branch '{branch}'");
-}
-
-fn stage_changes_for_pr(repo_root: &Path) -> Result<()> {
-    let add_status = Command::new("git")
-        .arg("add")
-        .args(["-A", "--", "."])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to stage changes for GitHub PR")?;
-
-    if !add_status.success() {
-        bail!("failed to stage changes for GitHub PR");
-    }
-
-    Ok(())
-}
-
-fn ensure_staged_changes(repo_root: &Path) -> Result<()> {
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to check staged changes")?;
-
-    match status.code() {
-        Some(0) => bail!("No staged changes to commit for GitHub PR"),
-        Some(1) => Ok(()),
-        _ => bail!("failed to check staged changes before committing"),
-    }
-}
-
-fn commit_changes(repo_root: &Path, title: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["commit", "-m", title])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to commit changes for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to commit changes for GitHub PR");
-}
-
-fn current_branch(repo_root: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_root)
-        .output()
-        .context("failed to resolve current branch")?;
-    if !output.status.success() {
-        bail!("git rev-parse --abbrev-ref failed");
-    }
-
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() {
-        bail!("unable to determine current branch");
-    }
-
-    Ok(branch)
-}
-
-fn push_branch(repo_root: &Path, branch: &str) -> Result<()> {
-    let status = Command::new("git")
-        .args(["push", "-u", "origin", branch])
-        .current_dir(repo_root)
-        .status()
-        .context("failed to push branch to origin for GitHub PR")?;
-
-    if status.success() {
-        return Ok(());
-    }
-
-    bail!("failed to push branch '{branch}' to origin");
 }
 
 #[derive(Deserialize)]
@@ -1196,11 +944,16 @@ async fn open_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::{
+        commit_changes as git_commit_changes, configure_repo as git_configure_repo,
+        resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
+    };
     use crate::{
         client::MockMetisClient,
         test_utils::ids::{issue_id, patch_id, task_id},
     };
     use anyhow::anyhow;
+    use git2::Repository;
     use metis_common::{
         issues::{
             IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
@@ -1214,7 +967,7 @@ mod tests {
         task_status::TaskStatusLog,
         RepoName,
     };
-    use std::{env, fs, process::Command, str::FromStr};
+    use std::{env, fs, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1277,78 +1030,22 @@ mod tests {
     ) -> Result<(tempfile::TempDir, std::path::PathBuf, GitOid, GitOid)> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test repo")?;
         let repo_path = tempdir.path().to_path_buf();
-        let repo_str = repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
-
-        Command::new("git")
-            .args(["init", repo_str])
-            .status()
-            .context("failed to init git repo for test")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.name", "Test User"])
-            .status()
-            .context("failed to set git user.name")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.email", "test@example.com"])
-            .status()
-            .context("failed to set git user.email")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
-        Command::new("git")
-            .args([
-                "-C",
-                repo_str,
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/dourolabs/example.git",
-            ])
-            .status()
-            .context("failed to set remote origin")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git remote add returned non-zero exit code"))?;
+        let repo = Repository::init(&repo_path).context("failed to init git repo for test")?;
+        git_configure_repo(&repo_path, "Test User", "test@example.com")?;
+        repo.remote("origin", "https://github.com/dourolabs/example.git")
+            .context("failed to set remote origin")?;
 
         fs::write(repo_path.join("README.md"), "initial content\n")
             .context("failed to write initial README.md")?;
-        Command::new("git")
-            .args(["-C", repo_str, "add", "README.md"])
-            .status()
-            .context("failed to add README.md to repo")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "commit", "-m", "initial commit"])
-            .status()
-            .context("failed to create initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        git_stage_all_changes(&repo_path)?;
+        git_commit_changes(&repo_path, "initial commit")?;
 
         fs::write(repo_path.join("README.md"), "updated content\n")
             .context("failed to update README.md")?;
         fs::write(repo_path.join("notes.txt"), "new note content\n")
             .context("failed to write notes.txt")?;
-        let base_commit = GitOid::from_str(
-            String::from_utf8_lossy(
-                &Command::new("git")
-                    .args(["-C", repo_str, "rev-parse", "HEAD^{commit}"])
-                    .output()
-                    .context("failed to resolve initial commit")?
-                    .stdout,
-            )
-            .trim(),
-        )
-        .context("failed to parse initial commit oid")?;
+        let base_commit = git_resolve_head_oid(&repo_path)?
+            .ok_or_else(|| anyhow!("failed to resolve initial commit"))?;
 
         Ok((tempdir, repo_path, base_commit, base_commit))
     }
