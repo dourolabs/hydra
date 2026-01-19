@@ -132,6 +132,38 @@ pub struct IssueDependency {
     pub issue_id: IssueId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoItem {
+    pub description: String,
+    #[serde(default)]
+    pub is_done: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoListResponse {
+    pub issue_id: IssueId,
+    #[serde(default)]
+    pub todo_list: Vec<TodoItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddTodoItemRequest {
+    pub description: String,
+    #[serde(default)]
+    pub is_done: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplaceTodoListRequest {
+    #[serde(default)]
+    pub todo_list: Vec<TodoItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToggleTodoItemRequest {
+    pub index: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssueGraphFilterSide {
     Left,
@@ -305,6 +337,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todo_list: Vec<TodoItem>,
     #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
@@ -385,6 +419,7 @@ pub struct ListIssuesResponse {
 mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
+    use serde_json::json;
     use std::collections::HashMap;
 
     fn issue_id(value: &str) -> IssueId {
@@ -482,5 +517,46 @@ mod tests {
             1,
             "only the graph filter key should exist when no filters are provided"
         );
+    }
+
+    #[test]
+    fn issue_todo_list_defaults_when_missing() {
+        let raw = r#"{"type":"task","description":"write docs"}"#;
+
+        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
+
+        assert!(issue.todo_list.is_empty());
+        assert_eq!(issue.status, IssueStatus::Open);
+    }
+
+    #[test]
+    fn issue_todo_list_round_trips_in_order() {
+        let todos = vec![
+            TodoItem {
+                description: "first".to_string(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "second".to_string(),
+                is_done: true,
+            },
+        ];
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "with todos".to_string(),
+            creator: String::new(),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            todo_list: todos.clone(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&issue).expect("issue should serialize");
+        assert_eq!(value["todo_list"], json!(todos));
+
+        let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
+        assert_eq!(round_trip.todo_list, todos);
     }
 }

@@ -234,6 +234,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -250,6 +251,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -266,6 +268,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Closed,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -323,6 +326,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -367,6 +371,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -383,6 +388,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![IssueDependency {
                         dependency_type: IssueDependencyType::BlockedOn,
                         issue_id: blocker_id.clone(),
@@ -414,6 +420,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -450,6 +457,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })
@@ -516,6 +524,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
                 })

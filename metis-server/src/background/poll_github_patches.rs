@@ -483,6 +483,7 @@ async fn maybe_transition_ci_wait_issue(
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: Some(review_assignee),
+            todo_list: Vec::new(),
             dependencies,
             patches: vec![patch_id.clone()],
         };
@@ -1250,6 +1251,7 @@ mod tests {
                     progress: "review-assignee: reviewer-a".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("github".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: Vec::new(),
                     patches: vec![patch_id.clone()],
                 })
@@ -1311,6 +1313,7 @@ mod tests {
                     progress: "review-assignee: reviewer-a".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("github".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: Vec::new(),
                     patches: vec![patch_id.clone()],
                 })
@@ -1388,6 +1391,7 @@ mod tests {
                     progress: "review-assignee: reviewer-a".to_string(),
                     status: IssueStatus::Open,
                     assignee: Some("github".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: Vec::new(),
                     patches: vec![patch_id.clone()],
                 })
@@ -1400,6 +1404,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("reviewer-a".to_string()),
+                    todo_list: Vec::new(),
                     dependencies: Vec::new(),
                     patches: vec![patch_id.clone()],
                 })

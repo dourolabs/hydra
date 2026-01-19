@@ -18,7 +18,8 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
 pub use app_state::{
-    AppState, CreateJobError, SetJobStatusError, UpsertIssueError, UpsertPatchError,
+    AppState, CreateJobError, SetJobStatusError, UpdateTodoListError, UpsertIssueError,
+    UpsertPatchError,
 };
 pub use metis_common::repositories::{
     ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo,
