@@ -23,9 +23,9 @@ use serde::Deserialize;
 use crate::client::MetisClientInterface;
 use crate::git;
 use crate::git::{
-    apply_patch, branch_exists, checkout_new_branch, commit_changes, current_branch,
-    diff_commit_range as git_diff_commit_range, ensure_staged_changes,
-    has_uncommitted_changes as git_has_uncommitted_changes, push_branch, stage_all_changes,
+    apply_patch, branch_exists, checkout_new_branch, current_branch,
+    diff_commit_range as git_diff_commit_range,
+    has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
 use tempfile::NamedTempFile;
 
@@ -816,9 +816,6 @@ async fn create_github_pull_request(
     let github_token = github_token
         .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    stage_all_changes(repo_root)?;
-    ensure_staged_changes(repo_root)?;
-    commit_changes(repo_root, title)?;
     push_branch(repo_root, &branch_name, Some(github_token))?;
     let pr_metadata =
         open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
