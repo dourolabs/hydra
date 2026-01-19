@@ -5,7 +5,9 @@ use futures::{stream, Stream, StreamExt};
 use metis_common::{
     agents::ListAgentsResponse,
     issues::{
-        IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
+        SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
@@ -64,6 +66,22 @@ pub trait MetisClientInterface: Send + Sync {
         issue_id: &IssueId,
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse>;
+    async fn add_todo_item(
+        &self,
+        issue_id: &IssueId,
+        request: &AddTodoItemRequest,
+    ) -> Result<TodoListResponse>;
+    async fn replace_todo_list(
+        &self,
+        issue_id: &IssueId,
+        request: &ReplaceTodoListRequest,
+    ) -> Result<TodoListResponse>;
+    async fn set_todo_item_status(
+        &self,
+        issue_id: &IssueId,
+        item_number: usize,
+        request: &SetTodoItemStatusRequest,
+    ) -> Result<TodoListResponse>;
     async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
@@ -405,6 +423,79 @@ impl MetisClient {
             .json::<ListIssuesResponse>()
             .await
             .context("failed to decode list issues response")
+    }
+
+    /// Call `POST /v1/issues/:issue_id/todo-items` to append a todo item.
+    pub async fn add_todo_item(
+        &self,
+        issue_id: &IssueId,
+        request: &AddTodoItemRequest,
+    ) -> Result<TodoListResponse> {
+        let path = format!("/v1/issues/{issue_id}/todo-items");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit add todo item request")?
+            .error_for_status()
+            .context("metis-server rejected add todo item request")?;
+
+        response
+            .json::<TodoListResponse>()
+            .await
+            .context("failed to decode add todo item response")
+    }
+
+    /// Call `PUT /v1/issues/:issue_id/todo-items` to replace the todo list.
+    pub async fn replace_todo_list(
+        &self,
+        issue_id: &IssueId,
+        request: &ReplaceTodoListRequest,
+    ) -> Result<TodoListResponse> {
+        let path = format!("/v1/issues/{issue_id}/todo-items");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .put(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit replace todo list request")?
+            .error_for_status()
+            .context("metis-server returned an error while replacing todo list")?;
+
+        response
+            .json::<TodoListResponse>()
+            .await
+            .context("failed to decode replace todo list response")
+    }
+
+    /// Call `POST /v1/issues/:issue_id/todo-items/:item_number` to update an item's status.
+    pub async fn set_todo_item_status(
+        &self,
+        issue_id: &IssueId,
+        item_number: usize,
+        request: &SetTodoItemStatusRequest,
+    ) -> Result<TodoListResponse> {
+        let path = format!("/v1/issues/{issue_id}/todo-items/{item_number}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit todo status update request")?
+            .error_for_status()
+            .context("metis-server returned an error while updating todo item status")?;
+
+        response
+            .json::<TodoListResponse>()
+            .await
+            .context("failed to decode todo status update response")
     }
 
     /// Call `POST /v1/patches` to create a new patch.
@@ -780,6 +871,31 @@ impl MetisClientInterface for MetisClient {
         request: &UpsertIssueRequest,
     ) -> Result<UpsertIssueResponse> {
         MetisClient::update_issue(self, issue_id, request).await
+    }
+
+    async fn add_todo_item(
+        &self,
+        issue_id: &IssueId,
+        request: &AddTodoItemRequest,
+    ) -> Result<TodoListResponse> {
+        MetisClient::add_todo_item(self, issue_id, request).await
+    }
+
+    async fn replace_todo_list(
+        &self,
+        issue_id: &IssueId,
+        request: &ReplaceTodoListRequest,
+    ) -> Result<TodoListResponse> {
+        MetisClient::replace_todo_list(self, issue_id, request).await
+    }
+
+    async fn set_todo_item_status(
+        &self,
+        issue_id: &IssueId,
+        item_number: usize,
+        request: &SetTodoItemStatusRequest,
+    ) -> Result<TodoListResponse> {
+        MetisClient::set_todo_item_status(self, issue_id, item_number, request).await
     }
 
     async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
