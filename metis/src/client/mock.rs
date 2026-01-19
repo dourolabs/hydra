@@ -5,7 +5,9 @@ use futures::stream;
 use metis_common::{
     agents::ListAgentsResponse,
     issues::{
-        IssueRecord, ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
+        SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
@@ -34,6 +36,9 @@ pub struct MockMetisClient {
     pub log_responses: Mutex<VecDeque<Vec<String>>>,
     pub log_requests: Mutex<Vec<TaskId>>,
     pub issue_upsert_responses: Mutex<VecDeque<UpsertIssueResponse>>,
+    pub add_todo_responses: Mutex<VecDeque<TodoListResponse>>,
+    pub replace_todo_responses: Mutex<VecDeque<TodoListResponse>>,
+    pub set_todo_status_responses: Mutex<VecDeque<TodoListResponse>>,
     pub patch_upsert_responses: Mutex<VecDeque<UpsertPatchResponse>>,
     pub get_issue_responses: Mutex<VecDeque<IssueRecord>>,
     pub get_patch_responses: Mutex<VecDeque<PatchRecord>>,
@@ -47,6 +52,9 @@ pub struct MockMetisClient {
     pub merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub enqueue_merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub issue_upsert_requests: Mutex<Vec<(Option<IssueId>, UpsertIssueRequest)>>,
+    pub add_todo_requests: Mutex<Vec<(IssueId, AddTodoItemRequest)>>,
+    pub replace_todo_requests: Mutex<Vec<(IssueId, ReplaceTodoListRequest)>>,
+    pub set_todo_status_requests: Mutex<Vec<(IssueId, usize, SetTodoItemStatusRequest)>>,
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
     pub create_repository_requests: Mutex<Vec<CreateRepositoryRequest>>,
     pub update_repository_requests: Mutex<Vec<(RepoName, UpdateRepositoryRequest)>>,
@@ -93,6 +101,24 @@ impl MockMetisClient {
 
     pub fn push_upsert_issue_response(&self, response: UpsertIssueResponse) {
         self.issue_upsert_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_add_todo_response(&self, response: TodoListResponse) {
+        self.add_todo_responses.lock().unwrap().push_back(response);
+    }
+
+    pub fn push_replace_todo_response(&self, response: TodoListResponse) {
+        self.replace_todo_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_set_todo_status_response(&self, response: TodoListResponse) {
+        self.set_todo_status_responses
             .lock()
             .unwrap()
             .push_back(response);
@@ -175,6 +201,20 @@ impl MockMetisClient {
 
     pub fn recorded_issue_upserts(&self) -> Vec<(Option<IssueId>, UpsertIssueRequest)> {
         self.issue_upsert_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_add_todo_requests(&self) -> Vec<(IssueId, AddTodoItemRequest)> {
+        self.add_todo_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_replace_todo_requests(&self) -> Vec<(IssueId, ReplaceTodoListRequest)> {
+        self.replace_todo_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_set_todo_status_requests(
+        &self,
+    ) -> Vec<(IssueId, usize, SetTodoItemStatusRequest)> {
+        self.set_todo_status_requests.lock().unwrap().clone()
     }
 
     pub fn recorded_patch_upserts(&self) -> Vec<(Option<PatchId>, UpsertPatchRequest)> {
@@ -306,6 +346,56 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for update_issue"))
+    }
+
+    async fn add_todo_item(
+        &self,
+        issue_id: &IssueId,
+        request: &AddTodoItemRequest,
+    ) -> Result<TodoListResponse> {
+        self.add_todo_requests
+            .lock()
+            .unwrap()
+            .push((issue_id.clone(), request.clone()));
+        self.add_todo_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for add_todo_item"))
+    }
+
+    async fn replace_todo_list(
+        &self,
+        issue_id: &IssueId,
+        request: &ReplaceTodoListRequest,
+    ) -> Result<TodoListResponse> {
+        self.replace_todo_requests
+            .lock()
+            .unwrap()
+            .push((issue_id.clone(), request.clone()));
+        self.replace_todo_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for replace_todo_list"))
+    }
+
+    async fn set_todo_item_status(
+        &self,
+        issue_id: &IssueId,
+        item_number: usize,
+        request: &SetTodoItemStatusRequest,
+    ) -> Result<TodoListResponse> {
+        self.set_todo_status_requests.lock().unwrap().push((
+            issue_id.clone(),
+            item_number,
+            request.clone(),
+        ));
+        self.set_todo_status_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for set_todo_item_status"))
     }
 
     async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {

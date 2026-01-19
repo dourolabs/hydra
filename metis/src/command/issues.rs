@@ -4,8 +4,9 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphSelector,
-        IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType, SearchIssuesQuery,
+        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
+        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
+        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
@@ -149,6 +150,44 @@ pub enum IssueCommands {
         #[arg(long)]
         clear_progress: bool,
     },
+    /// Inspect or update an issue's todo list.
+    Todo {
+        /// Issue ID to operate on.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Append a new todo item (prefix with '[x]' to mark done immediately).
+        #[arg(long, value_name = "TEXT", conflicts_with_all = ["done", "undone", "replace"])]
+        add: Option<String>,
+
+        /// Mark a todo item as done (1-indexed).
+        #[arg(
+            long,
+            value_name = "ITEM_NUMBER",
+            value_parser = clap::value_parser!(usize),
+            conflicts_with_all = ["add", "undone", "replace"]
+        )]
+        done: Option<usize>,
+
+        /// Mark a todo item as not done (1-indexed).
+        #[arg(
+            long,
+            value_name = "ITEM_NUMBER",
+            value_parser = clap::value_parser!(usize),
+            conflicts_with_all = ["add", "done", "replace"]
+        )]
+        undone: Option<usize>,
+
+        /// Replace the entire todo list with the provided ordered items.
+        #[arg(
+            long,
+            value_name = "ITEM",
+            num_args = 1..,
+            value_delimiter = ',',
+            conflicts_with_all = ["add", "done", "undone"]
+        )]
+        replace: Option<Vec<String>>,
+    },
     /// Describe an issue and its relationships.
     Describe {
         /// Issue ID to describe.
@@ -240,6 +279,13 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             )
             .await
         }
+        IssueCommands::Todo {
+            id,
+            add,
+            done,
+            undone,
+            replace,
+        } => manage_todo_list(client, id, add, done, undone, replace).await,
         IssueCommands::Describe { id, pretty } => describe_issue(client, id, pretty).await,
     }
 }
@@ -658,6 +704,170 @@ async fn update_issue(
     Ok(())
 }
 
+async fn manage_todo_list(
+    client: &dyn MetisClientInterface,
+    issue_id: IssueId,
+    add: Option<String>,
+    done: Option<usize>,
+    undone: Option<usize>,
+    replace: Option<Vec<String>>,
+) -> Result<()> {
+    let todo_list = resolve_todo_list(client, &issue_id, add, done, undone, replace).await?;
+    print_todo_list(&issue_id, &todo_list)?;
+    Ok(())
+}
+
+async fn resolve_todo_list(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+    add: Option<String>,
+    done: Option<usize>,
+    undone: Option<usize>,
+    replace: Option<Vec<String>>,
+) -> Result<Vec<TodoItem>> {
+    if let Some(items) = replace {
+        let todo_list = parse_todo_items(items)?;
+        let response = client
+            .replace_todo_list(issue_id, &ReplaceTodoListRequest { todo_list })
+            .await
+            .with_context(|| format!("failed to replace todo list for issue '{issue_id}'"))?;
+        return Ok(response.todo_list);
+    }
+
+    if let Some(text) = add {
+        let item = parse_todo_item_input(&text)?;
+        let response = client
+            .add_todo_item(
+                issue_id,
+                &AddTodoItemRequest {
+                    description: item.description,
+                    is_done: item.is_done,
+                },
+            )
+            .await
+            .with_context(|| format!("failed to add todo item for issue '{issue_id}'"))?;
+        return Ok(response.todo_list);
+    }
+
+    if let Some(item_number) = done {
+        let item_number = validate_item_number(item_number)?;
+        let response = client
+            .set_todo_item_status(
+                issue_id,
+                item_number,
+                &SetTodoItemStatusRequest { is_done: true },
+            )
+            .await
+            .with_context(|| {
+                format!("failed to mark todo item {item_number} done for issue '{issue_id}'")
+            })?;
+        return Ok(response.todo_list);
+    }
+
+    if let Some(item_number) = undone {
+        let item_number = validate_item_number(item_number)?;
+        let response = client
+            .set_todo_item_status(
+                issue_id,
+                item_number,
+                &SetTodoItemStatusRequest { is_done: false },
+            )
+            .await
+            .with_context(|| {
+                format!("failed to mark todo item {item_number} undone for issue '{issue_id}'")
+            })?;
+        return Ok(response.todo_list);
+    }
+
+    let issue = client
+        .get_issue(issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+    Ok(issue.issue.todo_list)
+}
+
+fn parse_todo_items(raw_items: Vec<String>) -> Result<Vec<TodoItem>> {
+    raw_items
+        .into_iter()
+        .map(|value| parse_todo_item_input(&value))
+        .collect()
+}
+
+fn validate_item_number(item_number: usize) -> Result<usize> {
+    if item_number == 0 {
+        bail!("Todo item number must be at least 1.");
+    }
+    Ok(item_number)
+}
+
+fn parse_todo_item_input(raw: &str) -> Result<TodoItem> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("Todo item description must not be empty.");
+    }
+
+    let (is_done, description) = if let Some(rest) = trimmed.strip_prefix("[x]") {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("[X]") {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("[ ]") {
+        (false, rest)
+    } else {
+        (false, trimmed)
+    };
+
+    let description = description.trim().to_string();
+    if description.is_empty() {
+        bail!("Todo item description must not be empty.");
+    }
+
+    Ok(TodoItem {
+        description,
+        is_done,
+    })
+}
+
+fn print_todo_list(issue_id: &IssueId, todo_list: &[TodoItem]) -> Result<()> {
+    let mut buffer = Vec::new();
+    render_todo_list(issue_id, todo_list, &mut buffer)?;
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn render_todo_list(
+    issue_id: &IssueId,
+    todo_list: &[TodoItem],
+    writer: &mut impl Write,
+) -> Result<()> {
+    writeln!(writer, "Todos for issue {issue_id}:")?;
+    if todo_list.is_empty() {
+        writeln!(writer, "  none")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    for (index, item) in todo_list.iter().enumerate() {
+        let status = if item.is_done { "[x]" } else { "[ ]" };
+        let prefix = format!("  {}. {status} ", index + 1);
+        let continuation_indent = " ".repeat(prefix.len());
+        let mut lines = item.description.lines();
+
+        if let Some(first_line) = lines.next() {
+            writeln!(writer, "{prefix}{first_line}")?;
+        } else {
+            writeln!(writer, "{prefix}-")?;
+        }
+
+        for line in lines {
+            writeln!(writer, "{continuation_indent}{line}")?;
+        }
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
 fn parse_issue_graph_filter(raw: &str) -> Result<IssueGraphFilter, String> {
     raw.parse()
 }
@@ -1020,8 +1230,9 @@ mod tests {
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use metis_common::issues::{
-        Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord, ListIssuesResponse,
-        SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
+        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
+        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     };
     use metis_common::patches::{Patch, PatchRecord, Review};
     use metis_common::RepoName;
@@ -1653,6 +1864,197 @@ mod tests {
         assert!(rendered.contains("Progress:\n  -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
+    }
+
+    #[tokio::test]
+    async fn todo_command_fetches_existing_list() {
+        let client = MockMetisClient::default();
+        let issue_id = issue_id("i-todo");
+        let todo_list = vec![
+            TodoItem {
+                description: "write docs".into(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "add tests".into(),
+                is_done: true,
+            },
+        ];
+        client.push_get_issue_response(IssueRecord {
+            id: issue_id.clone(),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "has todos".into(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: todo_list.clone(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            },
+        });
+
+        let resolved = resolve_todo_list(&client, &issue_id, None, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(client.recorded_get_issue_requests(), vec![issue_id]);
+        assert_eq!(resolved, todo_list);
+    }
+
+    #[tokio::test]
+    async fn todo_command_adds_item_and_parses_done_prefix() {
+        let client = MockMetisClient::default();
+        let issue_id = issue_id("i-add");
+        client.push_add_todo_response(TodoListResponse {
+            issue_id: issue_id.clone(),
+            todo_list: Vec::new(),
+        });
+
+        let updated = resolve_todo_list(
+            &client,
+            &issue_id,
+            Some("[x] finish docs".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            client.recorded_add_todo_requests(),
+            vec![(
+                issue_id.clone(),
+                AddTodoItemRequest {
+                    description: "finish docs".into(),
+                    is_done: true,
+                }
+            )]
+        );
+        assert!(updated.is_empty());
+    }
+
+    #[tokio::test]
+    async fn todo_command_marks_item_done_and_undone() {
+        let client = MockMetisClient::default();
+        let issue_id = issue_id("i-done");
+        client.push_set_todo_status_response(TodoListResponse {
+            issue_id: issue_id.clone(),
+            todo_list: vec![TodoItem {
+                description: "first".into(),
+                is_done: true,
+            }],
+        });
+
+        let done_list = resolve_todo_list(&client, &issue_id, None, Some(1), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            client.recorded_set_todo_status_requests(),
+            vec![(
+                issue_id.clone(),
+                1,
+                SetTodoItemStatusRequest { is_done: true }
+            )]
+        );
+        assert!(done_list[0].is_done);
+
+        client.push_set_todo_status_response(TodoListResponse {
+            issue_id: issue_id.clone(),
+            todo_list: vec![TodoItem {
+                description: "first".into(),
+                is_done: false,
+            }],
+        });
+
+        let undone_list = resolve_todo_list(&client, &issue_id, None, None, Some(1), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            client.recorded_set_todo_status_requests(),
+            vec![
+                (
+                    issue_id.clone(),
+                    1,
+                    SetTodoItemStatusRequest { is_done: true }
+                ),
+                (
+                    issue_id.clone(),
+                    1,
+                    SetTodoItemStatusRequest { is_done: false }
+                )
+            ]
+        );
+        assert!(!undone_list[0].is_done);
+    }
+
+    #[tokio::test]
+    async fn todo_command_replaces_list_with_parsed_items() {
+        let client = MockMetisClient::default();
+        let issue_id = issue_id("i-replace");
+        let parsed = vec![
+            TodoItem {
+                description: "first item".into(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "second".into(),
+                is_done: true,
+            },
+        ];
+        client.push_replace_todo_response(TodoListResponse {
+            issue_id: issue_id.clone(),
+            todo_list: parsed.clone(),
+        });
+
+        let resolved = resolve_todo_list(
+            &client,
+            &issue_id,
+            None,
+            None,
+            None,
+            Some(vec!["first item".into(), "[x] second".into()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            client.recorded_replace_todo_requests(),
+            vec![(
+                issue_id,
+                ReplaceTodoListRequest {
+                    todo_list: parsed.clone()
+                }
+            )]
+        );
+        assert_eq!(resolved, parsed);
+    }
+
+    #[test]
+    fn render_todo_list_formats_output() {
+        let todo_list = vec![
+            TodoItem {
+                description: "write docs".into(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "add tests\nwith details".into(),
+                is_done: true,
+            },
+        ];
+        let mut output = Vec::new();
+        render_todo_list(&issue_id("i-render"), &todo_list, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("Todos for issue i-render:"));
+        assert!(rendered.contains("1. [ ] write docs"));
+        assert!(rendered.contains("2. [x] add tests"));
+        assert!(
+            rendered.contains("         with details"),
+            "continuation lines should be indented"
+        );
     }
 
     #[test]
