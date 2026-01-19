@@ -4,6 +4,7 @@
 - Docker must be installed and the daemon running
 - `kind` and `kubectl` binaries installed and available in PATH
 - A kind cluster named `local-dev` (create with the command below)
+- You can check existing clusters with `kind get clusters` before creating a new one
 
 ```
 kind create cluster --name local-dev
