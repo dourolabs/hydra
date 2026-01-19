@@ -80,6 +80,7 @@ impl TestEnvironment {
             job_id,
             worker_dir,
             None,
+            None,
             &bash_commands,
         )
         .await

@@ -28,5 +28,19 @@ An issue cannot be marked as Closed unless all of its child issues are Closed.
 3. The Agent who works on the merge request issue reviews the patch, if the patch is good, the agent leaves a review, merges it, then closes B.
 4. The Agent working on the merge request can request reviews for the patch by making a ticket C --child-of--> B and assigning it to someone.
 
-## Example: Task with rejected PR
-1. 
+
+# Workers & Git
+
+The system creates tracking branches that are pushed up to the remote to track the work
+done by agents for both issues and tasks. There are 4 branches created by any given task:
+* `metis/<issue-id>/base` tracks where the work for an issue started
+* `metis/<issue-id>/head` tracks the current head of the work for the issue. 
+* `metis/<task-id>/base` tracks where the work for a task started
+* `metis/<task-id>/head` tracks where the work for a task ended.
+
+Workers working on a specific issue try to start from `metis/<issue-id>/head`, which allows
+them to pick up the work from previous workers on the same issue. This approach is similar to running the agent in a loop on a single machine (though any changes not tracked by git are lost between agent runs).
+
+The branch invariants above are maintained by the `worker_run` command. It creates these tracking branches on startup, and then whenever the worker ends, `worker_run` will commit any uncommitted changes, push them up, and update the branch refs. 
+
+Another neat thing about this 
