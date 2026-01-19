@@ -36,20 +36,11 @@ done by agents for both issues and tasks. There are 4 branches created by any gi
 * `metis/<issue-id>/base` tracks where the work for an issue started
 * `metis/<issue-id>/head` tracks the current head of the work for the issue. 
 * `metis/<task-id>/base` tracks where the work for a task started
-* `metis/<task-id>/head` tracks where the work for a task ended. 
+* `metis/<task-id>/head` tracks where the work for a task ended.
 
-* 
-* The first agent spawned for an issue branches off from main. It creates a branch  which remains at the
-  forking off point from main, and another branch metis/<issue-id>/head . The head branch is the current branch when the agent 
-  starts working and any commits or updates to the agent advance this branch.
-* Any subsequent agents spawned for the same issue start off from metis/<issue-id>/head . This allows multiple agents to preserve
-  progress and work together in sequence.
-* At the end of each agent run, the worker_run command automatically commits any unstaged changes (including new files) to the repo 
-  to ensure work isn't lost. It also automatically pushes up the branch to the remote.
-* In addition to the metis/<issue-id>/head branches, we automatically create metis/<task-id>/base and metis/<task-id>/head
-  branches. These branches will similarly be created in worker_run (at the beginning / end of the agent's work) and synced to the remote.
-  This will allow third parties to easily audit the work done by a particular task.
-* metis patches will no longer use uncommitted changes. Instead, it will create a patch from a range of commits, which will
-  default to metis/<issue-id>/base..metis/<issue-id>/head . Additionally, if there are uncommitted changes, it will return an error
-  prompting the user that their working directory is dirty and they need to commit their changes before running the command. It should
-  also have a --allow-uncommitted-changes flag that overrides this error in case the user really wants that behavior.
+Workers working on a specific issue try to start from `metis/<issue-id>/head`, which allows
+them to pick up the work from previous workers on the same issue. This approach is similar to running the agent in a loop on a single machine (though any changes not tracked by git are lost between agent runs).
+
+The branch invariants above are maintained by the `worker_run` command. It creates these tracking branches on startup, and then whenever the worker ends, `worker_run` will commit any uncommitted changes, push them up, and update the branch refs. 
+
+Another neat thing about this 

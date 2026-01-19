@@ -780,7 +780,7 @@ mod tests {
         let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
         configure_repo(
-            &clone_dir.path(),
+            clone_dir.path(),
             "Metis Worker",
             "metis-worker@example.com",
         )
