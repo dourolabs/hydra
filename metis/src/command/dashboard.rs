@@ -792,6 +792,7 @@ async fn submit_issue(
             progress: String::new(),
             status: IssueStatus::Open,
             assignee,
+            todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
         },

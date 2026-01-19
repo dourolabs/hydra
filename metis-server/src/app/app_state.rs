@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
-    issues::{IssueId, IssueStatus, IssueType, UpsertIssueRequest},
+    issues::{IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
     merge_queues::MergeQueue,
@@ -168,6 +168,24 @@ pub enum UpsertIssueError {
         source: JobEngineError,
         issue_id: IssueId,
         job_id: TaskId,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum UpdateTodoListError {
+    #[error("issue '{issue_id}' not found")]
+    IssueNotFound {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
+    #[error("todo item index {index} is out of range for issue '{issue_id}'")]
+    InvalidIndex { issue_id: IssueId, index: usize },
+    #[error("issue store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
     },
 }
 
@@ -764,6 +782,91 @@ impl AppState {
         Ok(issue_id)
     }
 
+    pub async fn add_todo_item(
+        &self,
+        issue_id: IssueId,
+        item: TodoItem,
+    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
+        let mut store = self.store.write().await;
+        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+            UpdateTodoListError::IssueNotFound {
+                source,
+                issue_id: issue_id.clone(),
+            }
+        })?;
+
+        issue.todo_list.push(item);
+        let todo_list = issue.todo_list.clone();
+        store
+            .update_issue(&issue_id, issue)
+            .await
+            .map_err(|source| UpdateTodoListError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        Ok(todo_list)
+    }
+
+    pub async fn replace_todo_list(
+        &self,
+        issue_id: IssueId,
+        todo_list: Vec<TodoItem>,
+    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
+        let mut store = self.store.write().await;
+        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+            UpdateTodoListError::IssueNotFound {
+                source,
+                issue_id: issue_id.clone(),
+            }
+        })?;
+
+        issue.todo_list = todo_list.clone();
+        store
+            .update_issue(&issue_id, issue)
+            .await
+            .map_err(|source| UpdateTodoListError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        Ok(todo_list)
+    }
+
+    pub async fn toggle_todo_item(
+        &self,
+        issue_id: IssueId,
+        index: usize,
+    ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
+        let mut store = self.store.write().await;
+        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+            UpdateTodoListError::IssueNotFound {
+                source,
+                issue_id: issue_id.clone(),
+            }
+        })?;
+
+        let item = issue
+            .todo_list
+            .get_mut(index)
+            .ok_or(UpdateTodoListError::InvalidIndex {
+                issue_id: issue_id.clone(),
+                index,
+            })?;
+        item.is_done = !item.is_done;
+
+        let todo_list = issue.todo_list.clone();
+        store
+            .update_issue(&issue_id, issue)
+            .await
+            .map_err(|source| UpdateTodoListError::Store {
+                source,
+                issue_id: issue_id.clone(),
+            })?;
+
+        Ok(todo_list)
+    }
+
     pub async fn merge_queue(
         &self,
         service_repo_name: &RepoName,
@@ -931,6 +1034,7 @@ mod tests {
             progress: String::new(),
             status,
             assignee: None,
+            todo_list: Vec::new(),
             dependencies,
             patches: Vec::new(),
         }

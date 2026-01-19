@@ -149,6 +149,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
+        todo_list: Vec::new(),
         dependencies: vec![],
         patches: vec![created_patch.patch_id.clone()],
     };

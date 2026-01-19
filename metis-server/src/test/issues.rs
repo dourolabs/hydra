@@ -11,8 +11,9 @@ use chrono::Utc;
 use metis_common::{
     TaskId,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-        ListIssuesResponse, SearchIssuesQuery, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus,
+        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, TodoItem,
+        TodoListResponse, ToggleTodoItemRequest, UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use serde_json::json;
@@ -33,6 +34,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 progress: "Initial progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -57,6 +59,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 progress: "Updated progress".to_string(),
                 status: IssueStatus::InProgress,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -89,6 +92,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             progress: "Updated progress".to_string(),
             status: IssueStatus::InProgress,
             assignee: None,
+            todo_list: Vec::new(),
             dependencies: vec![],
             patches: Vec::new(),
         }
@@ -111,6 +115,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -135,6 +140,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: blocked_dependencies.clone(),
                 patches: Vec::new(),
             },
@@ -159,6 +165,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: blocked_dependencies.clone(),
                 patches: Vec::new(),
             },
@@ -191,6 +198,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -214,6 +222,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: blocked_dependencies,
                 patches: Vec::new(),
             },
@@ -241,6 +250,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -265,6 +275,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: child_dependencies.clone(),
                 patches: Vec::new(),
             },
@@ -289,6 +300,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -321,6 +333,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: child_dependencies,
                 patches: Vec::new(),
             },
@@ -344,6 +357,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
+                todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
             },
@@ -370,6 +384,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
+        todo_list: Vec::new(),
         dependencies: vec![],
         patches: Vec::new(),
     };
@@ -440,6 +455,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
+        todo_list: Vec::new(),
         dependencies: vec![],
         patches: Vec::new(),
     };
@@ -450,6 +466,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: Some("owner-1".to_string()),
+        todo_list: Vec::new(),
         dependencies: vec![],
         patches: Vec::new(),
     };
@@ -460,6 +477,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         progress: String::new(),
         status: IssueStatus::Closed,
         assignee: None,
+        todo_list: Vec::new(),
         dependencies: vec![],
         patches: Vec::new(),
     };
@@ -526,5 +544,125 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
 
     assert_eq!(filtered_by_status.issues.len(), 1);
     assert_eq!(filtered_by_status.issues[0].issue, closed_issue);
+    Ok(())
+}
+
+#[tokio::test]
+async fn todo_list_endpoints_append_toggle_and_replace() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let initial_todo = TodoItem {
+        description: "write tests".to_string(),
+        is_done: false,
+    };
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "issue with todos".to_string(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: vec![initial_todo.clone()],
+                dependencies: vec![],
+                patches: Vec::new(),
+            },
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let added: TodoListResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/todo-items",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&AddTodoItemRequest {
+            description: "review PR".to_string(),
+            is_done: false,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        added.todo_list,
+        vec![
+            initial_todo.clone(),
+            TodoItem {
+                description: "review PR".to_string(),
+                is_done: false
+            }
+        ]
+    );
+
+    let toggled: TodoListResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/todo-items/toggle",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&ToggleTodoItemRequest { index: 1 })
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(toggled.todo_list[1].is_done);
+
+    let replacement = ReplaceTodoListRequest {
+        todo_list: vec![
+            TodoItem {
+                description: "rewrite docs".to_string(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "review PR".to_string(),
+                is_done: true,
+            },
+        ],
+    };
+
+    let replaced: TodoListResponse = client
+        .put(format!(
+            "{}/v1/issues/{}/todo-items",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&replacement)
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(replaced.todo_list, replacement.todo_list);
+
+    let fetched: IssueRecord = client
+        .get(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(fetched.issue.todo_list, replacement.todo_list);
+
+    let invalid_toggle = client
+        .post(format!(
+            "{}/v1/issues/{}/todo-items/toggle",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&ToggleTodoItemRequest { index: 99 })
+        .send()
+        .await?;
+    assert_eq!(invalid_toggle.status(), reqwest::StatusCode::BAD_REQUEST);
+
     Ok(())
 }

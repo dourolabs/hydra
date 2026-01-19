@@ -516,6 +516,7 @@ async fn create_ci_wait_issue(
                 progress,
                 status: IssueStatus::Open,
                 assignee: Some("github".to_string()),
+                todo_list: Vec::new(),
                 dependencies,
                 patches: vec![patch_id],
             },

@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, UpsertIssueError},
+    app::{AppState, UpdateTodoListError, UpsertIssueError},
     routes::jobs::ApiError,
     routes::map_emit_error,
     store::StoreError,
@@ -11,7 +11,8 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::issues::{
-    Issue, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse, SearchIssuesQuery,
+    AddTodoItemRequest, Issue, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
+    ReplaceTodoListRequest, SearchIssuesQuery, TodoItem, TodoListResponse, ToggleTodoItemRequest,
     UpsertIssueRequest, UpsertIssueResponse,
 };
 use tracing::{error, info};
@@ -155,6 +156,82 @@ pub async fn list_issues(
     Ok(Json(response))
 }
 
+pub async fn add_todo_item(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(request): Json<AddTodoItemRequest>,
+) -> Result<Json<TodoListResponse>, ApiError> {
+    info!(issue_id = %issue_id, "add_todo_item invoked");
+    let todo_list = state
+        .add_todo_item(
+            issue_id.clone(),
+            TodoItem {
+                description: request.description,
+                is_done: request.is_done,
+            },
+        )
+        .await
+        .map_err(map_todo_error)?;
+
+    info!(
+        issue_id = %issue_id,
+        count = todo_list.len(),
+        "add_todo_item completed"
+    );
+    Ok(Json(TodoListResponse {
+        issue_id,
+        todo_list,
+    }))
+}
+
+pub async fn replace_todo_list(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(request): Json<ReplaceTodoListRequest>,
+) -> Result<Json<TodoListResponse>, ApiError> {
+    info!(issue_id = %issue_id, "replace_todo_list invoked");
+    let todo_list = state
+        .replace_todo_list(issue_id.clone(), request.todo_list)
+        .await
+        .map_err(map_todo_error)?;
+
+    info!(
+        issue_id = %issue_id,
+        count = todo_list.len(),
+        "replace_todo_list completed"
+    );
+    Ok(Json(TodoListResponse {
+        issue_id,
+        todo_list,
+    }))
+}
+
+pub async fn toggle_todo_item(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+    Json(request): Json<ToggleTodoItemRequest>,
+) -> Result<Json<TodoListResponse>, ApiError> {
+    info!(
+        issue_id = %issue_id,
+        index = request.index,
+        "toggle_todo_item invoked"
+    );
+    let todo_list = state
+        .toggle_todo_item(issue_id.clone(), request.index)
+        .await
+        .map_err(map_todo_error)?;
+
+    info!(
+        issue_id = %issue_id,
+        index = request.index,
+        "toggle_todo_item completed"
+    );
+    Ok(Json(TodoListResponse {
+        issue_id,
+        todo_list,
+    }))
+}
+
 fn map_graph_filter_error(err: StoreError) -> ApiError {
     match err {
         StoreError::IssueNotFound(id) => ApiError::bad_request(format!(
@@ -286,5 +363,24 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
             );
             ApiError::internal(anyhow!("issue store error: {other}"))
         }
+    }
+}
+
+fn map_todo_error(err: UpdateTodoListError) -> ApiError {
+    match err {
+        UpdateTodoListError::IssueNotFound { issue_id, source } => {
+            map_issue_error(source, Some(&issue_id))
+        }
+        UpdateTodoListError::InvalidIndex { issue_id, index } => {
+            error!(
+                issue_id = %issue_id,
+                index,
+                "todo list index out of bounds"
+            );
+            ApiError::bad_request(format!(
+                "todo_list index {index} is out of range for issue '{issue_id}'"
+            ))
+        }
+        UpdateTodoListError::Store { issue_id, source } => map_issue_error(source, Some(&issue_id)),
     }
 }

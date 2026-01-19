@@ -798,6 +798,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
+            todo_list: Vec::new(),
             dependencies,
             patches: Vec::new(),
         }
@@ -811,6 +812,7 @@ mod tests {
             progress: String::new(),
             status,
             assignee: None,
+            todo_list: Vec::new(),
             dependencies,
             patches: Vec::new(),
         }

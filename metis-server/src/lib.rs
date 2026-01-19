@@ -47,6 +47,14 @@ pub async fn run_with_state(
             get(routes::issues::get_issue).put(routes::issues::update_issue),
         )
         .route(
+            "/v1/issues/:issue_id/todo-items",
+            post(routes::issues::add_todo_item).put(routes::issues::replace_todo_list),
+        )
+        .route(
+            "/v1/issues/:issue_id/todo-items/toggle",
+            post(routes::issues::toggle_todo_item),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )
