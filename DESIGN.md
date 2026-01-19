@@ -43,4 +43,6 @@ them to pick up the work from previous workers on the same issue. This approach 
 
 The branch invariants above are maintained by the `worker_run` command. It creates these tracking branches on startup, and then whenever the worker ends, `worker_run` will commit any uncommitted changes, push them up, and update the branch refs. 
 
-Another neat thing about this 
+Note that all of these branches are pushed to the remote, so you can easily fetch the repo
+state before/after the work of a task / issue. Simply checkout the corresponding branch from
+the remote.
