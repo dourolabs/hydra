@@ -41,6 +41,8 @@ const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
+const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
+const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
 const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
     IssueStatus::Open,
     IssueStatus::InProgress,
@@ -1295,9 +1297,9 @@ fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
             let panels = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(35),
-                    Constraint::Percentage(35),
+                    Constraint::Length(USER_ISSUES_PANEL_HEIGHT),
+                    Constraint::Fill(1),
+                    Constraint::Fill(1),
                 ])
                 .split(area);
             return IssuePanelLayout {
