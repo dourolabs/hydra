@@ -363,6 +363,7 @@ fn format_key_code(code: KeyCode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::layout::Rect;
 
     #[test]
     fn scroll_keys_adjust_offset_when_focused() {
@@ -374,6 +375,22 @@ mod tests {
         assert_eq!(event, PanelEvent::Scrolled);
 
         let event = state.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10, 3);
+        assert_eq!(state.scroll_offset(), 0);
+        assert_eq!(event, PanelEvent::Scrolled);
+    }
+
+    #[test]
+    fn vim_keys_adjust_offset_when_focused() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let event =
+            state.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 8, 3);
+        assert_eq!(state.scroll_offset(), 1);
+        assert_eq!(event, PanelEvent::Scrolled);
+
+        let event =
+            state.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 8, 3);
         assert_eq!(state.scroll_offset(), 0);
         assert_eq!(event, PanelEvent::Scrolled);
     }
@@ -405,10 +422,49 @@ mod tests {
     }
 
     #[test]
+    fn focused_panel_renders_keybinding_footer() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+        state.register_keybinding(KeyCode::Char('r'), KeyModifiers::NONE, "Refresh");
+
+        let area = Rect::new(0, 0, 36, 5);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", Vec::new());
+        panel.render(area, &mut buffer, &mut state);
+
+        let footer_y = area.y + area.height - 2;
+        let footer = row_text(&buffer, footer_y, area.width);
+        assert!(footer.contains("j/k or Up/Down"));
+        assert!(footer.contains("r Refresh"));
+    }
+
+    #[test]
+    fn unfocused_panel_hides_keybinding_footer() {
+        let mut state = PanelState::new();
+
+        let area = Rect::new(0, 0, 36, 5);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", Vec::new());
+        panel.render(area, &mut buffer, &mut state);
+
+        let footer_y = area.y + area.height - 2;
+        let footer = row_text(&buffer, footer_y, area.width);
+        assert!(!footer.contains("j/k or Up/Down"));
+    }
+
+    #[test]
     fn sync_scroll_clamps_offset() {
         let mut state = PanelState::new();
         state.scroll_offset = 10;
         state.sync_scroll(5, 3);
         assert_eq!(state.scroll_offset, 2);
+    }
+
+    fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
+        let mut row = String::new();
+        for x in 0..width {
+            row.push_str(buffer.get(x, y).symbol());
+        }
+        row.trim_end().to_string()
     }
 }
