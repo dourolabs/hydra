@@ -12,8 +12,9 @@ use metis_common::{
     TaskId,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus,
-        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, TodoItem,
-        TodoListResponse, ToggleTodoItemRequest, UpsertIssueRequest, UpsertIssueResponse,
+        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     },
 };
 use serde_json::json;
@@ -371,6 +372,108 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let todo_list = vec![
+        TodoItem {
+            description: "write tests".to_string(),
+            is_done: false,
+        },
+        TodoItem {
+            description: "review PR".to_string(),
+            is_done: false,
+        },
+    ];
+    let base_issue = Issue {
+        issue_type: IssueType::Task,
+        description: "issue with todos".to_string(),
+        creator: String::new(),
+        progress: String::new(),
+        status: IssueStatus::Open,
+        assignee: None,
+        todo_list,
+        dependencies: vec![],
+        patches: Vec::new(),
+    };
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: base_issue.clone(),
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let mut closed_issue = base_issue.clone();
+    closed_issue.status = IssueStatus::Closed;
+    let response = client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&UpsertIssueRequest {
+            issue: closed_issue.clone(),
+            job_id: None,
+        })
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await?;
+    assert_eq!(
+        body,
+        json!({ "error": "cannot close issue with incomplete todo items: 1, 2" })
+    );
+
+    for item_number in [1, 2] {
+        client
+            .post(format!(
+                "{}/v1/issues/{}/todo-items/{}",
+                server.base_url(),
+                created.issue_id,
+                item_number
+            ))
+            .json(&SetTodoItemStatusRequest { is_done: true })
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    let mut completed_issue = closed_issue;
+    completed_issue.todo_list = vec![
+        TodoItem {
+            description: "write tests".to_string(),
+            is_done: true,
+        },
+        TodoItem {
+            description: "review PR".to_string(),
+            is_done: true,
+        },
+    ];
+    client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&UpsertIssueRequest {
+            issue: completed_issue,
+            job_id: None,
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
     let state = test_state_with_engine(engine.clone());
@@ -548,7 +651,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn todo_list_endpoints_append_toggle_and_replace() -> anyhow::Result<()> {
+async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -602,18 +705,44 @@ async fn todo_list_endpoints_append_toggle_and_replace() -> anyhow::Result<()> {
         ]
     );
 
-    let toggled: TodoListResponse = client
+    let updated: TodoListResponse = client
         .post(format!(
-            "{}/v1/issues/{}/todo-items/toggle",
+            "{}/v1/issues/{}/todo-items/2",
             server.base_url(),
             created.issue_id
         ))
-        .json(&ToggleTodoItemRequest { index: 1 })
+        .json(&SetTodoItemStatusRequest { is_done: true })
         .send()
         .await?
         .json()
         .await?;
-    assert!(toggled.todo_list[1].is_done);
+    assert!(updated.todo_list[1].is_done);
+
+    let repeated: TodoListResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/todo-items/2",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SetTodoItemStatusRequest { is_done: true })
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(repeated.todo_list[1].is_done);
+
+    let unset: TodoListResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/todo-items/2",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&SetTodoItemStatusRequest { is_done: false })
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(!unset.todo_list[1].is_done);
 
     let replacement = ReplaceTodoListRequest {
         todo_list: vec![
@@ -653,16 +782,16 @@ async fn todo_list_endpoints_append_toggle_and_replace() -> anyhow::Result<()> {
         .await?;
     assert_eq!(fetched.issue.todo_list, replacement.todo_list);
 
-    let invalid_toggle = client
+    let invalid_update = client
         .post(format!(
-            "{}/v1/issues/{}/todo-items/toggle",
+            "{}/v1/issues/{}/todo-items/99",
             server.base_url(),
             created.issue_id
         ))
-        .json(&ToggleTodoItemRequest { index: 99 })
+        .json(&SetTodoItemStatusRequest { is_done: true })
         .send()
         .await?;
-    assert_eq!(invalid_toggle.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_update.status(), reqwest::StatusCode::BAD_REQUEST);
 
     Ok(())
 }

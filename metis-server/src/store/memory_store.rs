@@ -132,6 +132,16 @@ impl MemoryStore {
         values.join(", ")
     }
 
+    fn join_item_numbers(numbers: &[usize]) -> String {
+        let mut values = numbers.to_vec();
+        values.sort();
+        values
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<String>>()
+            .join(", ")
+    }
+
     fn index_task_for_issue(&mut self, issue_id: &IssueId, task_id: TaskId) {
         let tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
         if !tasks.contains(&task_id) {
@@ -181,6 +191,20 @@ impl MemoryStore {
             if blocker.status != IssueStatus::Closed {
                 open_blockers.push(dependency.issue_id.clone());
             }
+        }
+
+        let mut open_todos = Vec::new();
+        for (index, item) in issue.todo_list.iter().enumerate() {
+            if !item.is_done {
+                open_todos.push(index + 1);
+            }
+        }
+
+        if !open_todos.is_empty() {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "cannot close issue with incomplete todo items: {}",
+                Self::join_item_numbers(&open_todos)
+            )));
         }
 
         if let Some(issue_id) = issue_id {
