@@ -39,6 +39,8 @@ use tui_textarea::TextArea;
 
 use crate::{client::MetisClientInterface, command::jobs};
 
+pub mod panel;
+
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MESSAGE_WIDTH: usize = 90;
