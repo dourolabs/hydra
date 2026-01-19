@@ -841,7 +841,7 @@ fn render_issue_sections(
     let panels = issue_panel_layout(area, state);
 
     if let Some(rect) = panels.user_owned {
-        let title = issue_list_title("Your issues", &state.user_unowned_issue_lines);
+        let title = issue_list_title("Your Issues", &state.user_unowned_issue_lines);
         let lines = issue_line_lines(
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
