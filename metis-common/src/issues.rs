@@ -160,8 +160,8 @@ pub struct ReplaceTodoListRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToggleTodoItemRequest {
-    pub index: usize,
+pub struct SetTodoItemStatusRequest {
+    pub is_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

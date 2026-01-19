@@ -179,8 +179,11 @@ pub enum UpdateTodoListError {
         source: StoreError,
         issue_id: IssueId,
     },
-    #[error("todo item index {index} is out of range for issue '{issue_id}'")]
-    InvalidIndex { issue_id: IssueId, index: usize },
+    #[error("todo item number {item_number} is out of range for issue '{issue_id}'")]
+    InvalidItemNumber {
+        issue_id: IssueId,
+        item_number: usize,
+    },
     #[error("issue store operation failed")]
     Store {
         #[source]
@@ -833,10 +836,11 @@ impl AppState {
         Ok(todo_list)
     }
 
-    pub async fn toggle_todo_item(
+    pub async fn set_todo_item_status(
         &self,
         issue_id: IssueId,
-        index: usize,
+        item_number: usize,
+        is_done: bool,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let mut store = self.store.write().await;
         let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
@@ -846,14 +850,22 @@ impl AppState {
             }
         })?;
 
-        let item = issue
-            .todo_list
-            .get_mut(index)
-            .ok_or(UpdateTodoListError::InvalidIndex {
-                issue_id: issue_id.clone(),
-                index,
-            })?;
-        item.is_done = !item.is_done;
+        if item_number == 0 {
+            return Err(UpdateTodoListError::InvalidItemNumber {
+                issue_id,
+                item_number,
+            });
+        }
+        let index = item_number - 1;
+        let item =
+            issue
+                .todo_list
+                .get_mut(index)
+                .ok_or(UpdateTodoListError::InvalidItemNumber {
+                    issue_id: issue_id.clone(),
+                    item_number,
+                })?;
+        item.is_done = is_done;
 
         let todo_list = issue.todo_list.clone();
         store

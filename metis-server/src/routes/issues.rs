@@ -12,8 +12,8 @@ use axum::{
 };
 use metis_common::issues::{
     AddTodoItemRequest, Issue, IssueId, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
-    ReplaceTodoListRequest, SearchIssuesQuery, TodoItem, TodoListResponse, ToggleTodoItemRequest,
-    UpsertIssueRequest, UpsertIssueResponse,
+    ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
+    TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
 };
 use tracing::{error, info};
 
@@ -33,6 +33,32 @@ where
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self(issue_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TodoItemPath {
+    pub issue_id: IssueId,
+    pub item_number: usize,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for TodoItemPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((issue_id, item_number)) =
+            Path::<(IssueId, usize)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self {
+            issue_id,
+            item_number,
+        })
     }
 }
 
@@ -206,25 +232,30 @@ pub async fn replace_todo_list(
     }))
 }
 
-pub async fn toggle_todo_item(
+pub async fn set_todo_item_status(
     State(state): State<AppState>,
-    IssueIdPath(issue_id): IssueIdPath,
-    Json(request): Json<ToggleTodoItemRequest>,
+    TodoItemPath {
+        issue_id,
+        item_number,
+    }: TodoItemPath,
+    Json(request): Json<SetTodoItemStatusRequest>,
 ) -> Result<Json<TodoListResponse>, ApiError> {
     info!(
         issue_id = %issue_id,
-        index = request.index,
-        "toggle_todo_item invoked"
+        item_number,
+        desired_status = request.is_done,
+        "set_todo_item_status invoked"
     );
     let todo_list = state
-        .toggle_todo_item(issue_id.clone(), request.index)
+        .set_todo_item_status(issue_id.clone(), item_number, request.is_done)
         .await
         .map_err(map_todo_error)?;
 
     info!(
         issue_id = %issue_id,
-        index = request.index,
-        "toggle_todo_item completed"
+        item_number,
+        desired_status = request.is_done,
+        "set_todo_item_status completed"
     );
     Ok(Json(TodoListResponse {
         issue_id,
@@ -371,14 +402,17 @@ fn map_todo_error(err: UpdateTodoListError) -> ApiError {
         UpdateTodoListError::IssueNotFound { issue_id, source } => {
             map_issue_error(source, Some(&issue_id))
         }
-        UpdateTodoListError::InvalidIndex { issue_id, index } => {
+        UpdateTodoListError::InvalidItemNumber {
+            issue_id,
+            item_number,
+        } => {
             error!(
                 issue_id = %issue_id,
-                index,
-                "todo list index out of bounds"
+                item_number,
+                "todo item number out of bounds"
             );
             ApiError::bad_request(format!(
-                "todo_list index {index} is out of range for issue '{issue_id}'"
+                "todo item number {item_number} is out of range for issue '{issue_id}'"
             ))
         }
         UpdateTodoListError::Store { issue_id, source } => map_issue_error(source, Some(&issue_id)),
