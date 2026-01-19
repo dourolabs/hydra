@@ -1170,7 +1170,7 @@ fn render_issue_list(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(List::new(items).block(block), area);
 }
 
