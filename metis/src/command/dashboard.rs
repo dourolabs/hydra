@@ -27,7 +27,7 @@ use metis_common::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
@@ -892,24 +892,38 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &DashboardState) {
     let layout = dashboard_layout(frame.size());
+    render_dashboard_header(frame, layout.header);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
     render_header(frame, layout.status, state);
 }
 
-fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            "Metis Dashboard",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" — press Ctrl+C to exit."),
-    ])];
+fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
+    let title = "Metis Dashboard";
+    let hint = "Tab to change panels, Ctrl+C to exit.";
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
+        .split(area);
 
-    lines.push(status_filter_line(
+    let title_line = Line::from(Span::styled(
+        title,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let hint_line = Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray)));
+
+    frame.render_widget(Paragraph::new(title_line), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(hint_line).alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
+fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+    let mut lines = vec![status_filter_line(
         &state.status_filter,
         state.status_panel_focus == StatusPanelFocus::StatusFilter,
-    ));
+    )];
     lines.push(agent_filter_line(
         &state.agent_filter,
         state.status_panel_focus == StatusPanelFocus::AgentFilter,
@@ -1228,6 +1242,7 @@ fn completed_issue_rows(completed_issue_lines: &CompletedIssueLines) -> Vec<Issu
 }
 
 struct DashboardLayout {
+    header: Rect,
     issue_creator: Rect,
     issue_sections: Rect,
     status: Rect,
@@ -1237,6 +1252,7 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1),
             Constraint::Length(8),
             Constraint::Min(12),
             Constraint::Length(6),
@@ -1244,9 +1260,10 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
         .split(area);
 
     DashboardLayout {
-        issue_creator: chunks[0],
-        issue_sections: chunks[1],
-        status: chunks[2],
+        header: chunks[0],
+        issue_creator: chunks[1],
+        issue_sections: chunks[2],
+        status: chunks[3],
     }
 }
 
