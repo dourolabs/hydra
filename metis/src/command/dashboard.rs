@@ -38,6 +38,7 @@ use tui_textarea::TextArea;
 use crate::{client::MetisClientInterface, command::jobs};
 
 pub mod panel;
+pub mod running_issues;
 
 use panel::{Panel, PanelEvent, PanelState};
 
@@ -673,7 +674,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
             matches!(
                 state.user_unowned_issue_panel.handle_key_event(
                     key,
-                    issue_lines_len(&state.user_unowned_issue_lines),
+                    running_issues::issue_lines_len(&state.user_unowned_issue_lines),
                     view_height,
                 ),
                 PanelEvent::Scrolled
@@ -688,7 +689,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
             matches!(
                 state.running_issue_panel.handle_key_event(
                     key,
-                    issue_lines_len(&state.issue_lines),
+                    running_issues::issue_lines_len(&state.issue_lines),
                     view_height,
                 ),
                 PanelEvent::Scrolled
@@ -841,8 +842,9 @@ fn render_issue_sections(
     let panels = issue_panel_layout(area, state);
 
     if let Some(rect) = panels.user_owned {
-        let title = issue_list_title("Your issues", &state.user_unowned_issue_lines);
-        let lines = issue_line_lines(
+        let title =
+            running_issues::issue_list_title("Your issues", &state.user_unowned_issue_lines);
+        let lines = running_issues::issue_line_lines(
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
         );
@@ -850,18 +852,16 @@ fn render_issue_sections(
         frame.render_stateful_widget(panel, rect, &mut state.user_unowned_issue_panel);
     }
 
-    let running_title = issue_list_title("Running issues", &state.issue_lines);
-    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
-    let running_panel = Panel::new(Line::from(running_title), running_lines);
-    frame.render_stateful_widget(
-        running_panel,
+    running_issues::render_running_issues_panel(
+        frame,
         panels.running,
+        &state.issue_lines,
         &mut state.running_issue_panel,
     );
 
     let completed_title = completed_issue_list_title(&state.completed_issue_lines);
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
-    let completed_lines = issue_line_lines(&completed_rows, "No completed issues");
+    let completed_lines = running_issues::issue_line_lines(&completed_rows, "No completed issues");
     let completed_panel = Panel::new(Line::from(completed_title), completed_lines);
     frame.render_stateful_widget(
         completed_panel,
@@ -932,10 +932,6 @@ fn render_issue_creator(
         ))
     };
     frame.render_widget(Paragraph::new(footer), sections.footer);
-}
-
-fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
-    format!("{title} ({})", issue_lines.rows.len())
 }
 
 fn completed_issue_list_title(completed_issue_lines: &CompletedIssueLines) -> String {
@@ -1079,7 +1075,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
     if let Some(rect) = panels.user_owned {
         if rect_contains(rect, column, row) {
             let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
-            let content_len = issue_lines_len(&state.user_unowned_issue_lines);
+            let content_len = running_issues::issue_lines_len(&state.user_unowned_issue_lines);
             let changed =
                 state
                     .user_unowned_issue_panel
@@ -1092,7 +1088,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 
     if rect_contains(panels.running, column, row) {
         let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
-        let content_len = issue_lines_len(&state.issue_lines);
+        let content_len = running_issues::issue_lines_len(&state.issue_lines);
         let changed = state
             .running_issue_panel
             .apply_scroll_delta(delta, content_len, view_height);
@@ -1136,7 +1132,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
 
     if let Some(rect) = panels.user_owned {
         let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
-        let content_len = issue_lines_len(&state.user_unowned_issue_lines);
+        let content_len = running_issues::issue_lines_len(&state.user_unowned_issue_lines);
         state
             .user_unowned_issue_panel
             .sync_scroll(content_len, view_height);
@@ -1146,7 +1142,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
 
     let running_view_height =
         panel_content_height(panels.running, state.running_issue_panel.focused());
-    let running_len = issue_lines_len(&state.issue_lines);
+    let running_len = running_issues::issue_lines_len(&state.issue_lines);
     state
         .running_issue_panel
         .sync_scroll(running_len, running_view_height);
@@ -1192,75 +1188,6 @@ fn completed_issue_descendants<'a>(
                 None
             }
         })
-}
-
-fn issue_line_lines(issue_lines: &[IssueLine], empty_message: &str) -> Vec<Line<'static>> {
-    if issue_lines.is_empty() {
-        return vec![Line::from(Span::styled(
-            empty_message.to_string(),
-            Style::default().fg(Color::DarkGray),
-        ))];
-    }
-
-    issue_lines
-        .iter()
-        .map(|line| {
-            let mut spans = Vec::new();
-            spans.push(Span::raw(issue_prefix(line.depth)));
-            spans.push(Span::raw(" "));
-            let (issue_status_label, issue_status_style) =
-                issue_status_display(line.status, &line.readiness);
-            spans.push(Span::styled(
-                format!("[{issue_status_label}]"),
-                issue_status_style,
-            ));
-
-            if let Some(task) = &line.task {
-                if let Some(runtime) = &task.runtime {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(
-                        format!("[{runtime}]"),
-                        status_style(task.status),
-                    ));
-                }
-            }
-
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                line.id.clone(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
-            if let Some(assignee) = &line.assignee {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    format!("@{assignee}"),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            spans.push(Span::raw(" — "));
-            spans.push(Span::raw(truncate_message(
-                &line.summary,
-                MAX_MESSAGE_WIDTH,
-            )));
-            if let Some(progress) = &line.progress {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    truncate_message(progress, MAX_MESSAGE_WIDTH),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-
-            Line::from(spans)
-        })
-        .collect()
-}
-
-fn issue_lines_len(issue_lines: &IssueLines) -> usize {
-    if issue_lines.rows.is_empty() {
-        1
-    } else {
-        issue_lines.rows.len()
-    }
 }
 
 fn completed_rows_len(rows: &[IssueLine]) -> usize {
@@ -1444,7 +1371,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
-    let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
+    let issue_lines = running_issues::build_issue_lines(&state.issues, &state.jobs, true);
     let user_unowned_issue_lines =
         build_user_unowned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
@@ -1519,40 +1446,7 @@ fn build_user_unowned_issue_lines(
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs, false)
-}
-
-fn build_issue_lines(
-    issues: &[IssueRecord],
-    jobs: &[JobDetails],
-    exclude_inactive_roots: bool,
-) -> IssueLines {
-    let nodes = build_issue_nodes(issues, jobs);
-
-    let mut roots: Vec<IssueId> = nodes
-        .iter()
-        .filter(|(_, node)| node.parent.is_none())
-        .map(|(id, _)| id.clone())
-        .collect();
-    roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
-
-    let mut rows = Vec::new();
-    let mut visited: HashSet<IssueId> = HashSet::new();
-    for root in roots {
-        if exclude_inactive_roots {
-            if let Some(node) = nodes.get(&root) {
-                if matches!(
-                    node.record.status,
-                    IssueStatus::Closed | IssueStatus::Dropped
-                ) {
-                    continue;
-                }
-            }
-        }
-        append_issue(&root, 0, &mut rows, &mut visited, &nodes);
-    }
-
-    IssueLines { rows }
+    running_issues::build_issue_lines(&assigned, jobs, false)
 }
 
 fn build_issue_nodes(issues: &[IssueRecord], jobs: &[JobDetails]) -> HashMap<IssueId, IssueNode> {
@@ -1645,41 +1539,6 @@ fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> C
     CompletedIssueLines {
         roots: completed_roots,
         descendants: completed_descendants,
-    }
-}
-
-fn append_issue(
-    id: &IssueId,
-    depth: usize,
-    rows: &mut Vec<IssueLine>,
-    visited: &mut HashSet<IssueId>,
-    nodes: &HashMap<IssueId, IssueNode>,
-) {
-    if !visited.insert(id.clone()) {
-        return;
-    }
-
-    let Some(node) = nodes.get(id) else {
-        return;
-    };
-
-    let readiness = issue_readiness(node, nodes);
-    let issue_summary = issue_summary(&node.record.description, &node.record.progress);
-    rows.push(IssueLine {
-        id: node.record.id.to_string(),
-        summary: issue_summary.summary,
-        progress: issue_summary.progress,
-        status: node.record.status,
-        readiness,
-        assignee: node.record.assignee.clone(),
-        task: node.task.clone(),
-        depth,
-    });
-
-    let mut children = node.children.clone();
-    children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
-    for child in children {
-        append_issue(&child, depth + 1, rows, visited, nodes);
     }
 }
 
@@ -2095,7 +1954,7 @@ mod tests {
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], false);
+        let lines = running_issues::build_issue_lines(&issues, &[], false);
 
         assert_eq!(lines.rows.len(), 3);
         assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
@@ -2125,7 +1984,7 @@ mod tests {
             issue("i-open", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], false);
+        let lines = running_issues::build_issue_lines(&issues, &[], false);
 
         let blocked_line = lines
             .rows
@@ -2143,7 +2002,7 @@ mod tests {
     #[test]
     fn dropped_issues_render_as_dropped() {
         let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
-        let lines = build_issue_lines(&issues, &[], false);
+        let lines = running_issues::build_issue_lines(&issues, &[], false);
 
         let line = lines.rows.first().expect("missing issue line");
         assert_eq!(line.readiness, IssueReadiness::Dropped);
@@ -2163,7 +2022,7 @@ mod tests {
             Some("3s"),
         )];
 
-        let lines = build_issue_lines(&issues, &jobs, false);
+        let lines = running_issues::build_issue_lines(&issues, &jobs, false);
 
         let line = lines.rows.first().expect("issue line missing");
         let task = line.task.as_ref().expect("task indicator missing");
@@ -2194,7 +2053,7 @@ mod tests {
             dependencies: Vec::new(),
         }];
 
-        let lines = build_issue_lines(&issues, &[], false);
+        let lines = running_issues::build_issue_lines(&issues, &[], false);
 
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.summary, "investigate logs");
@@ -2223,7 +2082,7 @@ mod tests {
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], false);
+        let lines = running_issues::build_issue_lines(&issues, &[], false);
 
         let line = lines
             .rows
@@ -2476,7 +2335,7 @@ mod tests {
             issue("i-open-root", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(&issues, &[], true);
+        let lines = running_issues::build_issue_lines(&issues, &[], true);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open-root").to_string());
