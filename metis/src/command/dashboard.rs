@@ -8,7 +8,10 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
+        KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -24,7 +27,7 @@ use metis_common::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
@@ -242,12 +245,39 @@ impl PartialEq for IssueDraft {
 }
 
 #[derive(Default, Clone, PartialEq)]
+struct ListScrollState {
+    offset: usize,
+}
+
+impl ListScrollState {
+    fn apply_delta(&mut self, delta: i16, total_items: usize, view_height: usize) -> bool {
+        let max_offset = max_scroll_offset(total_items, view_height);
+        let next = self.offset as i64 + i64::from(delta);
+        let clamped = next.clamp(0, max_offset as i64) as usize;
+        if clamped == self.offset {
+            return false;
+        }
+        self.offset = clamped;
+        true
+    }
+
+    fn clamp(&mut self, max_offset: usize) {
+        if self.offset > max_offset {
+            self.offset = max_offset;
+        }
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
+    issue_scroll: ListScrollState,
+    user_unowned_issue_scroll: ListScrollState,
+    completed_issue_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
     agents_error: Option<String>,
@@ -257,6 +287,7 @@ struct DashboardState {
     agent_filter: AgentFilterState,
     selected_panel: PanelFocus,
     status_panel_focus: StatusPanelFocus,
+    last_frame_size: Option<Rect>,
 }
 
 struct IssueSubmission {
@@ -450,6 +481,8 @@ async fn run_dashboard_loop(
     }
 
     if needs_draw {
+        state.last_frame_size = Some(terminal.size()?);
+        clamp_issue_scrolls(&mut state);
         terminal.draw(|f| render(f, &state))?;
         needs_draw = false;
     }
@@ -541,6 +574,8 @@ async fn run_dashboard_loop(
         }
 
         if needs_draw {
+            state.last_frame_size = Some(terminal.size()?);
+            clamp_issue_scrolls(&mut state);
             terminal.draw(|f| render(f, &state))?;
             needs_draw = false;
         }
@@ -551,15 +586,20 @@ async fn run_dashboard_loop(
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode().context("failed to enable raw mode")?;
-    execute!(stdout(), EnterAlternateScreen).context("failed to switch to alternate screen")?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)
+        .context("failed to switch to alternate screen")?;
     let backend = CrosstermBackend::new(stdout());
     Terminal::new(backend).context("failed to initialize terminal")
 }
 
 fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)
-        .context("failed to leave alternate screen")?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .context("failed to leave alternate screen")?;
     terminal.show_cursor().context("failed to show cursor")
 }
 
@@ -620,10 +660,21 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 submission: None,
             }
         }
-        Event::Resize(_, _) => EventOutcome {
-            should_quit: false,
-            submission: None,
-        },
+        Event::Resize(width, height) => {
+            state.last_frame_size = Some(Rect::new(0, 0, width, height));
+            clamp_issue_scrolls(state);
+            EventOutcome {
+                should_quit: false,
+                submission: None,
+            }
+        }
+        Event::Mouse(mouse) => {
+            handle_mouse_scroll(mouse, state);
+            EventOutcome {
+                should_quit: false,
+                submission: None,
+            }
+        }
         _ => EventOutcome {
             should_quit: false,
             submission: None,
@@ -841,18 +892,10 @@ async fn submit_issue(
 }
 
 fn render(frame: &mut Frame, state: &DashboardState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8),
-            Constraint::Min(12),
-            Constraint::Length(6),
-        ])
-        .split(frame.size());
-
-    render_issue_creator(frame, chunks[0], state);
-    render_issue_sections(frame, chunks[1], state);
-    render_header(frame, chunks[2], state);
+    let layout = dashboard_layout(frame.size());
+    render_issue_creator(frame, layout.issue_creator, state);
+    render_issue_sections(frame, layout.issue_sections, state);
+    render_header(frame, layout.status, state);
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -1006,86 +1049,35 @@ fn agent_filter_line(filter: &AgentFilterState, active: bool) -> Line {
 }
 
 fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let has_username = state
-        .username
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
+    let panels = issue_panel_layout(area, state);
 
-    if has_username {
-        let show_user_owned =
-            should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
-
-        if show_user_owned {
-            let panels = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(35),
-                    Constraint::Percentage(35),
-                ])
-                .split(area);
-            render_issue_list(
-                frame,
-                panels[0],
-                &state.user_unowned_issue_lines,
-                &issue_list_title("Your issues", &state.user_unowned_issue_lines),
-                "No open issues assigned to you",
-            );
-            render_issue_list(
-                frame,
-                panels[1],
-                &state.issue_lines,
-                &issue_list_title("Running issues", &state.issue_lines),
-                "No issues found",
-            );
-            render_completed_issue_list(
-                frame,
-                panels[2],
-                &state.completed_issue_lines,
-                &completed_issue_list_title(&state.completed_issue_lines),
-                "No completed issues",
-            );
-        } else {
-            let panels = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .split(area);
-            render_issue_list(
-                frame,
-                panels[0],
-                &state.issue_lines,
-                &issue_list_title("Running issues", &state.issue_lines),
-                "No issues found",
-            );
-            render_completed_issue_list(
-                frame,
-                panels[1],
-                &state.completed_issue_lines,
-                &completed_issue_list_title(&state.completed_issue_lines),
-                "No completed issues",
-            );
-        }
-    } else {
-        let panels = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(area);
+    if let Some(rect) = panels.user_owned {
         render_issue_list(
             frame,
-            panels[0],
-            &state.issue_lines,
-            &issue_list_title("Running issues", &state.issue_lines),
-            "No issues found",
-        );
-        render_completed_issue_list(
-            frame,
-            panels[1],
-            &state.completed_issue_lines,
-            &completed_issue_list_title(&state.completed_issue_lines),
-            "No completed issues",
+            rect,
+            &state.user_unowned_issue_lines,
+            &issue_list_title("Your issues", &state.user_unowned_issue_lines),
+            "No open issues assigned to you",
+            state.user_unowned_issue_scroll.offset,
         );
     }
+
+    render_issue_list(
+        frame,
+        panels.running,
+        &state.issue_lines,
+        &issue_list_title("Running issues", &state.issue_lines),
+        "No issues found",
+        state.issue_scroll.offset,
+    );
+    render_completed_issue_list(
+        frame,
+        panels.completed,
+        &state.completed_issue_lines,
+        &completed_issue_list_title(&state.completed_issue_lines),
+        "No completed issues",
+        state.completed_issue_scroll.offset,
+    );
 }
 
 fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -1164,8 +1156,11 @@ fn render_issue_list(
     issue_lines: &IssueLines,
     title: &str,
     empty_message: &str,
+    scroll_offset: usize,
 ) {
-    let items = issue_line_items(&issue_lines.rows, empty_message);
+    let view_height = list_view_height(area);
+    let items =
+        issue_line_items_with_scroll(&issue_lines.rows, empty_message, scroll_offset, view_height);
 
     let block = Block::default()
         .title(title)
@@ -1180,9 +1175,11 @@ fn render_completed_issue_list(
     completed_issue_lines: &CompletedIssueLines,
     title: &str,
     empty_message: &str,
+    scroll_offset: usize,
 ) {
     let rows = completed_issue_rows(completed_issue_lines);
-    let items = issue_line_items(&rows, empty_message);
+    let view_height = list_view_height(area);
+    let items = issue_line_items_with_scroll(&rows, empty_message, scroll_offset, view_height);
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -1229,6 +1226,153 @@ fn completed_issue_rows(completed_issue_lines: &CompletedIssueLines) -> Vec<Issu
         }
     }
     rows
+}
+
+struct DashboardLayout {
+    issue_creator: Rect,
+    issue_sections: Rect,
+    status: Rect,
+}
+
+fn dashboard_layout(area: Rect) -> DashboardLayout {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Min(12),
+            Constraint::Length(6),
+        ])
+        .split(area);
+
+    DashboardLayout {
+        issue_creator: chunks[0],
+        issue_sections: chunks[1],
+        status: chunks[2],
+    }
+}
+
+struct IssuePanelLayout {
+    user_owned: Option<Rect>,
+    running: Rect,
+    completed: Rect,
+}
+
+fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
+    let has_username = state
+        .username
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    if has_username {
+        let show_user_owned =
+            should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
+        if show_user_owned {
+            let panels = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(35),
+                    Constraint::Percentage(35),
+                ])
+                .split(area);
+            return IssuePanelLayout {
+                user_owned: Some(panels[0]),
+                running: panels[1],
+                completed: panels[2],
+            };
+        }
+    }
+
+    let panels = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    IssuePanelLayout {
+        user_owned: None,
+        running: panels[0],
+        completed: panels[1],
+    }
+}
+
+fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
+    let delta = match mouse.kind {
+        MouseEventKind::ScrollUp => -1,
+        MouseEventKind::ScrollDown => 1,
+        _ => return false,
+    };
+
+    let size = match state.last_frame_size {
+        Some(size) => size,
+        None => return false,
+    };
+
+    let layout = dashboard_layout(size);
+    let panels = issue_panel_layout(layout.issue_sections, state);
+    let row = mouse.row;
+    let column = mouse.column;
+
+    if let Some(rect) = panels.user_owned {
+        if rect_contains(rect, column, row) {
+            let view_height = list_view_height(rect);
+            return state.user_unowned_issue_scroll.apply_delta(
+                delta,
+                state.user_unowned_issue_lines.rows.len(),
+                view_height,
+            );
+        }
+    }
+
+    if rect_contains(panels.running, column, row) {
+        let view_height = list_view_height(panels.running);
+        return state
+            .issue_scroll
+            .apply_delta(delta, state.issue_lines.rows.len(), view_height);
+    }
+
+    if rect_contains(panels.completed, column, row) {
+        let view_height = list_view_height(panels.completed);
+        let rows = completed_issue_rows(&state.completed_issue_lines);
+        return state
+            .completed_issue_scroll
+            .apply_delta(delta, rows.len(), view_height);
+    }
+
+    false
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+fn clamp_issue_scrolls(state: &mut DashboardState) {
+    let size = match state.last_frame_size {
+        Some(size) => size,
+        None => return,
+    };
+
+    let layout = dashboard_layout(size);
+    let panels = issue_panel_layout(layout.issue_sections, state);
+
+    if let Some(rect) = panels.user_owned {
+        let view_height = list_view_height(rect);
+        let max_offset = max_scroll_offset(state.user_unowned_issue_lines.rows.len(), view_height);
+        state.user_unowned_issue_scroll.clamp(max_offset);
+    } else {
+        state.user_unowned_issue_scroll.offset = 0;
+    }
+
+    let running_view_height = list_view_height(panels.running);
+    let running_max = max_scroll_offset(state.issue_lines.rows.len(), running_view_height);
+    state.issue_scroll.clamp(running_max);
+
+    let completed_view_height = list_view_height(panels.completed);
+    let completed_rows = completed_issue_rows(&state.completed_issue_lines);
+    let completed_max = max_scroll_offset(completed_rows.len(), completed_view_height);
+    state.completed_issue_scroll.clamp(completed_max);
 }
 
 fn completed_issue_descendants<'a>(
@@ -1306,6 +1450,36 @@ fn issue_line_items<'a>(issue_lines: &'a [IssueLine], empty_message: &'a str) ->
             ListItem::new(Line::from(spans))
         })
         .collect()
+}
+
+fn issue_line_items_with_scroll<'a>(
+    issue_lines: &'a [IssueLine],
+    empty_message: &'a str,
+    scroll_offset: usize,
+    view_height: usize,
+) -> Vec<ListItem<'a>> {
+    if view_height == 0 {
+        return Vec::new();
+    }
+    if issue_lines.is_empty() {
+        return issue_line_items(issue_lines, empty_message);
+    }
+
+    let max_offset = max_scroll_offset(issue_lines.len(), view_height);
+    let offset = scroll_offset.min(max_offset);
+    let end = (offset + view_height).min(issue_lines.len());
+    issue_line_items(&issue_lines[offset..end], empty_message)
+}
+
+fn list_view_height(area: Rect) -> usize {
+    area.height.saturating_sub(2) as usize
+}
+
+fn max_scroll_offset(total_items: usize, view_height: usize) -> usize {
+    if view_height == 0 {
+        return 0;
+    }
+    total_items.saturating_sub(view_height)
 }
 
 fn issue_prefix(depth: usize) -> String {
@@ -1458,6 +1632,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     state.issue_lines = issue_lines;
     state.user_unowned_issue_lines = user_unowned_issue_lines;
     state.completed_issue_lines = completed_issue_lines;
+    clamp_issue_scrolls(state);
 
     previous_issue_lines != state.issue_lines
         || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
@@ -2015,7 +2190,7 @@ mod tests {
     use crate::client::MockMetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
-    use crossterm::event::Event as CrosstermEvent;
+    use crossterm::event::{Event as CrosstermEvent, KeyModifiers, MouseEvent, MouseEventKind};
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
@@ -2780,6 +2955,34 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
+    }
+
+    #[test]
+    fn mouse_scroll_down_updates_running_issue_offset() {
+        let issues = (0..10)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_scroll.offset, 1);
     }
 
     #[test]
