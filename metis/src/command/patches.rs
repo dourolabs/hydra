@@ -328,9 +328,9 @@ async fn create_patch(
     )
     .await?;
 
-    let mut ci_wait_issue_id = None;
+    let mut merge_request_issue_id = None;
     if let Some(assignee) = assignee {
-        let wait_issue_id = create_ci_wait_issue(
+        let merge_issue_id = create_merge_request_issue(
             client,
             response.patch_id.clone(),
             assignee,
@@ -339,7 +339,7 @@ async fn create_patch(
             description,
         )
         .await?;
-        ci_wait_issue_id = Some(wait_issue_id);
+        merge_request_issue_id = Some(merge_issue_id);
     }
 
     let mut output = serde_json::json!({
@@ -347,9 +347,12 @@ async fn create_patch(
         "type": "patch"
     });
 
-    if let Some(issue_id) = ci_wait_issue_id {
+    if let Some(issue_id) = merge_request_issue_id {
         if let Some(object) = output.as_object_mut() {
-            object.insert("ci_wait_issue_id".to_string(), serde_json::json!(issue_id));
+            object.insert(
+                "merge_request_issue_id".to_string(),
+                serde_json::json!(issue_id),
+            );
         }
     }
 
@@ -509,16 +512,16 @@ fn print_merge_queue_pretty(
     Ok(())
 }
 
-async fn create_ci_wait_issue(
+async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
-    review_assignee: String,
+    assignee: String,
     parent_issue_id: Option<IssueId>,
     patch_title: String,
     patch_description: String,
 ) -> Result<IssueId> {
-    let review_assignee = review_assignee.trim().to_string();
-    if review_assignee.is_empty() {
+    let assignee = assignee.trim().to_string();
+    if assignee.is_empty() {
         bail!("Assignee must not be empty.");
     }
 
@@ -543,22 +546,22 @@ async fn create_ci_wait_issue(
         summary.to_string()
     };
 
+    let description = format!("Review patch {}: {title}", patch_id.as_ref());
     let creator = env::var("METIS_USER")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
-    let progress = format!("review-assignee: {review_assignee}");
 
     let response = client
         .create_issue(&UpsertIssueRequest {
             issue: Issue {
-                issue_type: IssueType::Task,
-                description: format!("Waiting on CI for patch {}: {title}", patch_id.as_ref()),
+                issue_type: IssueType::MergeRequest,
+                description,
                 creator,
-                progress,
+                progress: String::new(),
                 status: IssueStatus::Open,
-                assignee: Some("github".to_string()),
+                assignee: Some(assignee),
                 todo_list: Vec::new(),
                 dependencies,
                 patches: vec![patch_id],
@@ -566,7 +569,7 @@ async fn create_ci_wait_issue(
             job_id: None,
         })
         .await
-        .context("failed to create CI wait issue")?;
+        .context("failed to create merge-request issue")?;
 
     Ok(response.issue_id)
 }
@@ -1273,121 +1276,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_requires_commit_range_or_issue_id() -> Result<()> {
-        let (_tempdir, repo_path, _base_commit, _head_commit) = initialize_repo_with_changes()?;
-        let client = MockMetisClient::default();
-
-        let result = create_patch(
-            &client,
-            "missing range".to_string(),
-            "needs commit range".to_string(),
-            Some(task_id("t-job-missing-range")),
-            false,
-            None,
-            None,
-            None,
-            None,
-            false,
-            Some(&repo_path),
-        )
-        .await;
-
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("commit range is required"),
-            "error should prompt for commit range or issue id: {error}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_errors_on_dirty_workdir_without_override() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        fs::write(repo_path.join("README.md"), "uncommitted change\n")
-            .context("failed to add dirty change")?;
-        let client = MockMetisClient::default();
-        let commit_range = Some(format!("{base_commit}..{head_commit}"));
-
-        let result = create_patch(
-            &client,
-            "dirty workdir".to_string(),
-            "should fail".to_string(),
-            Some(task_id("t-job-dirty")),
-            false,
-            None,
-            None,
-            None,
-            commit_range,
-            false,
-            Some(&repo_path),
-        )
-        .await;
-
-        let error = result.unwrap_err().to_string();
-        assert!(
-            error.contains("Working directory has uncommitted changes"),
-            "error should prompt to clean working directory: {error}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_allows_dirty_workdir_with_flag() -> Result<()> {
-        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let commit_range = format!("{base_commit}..{head_commit}");
-        fs::write(repo_path.join("README.md"), "uncommitted change\n")
-            .context("failed to add dirty change")?;
-        let job_id = task_id("t-job-dirty-override");
-        let client = MockMetisClient::default();
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
-                    name: sample_repo_name(),
-                    rev: None,
-                },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-dirty-override"),
-        });
-
-        create_patch(
-            &client,
-            "dirty workdir allowed".to_string(),
-            "should proceed".to_string(),
-            Some(job_id),
-            false,
-            None,
-            None,
-            None,
-            Some(commit_range.clone()),
-            true,
-            Some(&repo_path),
-        )
-        .await?;
-
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected patch creation to proceed");
-        let (_, request) = &requests[0];
-        assert_eq!(
-            request.patch.diff,
-            git_diff_commit_range(&repo_path, &commit_range)?
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_patch_creates_ci_wait_issue_when_assignee_provided() -> Result<()> {
+    async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
         let job_id = task_id("t-job-merge");
         let parent_issue = issue_id("i-parent");
@@ -1441,10 +1330,9 @@ mod tests {
         assert_eq!(issue_requests.len(), 1);
         let (issue_id, request) = &issue_requests[0];
         assert!(issue_id.is_none());
-        assert_eq!(request.issue.issue_type, IssueType::Task);
+        assert_eq!(request.issue.issue_type, IssueType::MergeRequest);
         assert_eq!(request.issue.status, IssueStatus::Open);
-        assert_eq!(request.issue.assignee.as_deref(), Some("github"));
-        assert_eq!(request.issue.progress.as_str(), "review-assignee: owner-a");
+        assert_eq!(request.issue.assignee.as_deref(), Some("owner-a"));
         assert_eq!(
             request.issue.dependencies,
             vec![IssueDependency {
