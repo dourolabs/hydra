@@ -789,7 +789,6 @@ fn handle_issue_submission_result(
         Ok(issue_id) => {
             state.issue_draft.clear_prompt();
             state.issue_draft.set_editing(false);
-            state.selected_panel = PanelFocus::Status;
             state.issue_draft.validation_error = None;
             state.issue_draft.info_message =
                 Some(format!("Created issue {issue_id} for @{assignee}."));
@@ -2747,6 +2746,22 @@ mod tests {
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
         assert!(state.issue_draft.is_submitting);
+    }
+
+    #[test]
+    fn issue_submission_success_preserves_selected_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::NewIssue,
+            ..Default::default()
+        };
+        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.set_editing(true);
+        state.issue_draft.is_submitting = true;
+
+        handle_issue_submission_result(&mut state, "pm", Ok(issue_id("i-new")));
+
+        assert!(matches!(state.selected_panel, PanelFocus::NewIssue));
+        assert!(!state.issue_draft.is_submitting);
     }
 
     #[test]
