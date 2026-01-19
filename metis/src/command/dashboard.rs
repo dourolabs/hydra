@@ -45,6 +45,7 @@ const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
+const PANEL_FOCUS_ORDER: [PanelFocus; 2] = [PanelFocus::NewIssue, PanelFocus::Status];
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 enum PanelFocus {
     #[default]
@@ -204,7 +205,7 @@ impl IssueDraft {
         let placeholder = if self.editing {
             "Describe the work to create a new issue.\nType to describe the work for a new issue."
         } else {
-            "Describe the work to create a new issue.\nPress Tab to focus the prompt."
+            "Describe the work to create a new issue.\nPress Tab/Shift+Tab to focus the prompt."
         };
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
@@ -468,8 +469,8 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if is_panel_focus_key(key) {
-                handle_panel_focus_key(state);
+            if let Some(forward) = panel_focus_direction(key) {
+                handle_panel_focus_key(state, forward);
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
@@ -536,22 +537,43 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
         && has_alt_modifier(key.modifiers)
 }
 
-fn is_panel_focus_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Tab && key.modifiers.is_empty()
+fn panel_focus_direction(key: KeyEvent) -> Option<bool> {
+    if key.code == KeyCode::Tab && key.modifiers.is_empty() {
+        return Some(true);
+    }
+
+    if key.code == KeyCode::BackTab
+        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+    {
+        return Some(false);
+    }
+
+    None
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
 }
 
-fn handle_panel_focus_key(state: &mut DashboardState) {
-    state.selected_panel = match state.selected_panel {
-        PanelFocus::NewIssue => PanelFocus::Status,
-        PanelFocus::Status => PanelFocus::NewIssue,
-    };
+fn handle_panel_focus_key(state: &mut DashboardState, forward: bool) {
+    state.selected_panel = next_panel_focus(state.selected_panel, forward);
     state
         .issue_draft
         .set_editing(state.selected_panel == PanelFocus::NewIssue);
+}
+
+fn next_panel_focus(current: PanelFocus, forward: bool) -> PanelFocus {
+    let total = PANEL_FOCUS_ORDER.len();
+    let index = PANEL_FOCUS_ORDER
+        .iter()
+        .position(|panel| *panel == current)
+        .unwrap_or(0);
+    let next = if forward {
+        (index + 1) % total
+    } else {
+        index.saturating_add(total - 1) % total
+    };
+    PANEL_FOCUS_ORDER[next]
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -687,7 +709,7 @@ fn render(frame: &mut Frame, state: &DashboardState) {
 
 fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
     let title = "Metis Dashboard";
-    let hint = "Tab to change panels, Ctrl+C to exit.";
+    let hint = "Tab/Shift+Tab to change panels, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -791,12 +813,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     } else if draft.editing {
         Line::from(Span::styled(
-            "Alt+A to cycle assignee. Alt+Enter to validate. Tab switches panels.",
+            "Alt+A to cycle assignee. Alt+Enter to validate. Tab/Shift+Tab switches panels.",
             Style::default().fg(Color::DarkGray),
         ))
     } else {
         Line::from(Span::styled(
-            "Tab to focus prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
+            "Tab/Shift+Tab to focus prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
             Style::default().fg(Color::DarkGray),
         ))
     };
@@ -2515,6 +2537,39 @@ mod tests {
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::NewIssue);
+        assert!(state.issue_draft.editing);
+    }
+
+    #[test]
+    fn shift_tab_switches_focus_to_status_panel() {
+        let mut state = DashboardState::default();
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert!(!state.issue_draft.editing);
+    }
+
+    #[test]
+    fn shift_tab_switches_focus_back_to_new_issue_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Status,
+            ..DashboardState::default()
+        };
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
             &mut state,
         );
 
