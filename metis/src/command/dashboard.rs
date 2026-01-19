@@ -41,6 +41,8 @@ const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
+const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
+const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
 const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
     IssueStatus::Open,
     IssueStatus::InProgress,
@@ -1292,18 +1294,27 @@ fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
         let show_user_owned =
             should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
         if show_user_owned {
+            let user_height = USER_ISSUES_PANEL_HEIGHT.min(area.height);
+            let user_owned = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: user_height,
+            };
+            let remaining = Rect {
+                x: area.x,
+                y: area.y.saturating_add(user_height),
+                width: area.width,
+                height: area.height.saturating_sub(user_height),
+            };
             let panels = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(35),
-                    Constraint::Percentage(35),
-                ])
-                .split(area);
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(remaining);
             return IssuePanelLayout {
-                user_owned: Some(panels[0]),
-                running: panels[1],
-                completed: panels[2],
+                user_owned: Some(user_owned),
+                running: panels[0],
+                completed: panels[1],
             };
         }
     }
