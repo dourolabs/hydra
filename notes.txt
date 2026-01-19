@@ -14,6 +14,8 @@ To delete the cluster
 kind delete cluster --name local-dev
 ```
 
+Keep the cluster small; a single control plane node is enough for these tests.
+
 
 ## Building & Running
 
