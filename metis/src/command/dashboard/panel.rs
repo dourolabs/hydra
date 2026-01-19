@@ -460,6 +460,27 @@ mod tests {
         assert_eq!(state.scroll_offset, 2);
     }
 
+    #[test]
+    fn apply_scroll_delta_clamps_to_bounds() {
+        let mut state = PanelState::new();
+
+        let changed = state.apply_scroll_delta(4, 6, 3);
+        assert!(changed);
+        assert_eq!(state.scroll_offset(), 3);
+
+        let changed = state.apply_scroll_delta(1, 6, 3);
+        assert!(!changed);
+        assert_eq!(state.scroll_offset(), 3);
+
+        let changed = state.apply_scroll_delta(-5, 6, 3);
+        assert!(changed);
+        assert_eq!(state.scroll_offset(), 0);
+
+        let changed = state.apply_scroll_delta(-1, 6, 3);
+        assert!(!changed);
+        assert_eq!(state.scroll_offset(), 0);
+    }
+
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
         let mut row = String::new();
         for x in 0..width {

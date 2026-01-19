@@ -815,7 +815,7 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
 
 fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
     let title = "Metis Dashboard";
-    let hint = "Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
+    let hint = "Tab to change panels, j/k or Up/Down/mouse wheel to scroll, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -2653,6 +2653,85 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 1);
+    }
+
+    #[test]
+    fn mouse_scroll_up_updates_running_issue_offset() {
+        let issues = (0..25)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let mouse_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_event(CrosstermEvent::Mouse(mouse_down), &mut state);
+
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse_up), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn mouse_scroll_respects_running_issue_bounds() {
+        let issues = (0..40)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
+        let content_len = issue_lines_len(&state.issue_lines);
+        let max_offset = max_scroll_offset(content_len, view_height);
+        assert!(max_offset > 0);
+
+        let mouse_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        for _ in 0..(max_offset + 2) {
+            handle_event(CrosstermEvent::Mouse(mouse_down), &mut state);
+        }
+
+        assert_eq!(state.running_issue_panel.scroll_offset(), max_offset);
+
+        let mouse_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        for _ in 0..(max_offset + 2) {
+            handle_event(CrosstermEvent::Mouse(mouse_up), &mut state);
+        }
+
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
     }
 
     #[test]
