@@ -48,7 +48,7 @@ const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
     IssueStatus::Dropped,
 ];
 
-#[derive(Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, PartialEq, Default, Debug)]
 enum PanelFocus {
     #[default]
     NewIssue,
@@ -214,7 +214,7 @@ impl IssueDraft {
         let placeholder = if self.editing {
             "Describe the work to create a new issue.\nType to describe the work for a new issue."
         } else {
-            "Describe the work to create a new issue.\nPress Alt+N to start editing."
+            "Describe the work to create a new issue.\nPress Tab to focus the prompt."
         };
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
@@ -621,10 +621,11 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if is_issue_edit_toggle_key(key) {
+            if is_panel_focus_key(key) {
+                handle_panel_focus_key(state);
                 return EventOutcome {
                     should_quit: false,
-                    submission: handle_issue_draft_key(key, state),
+                    submission: None,
                 };
             }
 
@@ -701,12 +702,22 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
         && has_alt_modifier(key.modifiers)
 }
 
-fn is_issue_edit_toggle_key(key: KeyEvent) -> bool {
-    is_alt_char_key(key, 'n')
+fn is_panel_focus_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Tab && key.modifiers.is_empty()
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
+}
+
+fn handle_panel_focus_key(state: &mut DashboardState) {
+    state.selected_panel = match state.selected_panel {
+        PanelFocus::NewIssue => PanelFocus::Status,
+        PanelFocus::Status => PanelFocus::NewIssue,
+    };
+    state
+        .issue_draft
+        .set_editing(state.selected_panel == PanelFocus::NewIssue);
 }
 
 fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
@@ -764,17 +775,6 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
-    if is_issue_edit_toggle_key(key) {
-        let next_editing = !state.issue_draft.editing;
-        state.issue_draft.set_editing(next_editing);
-        state.selected_panel = if next_editing {
-            PanelFocus::NewIssue
-        } else {
-            PanelFocus::Status
-        };
-        return None;
-    }
-
     if state.issue_draft.is_submitting {
         if is_issue_submit_key(key) {
             state.issue_draft.info_message =
@@ -1159,12 +1159,12 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     } else if draft.editing {
         Line::from(Span::styled(
-            "Alt+A to cycle assignee. Alt+Enter to validate. Alt+N to stop editing.",
+            "Alt+A to cycle assignee. Alt+Enter to validate. Tab switches panels.",
             Style::default().fg(Color::DarkGray),
         ))
     } else {
         Line::from(Span::styled(
-            "Alt+N to edit prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
+            "Tab to focus prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
             Style::default().fg(Color::DarkGray),
         ))
     };
@@ -3010,6 +3010,40 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
+    }
+
+    #[test]
+    fn tab_switches_focus_to_status_panel() {
+        let mut state = DashboardState::default();
+        state.issue_draft.set_editing(true);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert!(!state.issue_draft.editing);
+    }
+
+    #[test]
+    fn tab_switches_focus_back_to_new_issue_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Status,
+            ..DashboardState::default()
+        };
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::NewIssue);
+        assert!(state.issue_draft.editing);
     }
 
     #[test]
