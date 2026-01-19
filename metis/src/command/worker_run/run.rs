@@ -15,7 +15,7 @@ use metis_common::{
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
-use crate::git::{clone_repo, configure_repo, resolve_head_oid, workdir_diff as git_workdir_diff};
+use crate::git::{clone_repo, configure_repo, resolve_head_oid, workdir_diff};
 use tempfile::Builder;
 
 use crate::command::worker_run::worker_commands::WorkerCommands;
@@ -39,23 +39,25 @@ pub async fn run(
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    match request_context {
+    let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
+            None
         }
         Bundle::GitRepository { url, rev } => {
-            clone_git_repo(&url, &rev, &dest, github_token.as_deref())?;
+            clone_repo(&url, &rev, &dest, github_token.as_deref())
+                .context("failed to clone repository")?;
+            configure_repo(&dest, "Metis Worker", "metis-worker@example.com")
+                .context("failed to configure git repository")?;
+            resolve_head_oid(&dest).context("failed to resolve HEAD commit")?
         }
-    }
+    };
 
     let output_dir = Builder::new()
         .prefix("codex-output")
         .tempdir()
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
-
-    configure_git_repo(&dest)?;
-    let base_commit = resolve_head_oid_if_present(&dest)?;
 
     let last_message = commands
         .run(
@@ -95,20 +97,6 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
     } else {
         fs::create_dir_all(dest).with_context(|| format!("failed to create {dest:?}"))
     }
-}
-
-fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
-    clone_repo(url, rev, dest, github_token).context("failed to clone repository")?;
-    Ok(())
-}
-
-fn configure_git_repo(dest: &Path) -> Result<()> {
-    let git_dir = dest.join(".git");
-    if !git_dir.exists() {
-        return Ok(());
-    }
-
-    configure_repo(dest, "Metis Worker", "metis-worker@example.com")
 }
 
 fn ensure_color_output_env(env: &mut HashMap<String, String>) {
@@ -160,7 +148,7 @@ async fn submit_patch_artifact_if_present(
         println!("No git repository detected; skipping patch submission for job '{job}'.");
         return Ok(());
     };
-    let diff = git_workdir_diff(dest)?;
+    let diff = workdir_diff(dest)?;
     if diff.trim().is_empty() {
         println!("No uncommitted changes detected; skipping patch submission for job '{job}'.");
         return Ok(());
@@ -202,14 +190,6 @@ fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
     };
 
     (title, description)
-}
-
-fn resolve_head_oid_if_present(dest: &Path) -> Result<Option<GitOid>> {
-    if !dest.join(".git").exists() {
-        return Ok(None);
-    }
-
-    resolve_head_oid(dest)
 }
 
 #[cfg(test)]
@@ -276,7 +256,7 @@ mod tests {
         git_stage_all_changes(repo_path)?;
         git_commit_changes(repo_path, "init")?;
 
-        configure_git_repo(repo_path)?;
+        git_configure_repo(repo_path, "Metis Worker", "metis-worker@example.com")?;
 
         let repo = Repository::open(repo_path).context("failed to reopen repo for assertions")?;
         let config = repo
