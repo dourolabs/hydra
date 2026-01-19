@@ -8,8 +8,8 @@ COMMAND="${1:-start}"
 #   NAMESPACE=my-app ./setup-server-client.sh
 
 NAMESPACE="${NAMESPACE:-metis}"
-SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
-CLIENT_IMAGE="${CLIENT_IMAGE:-metis-worker:latest}"
+SERVER_IMAGE="${SERVER_IMAGE:-localhost/metis-server:latest}"
+CLIENT_IMAGE="${CLIENT_IMAGE:-localhost/metis-worker:latest}"
 SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
 
 # Service type for external access:
