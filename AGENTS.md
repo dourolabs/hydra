@@ -16,6 +16,8 @@ Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers
 ## Coding Style & Naming Conventions
 Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before submitting. Modules and files use snake_case; types and traits use UpperCamelCase; constants are SCREAMING_SNAKE_CASE. Keep each CLI subcommand isolated per file under `metis/src/command` and prefer thin synchronous wrappers around async helpers. Document only non-obvious public behavior with `///` comments.
 - Use the `MetisId` type alias for all Metis identifiers instead of raw `String` values.
+- CLI git operations should use libgit2; do not shell out to the git binary.
+- When a CLI command needs environment variables, declare them on the arg struct (e.g., `#[arg(env = ...)]`) and read them from the parsed args rather than calling `env::var` inside the implementation.
 
 ## Testing Guidelines
 Run `cargo test --workspace` before opening a pull request. Keep tests near their code (shared helpers belong in `metis-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
