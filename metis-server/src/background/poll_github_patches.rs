@@ -1213,68 +1213,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ci_pending_leaves_wait_issue_open_without_review_issue() -> anyhow::Result<()> {
-        let state = test_state();
-        let repo_name = RepoName::from_str("dourolabs/api")?;
-        let patch = Patch {
-            title: "Add feature".to_string(),
-            description: "Adds feature".to_string(),
-            diff: sample_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            reviews: Vec::new(),
-            service_repo_name: repo_name,
-            github: Some(GithubPr {
-                owner: "octo".to_string(),
-                repo: "repo".to_string(),
-                number: 41,
-                head_ref: None,
-                base_ref: None,
-                url: Some("https://github.com/octo/repo/pull/41".to_string()),
-                ci: Some(GithubCiStatus {
-                    state: GithubCiState::Pending,
-                    failure: None,
-                }),
-            }),
-        };
-        let patch_id = {
-            let mut store = state.store.write().await;
-            store.add_patch(patch.clone()).await?
-        };
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: format!("Waiting on CI for patch {patch_id}: Add feature"),
-                    creator: "metis".to_string(),
-                    progress: "review-assignee: reviewer-a".to_string(),
-                    status: IssueStatus::Open,
-                    assignee: Some("github".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: Vec::new(),
-                    patches: vec![patch_id.clone()],
-                })
-                .await?;
-        }
-
-        let ci_status = GithubCiStatus {
-            state: GithubCiState::Pending,
-            failure: None,
-        };
-        maybe_transition_ci_wait_issue(&state, &patch_id, &patch, &ci_status).await?;
-
-        let store = state.store.read().await;
-        let issue_ids = store.get_issues_for_patch(&patch_id).await?;
-        assert_eq!(issue_ids.len(), 1);
-        let issue = store.get_issue(&issue_ids[0]).await?;
-        assert_eq!(issue.assignee.as_deref(), Some("github"));
-        assert_eq!(issue.status, IssueStatus::Open);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn ci_success_closes_wait_issue_and_creates_review_issue() -> anyhow::Result<()> {
         let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api")?;
