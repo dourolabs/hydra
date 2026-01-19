@@ -43,25 +43,11 @@ const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
-const STATUS_FILTER_OPTIONS: [IssueStatus; 4] = [
-    IssueStatus::Open,
-    IssueStatus::InProgress,
-    IssueStatus::Closed,
-    IssueStatus::Dropped,
-];
-
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 enum PanelFocus {
     #[default]
     NewIssue,
     Status,
-}
-
-#[derive(Copy, Clone, PartialEq, Default)]
-enum StatusPanelFocus {
-    #[default]
-    StatusFilter,
-    AgentFilter,
 }
 
 #[derive(Clone, PartialEq)]
@@ -290,13 +276,9 @@ struct DashboardState {
     completed_issue_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    agents_error: Option<String>,
     username: Option<String>,
     issue_draft: IssueDraft,
-    status_filter: StatusFilterState,
-    agent_filter: AgentFilterState,
     selected_panel: PanelFocus,
-    status_panel_focus: StatusPanelFocus,
     last_frame_size: Option<Rect>,
 }
 
@@ -308,128 +290,6 @@ struct IssueSubmission {
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
-}
-
-#[derive(Clone, PartialEq)]
-struct StatusFilterState {
-    selected_index: usize,
-    enabled: [bool; STATUS_FILTER_OPTIONS.len()],
-}
-
-#[derive(Clone, PartialEq, Default)]
-struct AgentFilterState {
-    options: Vec<String>,
-    selected_index: usize,
-    enabled: Vec<bool>,
-}
-
-impl AgentFilterState {
-    fn set_options(&mut self, options: Vec<String>) {
-        if options == self.options {
-            return;
-        }
-
-        let mut enabled = Vec::with_capacity(options.len());
-        for option in &options {
-            let previous = self
-                .options
-                .iter()
-                .position(|value| value == option)
-                .and_then(|index| self.enabled.get(index))
-                .copied()
-                .unwrap_or(false);
-            enabled.push(previous);
-        }
-
-        self.options = options;
-        self.enabled = enabled;
-
-        if self.selected_index >= self.options.len() {
-            self.selected_index = 0;
-        }
-    }
-
-    fn cycle_selection(&mut self, forward: bool) {
-        if self.options.is_empty() {
-            return;
-        }
-        let total = self.options.len();
-        let next = if forward {
-            (self.selected_index + 1) % total
-        } else {
-            self.selected_index.saturating_add(total - 1) % total
-        };
-        self.selected_index = next;
-    }
-
-    fn toggle_selected(&mut self) {
-        if self.options.is_empty() {
-            return;
-        }
-        let index = self.selected_index;
-        if let Some(enabled) = self.enabled.get_mut(index) {
-            *enabled = !*enabled;
-        }
-    }
-
-    fn allows(&self, assignee: Option<&str>) -> bool {
-        if !self.any_enabled() {
-            return true;
-        }
-
-        let Some(assignee) = assignee else {
-            return false;
-        };
-        self.options
-            .iter()
-            .position(|option| option == assignee)
-            .and_then(|index| self.enabled.get(index))
-            .copied()
-            .unwrap_or(false)
-    }
-
-    fn any_enabled(&self) -> bool {
-        self.enabled.iter().any(|enabled| *enabled)
-    }
-}
-
-impl Default for StatusFilterState {
-    fn default() -> Self {
-        Self {
-            selected_index: 0,
-            enabled: [false; STATUS_FILTER_OPTIONS.len()],
-        }
-    }
-}
-
-impl StatusFilterState {
-    fn cycle_selection(&mut self, forward: bool) {
-        let total = STATUS_FILTER_OPTIONS.len();
-        let next = if forward {
-            (self.selected_index + 1) % total
-        } else {
-            self.selected_index.saturating_add(total - 1) % total
-        };
-        self.selected_index = next;
-    }
-
-    fn toggle_selected(&mut self) {
-        let index = self.selected_index;
-        self.enabled[index] = !self.enabled[index];
-    }
-
-    fn allows(&self, status: IssueStatus) -> bool {
-        if !self.any_enabled() {
-            return true;
-        }
-
-        let index = status_filter_index(status);
-        self.enabled[index]
-    }
-
-    fn any_enabled(&self) -> bool {
-        self.enabled.iter().any(|enabled| *enabled)
-    }
 }
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
@@ -482,14 +342,6 @@ async fn run_dashboard_loop(
         }
     }
 
-    match refresh_agents(client, &mut state).await {
-        Ok(changed) => needs_draw |= changed,
-        Err(err) => {
-            state.agents_error = Some(format!("Failed to load agents: {err}"));
-            needs_draw = true;
-        }
-    }
-
     if needs_draw {
         state.last_frame_size = Some(terminal.size()?);
         clamp_issue_scrolls(&mut state);
@@ -523,16 +375,6 @@ async fn run_dashboard_loop(
                     }
                     Err(err) => {
                         state.records_error = Some(format!("Failed to refresh issues: {err}"));
-                        needs_draw = true;
-                    }
-                }
-                match refresh_agents(client, &mut state).await {
-                    Ok(changed) => {
-                        state.agents_error = None;
-                        needs_draw |= changed;
-                    }
-                    Err(err) => {
-                        state.agents_error = Some(format!("Failed to refresh agents: {err}"));
                         needs_draw = true;
                     }
                 }
@@ -631,26 +473,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            match state.selected_panel {
-                PanelFocus::Status => {
-                    if handle_status_panel_key(key, state) {
-                        return EventOutcome {
-                            should_quit: false,
-                            submission: None,
-                        };
-                    }
-                }
-                PanelFocus::NewIssue => {
-                    return EventOutcome {
-                        should_quit: false,
-                        submission: handle_issue_draft_key(key, state),
-                    };
-                }
-            }
-
+            let submission = match state.selected_panel {
+                PanelFocus::NewIssue => handle_issue_draft_key(key, state),
+                PanelFocus::Status => None,
+            };
             EventOutcome {
                 should_quit: false,
-                submission: None,
+                submission,
             }
         }
         Event::Paste(text) => {
@@ -720,60 +549,6 @@ fn handle_panel_focus_key(state: &mut DashboardState) {
     state
         .issue_draft
         .set_editing(state.selected_panel == PanelFocus::NewIssue);
-}
-
-fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
-    if !key.modifiers.is_empty() {
-        return false;
-    }
-
-    match key.code {
-        KeyCode::Left | KeyCode::Char('h') => {
-            match state.status_panel_focus {
-                StatusPanelFocus::StatusFilter => {
-                    state.status_filter.cycle_selection(false);
-                }
-                StatusPanelFocus::AgentFilter => {
-                    state.agent_filter.cycle_selection(false);
-                }
-            }
-            update_views(state);
-            true
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            match state.status_panel_focus {
-                StatusPanelFocus::StatusFilter => {
-                    state.status_filter.cycle_selection(true);
-                }
-                StatusPanelFocus::AgentFilter => {
-                    state.agent_filter.cycle_selection(true);
-                }
-            }
-            update_views(state);
-            true
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            state.status_panel_focus = StatusPanelFocus::StatusFilter;
-            true
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            state.status_panel_focus = StatusPanelFocus::AgentFilter;
-            true
-        }
-        KeyCode::Enter => {
-            match state.status_panel_focus {
-                StatusPanelFocus::StatusFilter => {
-                    state.status_filter.toggle_selected();
-                }
-                StatusPanelFocus::AgentFilter => {
-                    state.agent_filter.toggle_selected();
-                }
-            }
-            update_views(state);
-            true
-        }
-        _ => false,
-    }
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -905,7 +680,6 @@ fn render(frame: &mut Frame, state: &DashboardState) {
     render_dashboard_header(frame, layout.header);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
-    render_header(frame, layout.status, state);
 }
 
 fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
@@ -927,148 +701,6 @@ fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
         Paragraph::new(hint_line).alignment(Alignment::Right),
         chunks[1],
     );
-}
-
-fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let mut lines = vec![status_filter_line(
-        &state.status_filter,
-        state.status_panel_focus == StatusPanelFocus::StatusFilter,
-    )];
-    lines.push(agent_filter_line(
-        &state.agent_filter,
-        state.status_panel_focus == StatusPanelFocus::AgentFilter,
-    ));
-
-    if let Some(error) = &state.jobs_error {
-        lines.push(Line::from(Span::styled(
-            format!("Jobs: {error}"),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
-    if let Some(error) = &state.records_error {
-        lines.push(Line::from(Span::styled(
-            format!("Issues: {error}"),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
-    if let Some(error) = &state.agents_error {
-        lines.push(Line::from(Span::styled(
-            format!("Agents: {error}"),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
-    let paragraph = Paragraph::new(lines).block(
-        Block::default()
-            .title("Status")
-            .borders(Borders::ALL)
-            .border_style(panel_border_style(
-                state.selected_panel == PanelFocus::Status,
-            )),
-    );
-    frame.render_widget(paragraph, area);
-}
-
-fn status_filter_line(filter: &StatusFilterState, active: bool) -> Line {
-    let mut label_style = Style::default().add_modifier(Modifier::BOLD);
-    if active {
-        label_style = label_style.add_modifier(Modifier::UNDERLINED);
-    }
-    let mut spans = vec![Span::styled("Status filter: ", label_style)];
-
-    for (index, status) in STATUS_FILTER_OPTIONS.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("  "));
-        }
-
-        let enabled = filter.enabled[index];
-        let checkbox_style = if enabled {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(
-            if enabled { "[x]" } else { "[ ]" },
-            checkbox_style,
-        ));
-        spans.push(Span::raw(" "));
-
-        let mut label_style = issue_status_style(*status);
-        if index == filter.selected_index {
-            label_style = label_style.add_modifier(Modifier::UNDERLINED);
-        }
-        spans.push(Span::styled(status.as_str(), label_style));
-    }
-
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        "Arrows/hjkl move, Enter toggles",
-        Style::default().fg(Color::DarkGray),
-    ));
-    if !filter.any_enabled() {
-        spans.push(Span::styled(
-            " (showing all)",
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-
-    Line::from(spans)
-}
-
-fn agent_filter_line(filter: &AgentFilterState, active: bool) -> Line {
-    let mut label_style = Style::default().add_modifier(Modifier::BOLD);
-    if active {
-        label_style = label_style.add_modifier(Modifier::UNDERLINED);
-    }
-    let mut spans = vec![Span::styled("Agent filter: ", label_style)];
-
-    if filter.options.is_empty() {
-        spans.push(Span::styled(
-            "No agents configured",
-            Style::default().fg(Color::DarkGray),
-        ));
-        return Line::from(spans);
-    }
-
-    for (index, agent) in filter.options.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("  "));
-        }
-
-        let enabled = filter.enabled.get(index).copied().unwrap_or(false);
-        let checkbox_style = if enabled {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(
-            if enabled { "[x]" } else { "[ ]" },
-            checkbox_style,
-        ));
-        spans.push(Span::raw(" "));
-
-        let mut label_style = Style::default().fg(Color::Cyan);
-        if index == filter.selected_index {
-            label_style = label_style.add_modifier(Modifier::UNDERLINED);
-        }
-        spans.push(Span::styled(agent.clone(), label_style));
-    }
-
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        "Arrows/hjkl move, Enter toggles",
-        Style::default().fg(Color::DarkGray),
-    ));
-    if !filter.any_enabled() {
-        spans.push(Span::styled(
-            " (showing all)",
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-
-    Line::from(spans)
 }
 
 fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
@@ -1255,7 +887,6 @@ struct DashboardLayout {
     header: Rect,
     issue_creator: Rect,
     issue_sections: Rect,
-    status: Rect,
 }
 
 fn dashboard_layout(area: Rect) -> DashboardLayout {
@@ -1265,7 +896,6 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
             Constraint::Length(1),
             Constraint::Length(8),
             Constraint::Min(12),
-            Constraint::Length(6),
         ])
         .split(area);
 
@@ -1273,7 +903,6 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
         header: chunks[0],
         issue_creator: chunks[1],
         issue_sections: chunks[2],
-        status: chunks[3],
     }
 }
 
@@ -1291,23 +920,19 @@ fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
         .unwrap_or(false);
 
     if has_username {
-        let show_user_owned =
-            should_show_user_owned_panel(state.username.as_deref(), &state.agent_filter.options);
-        if show_user_owned {
-            let panels = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(USER_ISSUES_PANEL_HEIGHT),
-                    Constraint::Fill(1),
-                    Constraint::Fill(1),
-                ])
-                .split(area);
-            return IssuePanelLayout {
-                user_owned: Some(panels[0]),
-                running: panels[1],
-                completed: panels[2],
-            };
-        }
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(USER_ISSUES_PANEL_HEIGHT),
+                Constraint::Fill(1),
+                Constraint::Fill(1),
+            ])
+            .split(area);
+        return IssuePanelLayout {
+            user_owned: Some(panels[0]),
+            running: panels[1],
+            completed: panels[2],
+        };
     }
 
     let panels = Layout::default()
@@ -1573,26 +1198,6 @@ async fn refresh_records(
     Ok(changed || derived_changed)
 }
 
-async fn refresh_agents(
-    client: &dyn MetisClientInterface,
-    state: &mut DashboardState,
-) -> Result<bool> {
-    let response = client.list_agents().await?;
-    let mut agents: Vec<String> = response
-        .agents
-        .into_iter()
-        .map(|agent| agent.name)
-        .collect();
-    agents.sort();
-    agents.dedup();
-
-    let previous_filter = state.agent_filter.clone();
-    state.agent_filter.set_options(agents);
-
-    let derived_changed = update_views(state);
-    Ok(previous_filter != state.agent_filter || derived_changed)
-}
-
 fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
     previous_jobs
         .iter()
@@ -1653,20 +1258,9 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
-    let issue_lines = build_issue_lines(
-        &state.issues,
-        &state.jobs,
-        &state.status_filter,
-        &state.agent_filter,
-        true,
-    );
-    let user_unowned_issue_lines = build_user_unowned_issue_lines(
-        state.username.as_deref(),
-        &state.issues,
-        &state.jobs,
-        &state.status_filter,
-        &state.agent_filter.options,
-    );
+    let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
+    let user_unowned_issue_lines =
+        build_user_unowned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
     update_assignee_options(state);
 
@@ -1726,42 +1320,24 @@ fn build_user_unowned_issue_lines(
     username: Option<&str>,
     issues: &[IssueRecord],
     jobs: &[JobDetails],
-    status_filter: &StatusFilterState,
-    agent_names: &[String],
 ) -> IssueLines {
-    if !should_show_user_owned_panel(username, agent_names) {
+    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
         return IssueLines::default();
-    }
+    };
 
     let assigned: Vec<IssueRecord> = issues
         .iter()
-        .filter(|issue| issue.assignee.as_deref() == username.map(str::trim))
+        .filter(|issue| issue.assignee.as_deref() == Some(username))
         .filter(|issue| issue.status == IssueStatus::Open)
         .cloned()
         .collect();
 
-    build_issue_lines(
-        &assigned,
-        jobs,
-        status_filter,
-        &AgentFilterState::default(),
-        false,
-    )
-}
-
-fn should_show_user_owned_panel(username: Option<&str>, agent_names: &[String]) -> bool {
-    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-
-    !agent_names.iter().any(|agent| agent == username)
+    build_issue_lines(&assigned, jobs, false)
 }
 
 fn build_issue_lines(
     issues: &[IssueRecord],
     jobs: &[JobDetails],
-    status_filter: &StatusFilterState,
-    agent_filter: &AgentFilterState,
     exclude_inactive_roots: bool,
 ) -> IssueLines {
     let nodes = build_issue_nodes(issues, jobs);
@@ -1786,15 +1362,7 @@ fn build_issue_lines(
                 }
             }
         }
-        append_issue(
-            &root,
-            0,
-            &mut rows,
-            &mut visited,
-            &nodes,
-            status_filter,
-            agent_filter,
-        );
+        append_issue(&root, 0, &mut rows, &mut visited, &nodes);
     }
 
     IssueLines { rows }
@@ -1899,8 +1467,6 @@ fn append_issue(
     rows: &mut Vec<IssueLine>,
     visited: &mut HashSet<IssueId>,
     nodes: &HashMap<IssueId, IssueNode>,
-    status_filter: &StatusFilterState,
-    agent_filter: &AgentFilterState,
 ) {
     if !visited.insert(id.clone()) {
         return;
@@ -1912,35 +1478,21 @@ fn append_issue(
 
     let readiness = issue_readiness(node, nodes);
     let issue_summary = issue_summary(&node.record.description, &node.record.progress);
-
-    let is_visible = status_filter.allows(node.record.status)
-        && agent_filter.allows(node.record.assignee.as_deref());
-    if is_visible {
-        rows.push(IssueLine {
-            id: node.record.id.to_string(),
-            summary: issue_summary.summary,
-            progress: issue_summary.progress,
-            status: node.record.status,
-            readiness,
-            assignee: node.record.assignee.clone(),
-            task: node.task.clone(),
-            depth,
-        });
-    }
+    rows.push(IssueLine {
+        id: node.record.id.to_string(),
+        summary: issue_summary.summary,
+        progress: issue_summary.progress,
+        status: node.record.status,
+        readiness,
+        assignee: node.record.assignee.clone(),
+        task: node.task.clone(),
+        depth,
+    });
 
     let mut children = node.children.clone();
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
-        let child_depth = if is_visible { depth + 1 } else { depth };
-        append_issue(
-            &child,
-            child_depth,
-            rows,
-            visited,
-            nodes,
-            status_filter,
-            agent_filter,
-        );
+        append_issue(&child, depth + 1, rows, visited, nodes);
     }
 }
 
@@ -2109,15 +1661,6 @@ fn issue_status_order(status: IssueStatus) -> usize {
         IssueStatus::Open => 1,
         IssueStatus::Dropped => 2,
         IssueStatus::Closed => 3,
-    }
-}
-
-fn status_filter_index(status: IssueStatus) -> usize {
-    match status {
-        IssueStatus::Open => 0,
-        IssueStatus::InProgress => 1,
-        IssueStatus::Closed => 2,
-        IssueStatus::Dropped => 3,
     }
 }
 
@@ -2365,13 +1908,7 @@ mod tests {
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &[], false);
 
         assert_eq!(lines.rows.len(), 3);
         assert_eq!(lines.rows[0].id, issue_id("i-2").to_string());
@@ -2401,13 +1938,7 @@ mod tests {
             issue("i-open", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &[], false);
 
         let blocked_line = lines
             .rows
@@ -2425,13 +1956,7 @@ mod tests {
     #[test]
     fn dropped_issues_render_as_dropped() {
         let issues = vec![issue("i-drop", IssueStatus::Dropped, vec![])];
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &[], false);
 
         let line = lines.rows.first().expect("missing issue line");
         assert_eq!(line.readiness, IssueReadiness::Dropped);
@@ -2451,13 +1976,7 @@ mod tests {
             Some("3s"),
         )];
 
-        let lines = build_issue_lines(
-            &issues,
-            &jobs,
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &jobs, false);
 
         let line = lines.rows.first().expect("issue line missing");
         let task = line.task.as_ref().expect("task indicator missing");
@@ -2488,13 +2007,7 @@ mod tests {
             dependencies: Vec::new(),
         }];
 
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &[], false);
 
         let line = lines.rows.first().expect("issue line missing");
         assert_eq!(line.summary, "investigate logs");
@@ -2523,13 +2036,7 @@ mod tests {
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            false,
-        );
+        let lines = build_issue_lines(&issues, &[], false);
 
         let line = lines
             .rows
@@ -2703,21 +2210,14 @@ mod tests {
     }
 
     #[test]
-    fn user_unowned_issue_lines_skip_agent_assignee() {
+    fn user_unowned_issue_lines_empty_without_username() {
         let issues = vec![issue_with_assignee(
             "i-open",
             IssueStatus::Open,
             Some("alice"),
         )];
-        let agents = vec!["alice".to_string(), "bot".to_string()];
 
-        let lines = build_user_unowned_issue_lines(
-            Some("alice"),
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &agents,
-        );
+        let lines = build_user_unowned_issue_lines(None, &issues, &[]);
 
         assert!(lines.rows.is_empty());
     }
@@ -2728,15 +2228,7 @@ mod tests {
             issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
             issue_with_assignee("i-other", IssueStatus::Open, Some("bot")),
         ];
-        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
-
-        let lines = build_user_unowned_issue_lines(
-            Some("alice"),
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &agents,
-        );
+        let lines = build_user_unowned_issue_lines(Some("alice"), &issues, &[]);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
@@ -2749,46 +2241,10 @@ mod tests {
             issue_with_assignee("i-progress", IssueStatus::InProgress, Some("alice")),
             issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
         ];
-        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
-
-        let lines = build_user_unowned_issue_lines(
-            Some("alice"),
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &agents,
-        );
+        let lines = build_user_unowned_issue_lines(Some("alice"), &issues, &[]);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
-    }
-
-    #[test]
-    fn user_unowned_issue_lines_ignore_agent_filter() {
-        let issues = vec![
-            issue_with_assignee("i-user", IssueStatus::Open, Some("alice")),
-            issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
-        ];
-        let mut state = DashboardState {
-            username: Some("alice".to_string()),
-            issues,
-            ..Default::default()
-        };
-        state.agent_filter.set_options(vec!["bot".to_string()]);
-        state.agent_filter.toggle_selected();
-
-        update_views(&mut state);
-
-        assert_eq!(state.issue_lines.rows.len(), 1);
-        assert_eq!(
-            state.issue_lines.rows[0].id,
-            issue_id("i-agent").to_string()
-        );
-        assert_eq!(state.user_unowned_issue_lines.rows.len(), 1);
-        assert_eq!(
-            state.user_unowned_issue_lines.rows[0].id,
-            issue_id("i-user").to_string()
-        );
     }
 
     #[test]
@@ -2802,9 +2258,6 @@ mod tests {
             issues,
             ..Default::default()
         };
-        state
-            .agent_filter
-            .set_options(vec!["agent-a".to_string(), "agent-b".to_string()]);
 
         update_views(&mut state);
 
@@ -2836,72 +2289,10 @@ mod tests {
             issue("i-open-root", IssueStatus::Open, vec![]),
         ];
 
-        let lines = build_issue_lines(
-            &issues,
-            &[],
-            &StatusFilterState::default(),
-            &AgentFilterState::default(),
-            true,
-        );
+        let lines = build_issue_lines(&issues, &[], true);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open-root").to_string());
-    }
-
-    #[test]
-    fn user_owned_panel_hidden_for_agent_user() {
-        let agents = vec!["alice".to_string(), "bot".to_string()];
-
-        let show = should_show_user_owned_panel(Some("alice"), &agents);
-
-        assert!(!show);
-    }
-
-    #[test]
-    fn user_owned_panel_shown_for_non_agent_user() {
-        let agents = vec!["agent-a".to_string(), "agent-b".to_string()];
-
-        let show = should_show_user_owned_panel(Some("alice"), &agents);
-
-        assert!(show);
-    }
-
-    #[test]
-    fn status_filter_hides_unselected_statuses() {
-        let issues = vec![
-            issue("i-open", IssueStatus::Open, vec![]),
-            issue("i-closed", IssueStatus::Closed, vec![]),
-        ];
-
-        let mut filter = StatusFilterState {
-            selected_index: status_filter_index(IssueStatus::Closed),
-            ..StatusFilterState::default()
-        };
-        filter.toggle_selected();
-
-        let lines = build_issue_lines(&issues, &[], &filter, &AgentFilterState::default(), false);
-
-        assert_eq!(lines.rows.len(), 1);
-        assert_eq!(lines.rows[0].id, issue_id("i-closed").to_string());
-    }
-
-    #[test]
-    fn agent_filter_hides_unselected_assignees() {
-        let issues = vec![
-            issue_with_assignee("i-alpha", IssueStatus::Open, Some("agent-a")),
-            issue_with_assignee("i-beta", IssueStatus::Open, Some("agent-b")),
-            issue_with_assignee("i-unassigned", IssueStatus::Open, None),
-        ];
-
-        let mut filter = AgentFilterState::default();
-        filter.set_options(vec!["agent-a".to_string(), "agent-b".to_string()]);
-        filter.cycle_selection(true);
-        filter.toggle_selected();
-
-        let lines = build_issue_lines(&issues, &[], &StatusFilterState::default(), &filter, false);
-
-        assert_eq!(lines.rows.len(), 1);
-        assert_eq!(lines.rows[0].id, issue_id("i-beta").to_string());
     }
 
     #[test]
@@ -2997,7 +2388,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_a_does_not_cycle_assignee_in_status_panel() {
+    fn alt_a_does_not_cycle_assignee_when_not_focused() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::Status,
             ..DashboardState::default()
@@ -3015,7 +2406,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_switches_focus_to_status_panel() {
+    fn tab_switches_focus_away_from_new_issue_panel() {
         let mut state = DashboardState::default();
         state.issue_draft.set_editing(true);
 
@@ -3050,7 +2441,7 @@ mod tests {
 
     #[test]
     fn mouse_scroll_down_updates_running_issue_offset() {
-        let issues = (0..10)
+        let issues = (0..25)
             .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
             .collect();
         let mut state = DashboardState {
@@ -3137,23 +2528,6 @@ mod tests {
     }
 
     #[test]
-    fn status_panel_right_arrow_cycles_status_filter() {
-        let mut state = DashboardState {
-            selected_panel: PanelFocus::Status,
-            ..DashboardState::default()
-        };
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
-            &mut state,
-        );
-
-        assert!(!outcome.should_quit);
-        assert!(outcome.submission.is_none());
-        assert_eq!(state.status_filter.selected_index, 1);
-    }
-
-    #[test]
     fn alt_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
         state.issue_draft.set_prompt("Ship dashboard");
@@ -3166,27 +2540,6 @@ mod tests {
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
         assert!(state.issue_draft.is_submitting);
-    }
-
-    #[test]
-    fn status_panel_enter_toggles_agent_filter_when_focused() {
-        let mut state = DashboardState {
-            selected_panel: PanelFocus::Status,
-            status_panel_focus: StatusPanelFocus::AgentFilter,
-            ..DashboardState::default()
-        };
-        state
-            .agent_filter
-            .set_options(vec!["pm".to_string(), "alice".to_string()]);
-
-        let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            &mut state,
-        );
-
-        assert!(!outcome.should_quit);
-        assert!(outcome.submission.is_none());
-        assert_eq!(state.agent_filter.enabled.first(), Some(&true));
     }
 
     #[test]
