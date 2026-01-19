@@ -30,7 +30,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, ScrollbarState},
     Frame, Terminal,
 };
 use tui_textarea::TextArea;
@@ -247,6 +247,7 @@ impl PartialEq for IssueDraft {
 #[derive(Default, Clone, PartialEq)]
 struct ListScrollState {
     offset: usize,
+    scrollbar_state: ScrollbarState,
 }
 
 impl ListScrollState {
@@ -255,16 +256,23 @@ impl ListScrollState {
         let next = self.offset as i64 + i64::from(delta);
         let clamped = next.clamp(0, max_offset as i64) as usize;
         if clamped == self.offset {
+            self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
             return false;
         }
         self.offset = clamped;
+        self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
         true
     }
 
-    fn clamp(&mut self, max_offset: usize) {
-        if self.offset > max_offset {
-            self.offset = max_offset;
-        }
+    fn sync(&mut self, total_items: usize, view_height: usize) {
+        let max_offset = max_scroll_offset(total_items, view_height);
+        self.offset = self.offset.min(max_offset);
+        self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
+    }
+
+    fn reset(&mut self) {
+        self.offset = 0;
+        self.scrollbar_state = ScrollbarState::default();
     }
 }
 
@@ -1358,20 +1366,23 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
 
     if let Some(rect) = panels.user_owned {
         let view_height = list_view_height(rect);
-        let max_offset = max_scroll_offset(state.user_unowned_issue_lines.rows.len(), view_height);
-        state.user_unowned_issue_scroll.clamp(max_offset);
+        state
+            .user_unowned_issue_scroll
+            .sync(state.user_unowned_issue_lines.rows.len(), view_height);
     } else {
-        state.user_unowned_issue_scroll.offset = 0;
+        state.user_unowned_issue_scroll.reset();
     }
 
     let running_view_height = list_view_height(panels.running);
-    let running_max = max_scroll_offset(state.issue_lines.rows.len(), running_view_height);
-    state.issue_scroll.clamp(running_max);
+    state
+        .issue_scroll
+        .sync(state.issue_lines.rows.len(), running_view_height);
 
     let completed_view_height = list_view_height(panels.completed);
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
-    let completed_max = max_scroll_offset(completed_rows.len(), completed_view_height);
-    state.completed_issue_scroll.clamp(completed_max);
+    state
+        .completed_issue_scroll
+        .sync(completed_rows.len(), completed_view_height);
 }
 
 fn completed_issue_descendants<'a>(
@@ -1479,6 +1490,18 @@ fn max_scroll_offset(total_items: usize, view_height: usize) -> usize {
         return 0;
     }
     total_items.saturating_sub(view_height)
+}
+
+fn list_scrollbar_state(
+    total_items: usize,
+    view_height: usize,
+    scroll_offset: usize,
+) -> ScrollbarState {
+    let max_offset = max_scroll_offset(total_items, view_height);
+    let position = scroll_offset.min(max_offset);
+    ScrollbarState::new(total_items)
+        .position(position)
+        .viewport_content_length(view_height)
 }
 
 fn issue_prefix(depth: usize) -> String {
