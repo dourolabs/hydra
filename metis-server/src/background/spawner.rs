@@ -12,10 +12,9 @@ use metis_common::RepoName;
 #[cfg(test)]
 use metis_common::constants::ENV_GH_TOKEN;
 #[cfg(test)]
-use metis_common::issues::{IssueDependency, IssueDependencyType, IssueType};
+use metis_common::issues::{IssueDependency, IssueType};
 use metis_common::{
-    issues::IssueId,
-    issues::{Issue, IssueStatus},
+    issues::{Issue, IssueDependencyType, IssueId, IssueStatus},
     jobs::BundleSpec,
 };
 use std::collections::{HashMap, HashSet};
@@ -118,15 +117,12 @@ impl Spawner for AgentQueue {
 
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
-            let Issue {
-                assignee, status, ..
-            } = issue;
-            if assignee.as_deref() != Some(self.name.as_str()) {
+            if issue.assignee.as_deref() != Some(self.name.as_str()) {
                 continue;
             }
 
             // Do not spawn tasks for closed or dropped issues.
-            if matches!(status, IssueStatus::Closed | IssueStatus::Dropped) {
+            if matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped) {
                 continue;
             }
 
@@ -142,7 +138,11 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            if !self.register_spawn_attempt(&issue_id, status).await {
+            if parent_has_running_task(store.as_ref(), &issue).await? {
+                continue;
+            }
+
+            if !self.register_spawn_attempt(&issue_id, issue.status).await {
                 continue;
             }
 
@@ -185,6 +185,22 @@ async fn existing_issue_tasks_for_agent(
     }
 
     Ok(issue_ids)
+}
+
+async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<bool, StoreError> {
+    for dependency in issue
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+    {
+        for task_id in store.get_tasks_for_issue(&dependency.issue_id).await? {
+            if matches!(store.get_status(&task_id).await?, Status::Running) {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -399,6 +415,73 @@ mod tests {
         }
 
         let tasks = queue("agent-a").spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_when_parent_task_running() -> anyhow::Result<()> {
+        let state = test_state();
+        let parent_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Parent issue".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+
+        {
+            let mut store = state.store.write().await;
+            let task_id = store
+                .add_task(
+                    Task {
+                        prompt: "Parent task".to_string(),
+                        context: BundleSpec::None,
+                        spawned_from: Some(parent_id.clone()),
+                        image: Some("metis-worker:latest".to_string()),
+                        env_vars: HashMap::from([
+                            (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
+                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                        ]),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+            store.mark_task_running(&task_id, Utc::now()).await?;
+        }
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Child issue".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
+                    dependencies: vec![IssueDependency {
+                        dependency_type: IssueDependencyType::ChildOf,
+                        issue_id: parent_id.clone(),
+                    }],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let queue = queue("agent-a");
+        let tasks = queue.spawn(&state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
