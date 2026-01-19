@@ -3001,6 +3001,66 @@ mod tests {
     }
 
     #[test]
+    fn mouse_scroll_down_updates_user_owned_issue_offset() {
+        let issues = (0..10)
+            .map(|index| {
+                issue_with_assignee(&format!("i-{index}"), IssueStatus::Open, Some("alice"))
+            })
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            username: Some("alice".to_string()),
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let user_owned = panels.user_owned.expect("user-owned panel missing");
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: user_owned.x + 1,
+            row: user_owned.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.user_unowned_issue_scroll.offset, 1);
+    }
+
+    #[test]
+    fn mouse_scroll_down_updates_completed_issue_offset() {
+        let issues = (0..10)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Closed, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.completed.x + 1,
+            row: panels.completed.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.completed_issue_scroll.offset, 1);
+    }
+
+    #[test]
     fn status_panel_right_arrow_cycles_status_filter() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::Status,
