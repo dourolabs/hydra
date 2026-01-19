@@ -8,11 +8,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{
-    constants::ENV_GH_TOKEN,
+    constants::{ENV_GH_TOKEN, ENV_METIS_BASE_COMMIT, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
-    RepoName, TaskId,
+    IssueId, RepoName, TaskId,
 };
 
 use crate::client::MetisClientInterface;
@@ -58,7 +58,32 @@ pub async fn run(
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
     configure_git_repo(&dest)?;
-    let base_commit = resolve_head_oid_if_present(&dest)?;
+    let base_commit = if dest.join(".git").exists() {
+        match resolve_issue_id(&execution_env) {
+            Ok(issue_id) => {
+                let fork_point = resolve_head_oid(&dest)?;
+                let issue_base_commit = setup_tracking_branches(
+                    &dest,
+                    &issue_id,
+                    &job,
+                    fork_point,
+                    github_token.as_deref(),
+                )?;
+                set_base_commit_env(&mut execution_env, Some(issue_base_commit));
+                Some(issue_base_commit)
+            }
+            Err(err) => {
+                eprintln!(
+                    "Skipping tracking branch setup because {ENV_METIS_ISSUE_ID} is missing or invalid: {err}"
+                );
+                let head_commit = resolve_head_oid(&dest)?;
+                set_base_commit_env(&mut execution_env, Some(head_commit));
+                Some(head_commit)
+            }
+        }
+    } else {
+        None
+    };
 
     let last_message = commands
         .run(
@@ -183,6 +208,257 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
         .or_insert_with(|| "1".to_string());
 }
 
+fn set_base_commit_env(env: &mut HashMap<String, String>, base_commit: Option<GitOid>) {
+    if let Some(base_commit) = base_commit {
+        env.insert(ENV_METIS_BASE_COMMIT.to_string(), base_commit.to_string());
+    }
+}
+
+fn resolve_issue_id(env: &HashMap<String, String>) -> Result<IssueId> {
+    let issue_id = env
+        .get(ENV_METIS_ISSUE_ID)
+        .ok_or_else(|| anyhow!("{ENV_METIS_ISSUE_ID} is required for tracking branches"))?;
+
+    IssueId::from_str(issue_id)
+        .with_context(|| format!("invalid issue id in {ENV_METIS_ISSUE_ID}: '{issue_id}'"))
+}
+
+#[derive(Debug, Clone)]
+struct TrackingBranchNames {
+    issue_base: String,
+    issue_head: String,
+    task_base: String,
+    task_head: String,
+}
+
+impl TrackingBranchNames {
+    fn new(issue_id: &IssueId, task_id: &TaskId) -> Result<Self> {
+        let issue_segment = sanitize_branch_segment(issue_id.as_ref());
+        let task_segment = sanitize_branch_segment(task_id.as_ref());
+        if issue_segment.is_empty() {
+            bail!("failed to build tracking branches: issue id produced an empty branch segment");
+        }
+        if task_segment.is_empty() {
+            bail!("failed to build tracking branches: task id produced an empty branch segment");
+        }
+
+        Ok(Self {
+            issue_base: format!("metis/{issue_segment}/base"),
+            issue_head: format!("metis/{issue_segment}/head"),
+            task_base: format!("metis/{task_segment}/base"),
+            task_head: format!("metis/{task_segment}/head"),
+        })
+    }
+}
+
+fn sanitize_branch_segment(input: &str) -> String {
+    let mut normalized = input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+
+    normalized.trim_matches('-').to_string()
+}
+
+fn setup_tracking_branches(
+    repo_root: &Path,
+    issue_id: &IssueId,
+    task_id: &TaskId,
+    fork_point: GitOid,
+    github_token: Option<&str>,
+) -> Result<GitOid> {
+    if let Some(_token) = github_token {
+        authenticate_github()?;
+    }
+
+    let remote = "origin";
+    ensure_remote_exists(repo_root, remote)?;
+    fetch_remote(repo_root, remote)?;
+    let branches = TrackingBranchNames::new(issue_id, task_id)?;
+    let fork_point_ref = fork_point.to_string();
+
+    let issue_base_remote = format!("{remote}/{}", branches.issue_base);
+    let issue_base_commit = if remote_branch_exists(repo_root, remote, &branches.issue_base)? {
+        let commit = resolve_ref(repo_root, &issue_base_remote)?;
+        create_or_reset_branch(repo_root, &branches.issue_base, &commit.to_string())?;
+        set_branch_upstream(repo_root, &branches.issue_base, &issue_base_remote)?;
+        commit
+    } else {
+        create_or_reset_branch(repo_root, &branches.issue_base, &fork_point_ref)?;
+        push_branch(repo_root, remote, &branches.issue_base)?;
+        fork_point
+    };
+
+    let issue_head_remote = format!("{remote}/{}", branches.issue_head);
+    let issue_head_commit = if remote_branch_exists(repo_root, remote, &branches.issue_head)? {
+        let commit = resolve_ref(repo_root, &issue_head_remote)?;
+        create_or_reset_branch(repo_root, &branches.issue_head, &commit.to_string())?;
+        set_branch_upstream(repo_root, &branches.issue_head, &issue_head_remote)?;
+        commit
+    } else {
+        create_or_reset_branch(repo_root, &branches.issue_head, &branches.issue_base)?;
+        push_branch(repo_root, remote, &branches.issue_head)?;
+        issue_base_commit
+    };
+
+    let task_base_remote = format!("{remote}/{}", branches.task_base);
+    let task_base_commit = if remote_branch_exists(repo_root, remote, &branches.task_base)? {
+        let commit = resolve_ref(repo_root, &task_base_remote)?;
+        create_or_reset_branch(repo_root, &branches.task_base, &commit.to_string())?;
+        set_branch_upstream(repo_root, &branches.task_base, &task_base_remote)?;
+        commit
+    } else {
+        create_or_reset_branch(
+            repo_root,
+            &branches.task_base,
+            &issue_head_commit.to_string(),
+        )?;
+        push_branch(repo_root, remote, &branches.task_base)?;
+        issue_head_commit
+    };
+
+    let task_head_remote = format!("{remote}/{}", branches.task_head);
+    if remote_branch_exists(repo_root, remote, &branches.task_head)? {
+        let commit = resolve_ref(repo_root, &task_head_remote)?;
+        create_or_reset_branch(repo_root, &branches.task_head, &commit.to_string())?;
+        set_branch_upstream(repo_root, &branches.task_head, &task_head_remote)?;
+    } else {
+        create_or_reset_branch(
+            repo_root,
+            &branches.task_head,
+            &task_base_commit.to_string(),
+        )?;
+        push_branch(repo_root, remote, &branches.task_head)?;
+    }
+    checkout_branch(repo_root, &branches.task_head)?;
+
+    Ok(issue_base_commit)
+}
+
+fn ensure_remote_exists(repo_root: &Path, remote: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["remote", "get-url", remote])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to read git remotes")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("repository does not have a '{remote}' remote; tracking branches require a configured remote");
+}
+
+fn fetch_remote(repo_root: &Path, remote: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["fetch", "--prune", remote])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to fetch repository remote")?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("git fetch failed for remote '{remote}'");
+}
+
+fn remote_branch_exists(repo_root: &Path, remote: &str, branch: &str) -> Result<bool> {
+    branch_exists(repo_root, &format!("refs/remotes/{remote}/{branch}"))
+}
+
+fn branch_exists(repo_root: &Path, reference: &str) -> Result<bool> {
+    let status = Command::new("git")
+        .args(["show-ref", "--verify", reference])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to inspect git references")?;
+
+    Ok(status.success())
+}
+
+fn create_or_reset_branch(repo_root: &Path, branch: &str, source: &str) -> Result<()> {
+    let target_ref = format!("refs/heads/{branch}");
+    let status = Command::new("git")
+        .args(["update-ref", &target_ref, source])
+        .current_dir(repo_root)
+        .status()
+        .with_context(|| format!("failed to create or reset branch '{branch}'"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to create or reset branch '{branch}'");
+}
+
+fn push_branch(repo_root: &Path, remote: &str, branch: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["push", "-u", remote, branch])
+        .current_dir(repo_root)
+        .status()
+        .with_context(|| format!("failed to push branch '{branch}' to remote '{remote}'"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to push branch '{branch}' to remote '{remote}'");
+}
+
+fn set_branch_upstream(repo_root: &Path, branch: &str, upstream: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["branch", "--set-upstream-to", upstream, branch])
+        .current_dir(repo_root)
+        .status()
+        .with_context(|| format!("failed to set upstream for branch '{branch}'"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to set upstream for branch '{branch}'");
+}
+
+fn checkout_branch(repo_root: &Path, branch: &str) -> Result<()> {
+    let status = Command::new("git")
+        .args(["checkout", branch])
+        .current_dir(repo_root)
+        .status()
+        .with_context(|| format!("failed to checkout branch '{branch}'"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    bail!("failed to checkout branch '{branch}'");
+}
+
+fn resolve_ref(repo_root: &Path, reference: &str) -> Result<GitOid> {
+    let output = Command::new("git")
+        .args(["rev-parse", &format!("{reference}^{{commit}}")])
+        .current_dir(repo_root)
+        .output()
+        .with_context(|| format!("failed to resolve reference '{reference}'"))?;
+
+    if !output.status.success() {
+        bail!("failed to resolve reference '{reference}'");
+    }
+
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    GitOid::from_str(&oid).context("failed to parse commit oid")
+}
+
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &TaskId,
@@ -265,14 +541,6 @@ fn patch_metadata(job: &TaskId, last_message: &str) -> (String, String) {
     (title, description)
 }
 
-fn resolve_head_oid_if_present(dest: &Path) -> Result<Option<GitOid>> {
-    if !dest.join(".git").exists() {
-        return Ok(None);
-    }
-
-    resolve_head_oid(dest).map(Some)
-}
-
 fn resolve_head_oid(dest: &Path) -> Result<GitOid> {
     let output = Command::new("git")
         .args(["rev-parse", "HEAD^{commit}"])
@@ -292,7 +560,7 @@ mod tests {
     use super::*;
     use crate::{
         client::MockMetisClient,
-        test_utils::ids::{patch_id, task_id},
+        test_utils::ids::{issue_id, patch_id, task_id},
     };
     use metis_common::patches::UpsertPatchResponse;
     use std::collections::HashMap;
@@ -363,6 +631,101 @@ mod tests {
         let repo_str = init_git_repo(repo_path)?;
         create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
         Ok(repo_str)
+    }
+
+    fn setup_bare_remote_repo() -> Result<(tempfile::TempDir, GitOid)> {
+        let remote_dir =
+            tempfile::tempdir().context("failed to create temporary directory for remote repo")?;
+        let remote_str = remote_dir
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow!("remote path contains invalid UTF-8"))?;
+        Command::new("git")
+            .args(["init", "--bare", remote_str])
+            .status()
+            .context("failed to init bare remote repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init --bare returned non-zero exit code"))?;
+
+        let seed_dir =
+            tempfile::tempdir().context("failed to create temporary directory for seed repo")?;
+        let seed_str = seed_dir
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow!("seed path contains invalid UTF-8"))?;
+        Command::new("git")
+            .args(["init", seed_str])
+            .status()
+            .context("failed to init seed repo for remote")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git init returned non-zero exit code for seed repo"))?;
+        Command::new("git")
+            .args(["-C", seed_str, "checkout", "-b", "main"])
+            .status()
+            .context("failed to create main branch in seed repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git checkout returned non-zero exit code for seed repo"))?;
+        configure_git_repo(seed_dir.path())?;
+        std::fs::write(seed_dir.path().join("README.md"), "seed content\n")
+            .context("failed to write seed file for remote")?;
+        Command::new("git")
+            .args(["-C", seed_str, "add", "README.md"])
+            .status()
+            .context("failed to add seed file to repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code for seed repo"))?;
+        Command::new("git")
+            .args(["-C", seed_str, "commit", "-m", "seed"])
+            .status()
+            .context("failed to commit seed repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git commit returned non-zero exit code for seed repo"))?;
+        Command::new("git")
+            .args(["-C", seed_str, "remote", "add", "origin", remote_str])
+            .status()
+            .context("failed to add remote to seed repo")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git remote add returned non-zero exit code for seed repo"))?;
+        Command::new("git")
+            .args(["-C", seed_str, "push", "-u", "origin", "main"])
+            .status()
+            .context("failed to push seed repo to remote")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git push returned non-zero exit code for seed repo"))?;
+
+        let main_commit = resolve_ref(seed_dir.path(), "HEAD")?;
+        Ok((remote_dir, main_commit))
+    }
+
+    fn clone_remote_repo(remote: &Path) -> Result<tempfile::TempDir> {
+        let clone_dir =
+            tempfile::tempdir().context("failed to create temporary clone directory")?;
+        let remote_str = remote
+            .to_str()
+            .ok_or_else(|| anyhow!("remote path contains invalid UTF-8"))?;
+        clone_git_repo(remote_str, "main", clone_dir.path(), None)?;
+        configure_git_repo(clone_dir.path())?;
+        Ok(clone_dir)
+    }
+
+    fn current_branch(repo_path: &Path) -> Result<String> {
+        let output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .context("failed to read current branch")?;
+        if !output.status.success() {
+            bail!("failed to read current branch");
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     #[test]
@@ -438,6 +801,156 @@ mod tests {
             String::from_utf8_lossy(&user_email.stdout).trim(),
             "metis-worker@example.com"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sanitize_branch_segment_normalizes_segments() {
+        assert_eq!(sanitize_branch_segment("I-This_is.TEST"), "i-this-is-test");
+        assert_eq!(sanitize_branch_segment("..."), "");
+    }
+
+    #[test]
+    fn set_base_commit_env_sets_value_when_present() -> Result<()> {
+        let mut env = HashMap::new();
+        let commit = GitOid::from_str("0123456789abcdef0123456789abcdef01234567")?;
+
+        set_base_commit_env(&mut env, Some(commit));
+
+        assert_eq!(
+            env.get(ENV_METIS_BASE_COMMIT).map(String::as_str),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn set_base_commit_env_ignores_missing_commit() {
+        let mut env = HashMap::new();
+
+        set_base_commit_env(&mut env, None);
+
+        assert!(!env.contains_key(ENV_METIS_BASE_COMMIT));
+    }
+
+    #[test]
+    fn setup_tracking_branches_bootstraps_issue_and_task_branches() -> Result<()> {
+        let (remote_dir, main_commit) = setup_bare_remote_repo()?;
+        let repo = clone_remote_repo(remote_dir.path())?;
+        let issue = issue_id("bootstrap");
+        let task = task_id("bootstrap-task");
+        let fork_point = resolve_head_oid(repo.path())?;
+
+        let branches = TrackingBranchNames::new(&issue, &task)?;
+        let base_commit = setup_tracking_branches(repo.path(), &issue, &task, fork_point, None)?;
+
+        assert_eq!(base_commit, main_commit);
+        assert_eq!(current_branch(repo.path())?, branches.task_head);
+        assert_eq!(resolve_ref(repo.path(), &branches.task_head)?, main_commit);
+        assert!(branch_exists(
+            repo.path(),
+            &format!("refs/remotes/origin/{}", branches.issue_base)
+        )?);
+        assert!(branch_exists(
+            repo.path(),
+            &format!("refs/remotes/origin/{}", branches.task_head)
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_tracking_branches_resumes_remote_head() -> Result<()> {
+        let (remote_dir, main_commit) = setup_bare_remote_repo()?;
+        let issue = issue_id("resume");
+        let task = task_id("resume-task");
+        let branches = TrackingBranchNames::new(&issue, &task)?;
+
+        let bootstrap_repo = clone_remote_repo(remote_dir.path())?;
+        let fork_point = resolve_head_oid(bootstrap_repo.path())?;
+        setup_tracking_branches(bootstrap_repo.path(), &issue, &task, fork_point, None)?;
+
+        let work_repo = clone_remote_repo(remote_dir.path())?;
+        create_or_reset_branch(
+            work_repo.path(),
+            &branches.issue_head,
+            &format!("origin/{}", branches.issue_head),
+        )?;
+        checkout_branch(work_repo.path(), &branches.issue_head)?;
+        std::fs::write(work_repo.path().join("README.md"), "next change\n")
+            .context("failed to update seed file")?;
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(work_repo.path())
+            .status()
+            .context("failed to add updated seed file")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git add returned non-zero exit code for updated seed file"))?;
+        Command::new("git")
+            .args(["commit", "-m", "advance head"])
+            .current_dir(work_repo.path())
+            .status()
+            .context("failed to commit head advancement")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| {
+                anyhow!("git commit returned non-zero exit code for head advancement")
+            })?;
+        Command::new("git")
+            .args(["push", "origin", &branches.issue_head])
+            .current_dir(work_repo.path())
+            .status()
+            .context("failed to push updated head to remote")?
+            .success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("git push returned non-zero exit code for updated head"))?;
+        let updated_head = resolve_ref(work_repo.path(), "HEAD")?;
+
+        let resume_repo = clone_remote_repo(remote_dir.path())?;
+        let fork_point = resolve_head_oid(resume_repo.path())?;
+        let base_commit =
+            setup_tracking_branches(resume_repo.path(), &issue, &task, fork_point, None)?;
+
+        assert_eq!(base_commit, main_commit);
+        assert_eq!(
+            resolve_ref(resume_repo.path(), &branches.issue_head)?,
+            updated_head
+        );
+        let remote_task_head = resolve_ref(
+            resume_repo.path(),
+            &format!("refs/remotes/origin/{}", branches.task_head),
+        )?;
+        assert_eq!(
+            resolve_ref(resume_repo.path(), &branches.task_head)?,
+            remote_task_head
+        );
+        assert_eq!(current_branch(resume_repo.path())?, branches.task_head);
+
+        Ok(())
+    }
+
+    #[test]
+    fn setup_tracking_branches_errors_without_remote() -> Result<()> {
+        let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
+        let repo_path = tempdir.path();
+        setup_git_repo_with_initial_commit(repo_path)?;
+        let issue = issue_id("no-remote");
+        let task = task_id("no-remote-task");
+        let original_branch = current_branch(repo_path)?;
+
+        let fork_point = resolve_head_oid(repo_path)?;
+        let err = setup_tracking_branches(repo_path, &issue, &task, fork_point, None)
+            .expect_err("missing remote should produce an error");
+
+        assert!(
+            err.to_string().contains("remote"),
+            "unexpected error from missing remote: {err}"
+        );
+
+        assert_eq!(current_branch(repo_path)?, original_branch);
 
         Ok(())
     }
