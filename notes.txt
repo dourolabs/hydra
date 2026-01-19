@@ -19,6 +19,7 @@ kind delete cluster --name local-dev
 
 ```cargo build``` in the top level will build all projects.
 
+Use ```cargo check --workspace``` for a quick compile pass before full builds.
 
 `./scripts/docker-build.sh` will build docker images for codex and metis-server, and additionally push those images into kind's image repository.
 
