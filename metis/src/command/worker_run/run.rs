@@ -2,11 +2,9 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
-    str::FromStr,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use metis_common::{
     constants::ENV_GH_TOKEN,
     job_status::JobStatusUpdate,
@@ -16,9 +14,8 @@ use metis_common::{
 };
 
 use crate::client::MetisClientInterface;
-use crate::command::patches::{
-    create_patch_artifact_from_repo, git_workdir_diff, resolve_service_repo_name,
-};
+use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
+use crate::git::{clone_repo, configure_repo, resolve_head_oid, workdir_diff as git_workdir_diff};
 use tempfile::Builder;
 
 use crate::command::worker_run::worker_commands::WorkerCommands;
@@ -101,39 +98,7 @@ fn ensure_clean_destination(dest: &Path) -> Result<()> {
 }
 
 fn clone_git_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>) -> Result<()> {
-    if let Some(_token) = github_token {
-        // The token is also present as an environment variable so it doesn't need to be explicitly
-        // passed to authenticate.
-        authenticate_github()?;
-    }
-
-    let status = Command::new("git")
-        .args(["clone", "--no-checkout", url, dest.to_str().unwrap()])
-        .status()
-        .context("failed to spawn git clone")?;
-    if !status.success() {
-        return Err(anyhow!("git clone failed with status {status}"));
-    }
-
-    let status = Command::new("git")
-        .args(["-C", dest.to_str().unwrap(), "checkout", rev])
-        .status()
-        .context("failed to spawn git checkout")?;
-    if !status.success() {
-        return Err(anyhow!("git checkout failed with status {status}"));
-    }
-    Ok(())
-}
-
-fn authenticate_github() -> Result<()> {
-    let status = Command::new("gh")
-        .args(["auth", "setup-git"])
-        .status()
-        .context("failed to spawn gh auth setup-git")?;
-    if !status.success() {
-        return Err(anyhow!("gh auth setup-git failed with status {status}"));
-    }
-
+    clone_repo(url, rev, dest, github_token).context("failed to clone repository")?;
     Ok(())
 }
 
@@ -143,33 +108,7 @@ fn configure_git_repo(dest: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let repo_path = dest
-        .to_str()
-        .ok_or_else(|| anyhow!("destination path contains invalid UTF-8"))?;
-
-    let status = Command::new("git")
-        .args(["-C", repo_path, "config", "user.name", "Metis Worker"])
-        .status()
-        .context("failed to set git user.name")?;
-    if !status.success() {
-        return Err(anyhow!("git config user.name failed with status {status}"));
-    }
-
-    let status = Command::new("git")
-        .args([
-            "-C",
-            repo_path,
-            "config",
-            "user.email",
-            "metis-worker@example.com",
-        ])
-        .status()
-        .context("failed to set git user.email")?;
-    if !status.success() {
-        return Err(anyhow!("git config user.email failed with status {status}"));
-    }
-
-    Ok(())
+    configure_repo(dest, "Metis Worker", "metis-worker@example.com")
 }
 
 fn ensure_color_output_env(env: &mut HashMap<String, String>) {
@@ -270,21 +209,7 @@ fn resolve_head_oid_if_present(dest: &Path) -> Result<Option<GitOid>> {
         return Ok(None);
     }
 
-    resolve_head_oid(dest).map(Some)
-}
-
-fn resolve_head_oid(dest: &Path) -> Result<GitOid> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD^{commit}"])
-        .current_dir(dest)
-        .output()
-        .context("failed to resolve HEAD commit")?;
-    if !output.status.success() {
-        bail!("failed to resolve HEAD commit");
-    }
-
-    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    GitOid::from_str(&oid).context("failed to parse HEAD commit oid")
+    resolve_head_oid(dest)
 }
 
 #[cfg(test)]
@@ -292,76 +217,40 @@ mod tests {
     use super::*;
     use crate::{
         client::MockMetisClient,
+        git::{
+            commit_changes as git_commit_changes, configure_repo as git_configure_repo,
+            stage_all_changes as git_stage_all_changes,
+        },
         test_utils::ids::{patch_id, task_id},
     };
+    use git2::Repository;
     use metis_common::patches::UpsertPatchResponse;
     use std::collections::HashMap;
-    use std::process::Command;
     use std::str::FromStr;
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
+        Repository::init(repo_path).context("failed to init git repo for test")?;
+        git_configure_repo(repo_path, "Test User", "test@example.com")?;
+
         let repo_str = repo_path
             .to_str()
             .ok_or_else(|| anyhow!("repo path contains invalid UTF-8"))?;
-
-        Command::new("git")
-            .args(["init", repo_str])
-            .status()
-            .context("failed to init git repo for test")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.name", "Test User"])
-            .status()
-            .context("failed to set git user.name")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.email", "test@example.com"])
-            .status()
-            .context("failed to set git user.email")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
-
         Ok(repo_str.to_string())
     }
 
-    fn create_initial_commit(
-        repo_path: &Path,
-        repo_str: &str,
-        filename: &str,
-        content: &str,
-    ) -> Result<()> {
+    fn create_initial_commit(repo_path: &Path, filename: &str, content: &str) -> Result<()> {
         std::fs::write(repo_path.join(filename), content)
             .with_context(|| format!("failed to write initial file {filename}"))?;
 
-        Command::new("git")
-            .args(["-C", repo_str, "add", filename])
-            .status()
-            .with_context(|| format!("failed to add initial file {filename}"))?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-
-        Command::new("git")
-            .args(["-C", repo_str, "commit", "-m", "initial commit"])
-            .status()
-            .context("failed to create initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        git_stage_all_changes(repo_path)?;
+        git_commit_changes(repo_path, "initial commit")?;
 
         Ok(())
     }
 
     fn setup_git_repo_with_initial_commit(repo_path: &Path) -> Result<String> {
         let repo_str = init_git_repo(repo_path)?;
-        create_initial_commit(repo_path, &repo_str, "README.md", "initial content")?;
+        create_initial_commit(repo_path, "README.md", "initial content")?;
         Ok(repo_str)
     }
 
@@ -369,75 +258,32 @@ mod tests {
     fn configure_git_repo_sets_user_config_and_branch() -> Result<()> {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
-        let repo_str = repo_path
-            .to_str()
-            .ok_or_else(|| anyhow!("tempdir path contains invalid UTF-8"))?;
-
-        Command::new("git")
-            .args(["init", repo_str])
-            .status()
-            .context("failed to init git repo for test")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git init returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "config", "user.name", "Initial User"])
-            .status()
-            .context("failed to set initial git user.name")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.name returned non-zero exit code"))?;
-        Command::new("git")
-            .args([
-                "-C",
-                repo_str,
-                "config",
-                "user.email",
-                "initial@example.com",
-            ])
-            .status()
-            .context("failed to set initial git user.email")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git config user.email returned non-zero exit code"))?;
+        Repository::init(repo_path).context("failed to init git repo for test")?;
+        {
+            let repo = Repository::open(repo_path).context("failed to reopen repo for config")?;
+            let mut config = repo
+                .config()
+                .context("failed to load git config for repo")?;
+            config
+                .set_str("user.name", "Initial User")
+                .context("failed to set initial git user.name")?;
+            config
+                .set_str("user.email", "initial@example.com")
+                .context("failed to set initial git user.email")?;
+        }
         std::fs::write(repo_path.join("README.md"), "hello world")
             .context("failed to write initial file for git repo")?;
-        Command::new("git")
-            .args(["-C", repo_str, "add", "."])
-            .status()
-            .context("failed to add file for initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git add returned non-zero exit code"))?;
-        Command::new("git")
-            .args(["-C", repo_str, "commit", "-m", "init"])
-            .status()
-            .context("failed to create initial commit")?
-            .success()
-            .then_some(())
-            .ok_or_else(|| anyhow!("git commit returned non-zero exit code"))?;
+        git_stage_all_changes(repo_path)?;
+        git_commit_changes(repo_path, "init")?;
 
         configure_git_repo(repo_path)?;
 
-        let user_name = Command::new("git")
-            .args(["-C", repo_str, "config", "user.name"])
-            .output()
-            .context("failed to read git user.name")?;
-        assert!(user_name.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&user_name.stdout).trim(),
-            "Metis Worker"
-        );
-
-        let user_email = Command::new("git")
-            .args(["-C", repo_str, "config", "user.email"])
-            .output()
-            .context("failed to read git user.email")?;
-        assert!(user_email.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&user_email.stdout).trim(),
-            "metis-worker@example.com"
-        );
+        let repo = Repository::open(repo_path).context("failed to reopen repo for assertions")?;
+        let config = repo
+            .config()
+            .context("failed to read git config for assertions")?;
+        assert_eq!(config.get_string("user.name")?, "Metis Worker");
+        assert_eq!(config.get_string("user.email")?, "metis-worker@example.com");
 
         Ok(())
     }
@@ -475,7 +321,8 @@ mod tests {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit = resolve_head_oid(repo_path)?;
+        let base_commit =
+            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
         std::fs::write(repo_path.join("README.md"), "updated content\n")?;
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
@@ -527,7 +374,8 @@ mod tests {
         let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
         let repo_path = tempdir.path();
         setup_git_repo_with_initial_commit(repo_path)?;
-        let base_commit = resolve_head_oid(repo_path)?;
+        let base_commit =
+            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
 
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-456");
