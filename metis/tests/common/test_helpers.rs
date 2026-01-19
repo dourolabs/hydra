@@ -75,9 +75,15 @@ impl TestEnvironment {
 
         let bash_commands = BashCommands { commands };
 
-        metis::command::worker_run::run(&self.client, job_id, worker_dir, None, &bash_commands)
-            .await
-            .context("failed to run worker commands")?;
+        metis::command::jobs::worker_run::run(
+            &self.client,
+            job_id,
+            worker_dir,
+            None,
+            &bash_commands,
+        )
+        .await
+        .context("failed to run worker commands")?;
 
         Ok(())
     }

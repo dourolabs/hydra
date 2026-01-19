@@ -1,10 +1,9 @@
 use std::{collections::HashMap, path::Path, process::Stdio};
 
-use tokio::{fs, io::AsyncWriteExt, process::Command};
-
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use metis_common::constants::ENV_OPENAI_API_KEY;
+use tokio::{fs, io::AsyncWriteExt, process::Command};
 
 #[async_trait]
 pub trait WorkerCommands: Send + Sync {
@@ -18,7 +17,8 @@ pub trait WorkerCommands: Send + Sync {
     ) -> Result<String>;
 }
 
-pub struct CodexCommands {}
+pub struct CodexCommands;
+
 impl CodexCommands {
     async fn login(&self, openai_api_key: Option<&str>) -> Result<()> {
         let openai_api_key = openai_api_key.map(str::to_owned).ok_or_else(|| {
@@ -55,7 +55,7 @@ impl CodexCommands {
         Ok(())
     }
 
-    pub async fn run_codex(
+    async fn run_codex(
         prompt: &str,
         working_dir: &Path,
         env: &HashMap<String, String>,
@@ -92,7 +92,7 @@ impl CodexCommands {
             return Err(anyhow!("codex command failed with status {status}"));
         }
 
-        fs::read_to_string(&output_path)
+        fs::read_to_string(output_path)
             .await
             .with_context(|| format!("failed to read codex output from {output_path:?}"))
     }

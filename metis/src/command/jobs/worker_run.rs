@@ -12,13 +12,12 @@ use metis_common::{
     patches::GitOid,
     RepoName, TaskId,
 };
+use tempfile::Builder;
 
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{clone_repo, configure_repo, resolve_head_oid, workdir_diff};
-use tempfile::Builder;
-
-use crate::command::worker_run::worker_commands::WorkerCommands;
+use crate::worker_commands::WorkerCommands;
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -34,7 +33,6 @@ pub async fn run(
         ..
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
-    // Startup tasks: set up context
     ensure_clean_destination(&dest)?;
     let github_token = variables.get(ENV_GH_TOKEN).cloned();
     let mut execution_env = variables;
@@ -78,7 +76,6 @@ pub async fn run(
         base_commit,
     )
     .await?;
-    // Submit job status (merge of worker-submit functionality)
     submit_job_status(client, &job, &last_message).await?;
 
     Ok(())
