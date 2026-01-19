@@ -5,6 +5,7 @@ use git2::{
     build::{CheckoutBuilder, RepoBuilder},
     ApplyLocation, BranchType, Commit, Cred, CredentialType, Diff, DiffFormat, DiffOptions,
     ErrorCode, FetchOptions, IndexAddOption, PushOptions, RemoteCallbacks, Repository,
+    RevparseMode, Status, StatusOptions,
 };
 use metis_common::patches::GitOid;
 
@@ -56,6 +57,43 @@ pub fn workdir_diff(repo_root: &Path) -> Result<String> {
     }
 
     Ok(pieces.join("\n"))
+}
+
+pub fn diff_commit_range(repo_root: &Path, commit_range: &str) -> Result<String> {
+    let repo = repo_for_path(repo_root)?;
+    let trimmed = commit_range.trim();
+    if trimmed.is_empty() {
+        bail!("commit range must not be empty");
+    }
+
+    let rev_spec = repo
+        .revparse(trimmed)
+        .with_context(|| format!("failed to parse commit range '{trimmed}'"))?;
+    if !rev_spec.mode().contains(RevparseMode::RANGE) {
+        bail!("commit range '{trimmed}' must be specified in '<base>..<head>' format");
+    }
+
+    let base = rev_spec
+        .from()
+        .ok_or_else(|| anyhow!("commit range '{trimmed}' is missing a base revision"))?;
+    let head = rev_spec
+        .to()
+        .ok_or_else(|| anyhow!("commit range '{trimmed}' is missing a head revision"))?;
+
+    let base_tree = base
+        .peel_to_tree()
+        .with_context(|| format!("failed to resolve base tree for '{trimmed}'"))?;
+    let head_tree = head
+        .peel_to_tree()
+        .with_context(|| format!("failed to resolve head tree for '{trimmed}'"))?;
+
+    let mut opts = DiffOptions::new();
+    opts.show_binary(true);
+    let diff = repo
+        .diff_tree_to_tree(Some(&base_tree), Some(&head_tree), Some(&mut opts))
+        .with_context(|| format!("failed to compute diff for commit range '{trimmed}'"))?;
+
+    diff_to_string(&diff)
 }
 
 pub fn apply_patch(repo_root: &Path, patch: &str) -> Result<()> {
@@ -286,4 +324,18 @@ fn checkout_revision(repo: &Repository, rev: &str) -> Result<()> {
     repo.set_head_detached(object.id())
         .with_context(|| format!("failed to detach HEAD at '{rev}'"))?;
     Ok(())
+}
+
+pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
+    let repo = repo_for_path(repo_root)?;
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_unmodified(false);
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .context("failed to inspect working tree status")?;
+    Ok(statuses
+        .iter()
+        .any(|entry| entry.status() != Status::CURRENT))
 }
