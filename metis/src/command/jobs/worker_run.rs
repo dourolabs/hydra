@@ -779,12 +779,8 @@ mod tests {
         let job_id = task_id("t-worker-789");
         let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
-        configure_repo(
-            clone_dir.path(),
-            "Metis Worker",
-            "metis-worker@example.com",
-        )
-        .context("failed to configure git repository")?;
+        configure_repo(clone_dir.path(), "Metis Worker", "metis-worker@example.com")
+            .context("failed to configure git repository")?;
         initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
         std::fs::write(clone_dir.path().join("README.md"), "updated content\n")
