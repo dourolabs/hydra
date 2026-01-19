@@ -235,7 +235,13 @@ impl PanelState {
             .viewport_content_length(view_height);
     }
 
-    fn apply_scroll_delta(&mut self, delta: i32, content_len: usize, view_height: usize) -> bool {
+    /// Applies a scroll delta and returns true when the offset changes.
+    pub fn apply_scroll_delta(
+        &mut self,
+        delta: i32,
+        content_len: usize,
+        view_height: usize,
+    ) -> bool {
         let max_offset = max_scroll_offset(content_len, view_height);
         let next_offset = if delta < 0 {
             self.scroll_offset

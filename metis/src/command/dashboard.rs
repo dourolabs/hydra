@@ -30,9 +30,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    },
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame, Terminal,
 };
 use tui_textarea::TextArea;
@@ -40,6 +38,8 @@ use tui_textarea::TextArea;
 use crate::{client::MetisClientInterface, command::jobs};
 
 pub mod panel;
+
+use panel::{Panel, PanelEvent, PanelState};
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -52,6 +52,14 @@ enum PanelFocus {
     #[default]
     NewIssue,
     Status,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+enum StatusPanelFocus {
+    UserOwned,
+    #[default]
+    Running,
+    Completed,
 }
 
 #[derive(Clone, PartialEq)]
@@ -242,49 +250,67 @@ struct ListScrollState {
     scrollbar_state: ScrollbarState,
 }
 
-impl ListScrollState {
-    fn apply_delta(&mut self, delta: i16, total_items: usize, view_height: usize) -> bool {
-        let max_offset = max_scroll_offset(total_items, view_height);
-        let next = self.offset as i64 + i64::from(delta);
-        let clamped = next.clamp(0, max_offset as i64) as usize;
-        if clamped == self.offset {
-            self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
-            return false;
-        }
-        self.offset = clamped;
-        self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
-        true
-    }
-
-    fn sync(&mut self, total_items: usize, view_height: usize) {
-        let max_offset = max_scroll_offset(total_items, view_height);
-        self.offset = self.offset.min(max_offset);
-        self.scrollbar_state = list_scrollbar_state(total_items, view_height, self.offset);
-    }
-
-    fn reset(&mut self) {
-        self.offset = 0;
-        self.scrollbar_state = ScrollbarState::default();
-    }
-}
-
-#[derive(Default, Clone, PartialEq)]
+#[derive(Clone)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
-    issue_scroll: ListScrollState,
-    user_unowned_issue_scroll: ListScrollState,
-    completed_issue_scroll: ListScrollState,
+    running_issue_panel: PanelState,
+    user_unowned_issue_panel: PanelState,
+    completed_issue_panel: PanelState,
+    issue_creator_panel: PanelState,
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: Option<String>,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
+    status_panel_focus: StatusPanelFocus,
     last_frame_size: Option<Rect>,
+}
+
+impl Default for DashboardState {
+    fn default() -> Self {
+        let mut issue_creator_panel = PanelState::new();
+        issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
+        issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
+        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Focus status");
+
+        let mut running_issue_panel = PanelState::new();
+        configure_status_panel_keybindings(&mut running_issue_panel);
+        let mut user_unowned_issue_panel = PanelState::new();
+        configure_status_panel_keybindings(&mut user_unowned_issue_panel);
+        let mut completed_issue_panel = PanelState::new();
+        configure_status_panel_keybindings(&mut completed_issue_panel);
+
+        let mut state = Self {
+            jobs: Vec::new(),
+            issues: Vec::new(),
+            issue_lines: IssueLines::default(),
+            user_unowned_issue_lines: IssueLines::default(),
+            completed_issue_lines: CompletedIssueLines::default(),
+            running_issue_panel,
+            user_unowned_issue_panel,
+            completed_issue_panel,
+            issue_creator_panel,
+            issue_draft_scroll: ListScrollState::default(),
+            jobs_error: None,
+            records_error: None,
+            username: None,
+            issue_draft: IssueDraft::default(),
+            selected_panel: PanelFocus::default(),
+            status_panel_focus: StatusPanelFocus::default(),
+            last_frame_size: None,
+        };
+        update_panel_focus(&mut state);
+        state
+    }
+}
+
+fn configure_status_panel_keybindings(panel: &mut PanelState) {
+    panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Focus new issue");
 }
 
 struct IssueSubmission {
@@ -329,6 +355,7 @@ async fn run_dashboard_loop(
         ..DashboardState::default()
     };
     state.issue_draft.set_editing(true);
+    update_panel_focus(&mut state);
     let mut needs_draw = true;
 
     match refresh_jobs(client, &mut state).await {
@@ -350,7 +377,7 @@ async fn run_dashboard_loop(
     if needs_draw {
         state.last_frame_size = Some(terminal.size()?);
         clamp_issue_scrolls(&mut state);
-        terminal.draw(|f| render(f, &state))?;
+        terminal.draw(|f| render(f, &mut state))?;
         needs_draw = false;
     }
 
@@ -395,7 +422,7 @@ async fn run_dashboard_loop(
                             let assignee = submission.assignee.clone();
                             state.issue_draft.info_message =
                                 Some(format!("Submitting issue for @{assignee}..."));
-                            terminal.draw(|f| render(f, &state))?;
+                            terminal.draw(|f| render(f, &mut state))?;
                             let submission_result = submit_issue(
                                 client,
                                 &submission,
@@ -433,7 +460,7 @@ async fn run_dashboard_loop(
         if needs_draw {
             state.last_frame_size = Some(terminal.size()?);
             clamp_issue_scrolls(&mut state);
-            terminal.draw(|f| render(f, &state))?;
+            terminal.draw(|f| render(f, &mut state))?;
             needs_draw = false;
         }
     }
@@ -480,7 +507,10 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
 
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
-                PanelFocus::Status => None,
+                PanelFocus::Status => {
+                    handle_status_panel_key(key, state);
+                    None
+                }
             };
             EventOutcome {
                 should_quit: false,
@@ -554,6 +584,40 @@ fn handle_panel_focus_key(state: &mut DashboardState) {
     state
         .issue_draft
         .set_editing(state.selected_panel == PanelFocus::NewIssue);
+    update_panel_focus(state);
+}
+
+fn update_panel_focus(state: &mut DashboardState) {
+    normalize_status_panel_focus(state);
+    let status_focused = state.selected_panel == PanelFocus::Status;
+    state
+        .issue_creator_panel
+        .set_focused(state.selected_panel == PanelFocus::NewIssue);
+    state
+        .running_issue_panel
+        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Running);
+    state.user_unowned_issue_panel.set_focused(
+        status_focused
+            && state.status_panel_focus == StatusPanelFocus::UserOwned
+            && has_user_owned_panel(state),
+    );
+    state
+        .completed_issue_panel
+        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Completed);
+}
+
+fn normalize_status_panel_focus(state: &mut DashboardState) {
+    if !has_user_owned_panel(state) && state.status_panel_focus == StatusPanelFocus::UserOwned {
+        state.status_panel_focus = StatusPanelFocus::Running;
+    }
+}
+
+fn has_user_owned_panel(state: &DashboardState) -> bool {
+    state
+        .username
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -586,6 +650,67 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     }
 
     None
+}
+
+fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    let size = match state.last_frame_size {
+        Some(size) => size,
+        None => return false,
+    };
+
+    let layout = dashboard_layout(size);
+    let panels = issue_panel_layout(layout.issue_sections, state);
+
+    match state.status_panel_focus {
+        StatusPanelFocus::UserOwned => {
+            let Some(area) = panels.user_owned else {
+                return false;
+            };
+            let view_height = panel_content_height(area, state.user_unowned_issue_panel.focused());
+            if view_height == 0 {
+                return false;
+            }
+            matches!(
+                state.user_unowned_issue_panel.handle_key_event(
+                    key,
+                    issue_lines_len(&state.user_unowned_issue_lines),
+                    view_height,
+                ),
+                PanelEvent::Scrolled
+            )
+        }
+        StatusPanelFocus::Running => {
+            let view_height =
+                panel_content_height(panels.running, state.running_issue_panel.focused());
+            if view_height == 0 {
+                return false;
+            }
+            matches!(
+                state.running_issue_panel.handle_key_event(
+                    key,
+                    issue_lines_len(&state.issue_lines),
+                    view_height,
+                ),
+                PanelEvent::Scrolled
+            )
+        }
+        StatusPanelFocus::Completed => {
+            let rows = completed_issue_rows(&state.completed_issue_lines);
+            let view_height =
+                panel_content_height(panels.completed, state.completed_issue_panel.focused());
+            if view_height == 0 {
+                return false;
+            }
+            matches!(
+                state.completed_issue_panel.handle_key_event(
+                    key,
+                    completed_rows_len(&rows),
+                    view_height,
+                ),
+                PanelEvent::Scrolled
+            )
+        }
+    }
 }
 
 fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -680,7 +805,7 @@ async fn submit_issue(
     Ok(response.issue_id)
 }
 
-fn render(frame: &mut Frame, state: &DashboardState) {
+fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.size());
     render_dashboard_header(frame, layout.header);
     render_issue_creator(frame, layout.issue_creator, state);
@@ -689,7 +814,7 @@ fn render(frame: &mut Frame, state: &DashboardState) {
 
 fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
     let title = "Metis Dashboard";
-    let hint = "Tab to change panels, Ctrl+C to exit.";
+    let hint = "Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -708,57 +833,61 @@ fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
     );
 }
 
-fn render_issue_sections(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
+fn render_issue_sections(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &mut DashboardState,
+) {
     let panels = issue_panel_layout(area, state);
 
     if let Some(rect) = panels.user_owned {
-        render_issue_list(
-            frame,
-            rect,
-            &state.user_unowned_issue_lines,
-            &issue_list_title("Your issues", &state.user_unowned_issue_lines),
+        let title = issue_list_title("Your issues", &state.user_unowned_issue_lines);
+        let lines = issue_line_lines(
+            &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
-            state.user_unowned_issue_scroll.offset,
-            state.user_unowned_issue_scroll.scrollbar_state,
         );
+        let panel = Panel::new(Line::from(title), lines);
+        frame.render_stateful_widget(panel, rect, &mut state.user_unowned_issue_panel);
     }
 
-    render_issue_list(
-        frame,
+    let running_title = issue_list_title("Running issues", &state.issue_lines);
+    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+    let running_panel = Panel::new(Line::from(running_title), running_lines);
+    frame.render_stateful_widget(
+        running_panel,
         panels.running,
-        &state.issue_lines,
-        &issue_list_title("Running issues", &state.issue_lines),
-        "No issues found",
-        state.issue_scroll.offset,
-        state.issue_scroll.scrollbar_state,
+        &mut state.running_issue_panel,
     );
-    render_completed_issue_list(
-        frame,
+
+    let completed_title = completed_issue_list_title(&state.completed_issue_lines);
+    let completed_rows = completed_issue_rows(&state.completed_issue_lines);
+    let completed_lines = issue_line_lines(&completed_rows, "No completed issues");
+    let completed_panel = Panel::new(Line::from(completed_title), completed_lines);
+    frame.render_stateful_widget(
+        completed_panel,
         panels.completed,
-        &state.completed_issue_lines,
-        &completed_issue_list_title(&state.completed_issue_lines),
-        "No completed issues",
-        state.completed_issue_scroll.offset,
-        state.completed_issue_scroll.scrollbar_state,
+        &mut state.completed_issue_panel,
     );
 }
 
-fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &DashboardState) {
-    let draft = &state.issue_draft;
-    let title = if draft.editing {
+fn render_issue_creator(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &mut DashboardState,
+) {
+    let title = if state.issue_draft.editing {
         "New issue (editing)"
     } else {
         "New issue"
     };
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(panel_border_style(
-            state.selected_panel == PanelFocus::NewIssue,
-        ));
-    frame.render_widget(block, area);
+    frame.render_stateful_widget(
+        Panel::new(title, Vec::new()),
+        area,
+        &mut state.issue_creator_panel,
+    );
 
-    let sections = issue_creator_layout(area);
+    let sections = issue_creator_layout(area, state.issue_creator_panel.focused());
+    let draft = &state.issue_draft;
     let prompt_label = Line::from(Span::styled(
         "Prompt",
         Style::default().add_modifier(Modifier::BOLD),
@@ -803,57 +932,6 @@ fn render_issue_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &
         ))
     };
     frame.render_widget(Paragraph::new(footer), sections.footer);
-}
-
-fn render_issue_list(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
-    issue_lines: &IssueLines,
-    title: &str,
-    empty_message: &str,
-    scroll_offset: usize,
-    scrollbar_state: ScrollbarState,
-) {
-    let view_height = list_view_height(area);
-    let items =
-        issue_line_items_with_scroll(&issue_lines.rows, empty_message, scroll_offset, view_height);
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(List::new(items).block(block), area);
-    render_panel_scrollbar(frame, panel_scrollbar_area(area), scrollbar_state);
-}
-
-fn render_completed_issue_list(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
-    completed_issue_lines: &CompletedIssueLines,
-    title: &str,
-    empty_message: &str,
-    scroll_offset: usize,
-    scrollbar_state: ScrollbarState,
-) {
-    let rows = completed_issue_rows(completed_issue_lines);
-    let view_height = list_view_height(area);
-    let items = issue_line_items_with_scroll(&rows, empty_message, scroll_offset, view_height);
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(List::new(items).block(block), area);
-    render_panel_scrollbar(frame, panel_scrollbar_area(area), scrollbar_state);
-}
-
-fn panel_border_style(selected: bool) -> Style {
-    if selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    }
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
@@ -957,11 +1035,8 @@ fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
     }
 }
 
-fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
-    let inner = area.inner(&Margin {
-        vertical: 1,
-        horizontal: 1,
-    });
+fn issue_creator_layout(area: Rect, focused: bool) -> IssueCreatorLayout {
+    let inner = panel_content_area(area, focused);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1003,28 +1078,41 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 
     if let Some(rect) = panels.user_owned {
         if rect_contains(rect, column, row) {
-            let view_height = list_view_height(rect);
-            return state.user_unowned_issue_scroll.apply_delta(
-                delta,
-                state.user_unowned_issue_lines.rows.len(),
-                view_height,
-            );
+            let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
+            let content_len = issue_lines_len(&state.user_unowned_issue_lines);
+            let changed =
+                state
+                    .user_unowned_issue_panel
+                    .apply_scroll_delta(delta, content_len, view_height);
+            state.status_panel_focus = StatusPanelFocus::UserOwned;
+            update_panel_focus(state);
+            return changed;
         }
     }
 
     if rect_contains(panels.running, column, row) {
-        let view_height = list_view_height(panels.running);
-        return state
-            .issue_scroll
-            .apply_delta(delta, state.issue_lines.rows.len(), view_height);
+        let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
+        let content_len = issue_lines_len(&state.issue_lines);
+        let changed = state
+            .running_issue_panel
+            .apply_scroll_delta(delta, content_len, view_height);
+        state.status_panel_focus = StatusPanelFocus::Running;
+        update_panel_focus(state);
+        return changed;
     }
 
     if rect_contains(panels.completed, column, row) {
-        let view_height = list_view_height(panels.completed);
         let rows = completed_issue_rows(&state.completed_issue_lines);
-        return state
-            .completed_issue_scroll
-            .apply_delta(delta, rows.len(), view_height);
+        let view_height =
+            panel_content_height(panels.completed, state.completed_issue_panel.focused());
+        let content_len = completed_rows_len(&rows);
+        let changed =
+            state
+                .completed_issue_panel
+                .apply_scroll_delta(delta, content_len, view_height);
+        state.status_panel_focus = StatusPanelFocus::Completed;
+        update_panel_focus(state);
+        return changed;
     }
 
     false
@@ -1047,26 +1135,32 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
     let panels = issue_panel_layout(layout.issue_sections, state);
 
     if let Some(rect) = panels.user_owned {
-        let view_height = list_view_height(rect);
+        let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
+        let content_len = issue_lines_len(&state.user_unowned_issue_lines);
         state
-            .user_unowned_issue_scroll
-            .sync(state.user_unowned_issue_lines.rows.len(), view_height);
+            .user_unowned_issue_panel
+            .sync_scroll(content_len, view_height);
     } else {
-        state.user_unowned_issue_scroll.reset();
+        state.user_unowned_issue_panel.sync_scroll(0, 0);
     }
 
-    let running_view_height = list_view_height(panels.running);
+    let running_view_height =
+        panel_content_height(panels.running, state.running_issue_panel.focused());
+    let running_len = issue_lines_len(&state.issue_lines);
     state
-        .issue_scroll
-        .sync(state.issue_lines.rows.len(), running_view_height);
+        .running_issue_panel
+        .sync_scroll(running_len, running_view_height);
 
-    let completed_view_height = list_view_height(panels.completed);
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
+    let completed_view_height =
+        panel_content_height(panels.completed, state.completed_issue_panel.focused());
+    let completed_len = completed_rows_len(&completed_rows);
     state
-        .completed_issue_scroll
-        .sync(completed_rows.len(), completed_view_height);
+        .completed_issue_panel
+        .sync_scroll(completed_len, completed_view_height);
 
-    let creator_layout = issue_creator_layout(layout.issue_creator);
+    let creator_layout =
+        issue_creator_layout(layout.issue_creator, state.issue_creator_panel.focused());
     let prompt_view_height = creator_layout.prompt_input.height as usize;
     let prompt_lines = state.issue_draft.prompt.lines().len();
     let cursor_row = state.issue_draft.prompt.cursor().0;
@@ -1100,12 +1194,12 @@ fn completed_issue_descendants<'a>(
         })
 }
 
-fn issue_line_items<'a>(issue_lines: &'a [IssueLine], empty_message: &'a str) -> Vec<ListItem<'a>> {
+fn issue_line_lines(issue_lines: &[IssueLine], empty_message: &str) -> Vec<Line<'static>> {
     if issue_lines.is_empty() {
-        return vec![ListItem::new(Line::from(Span::styled(
-            empty_message,
+        return vec![Line::from(Span::styled(
+            empty_message.to_string(),
             Style::default().fg(Color::DarkGray),
-        )))];
+        ))];
     }
 
     issue_lines
@@ -1156,39 +1250,44 @@ fn issue_line_items<'a>(issue_lines: &'a [IssueLine], empty_message: &'a str) ->
                 ));
             }
 
-            ListItem::new(Line::from(spans))
+            Line::from(spans)
         })
         .collect()
 }
 
-fn issue_line_items_with_scroll<'a>(
-    issue_lines: &'a [IssueLine],
-    empty_message: &'a str,
-    scroll_offset: usize,
-    view_height: usize,
-) -> Vec<ListItem<'a>> {
-    if view_height == 0 {
-        return Vec::new();
+fn issue_lines_len(issue_lines: &IssueLines) -> usize {
+    if issue_lines.rows.is_empty() {
+        1
+    } else {
+        issue_lines.rows.len()
     }
-    if issue_lines.is_empty() {
-        return issue_line_items(issue_lines, empty_message);
-    }
-
-    let max_offset = max_scroll_offset(issue_lines.len(), view_height);
-    let offset = scroll_offset.min(max_offset);
-    let end = (offset + view_height).min(issue_lines.len());
-    issue_line_items(&issue_lines[offset..end], empty_message)
 }
 
-fn list_view_height(area: Rect) -> usize {
-    area.height.saturating_sub(2) as usize
+fn completed_rows_len(rows: &[IssueLine]) -> usize {
+    if rows.is_empty() {
+        1
+    } else {
+        rows.len()
+    }
 }
 
-fn panel_scrollbar_area(area: Rect) -> Rect {
-    area.inner(&Margin {
+fn panel_content_area(area: Rect, focused: bool) -> Rect {
+    let inner = area.inner(&Margin {
         vertical: 1,
         horizontal: 1,
-    })
+    });
+    if !focused || inner.height == 0 {
+        return inner;
+    }
+
+    Rect {
+        height: inner.height.saturating_sub(1),
+        ..inner
+    }
+}
+
+fn panel_content_height(area: Rect, focused: bool) -> usize {
+    panel_content_area(area, focused).height as usize
 }
 
 fn max_scroll_offset(total_items: usize, view_height: usize) -> usize {
@@ -1354,6 +1453,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     state.issue_lines = issue_lines;
     state.user_unowned_issue_lines = user_unowned_issue_lines;
     state.completed_issue_lines = completed_issue_lines;
+    update_panel_focus(state);
     clamp_issue_scrolls(state);
 
     previous_issue_lines != state.issue_lines
@@ -2551,7 +2651,7 @@ mod tests {
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
-        assert_eq!(state.issue_scroll.offset, 1);
+        assert_eq!(state.running_issue_panel.scroll_offset(), 1);
     }
 
     #[test]
@@ -2583,7 +2683,7 @@ mod tests {
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
-        assert_eq!(state.user_unowned_issue_scroll.offset, 1);
+        assert_eq!(state.user_unowned_issue_panel.scroll_offset(), 1);
     }
 
     #[test]
@@ -2611,7 +2711,7 @@ mod tests {
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
-        assert_eq!(state.completed_issue_scroll.offset, 1);
+        assert_eq!(state.completed_issue_panel.scroll_offset(), 1);
     }
 
     #[test]
