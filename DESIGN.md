@@ -16,8 +16,11 @@ The workflow to process an issue is as follows
   - if the agent finishes it, it sets the status to Closed
   - if the agent does not finish it, it sets the status to InProgress and creates new child issues to record future work
 - At this point, the issue should be InProgress. Once the issue is Ready again, another agent will be assigned to work on it
-  - if the agent determines the issue is complete (most likely), then it sets the status to Closed
+  - if the agent determines the issue is complete (most likely), then it sets the status to Closed.
   - otherwise, it can repeat the process of identifying more work and scheduling it. 
+  The state of the git repository is preserved between sequential tasks running on the same
+  issue, which enables this follow-up agent to work off of the results produced by the first
+  agent. See details in the section below.
 
 An issue cannot be marked as Closed unless all of its child issues are Closed.
 
