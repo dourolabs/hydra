@@ -982,67 +982,42 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 
     if let Some(rect) = panels.user_owned {
         if rect_contains(rect, column, row) {
-            return scroll_user_unowned_panel(mouse, state, rect);
+            let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
+            let content_len = issue_lines_len(&state.user_unowned_issue_lines);
+            return matches!(
+                state
+                    .user_unowned_issue_panel
+                    .handle_mouse_event(mouse, content_len, view_height),
+                PanelEvent::Scrolled
+            );
         }
     }
 
     if rect_contains(panels.running, column, row) {
-        return scroll_running_panel(mouse, state, panels.running);
+        let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
+        let content_len = issue_lines_len(&state.issue_lines);
+        return matches!(
+            state
+                .running_issue_panel
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     if rect_contains(panels.completed, column, row) {
-        return scroll_completed_panel(mouse, state, panels.completed);
-    }
-
-    if state.user_unowned_issue_panel.focused() {
-        if let Some(rect) = panels.user_owned {
-            return scroll_user_unowned_panel(mouse, state, rect);
-        }
-    }
-
-    if state.running_issue_panel.focused() {
-        return scroll_running_panel(mouse, state, panels.running);
-    }
-
-    if state.completed_issue_panel.focused() {
-        return scroll_completed_panel(mouse, state, panels.completed);
+        let rows = completed_issue_rows(&state.completed_issue_lines);
+        let view_height =
+            panel_content_height(panels.completed, state.completed_issue_panel.focused());
+        let content_len = completed_rows_len(&rows);
+        return matches!(
+            state
+                .completed_issue_panel
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     false
-}
-
-fn scroll_user_unowned_panel(mouse: MouseEvent, state: &mut DashboardState, rect: Rect) -> bool {
-    let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
-    let content_len = issue_lines_len(&state.user_unowned_issue_lines);
-    matches!(
-        state
-            .user_unowned_issue_panel
-            .handle_mouse_event(mouse, content_len, view_height),
-        PanelEvent::Scrolled
-    )
-}
-
-fn scroll_running_panel(mouse: MouseEvent, state: &mut DashboardState, rect: Rect) -> bool {
-    let view_height = panel_content_height(rect, state.running_issue_panel.focused());
-    let content_len = issue_lines_len(&state.issue_lines);
-    matches!(
-        state
-            .running_issue_panel
-            .handle_mouse_event(mouse, content_len, view_height),
-        PanelEvent::Scrolled
-    )
-}
-
-fn scroll_completed_panel(mouse: MouseEvent, state: &mut DashboardState, rect: Rect) -> bool {
-    let rows = completed_issue_rows(&state.completed_issue_lines);
-    let view_height = panel_content_height(rect, state.completed_issue_panel.focused());
-    let content_len = completed_rows_len(&rows);
-    matches!(
-        state
-            .completed_issue_panel
-            .handle_mouse_event(mouse, content_len, view_height),
-        PanelEvent::Scrolled
-    )
 }
 
 fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -2667,10 +2642,13 @@ mod tests {
     }
 
     #[test]
-    fn mouse_scroll_falls_back_to_focused_panel_when_not_hovered() {
-        let issues = (0..25)
-            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
-            .collect();
+    fn mouse_scroll_without_hover_does_not_scroll_focused_panel() {
+        let mut issues = (0..25)
+            .map(|index| issue(&format!("i-open-{index}"), IssueStatus::Open, vec![]))
+            .collect::<Vec<_>>();
+        issues.extend(
+            (0..25).map(|index| issue(&format!("i-closed-{index}"), IssueStatus::Closed, vec![])),
+        );
         let mut state = DashboardState {
             issues,
             ..DashboardState::default()
@@ -2693,7 +2671,8 @@ mod tests {
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
-        assert_eq!(state.running_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+        assert_eq!(state.completed_issue_panel.scroll_offset(), 0);
         assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
         assert!(state.running_issue_panel.focused());
     }
