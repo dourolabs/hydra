@@ -44,13 +44,7 @@ const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
 enum PanelFocus {
     #[default]
     NewIssue,
-    Status,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-enum StatusPanelFocus {
     UserOwned,
-    #[default]
     Running,
     Completed,
 }
@@ -260,7 +254,6 @@ struct DashboardState {
     username: String,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
-    status_panel_focus: StatusPanelFocus,
     last_frame_size: Option<Rect>,
 }
 
@@ -269,7 +262,8 @@ impl Default for DashboardState {
         let mut issue_creator_panel = PanelState::new();
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
-        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Focus status");
+        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
+        issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut running_issue_panel);
@@ -294,7 +288,6 @@ impl Default for DashboardState {
             username: String::new(),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
-            status_panel_focus: StatusPanelFocus::default(),
             last_frame_size: None,
         };
         update_panel_focus(&mut state);
@@ -303,7 +296,8 @@ impl Default for DashboardState {
 }
 
 fn configure_status_panel_keybindings(panel: &mut PanelState) {
-    panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Focus new issue");
+    panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
+    panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 }
 
 struct IssueSubmission {
@@ -439,7 +433,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             }
 
             if is_panel_focus_key(key) {
-                handle_panel_focus_key(state);
+                handle_panel_focus_key(key, state);
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
@@ -448,7 +442,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
 
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
-                PanelFocus::Status => {
+                PanelFocus::UserOwned | PanelFocus::Running | PanelFocus::Completed => {
                     handle_status_panel_key(key, state);
                     None
                 }
@@ -510,17 +504,17 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
 }
 
 fn is_panel_focus_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Tab && key.modifiers.is_empty()
+    key.modifiers.is_empty() && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
 }
 
-fn handle_panel_focus_key(state: &mut DashboardState) {
-    state.selected_panel = match state.selected_panel {
-        PanelFocus::NewIssue => PanelFocus::Status,
-        PanelFocus::Status => PanelFocus::NewIssue,
+fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
+    state.selected_panel = match key.code {
+        KeyCode::BackTab => prev_panel_focus(state.selected_panel),
+        _ => next_panel_focus(state.selected_panel),
     };
     state
         .issue_draft
@@ -528,20 +522,37 @@ fn handle_panel_focus_key(state: &mut DashboardState) {
     update_panel_focus(state);
 }
 
+fn next_panel_focus(current: PanelFocus) -> PanelFocus {
+    match current {
+        PanelFocus::NewIssue => PanelFocus::UserOwned,
+        PanelFocus::UserOwned => PanelFocus::Running,
+        PanelFocus::Running => PanelFocus::Completed,
+        PanelFocus::Completed => PanelFocus::NewIssue,
+    }
+}
+
+fn prev_panel_focus(current: PanelFocus) -> PanelFocus {
+    match current {
+        PanelFocus::NewIssue => PanelFocus::Completed,
+        PanelFocus::UserOwned => PanelFocus::NewIssue,
+        PanelFocus::Running => PanelFocus::UserOwned,
+        PanelFocus::Completed => PanelFocus::Running,
+    }
+}
+
 fn update_panel_focus(state: &mut DashboardState) {
-    let status_focused = state.selected_panel == PanelFocus::Status;
     state
         .issue_creator_panel
         .set_focused(state.selected_panel == PanelFocus::NewIssue);
     state
         .running_issue_panel
-        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Running);
+        .set_focused(state.selected_panel == PanelFocus::Running);
     state
         .user_unowned_issue_panel
-        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::UserOwned);
+        .set_focused(state.selected_panel == PanelFocus::UserOwned);
     state
         .completed_issue_panel
-        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Completed);
+        .set_focused(state.selected_panel == PanelFocus::Completed);
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -585,8 +596,8 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
     let layout = dashboard_layout(size);
     let panels = issue_panel_layout(layout.issue_sections);
 
-    match state.status_panel_focus {
-        StatusPanelFocus::UserOwned => {
+    match state.selected_panel {
+        PanelFocus::UserOwned => {
             let Some(area) = panels.user_owned else {
                 return false;
             };
@@ -603,7 +614,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
                 PanelEvent::Scrolled
             )
         }
-        StatusPanelFocus::Running => {
+        PanelFocus::Running => {
             let view_height =
                 panel_content_height(panels.running, state.running_issue_panel.focused());
             if view_height == 0 {
@@ -618,7 +629,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
                 PanelEvent::Scrolled
             )
         }
-        StatusPanelFocus::Completed => {
+        PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
             let view_height =
                 panel_content_height(panels.completed, state.completed_issue_panel.focused());
@@ -634,6 +645,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
                 PanelEvent::Scrolled
             )
         }
+        PanelFocus::NewIssue => false,
     }
 }
 
@@ -735,7 +747,7 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
 
 fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
     let title = "Metis Dashboard";
-    let hint = "Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
+    let hint = "Tab/Shift+Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -843,12 +855,12 @@ fn render_issue_creator(
         ))
     } else if draft.editing {
         Line::from(Span::styled(
-            "Alt+A to cycle assignee. Alt+Enter to validate. Tab switches panels.",
+            "Alt+A to cycle assignee. Alt+Enter to validate. Tab/Shift+Tab switches panels.",
             Style::default().fg(Color::DarkGray),
         ))
     } else {
         Line::from(Span::styled(
-            "Tab to focus prompt. Alt+A to cycle assignee. Alt+Enter to validate.",
+            "Tab/Shift+Tab to change panels. Alt+A to cycle assignee. Alt+Enter to validate.",
             Style::default().fg(Color::DarkGray),
         ))
     };
@@ -2460,7 +2472,7 @@ mod tests {
     #[test]
     fn alt_a_does_not_cycle_assignee_when_not_focused() {
         let mut state = DashboardState {
-            selected_panel: PanelFocus::Status,
+            selected_panel: PanelFocus::Running,
             ..DashboardState::default()
         };
         state.issue_draft.assignees = vec!["pm".to_string(), "alice".to_string()];
@@ -2487,19 +2499,38 @@ mod tests {
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
-        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert_eq!(state.selected_panel, PanelFocus::UserOwned);
         assert!(!state.issue_draft.editing);
     }
 
     #[test]
     fn tab_switches_focus_back_to_new_issue_panel() {
         let mut state = DashboardState {
-            selected_panel: PanelFocus::Status,
+            selected_panel: PanelFocus::Completed,
             ..DashboardState::default()
         };
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::NewIssue);
+        assert!(state.issue_draft.editing);
+    }
+
+    #[test]
+    fn backtab_moves_focus_to_previous_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::UserOwned,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)),
             &mut state,
         );
 
@@ -2518,8 +2549,7 @@ mod tests {
             issues,
             ..DashboardState::default()
         };
-        state.selected_panel = PanelFocus::Status;
-        state.status_panel_focus = StatusPanelFocus::Completed;
+        state.selected_panel = PanelFocus::Completed;
         update_panel_focus(&mut state);
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
@@ -2538,8 +2568,7 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 1);
-        assert_eq!(state.selected_panel, PanelFocus::Status);
-        assert_eq!(state.status_panel_focus, StatusPanelFocus::Completed);
+        assert_eq!(state.selected_panel, PanelFocus::Completed);
         assert!(state.completed_issue_panel.focused());
     }
 
@@ -2615,8 +2644,7 @@ mod tests {
             issues,
             ..DashboardState::default()
         };
-        state.selected_panel = PanelFocus::Status;
-        state.status_panel_focus = StatusPanelFocus::Running;
+        state.selected_panel = PanelFocus::Running;
         update_panel_focus(&mut state);
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
@@ -2636,7 +2664,7 @@ mod tests {
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 0);
         assert_eq!(state.completed_issue_panel.scroll_offset(), 1);
-        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert_eq!(state.selected_panel, PanelFocus::Running);
         assert!(state.running_issue_panel.focused());
         assert!(!state.completed_issue_panel.focused());
     }
@@ -2650,8 +2678,7 @@ mod tests {
             issues,
             ..DashboardState::default()
         };
-        state.selected_panel = PanelFocus::Status;
-        state.status_panel_focus = StatusPanelFocus::Running;
+        state.selected_panel = PanelFocus::Running;
         update_panel_focus(&mut state);
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
@@ -2669,7 +2696,7 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 0);
-        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert_eq!(state.selected_panel, PanelFocus::Running);
         assert!(state.running_issue_panel.focused());
     }
 
