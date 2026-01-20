@@ -7,7 +7,6 @@ use std::{
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
-    #[serde(default)]
     pub server: ServerSection,
 }
 
@@ -27,16 +26,7 @@ impl AppConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct ServerSection {
-    #[serde(default = "default_metis_server_url")]
     pub url: String,
-}
-
-impl Default for ServerSection {
-    fn default() -> Self {
-        Self {
-            url: default_metis_server_url(),
-        }
-    }
 }
 
 pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
@@ -47,6 +37,19 @@ pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
     }
 }
 
-fn default_metis_server_url() -> String {
-    "http://localhost:8080".to_string()
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn config_requires_server_url() {
+        let err = toml::from_str::<AppConfig>("[server]\n").unwrap_err();
+        assert!(err.to_string().contains("missing field `url`"));
+    }
+
+    #[test]
+    fn config_requires_server_section() {
+        let err = toml::from_str::<AppConfig>("").unwrap_err();
+        assert!(err.to_string().contains("missing field `server`"));
+    }
 }
