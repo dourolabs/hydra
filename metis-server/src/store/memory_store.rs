@@ -688,7 +688,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: "issue details".to_string(),
-            creator: String::new(),
+            creator: String::new().into(),
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,

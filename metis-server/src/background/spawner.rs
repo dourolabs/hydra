@@ -246,7 +246,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Fix login page".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -263,7 +263,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "In-progress but ready".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: Some("agent-a".to_string()),
@@ -280,7 +280,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Ignore closed".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Closed,
                     assignee: Some("agent-a".to_string()),
@@ -338,7 +338,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Already queued".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -383,7 +383,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Blocker".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
@@ -400,7 +400,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Blocked issue".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -429,7 +429,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Parent issue".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -466,7 +466,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Child issue".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -499,7 +499,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Retry limited".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -536,7 +536,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "State change reset".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -603,7 +603,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Assigned".to_string(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),

@@ -142,7 +142,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
     let merge_request_issue = Issue {
         issue_type: IssueType::MergeRequest,
         description: "linked merge request".to_string(),
-        creator: String::new(),
+        creator: String::new().into(),
         progress: String::new(),
         status: IssueStatus::Open,
         assignee: None,
