@@ -1,19 +1,13 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
-    io::{stdout, Stdout},
     time::Duration,
 };
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use crossterm::{
-    event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
-        KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use crossterm::event::{
+    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 use futures::StreamExt;
 use metis_common::{
@@ -26,12 +20,11 @@ use metis_common::{
     IssueId, TaskId,
 };
 use ratatui::{
-    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
-    Frame, Terminal,
+    DefaultTerminal, Frame,
 };
 use tui_textarea::TextArea;
 
@@ -325,10 +318,8 @@ struct EventOutcome {
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
     let username = resolve_username(username);
-    let mut terminal = setup_terminal()?;
-    let dashboard_result = run_dashboard_loop(client, &mut terminal, username).await;
-    teardown_terminal(&mut terminal)?;
-    dashboard_result
+    let handle = tokio::runtime::Handle::current();
+    ratatui::run(|terminal| handle.block_on(run_dashboard_loop(client, terminal, username)))
 }
 
 fn resolve_username(username: Option<String>) -> Option<String> {
@@ -347,7 +338,7 @@ fn resolve_username(username: Option<String>) -> Option<String> {
 
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    terminal: &mut DefaultTerminal,
     username: Option<String>,
 ) -> Result<()> {
     let mut state = DashboardState {
@@ -375,7 +366,7 @@ async fn run_dashboard_loop(
     }
 
     if needs_draw {
-        state.last_frame_size = Some(terminal.size()?);
+        state.last_frame_size = Some(terminal.size()?.into());
         clamp_issue_scrolls(&mut state);
         terminal.draw(|f| render(f, &mut state))?;
         needs_draw = false;
@@ -458,7 +449,7 @@ async fn run_dashboard_loop(
         }
 
         if needs_draw {
-            state.last_frame_size = Some(terminal.size()?);
+            state.last_frame_size = Some(terminal.size()?.into());
             clamp_issue_scrolls(&mut state);
             terminal.draw(|f| render(f, &mut state))?;
             needs_draw = false;
@@ -466,25 +457,6 @@ async fn run_dashboard_loop(
     }
 
     Ok(())
-}
-
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode().context("failed to enable raw mode")?;
-    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)
-        .context("failed to switch to alternate screen")?;
-    let backend = CrosstermBackend::new(stdout());
-    Terminal::new(backend).context("failed to initialize terminal")
-}
-
-fn teardown_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )
-    .context("failed to leave alternate screen")?;
-    terminal.show_cursor().context("failed to show cursor")
 }
 
 fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
@@ -807,7 +779,7 @@ async fn submit_issue(
 }
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
-    let layout = dashboard_layout(frame.size());
+    let layout = dashboard_layout(frame.area());
     render_dashboard_header(frame, layout.header);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
@@ -1273,7 +1245,7 @@ fn completed_rows_len(rows: &[IssueLine]) -> usize {
 }
 
 fn panel_content_area(area: Rect, focused: bool) -> Rect {
-    let inner = area.inner(&Margin {
+    let inner = area.inner(Margin {
         vertical: 1,
         horizontal: 1,
     });

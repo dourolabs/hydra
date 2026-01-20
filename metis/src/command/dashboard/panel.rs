@@ -463,7 +463,7 @@ mod tests {
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
         let mut row = String::new();
         for x in 0..width {
-            row.push_str(buffer.get(x, y).symbol());
+            row.push_str(buffer[(x, y)].symbol());
         }
         row.trim_end().to_string()
     }
