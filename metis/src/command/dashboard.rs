@@ -375,7 +375,7 @@ async fn run_dashboard_loop(
     }
 
     if needs_draw {
-        state.last_frame_size = Some(terminal.size()?);
+        state.last_frame_size = Some(terminal.size()?.into());
         clamp_issue_scrolls(&mut state);
         terminal.draw(|f| render(f, &mut state))?;
         needs_draw = false;
@@ -458,7 +458,7 @@ async fn run_dashboard_loop(
         }
 
         if needs_draw {
-            state.last_frame_size = Some(terminal.size()?);
+            state.last_frame_size = Some(terminal.size()?.into());
             clamp_issue_scrolls(&mut state);
             terminal.draw(|f| render(f, &mut state))?;
             needs_draw = false;
@@ -807,7 +807,7 @@ async fn submit_issue(
 }
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
-    let layout = dashboard_layout(frame.size());
+    let layout = dashboard_layout(frame.area());
     render_dashboard_header(frame, layout.header);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
@@ -1273,7 +1273,7 @@ fn completed_rows_len(rows: &[IssueLine]) -> usize {
 }
 
 fn panel_content_area(area: Rect, focused: bool) -> Rect {
-    let inner = area.inner(&Margin {
+    let inner = area.inner(Margin {
         vertical: 1,
         horizontal: 1,
     });
