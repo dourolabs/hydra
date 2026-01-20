@@ -2,7 +2,7 @@ use crate::{
     background::Spawner,
     config::AppConfig,
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{Status, Store, StoreError, Task, TaskError, TaskExt, TaskResolutionError},
+    store::{Status, Store, StoreError, Task, TaskError},
 };
 use chrono::{Duration, Utc};
 use metis_common::{
@@ -19,7 +19,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use super::{MergeQueueError, ServiceState};
+use super::{MergeQueueError, ServiceState, TaskExt, TaskResolutionError};
 
 #[derive(Clone)]
 pub struct AppState {

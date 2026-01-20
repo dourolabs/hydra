@@ -1,4 +1,5 @@
 mod app_state;
+mod resolved_task;
 
 use crate::{
     config::{ServiceSection, non_empty},
@@ -24,6 +25,7 @@ pub use app_state::{
 pub use metis_common::repositories::{
     ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo,
 };
+pub use resolved_task::{ResolvedTask, TaskExt, TaskResolutionError};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {

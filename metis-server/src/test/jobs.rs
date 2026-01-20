@@ -1,8 +1,8 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
 use crate::{
-    app::ServiceState,
+    app::{ServiceState, TaskExt},
     job_engine::JobStatus,
-    store::{Status, Task, TaskError, TaskExt},
+    store::{Status, Task, TaskError},
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client, test_state,
         test_state_with_engine,
