@@ -19,6 +19,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use std::{collections::HashSet, str::FromStr, time::Duration};
+use tracing::info;
 
 use super::issue_graph::IssueGraphContext;
 
@@ -70,6 +71,78 @@ pub async fn run_migrations(pool: &PgStorePool) -> Result<()> {
         .run(pool)
         .await
         .context("failed to apply Postgres migrations")
+}
+
+#[derive(Clone, Copy)]
+struct PayloadTable {
+    object_type: &'static str,
+    table: &'static str,
+    target_version: i32,
+}
+
+const PAYLOAD_TABLES: &[PayloadTable] = &[
+    PayloadTable {
+        object_type: "issue",
+        table: TABLE_ISSUES,
+        target_version: ISSUE_SCHEMA_VERSION,
+    },
+    PayloadTable {
+        object_type: "patch",
+        table: TABLE_PATCHES,
+        target_version: PATCH_SCHEMA_VERSION,
+    },
+    PayloadTable {
+        object_type: "task",
+        table: TABLE_TASKS,
+        target_version: TASK_SCHEMA_VERSION,
+    },
+    PayloadTable {
+        object_type: "task_status_log",
+        table: TABLE_TASK_STATUS_LOGS,
+        target_version: TASK_STATUS_LOG_SCHEMA_VERSION,
+    },
+    PayloadTable {
+        object_type: "user",
+        table: TABLE_USERS,
+        target_version: USER_SCHEMA_VERSION,
+    },
+];
+
+/// Migrate any outdated payloads to the current schema versions using the
+/// database-level `metis.migrate_payload` helper.
+pub async fn migrate_payloads(pool: &PgStorePool) -> Result<()> {
+    for table in PAYLOAD_TABLES {
+        let rows = migrate_table_payloads(pool, *table).await?;
+        if rows > 0 {
+            info!(
+                object_type = table.object_type,
+                rows_migrated = rows,
+                target_version = table.target_version,
+                "updated Postgres payloads to current schema version"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn migrate_table_payloads(pool: &PgStorePool, table: PayloadTable) -> Result<u64> {
+    let query = format!(
+        "UPDATE {table_name}
+         SET payload = metis.migrate_payload($1, schema_version, $2, payload),
+             schema_version = $2
+         WHERE schema_version < $2",
+        table_name = table.table
+    );
+
+    let result = sqlx::query(&query)
+        .bind(table.object_type)
+        .bind(table.target_version)
+        .execute(pool)
+        .await
+        .with_context(|| format!("failed to migrate payloads for {}", table.object_type))?;
+
+    Ok(result.rows_affected())
 }
 
 const TABLE_ISSUES: &str = "metis.issues";
@@ -868,6 +941,31 @@ mod tests {
 
         let err = store.get_issue(&issue_id).await.unwrap_err();
         assert!(matches!(err, StoreError::Internal(message) if message.contains("schema version")));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migrates_outdated_payloads(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool.clone());
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let migration = PayloadTable {
+            object_type: "issue",
+            table: TABLE_ISSUES,
+            target_version: ISSUE_SCHEMA_VERSION + 1,
+        };
+
+        let updated = migrate_table_payloads(&pool, migration).await.unwrap();
+        assert_eq!(updated, 1);
+
+        let version: i32 = sqlx::query_scalar(&format!(
+            "SELECT schema_version FROM {TABLE_ISSUES} WHERE id = $1"
+        ))
+        .bind(issue_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(version, ISSUE_SCHEMA_VERSION + 1);
     }
 
     #[sqlx::test(migrations = "./migrations")]
