@@ -316,24 +316,20 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, username: String) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = run_dashboard_loop(client, &mut terminal, username).await;
     ratatui::restore();
     result
 }
 
-pub fn resolve_username(username: Option<String>) -> String {
-    username.unwrap_or_else(whoami::username)
-}
-
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: String,
+    username: Option<String>,
 ) -> Result<()> {
     let mut state = DashboardState {
-        username,
+        username: username.unwrap_or_else(whoami::username),
         ..DashboardState::default()
     };
     state.issue_draft.set_editing(true);
@@ -1955,21 +1951,6 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
         }
-    }
-
-    #[test]
-    fn resolve_username_preserves_explicit_input() {
-        let resolved = resolve_username(Some("explicit".to_string()));
-
-        assert_eq!(resolved, "explicit".to_string());
-    }
-
-    #[test]
-    fn resolve_username_defaults_to_current_user() {
-        let expected = whoami::username();
-        let resolved = resolve_username(None);
-
-        assert_eq!(resolved, expected);
     }
 
     fn job_details_with_issue(
