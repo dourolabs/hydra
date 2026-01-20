@@ -596,10 +596,6 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    fn get_result(&self, id: &TaskId) -> Option<Result<(), TaskError>> {
-        self.status_logs.get(id).and_then(TaskStatusLog::result)
-    }
-
     async fn mark_task_running(
         &mut self,
         id: &TaskId,
