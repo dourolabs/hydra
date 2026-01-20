@@ -8,6 +8,7 @@ use metis_common::{
 };
 use std::collections::HashSet;
 
+mod issue_graph;
 mod memory_store;
 pub mod postgres;
 
