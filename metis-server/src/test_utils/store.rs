@@ -70,10 +70,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn is_issue_ready(&self, _issue_id: &IssueId) -> Result<bool, StoreError> {
-        fail()
-    }
-
     async fn get_tasks_for_issue(&self, _issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         fail()
     }

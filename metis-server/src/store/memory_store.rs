@@ -8,7 +8,7 @@ use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
-        IssueGraphWildcard, IssueStatus,
+        IssueGraphWildcard,
     },
     patches::Patch,
     users::User,
@@ -420,60 +420,6 @@ impl Store for MemoryStore {
         }
     }
 
-    async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
-        let issue = self
-            .issues
-            .get(issue_id)
-            .ok_or_else(|| StoreError::IssueNotFound(issue_id.clone()))?;
-
-        let status = &issue.status;
-        let dependencies = issue.dependencies.as_slice();
-
-        match status {
-            IssueStatus::Closed => Ok(false),
-            IssueStatus::Dropped => Ok(false),
-            IssueStatus::Open => {
-                for dependency in dependencies {
-                    if dependency.dependency_type == IssueDependencyType::BlockedOn {
-                        let blocker_status = match self.issues.get(&dependency.issue_id) {
-                            Some(blocker) => &blocker.status,
-                            None => {
-                                return Err(StoreError::IssueNotFound(dependency.issue_id.clone()));
-                            }
-                        };
-
-                        if !matches!(blocker_status, IssueStatus::Closed) {
-                            return Ok(false);
-                        }
-                    }
-                }
-
-                Ok(true)
-            }
-            IssueStatus::InProgress => {
-                let children = self
-                    .issue_children
-                    .get(issue_id)
-                    .cloned()
-                    .unwrap_or_default();
-                for child_id in children {
-                    let child_status = match self.issues.get(&child_id) {
-                        Some(child) => &child.status,
-                        None => {
-                            return Err(StoreError::IssueNotFound(child_id));
-                        }
-                    };
-
-                    if !matches!(child_status, IssueStatus::Closed) {
-                        return Ok(false);
-                    }
-                }
-
-                Ok(true)
-            }
-        }
-    }
-
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         if !self.issues.contains_key(issue_id) {
             return Err(StoreError::IssueNotFound(issue_id.clone()));
@@ -768,20 +714,6 @@ mod tests {
             creator: String::new(),
             progress: String::new(),
             status: IssueStatus::Open,
-            assignee: None,
-            todo_list: Vec::new(),
-            dependencies,
-            patches: Vec::new(),
-        }
-    }
-
-    fn issue_with_status(status: IssueStatus, dependencies: Vec<IssueDependency>) -> Issue {
-        Issue {
-            issue_type: IssueType::Task,
-            description: "issue details".to_string(),
-            creator: String::new(),
-            progress: String::new(),
-            status,
             assignee: None,
             todo_list: Vec::new(),
             dependencies,
@@ -1205,115 +1137,6 @@ mod tests {
             store.get_issues_for_patch(&patch_b).await.unwrap(),
             vec![issue_id]
         );
-    }
-
-    #[tokio::test]
-    async fn open_issue_ready_when_not_blocked() {
-        let mut store = MemoryStore::new();
-
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
-
-        assert!(store.is_issue_ready(&issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn open_issue_not_ready_when_blocked_on_open_issue() {
-        let mut store = MemoryStore::new();
-
-        let blocker_id = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let blocked_issue_id = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: blocker_id.clone(),
-            }]))
-            .await
-            .unwrap();
-
-        assert!(!store.is_issue_ready(&blocked_issue_id).await.unwrap());
-
-        store
-            .update_issue(&blocker_id, issue_with_status(IssueStatus::Closed, vec![]))
-            .await
-            .unwrap();
-
-        assert!(store.is_issue_ready(&blocked_issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn in_progress_issue_ready_after_children_closed() {
-        let mut store = MemoryStore::new();
-
-        let parent_id = store
-            .add_issue(issue_with_status(IssueStatus::InProgress, vec![]))
-            .await
-            .unwrap();
-        let child_dependencies = vec![IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: parent_id.clone(),
-        }];
-        let child_id = store
-            .add_issue(issue_with_status(
-                IssueStatus::Open,
-                child_dependencies.clone(),
-            ))
-            .await
-            .unwrap();
-
-        assert!(!store.is_issue_ready(&parent_id).await.unwrap());
-
-        store
-            .update_issue(
-                &child_id,
-                issue_with_status(IssueStatus::Closed, child_dependencies),
-            )
-            .await
-            .unwrap();
-
-        assert!(store.is_issue_ready(&parent_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn dropped_issue_is_not_ready() {
-        let mut store = MemoryStore::new();
-
-        let issue_id = store
-            .add_issue(issue_with_status(IssueStatus::Dropped, vec![]))
-            .await
-            .unwrap();
-
-        assert!(!store.is_issue_ready(&issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn dropped_blocker_keeps_issue_blocked() {
-        let mut store = MemoryStore::new();
-
-        let blocker_id = store
-            .add_issue(issue_with_status(IssueStatus::Dropped, vec![]))
-            .await
-            .unwrap();
-        let blocked_dependencies = vec![IssueDependency {
-            dependency_type: IssueDependencyType::BlockedOn,
-            issue_id: blocker_id.clone(),
-        }];
-        let blocked_issue_id = store
-            .add_issue(issue_with_status(IssueStatus::Open, blocked_dependencies))
-            .await
-            .unwrap();
-
-        assert!(!store.is_issue_ready(&blocked_issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn closed_issue_is_not_ready() {
-        let mut store = MemoryStore::new();
-
-        let issue_id = store
-            .add_issue(issue_with_status(IssueStatus::Closed, vec![]))
-            .await
-            .unwrap();
-
-        assert!(!store.is_issue_ready(&issue_id).await.unwrap());
     }
 
     #[tokio::test]

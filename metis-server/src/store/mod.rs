@@ -93,9 +93,6 @@ pub trait Store: Send + Sync {
     #[allow(dead_code)]
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
-    /// Returns whether the issue is ready to be worked on based on its status and dependencies.
-    async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError>;
-
     /// Lists all task IDs spawned from the provided issue.
     #[allow(dead_code)]
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError>;
