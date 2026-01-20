@@ -257,7 +257,7 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    username: Option<String>,
+    username: String,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     status_panel_focus: StatusPanelFocus,
@@ -291,7 +291,7 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             jobs_error: None,
             records_error: None,
-            username: None,
+            username: String::new(),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             status_panel_focus: StatusPanelFocus::default(),
@@ -316,32 +316,21 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
-    let username = resolve_username(username);
+pub async fn run(client: &dyn MetisClientInterface, username: String) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = run_dashboard_loop(client, &mut terminal, username).await;
     ratatui::restore();
     result
 }
 
-fn resolve_username(username: Option<String>) -> Option<String> {
-    if username.is_some() {
-        return username;
-    }
-
-    let resolved = whoami::username();
-    let trimmed = resolved.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+pub fn resolve_username(username: Option<String>) -> String {
+    username.unwrap_or_else(whoami::username)
 }
 
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: Option<String>,
+    username: String,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
@@ -408,11 +397,8 @@ async fn run_dashboard_loop(
                             state.issue_draft.info_message =
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &mut state))?;
-                            let submission_result = submit_issue(
-                                client,
-                                &submission,
-                                state.username.as_deref(),
-                            )
+                            let submission_result =
+                                submit_issue(client, &submission, &state.username)
                             .await;
                             handle_issue_submission_result(
                                 &mut state,
@@ -572,11 +558,7 @@ fn normalize_status_panel_focus(state: &mut DashboardState) {
 }
 
 fn has_user_owned_panel(state: &DashboardState) -> bool {
-    state
-        .username
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
+    !state.username.is_empty()
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -729,7 +711,7 @@ fn handle_issue_submission_result(
 async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
-    creator: Option<&str>,
+    creator: &str,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -737,11 +719,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = creator
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-        .to_string();
+    let creator = creator.to_string();
 
     let request = UpsertIssueRequest {
         issue: Issue {
@@ -962,11 +940,7 @@ struct IssueCreatorLayout {
 }
 
 fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
-    let has_username = state
-        .username
-        .as_deref()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
+    let has_username = !state.username.is_empty();
 
     if has_username {
         let panels = Layout::default()
@@ -1406,7 +1380,7 @@ fn update_views(state: &mut DashboardState) -> bool {
 
     let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
     let user_unowned_issue_lines =
-        build_user_unowned_issue_lines(state.username.as_deref(), &state.issues, &state.jobs);
+        build_user_unowned_issue_lines(&state.username, &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
     update_assignee_options(state);
 
@@ -1464,14 +1438,10 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
 }
 
 fn build_user_unowned_issue_lines(
-    username: Option<&str>,
+    username: &str,
     issues: &[IssueRecord],
     jobs: &[JobDetails],
 ) -> IssueLines {
-    let Some(username) = username.map(str::trim).filter(|value| !value.is_empty()) else {
-        return IssueLines::default();
-    };
-
     let assigned: Vec<IssueRecord> = issues
         .iter()
         .filter(|issue| issue.assignee.as_deref() == Some(username))
@@ -1991,13 +1961,13 @@ mod tests {
     fn resolve_username_preserves_explicit_input() {
         let resolved = resolve_username(Some("explicit".to_string()));
 
-        assert_eq!(resolved, Some("explicit".to_string()));
+        assert_eq!(resolved, "explicit".to_string());
     }
 
     #[test]
     fn resolve_username_defaults_to_current_user() {
         let expected = whoami::username();
-        let resolved = resolve_username(None).unwrap_or_default();
+        let resolved = resolve_username(None);
 
         assert_eq!(resolved, expected);
     }
@@ -2364,7 +2334,7 @@ mod tests {
             Some("alice"),
         )];
 
-        let lines = build_user_unowned_issue_lines(None, &issues, &[]);
+        let lines = build_user_unowned_issue_lines("", &issues, &[]);
 
         assert!(lines.rows.is_empty());
     }
@@ -2375,7 +2345,7 @@ mod tests {
             issue_with_assignee("i-open", IssueStatus::Open, Some("alice")),
             issue_with_assignee("i-other", IssueStatus::Open, Some("bot")),
         ];
-        let lines = build_user_unowned_issue_lines(Some("alice"), &issues, &[]);
+        let lines = build_user_unowned_issue_lines("alice", &issues, &[]);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
@@ -2388,7 +2358,7 @@ mod tests {
             issue_with_assignee("i-progress", IssueStatus::InProgress, Some("alice")),
             issue_with_assignee("i-closed", IssueStatus::Closed, Some("alice")),
         ];
-        let lines = build_user_unowned_issue_lines(Some("alice"), &issues, &[]);
+        let lines = build_user_unowned_issue_lines("alice", &issues, &[]);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
@@ -2401,7 +2371,7 @@ mod tests {
             issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
         ];
         let mut state = DashboardState {
-            username: Some("alice".to_string()),
+            username: "alice".to_string(),
             issues,
             ..Default::default()
         };
@@ -2623,7 +2593,7 @@ mod tests {
             .collect();
         let mut state = DashboardState {
             issues,
-            username: Some("alice".to_string()),
+            username: "alice".to_string(),
             ..DashboardState::default()
         };
         update_views(&mut state);
@@ -2792,7 +2762,7 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission, Some(" metis-user "))
+        let created = submit_issue(&client, &submission, " metis-user ")
             .await
             .expect("submission failed");
 
@@ -2805,7 +2775,7 @@ mod tests {
         assert_eq!(request.issue.status, IssueStatus::Open);
         assert_eq!(request.issue.description, "Draft release notes");
         assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
-        assert_eq!(request.issue.creator, "metis-user");
+        assert_eq!(request.issue.creator, " metis-user ");
         assert!(request.issue.dependencies.is_empty());
     }
 }
