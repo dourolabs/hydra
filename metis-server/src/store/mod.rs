@@ -147,9 +147,9 @@ pub enum StoreError {
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
 ///
-/// Implementations must enforce issue lifecycle invariants: an issue cannot be
-/// closed while any blockers remain open or while it has open child issues.
-/// Violations should return `StoreError::InvalidIssueStatus`.
+/// Implementations focus on persistence and referential integrity; application-specific
+/// state transition rules (such as issue lifecycle validation) must be enforced by the
+/// caller before invoking store operations.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Adds a new issue to the store and assigns it an IssueId.

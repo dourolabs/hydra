@@ -8,7 +8,9 @@ use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
-    issues::{IssueDependencyType, IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest},
+    issues::{
+        Issue, IssueDependencyType, IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
+    },
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
     merge_queues::MergeQueue,
@@ -21,6 +23,7 @@ use tracing::{error, info, warn};
 
 use super::{MergeQueueError, ServiceState};
 
+/// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
@@ -667,7 +670,28 @@ impl AppState {
                 let updated_issue = issue.clone();
                 let is_dropping = updated_issue.status == IssueStatus::Dropped;
 
-                match store.update_issue(&id, issue).await {
+                if let Err(source) =
+                    validate_issue_lifecycle(store.as_ref(), Some(&id), &updated_issue).await
+                {
+                    return Err(match source {
+                        StoreError::IssueNotFound(_) => UpsertIssueError::IssueNotFound {
+                            issue_id: id.clone(),
+                            source,
+                        },
+                        StoreError::InvalidDependency(dependency_id) => {
+                            UpsertIssueError::MissingDependency {
+                                dependency_id: dependency_id.clone(),
+                                source: StoreError::InvalidDependency(dependency_id),
+                            }
+                        }
+                        other => UpsertIssueError::Store {
+                            source: other,
+                            issue_id: Some(id),
+                        },
+                    });
+                }
+
+                match store.update_issue(&id, updated_issue).await {
                     Ok(()) => {
                         if is_dropping {
                             tasks_to_kill = active_tasks_for_issue(store.as_ref(), &id)
@@ -748,6 +772,21 @@ impl AppState {
                             }
                         }
                     }
+                }
+
+                if let Err(source) = validate_issue_lifecycle(store.as_ref(), None, &issue).await {
+                    return Err(match source {
+                        StoreError::InvalidDependency(dependency_id) => {
+                            UpsertIssueError::MissingDependency {
+                                dependency_id: dependency_id.clone(),
+                                source: StoreError::InvalidDependency(dependency_id),
+                            }
+                        }
+                        other => UpsertIssueError::Store {
+                            source: other,
+                            issue_id: None,
+                        },
+                    });
                 }
 
                 let id = store
@@ -942,6 +981,91 @@ impl AppState {
     }
 }
 
+fn join_issue_ids(ids: &[IssueId]) -> String {
+    let mut values: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    values.sort();
+    values.join(", ")
+}
+
+fn join_item_numbers(numbers: &[usize]) -> String {
+    let mut values = numbers.to_vec();
+    values.sort();
+    values
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+async fn validate_issue_lifecycle(
+    store: &dyn Store,
+    issue_id: Option<&IssueId>,
+    issue: &Issue,
+) -> Result<(), StoreError> {
+    if issue.status != IssueStatus::Closed {
+        return Ok(());
+    }
+
+    let mut open_blockers = Vec::new();
+    for dependency in issue
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
+    {
+        let blocker = store
+            .get_issue(&dependency.issue_id)
+            .await
+            .map_err(|err| match err {
+                StoreError::IssueNotFound(missing_id) => StoreError::InvalidDependency(missing_id),
+                other => other,
+            })?;
+
+        if blocker.status != IssueStatus::Closed {
+            open_blockers.push(dependency.issue_id.clone());
+        }
+    }
+
+    let mut open_todos = Vec::new();
+    for (index, item) in issue.todo_list.iter().enumerate() {
+        if !item.is_done {
+            open_todos.push(index + 1);
+        }
+    }
+
+    if !open_todos.is_empty() {
+        return Err(StoreError::InvalidIssueStatus(format!(
+            "cannot close issue with incomplete todo items: {}",
+            join_item_numbers(&open_todos)
+        )));
+    }
+
+    if let Some(issue_id) = issue_id {
+        let mut open_children = Vec::new();
+        for child_id in store.get_issue_children(issue_id).await? {
+            let child = store.get_issue(&child_id).await?;
+            if child.status != IssueStatus::Closed {
+                open_children.push(child_id);
+            }
+        }
+
+        if !open_children.is_empty() {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "cannot close issue with open child issues: {}",
+                join_issue_ids(&open_children)
+            )));
+        }
+    }
+
+    if !open_blockers.is_empty() {
+        return Err(StoreError::InvalidIssueStatus(format!(
+            "blocked issues cannot close until blockers are closed: {}",
+            join_issue_ids(&open_blockers)
+        )));
+    }
+
+    Ok(())
+}
+
 async fn drop_issue_children(
     store: &mut dyn Store,
     issue_id: &IssueId,
@@ -1023,16 +1147,18 @@ async fn active_tasks_for_issue(
 
 #[cfg(test)]
 mod tests {
+    use super::UpsertIssueError;
     use crate::{
         job_engine::{JobEngine, JobStatus},
-        store::{Status, TaskError},
+        store::{Status, StoreError, TaskError},
         test_utils::{MockJobEngine, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
     use metis_common::{
         IssueId, TaskId,
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueRequest,
+            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
+            UpsertIssueRequest,
         },
         jobs::{BundleSpec, Task},
     };
@@ -1309,6 +1435,231 @@ mod tests {
                 .expect("job should exist");
             assert_eq!(job.status, JobStatus::Failed);
         }
+    }
+
+    #[tokio::test]
+    async fn closing_issue_requires_closed_blockers() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
+        let blocker_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: blocker_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let blocked_dependencies = vec![IssueDependency {
+            dependency_type: IssueDependencyType::BlockedOn,
+            issue_id: blocker_id.clone(),
+        }];
+        let blocked_issue =
+            issue_with_status("blocked", IssueStatus::Open, blocked_dependencies.clone());
+        let blocked_issue_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: blocked_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let err = state
+            .upsert_issue(
+                Some(blocked_issue_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status(
+                        "blocked",
+                        IssueStatus::Closed,
+                        blocked_dependencies.clone(),
+                    ),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            UpsertIssueError::Store {
+                source: StoreError::InvalidIssueStatus(message),
+                issue_id: Some(id),
+            } if id == blocked_issue_id && message.contains(&blocker_id.to_string())
+        ));
+
+        state
+            .upsert_issue(
+                Some(blocker_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        state
+            .upsert_issue(
+                Some(blocked_issue_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_parent_requires_closed_children() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: parent_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        let child_issue =
+            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+        let child_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: child_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let err = state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status("parent", IssueStatus::Closed, vec![]),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            UpsertIssueError::Store {
+                source: StoreError::InvalidIssueStatus(message),
+                issue_id: Some(id),
+            } if id == parent_id && message.contains(&child_id.to_string())
+        ));
+
+        state
+            .upsert_issue(
+                Some(child_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status(
+                        "child",
+                        IssueStatus::Closed,
+                        vec![child_dependency.clone()],
+                    ),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        state
+            .upsert_issue(
+                Some(parent_id.clone()),
+                UpsertIssueRequest {
+                    issue: issue_with_status("parent", IssueStatus::Closed, vec![]),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn closing_issue_requires_completed_todos() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let mut issue = issue_with_status("todo", IssueStatus::Open, vec![]);
+        issue.todo_list.push(TodoItem {
+            description: "finish task".to_string(),
+            is_done: false,
+        });
+        let issue_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: issue.clone(),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let mut closed_issue = issue.clone();
+        closed_issue.status = IssueStatus::Closed;
+
+        let err = state
+            .upsert_issue(
+                Some(issue_id.clone()),
+                UpsertIssueRequest {
+                    issue: closed_issue.clone(),
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            UpsertIssueError::Store {
+                source: StoreError::InvalidIssueStatus(message),
+                issue_id: Some(id),
+            } if id == issue_id && message.contains("incomplete todo items")
+        ));
+
+        state
+            .set_todo_item_status(issue_id.clone(), 1, true)
+            .await
+            .unwrap();
+
+        closed_issue
+            .todo_list
+            .iter_mut()
+            .for_each(|item| item.is_done = true);
+
+        state
+            .upsert_issue(
+                Some(issue_id.clone()),
+                UpsertIssueRequest {
+                    issue: closed_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
