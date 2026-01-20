@@ -24,6 +24,10 @@ use metis_common::{
         CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
+    users::{
+        CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
+        UpsertUserResponse,
+    },
     IssueId, PatchId, RepoName, TaskId,
 };
 use std::collections::VecDeque;
@@ -48,6 +52,10 @@ pub struct MockMetisClient {
     pub list_repository_responses: Mutex<VecDeque<ListRepositoriesResponse>>,
     pub create_repository_responses: Mutex<VecDeque<UpsertRepositoryResponse>>,
     pub update_repository_responses: Mutex<VecDeque<UpsertRepositoryResponse>>,
+    pub list_users_responses: Mutex<VecDeque<ListUsersResponse>>,
+    pub create_user_responses: Mutex<VecDeque<UpsertUserResponse>>,
+    pub delete_user_responses: Mutex<VecDeque<DeleteUserResponse>>,
+    pub set_user_github_token_responses: Mutex<VecDeque<UpsertUserResponse>>,
     pub list_agents_responses: Mutex<VecDeque<ListAgentsResponse>>,
     pub merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
     pub enqueue_merge_queue_responses: Mutex<VecDeque<MergeQueue>>,
@@ -58,12 +66,16 @@ pub struct MockMetisClient {
     pub patch_upsert_requests: Mutex<Vec<(Option<PatchId>, UpsertPatchRequest)>>,
     pub create_repository_requests: Mutex<Vec<CreateRepositoryRequest>>,
     pub update_repository_requests: Mutex<Vec<(RepoName, UpdateRepositoryRequest)>>,
+    pub create_user_requests: Mutex<Vec<CreateUserRequest>>,
+    pub delete_user_requests: Mutex<Vec<String>>,
+    pub set_user_github_token_requests: Mutex<Vec<(String, UpdateGithubTokenRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
     pub patch_get_requests: Mutex<Vec<PatchId>>,
     pub job_get_requests: Mutex<Vec<TaskId>>,
     pub list_job_queries: Mutex<Vec<SearchJobsQuery>>,
     pub list_issue_queries: Mutex<Vec<SearchIssuesQuery>>,
     pub list_patch_queries: Mutex<Vec<SearchPatchesQuery>>,
+    pub list_users_calls: Mutex<usize>,
     pub list_agents_calls: Mutex<usize>,
     pub merge_queue_requests: Mutex<Vec<(RepoName, String)>>,
     pub enqueue_merge_queue_requests: Mutex<Vec<(RepoName, String, PatchId)>>,
@@ -178,6 +190,34 @@ impl MockMetisClient {
             .push_back(response);
     }
 
+    pub fn push_list_users_response(&self, response: ListUsersResponse) {
+        self.list_users_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_create_user_response(&self, response: UpsertUserResponse) {
+        self.create_user_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_delete_user_response(&self, response: DeleteUserResponse) {
+        self.delete_user_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
+    pub fn push_set_user_github_token_response(&self, response: UpsertUserResponse) {
+        self.set_user_github_token_responses
+            .lock()
+            .unwrap()
+            .push_back(response);
+    }
+
     pub fn push_list_agents_response(&self, response: ListAgentsResponse) {
         self.list_agents_responses
             .lock()
@@ -227,6 +267,24 @@ impl MockMetisClient {
 
     pub fn recorded_update_repository_requests(&self) -> Vec<(RepoName, UpdateRepositoryRequest)> {
         self.update_repository_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_create_user_requests(&self) -> Vec<CreateUserRequest> {
+        self.create_user_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_delete_user_requests(&self) -> Vec<String> {
+        self.delete_user_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_set_user_github_token_requests(
+        &self,
+    ) -> Vec<(String, UpdateGithubTokenRequest)> {
+        self.set_user_github_token_requests.lock().unwrap().clone()
+    }
+
+    pub fn recorded_list_users_calls(&self) -> usize {
+        *self.list_users_calls.lock().unwrap()
     }
 
     pub fn recorded_get_issue_requests(&self) -> Vec<IssueId> {
@@ -505,6 +563,56 @@ impl MetisClientInterface for MockMetisClient {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow!("no mock response configured for update_repository"))
+    }
+
+    async fn list_users(&self) -> Result<ListUsersResponse> {
+        let mut calls = self.list_users_calls.lock().unwrap();
+        *calls = calls.saturating_add(1);
+        self.list_users_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for list_users"))
+    }
+
+    async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {
+        self.create_user_requests
+            .lock()
+            .unwrap()
+            .push(request.clone());
+        self.create_user_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for create_user"))
+    }
+
+    async fn delete_user(&self, username: &str) -> Result<DeleteUserResponse> {
+        self.delete_user_requests
+            .lock()
+            .unwrap()
+            .push(username.to_string());
+        self.delete_user_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for delete_user"))
+    }
+
+    async fn set_user_github_token(
+        &self,
+        username: &str,
+        request: &UpdateGithubTokenRequest,
+    ) -> Result<UpsertUserResponse> {
+        self.set_user_github_token_requests
+            .lock()
+            .unwrap()
+            .push((username.to_string(), request.clone()));
+        self.set_user_github_token_responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow!("no mock response configured for set_user_github_token"))
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
