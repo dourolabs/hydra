@@ -102,6 +102,109 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let parent_creator = "parent-creator".to_string();
+    let parent: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "parent".to_string(),
+                creator: parent_creator.clone(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            },
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let child_dependencies = vec![IssueDependency {
+        dependency_type: IssueDependencyType::ChildOf,
+        issue_id: parent.issue_id.clone(),
+    }];
+    let child: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "child".to_string(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: Vec::new(),
+                dependencies: child_dependencies.clone(),
+                patches: Vec::new(),
+            },
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let fetched: IssueRecord = client
+        .get(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            child.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(fetched.issue.creator, parent_creator);
+
+    let explicit_creator = "explicit-creator".to_string();
+    let explicit_child: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: "explicit child".to_string(),
+                creator: explicit_creator.clone(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: Vec::new(),
+                dependencies: child_dependencies.clone(),
+                patches: Vec::new(),
+            },
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let fetched_explicit: IssueRecord = client
+        .get(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            explicit_child.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(fetched_explicit.issue.creator, explicit_creator);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
