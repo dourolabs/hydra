@@ -102,10 +102,7 @@ async fn dispatch(
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
-        Commands::Dashboard { username } => {
-            let username = command::dashboard::resolve_username(username);
-            command::dashboard::run(client, username).await?
-        }
+        Commands::Dashboard { username } => command::dashboard::run(client, username).await?,
         Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Chat {
