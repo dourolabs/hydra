@@ -1,0 +1,131 @@
+use crate::{app::AppState, routes::jobs::ApiError, store::StoreError};
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use metis_common::users::{
+    CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
+    UpsertUserResponse, User, UserSummary,
+};
+use tracing::{error, info};
+
+pub async fn list_users(
+    State(state): State<AppState>,
+) -> Result<Json<ListUsersResponse>, ApiError> {
+    info!("list_users invoked");
+    let store = state.store.read().await;
+    let users = store.list_users().await.map_err(|err| {
+        error!(error = %err, "failed to list users");
+        ApiError::internal(anyhow::anyhow!("failed to list users: {err}"))
+    })?;
+
+    let summaries = users.into_iter().map(UserSummary::from).collect::<Vec<_>>();
+    info!(user_count = summaries.len(), "list_users completed");
+
+    Ok(Json(ListUsersResponse { users: summaries }))
+}
+
+pub async fn create_user(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateUserRequest>,
+) -> Result<Json<UpsertUserResponse>, ApiError> {
+    let username = normalize_non_empty("username", payload.username)?;
+    let github_token = normalize_non_empty("github_token", payload.github_token)?;
+    info!(username = %username, "create_user invoked");
+
+    let user = User {
+        username: username.clone(),
+        github_token,
+    };
+
+    let mut store = state.store.write().await;
+    store
+        .add_user(user.clone())
+        .await
+        .map_err(|err| match err {
+            StoreError::UserAlreadyExists(existing) => {
+                error!(username = %existing, "user already exists");
+                ApiError::conflict(format!("user '{existing}' already exists"))
+            }
+            other => {
+                error!(username = %username, error = %other, "failed to create user");
+                ApiError::internal(anyhow::anyhow!(
+                    "failed to create user '{username}': {other}"
+                ))
+            }
+        })?;
+
+    info!(username = %username, "create_user completed");
+    Ok(Json(UpsertUserResponse {
+        user: UserSummary::from(user),
+    }))
+}
+
+pub async fn delete_user(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+) -> Result<Json<DeleteUserResponse>, ApiError> {
+    let username = normalize_non_empty("username", username)?;
+    info!(username = %username, "delete_user invoked");
+
+    let mut store = state.store.write().await;
+    store
+        .delete_user(&username)
+        .await
+        .map_err(|err| match err {
+            StoreError::UserNotFound(missing) => {
+                error!(username = %missing, "user not found");
+                ApiError::not_found(format!("user '{missing}' not found"))
+            }
+            other => {
+                error!(username = %username, error = %other, "failed to delete user");
+                ApiError::internal(anyhow::anyhow!(
+                    "failed to delete user '{username}': {other}"
+                ))
+            }
+        })?;
+
+    info!(username = %username, "delete_user completed");
+    Ok(Json(DeleteUserResponse { username }))
+}
+
+pub async fn set_github_token(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    Json(payload): Json<UpdateGithubTokenRequest>,
+) -> Result<Json<UpsertUserResponse>, ApiError> {
+    let username = normalize_non_empty("username", username)?;
+    let github_token = normalize_non_empty("github_token", payload.github_token)?;
+    info!(username = %username, "set_github_token invoked");
+
+    let mut store = state.store.write().await;
+    let updated = store
+        .set_user_github_token(&username, github_token)
+        .await
+        .map_err(|err| match err {
+            StoreError::UserNotFound(missing) => {
+                error!(username = %missing, "user not found");
+                ApiError::not_found(format!("user '{missing}' not found"))
+            }
+            other => {
+                error!(username = %username, error = %other, "failed to update github token");
+                ApiError::internal(anyhow::anyhow!(
+                    "failed to update github token for '{username}': {other}"
+                ))
+            }
+        })?;
+
+    info!(username = %username, "set_github_token completed");
+    Ok(Json(UpsertUserResponse {
+        user: UserSummary::from(updated),
+    }))
+}
+
+fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(format!("{field} must not be empty")));
+    }
+
+    Ok(trimmed.to_string())
+}
