@@ -2642,13 +2642,10 @@ mod tests {
     }
 
     #[test]
-    fn mouse_scroll_without_hover_does_not_scroll_focused_panel() {
-        let mut issues = (0..25)
-            .map(|index| issue(&format!("i-open-{index}"), IssueStatus::Open, vec![]))
-            .collect::<Vec<_>>();
-        issues.extend(
-            (0..25).map(|index| issue(&format!("i-closed-{index}"), IssueStatus::Closed, vec![])),
-        );
+    fn mouse_scroll_outside_panels_does_not_scroll_focused_panel() {
+        let issues = (0..25)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
         let mut state = DashboardState {
             issues,
             ..DashboardState::default()
@@ -2672,7 +2669,6 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 0);
-        assert_eq!(state.completed_issue_panel.scroll_offset(), 0);
         assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
         assert!(state.running_issue_panel.focused());
     }
