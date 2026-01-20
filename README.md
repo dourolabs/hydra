@@ -25,6 +25,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 - Kubernetes cluster credentials (`kubectl` configured + the `kube` Rust client can talk to it).
 - Docker (for building worker/server images) and, for local clusters, [`kind`](https://kind.sigs.k8s.io/).
 - An `OPENAI_API_KEY` (export it or set it inside the server config).
+- A Github PAT token in `GH_TOKEN` with permissions Actions, Contents, Issues, Pull Requests, and Workflows (all Read & Write), Commit Statuses (Read).
 
 ## Building & quick verification
 
