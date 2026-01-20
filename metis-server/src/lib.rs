@@ -18,7 +18,10 @@ use crate::app::{AppState, ServiceState};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
-use crate::store::{MemoryStore, Store, postgres};
+use crate::store::{
+    MemoryStore, Store,
+    postgres::{self, PostgresStore},
+};
 use axum::{
     Json, Router,
     routing::{delete, get, post, put},
@@ -158,7 +161,10 @@ pub async fn run() -> anyhow::Result<()> {
         info!("no Postgres database configured; using in-memory store");
     }
 
-    let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
+    let store: Arc<RwLock<Box<dyn Store>>> = match postgres_pool.clone() {
+        Some(pool) => Arc::new(RwLock::new(Box::new(PostgresStore::new(pool)))),
+        None => Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+    };
 
     let spawners = build_spawners(&app_config);
 
