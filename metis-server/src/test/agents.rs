@@ -28,6 +28,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),
+        postgres_pool: None,
     }
 }
 

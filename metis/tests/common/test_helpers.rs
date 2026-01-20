@@ -243,5 +243,6 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()) as Box<dyn Store>)),
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),
+        postgres_pool: None,
     })
 }

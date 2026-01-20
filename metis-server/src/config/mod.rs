@@ -3,11 +3,16 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::{RepoName, jobs::BundleSpec, repositories::ServiceRepositoryConfig};
+use metis_common::{
+    RepoName,
+    constants::{ENV_DATABASE_URL, ENV_METIS_DATABASE_URL},
+    jobs::BundleSpec,
+    repositories::ServiceRepositoryConfig,
+};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -17,6 +22,8 @@ pub struct AppConfig {
     pub metis: MetisSection,
     #[serde(default)]
     pub kubernetes: KubernetesSection,
+    #[serde(default)]
+    pub database: DatabaseSection,
     #[serde(default)]
     pub service: ServiceSection,
     #[serde(default)]
@@ -56,6 +63,59 @@ impl Default for MetisSection {
             worker_image: default_worker_image(),
             server_hostname: String::new(),
             openai_api_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DatabaseSection {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default = "default_min_connections")]
+    pub min_connections: u32,
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+    #[serde(default = "default_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+}
+
+impl DatabaseSection {
+    pub fn database_url(&self) -> Option<String> {
+        self.url
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_owned)
+            .or_else(|| {
+                env::var(ENV_METIS_DATABASE_URL)
+                    .ok()
+                    .and_then(|value| non_empty(&value).map(str::to_owned))
+            })
+            .or_else(|| {
+                env::var(ENV_DATABASE_URL)
+                    .ok()
+                    .and_then(|value| non_empty(&value).map(str::to_owned))
+            })
+    }
+
+    pub fn idle_timeout(&self) -> Option<u64> {
+        if self.idle_timeout_secs == 0 {
+            None
+        } else {
+            Some(self.idle_timeout_secs)
+        }
+    }
+}
+
+impl Default for DatabaseSection {
+    fn default() -> Self {
+        Self {
+            url: None,
+            min_connections: default_min_connections(),
+            max_connections: default_max_connections(),
+            connect_timeout_secs: default_connect_timeout_secs(),
+            idle_timeout_secs: default_idle_timeout_secs(),
         }
     }
 }
@@ -198,6 +258,21 @@ fn default_worker_image() -> String {
 }
 
 pub const DEFAULT_AGENT_MAX_TRIES: u32 = 3;
+const fn default_min_connections() -> u32 {
+    1
+}
+
+const fn default_max_connections() -> u32 {
+    5
+}
+
+const fn default_connect_timeout_secs() -> u64 {
+    5
+}
+
+const fn default_idle_timeout_secs() -> u64 {
+    300
+}
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
@@ -258,6 +333,9 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn scheduler_defaults_match_worker_intervals() {
@@ -280,5 +358,81 @@ mod tests {
         assert_eq!(scheduler.run_spawners.max_backoff_secs, 30);
         assert_eq!(scheduler.github_poller.initial_backoff_secs, 1);
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
+    }
+
+    #[test]
+    fn database_url_prefers_config_value() {
+        let database = DatabaseSection {
+            url: Some("postgres://config-value".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            database.database_url(),
+            Some("postgres://config-value".to_string())
+        );
+    }
+
+    #[test]
+    fn database_url_prefers_namespaced_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _namespaced = EnvGuard::set(ENV_METIS_DATABASE_URL, "postgres://namespaced");
+        let _legacy = EnvGuard::set(ENV_DATABASE_URL, "postgres://legacy");
+
+        let database = DatabaseSection {
+            url: None,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            database.database_url(),
+            Some("postgres://namespaced".to_string())
+        );
+    }
+
+    #[test]
+    fn database_url_ignores_blank_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _namespaced = EnvGuard::set(ENV_METIS_DATABASE_URL, "   ");
+        let _legacy = EnvGuard::set(ENV_DATABASE_URL, "");
+
+        let database = DatabaseSection {
+            url: Some(" ".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(database.database_url(), None);
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: tests serialize mutations through ENV_LOCK to avoid cross-thread races.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                // SAFETY: the lock held by callers ensures environment updates are serialized.
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
     }
 }
