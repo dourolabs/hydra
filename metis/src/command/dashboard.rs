@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
-    future::Future,
     time::Duration,
 };
 
@@ -319,28 +318,10 @@ struct EventOutcome {
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
     let username = resolve_username(username);
-    let handle = tokio::runtime::Handle::current();
-    let result = std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                ratatui::run(|terminal| {
-                    block_on_dashboard_future(
-                        &handle,
-                        run_dashboard_loop(client, terminal, username),
-                    )
-                })
-            })
-            .join()
-    });
-
-    match result {
-        Ok(result) => result,
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
-}
-
-fn block_on_dashboard_future<F: Future>(handle: &tokio::runtime::Handle, future: F) -> F::Output {
-    handle.block_on(future)
+    let mut terminal = ratatui::init();
+    let result = run_dashboard_loop(client, &mut terminal, username).await;
+    ratatui::restore();
+    result
 }
 
 fn resolve_username(username: Option<String>) -> Option<String> {
@@ -1997,18 +1978,6 @@ mod tests {
             notes: None,
             status_log: log,
         }
-    }
-
-    #[tokio::test]
-    async fn dashboard_boot_avoids_nested_runtime_block_on() {
-        let handle = tokio::runtime::Handle::current();
-        let result = std::thread::scope(|scope| {
-            scope
-                .spawn(|| block_on_dashboard_future(&handle, async {}))
-                .join()
-        });
-
-        assert!(result.is_ok());
     }
 
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
