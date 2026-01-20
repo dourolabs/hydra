@@ -1,15 +1,13 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
+use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::task_status::Event;
 use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
-        IssueGraphWildcard,
-    },
+    issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     users::User,
 };
@@ -163,129 +161,6 @@ impl Default for MemoryStore {
     }
 }
 
-struct IssueGraphContext {
-    known_issues: HashSet<IssueId>,
-    forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
-    reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
-}
-
-impl IssueGraphContext {
-    fn new(store: &MemoryStore) -> Self {
-        let mut forward = HashMap::new();
-        forward.insert(IssueDependencyType::ChildOf, store.issue_children.clone());
-        forward.insert(
-            IssueDependencyType::BlockedOn,
-            store.issue_blocked_on.clone(),
-        );
-
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-
-        for (issue_id, issue) in store.issues.iter() {
-            for dependency in &issue.dependencies {
-                reverse
-                    .entry(dependency.dependency_type)
-                    .or_default()
-                    .entry(issue_id.clone())
-                    .or_default()
-                    .push(dependency.issue_id.clone());
-            }
-        }
-
-        Self {
-            known_issues: store.issues.keys().cloned().collect(),
-            forward,
-            reverse,
-        }
-    }
-
-    fn contains_issue(&self, issue_id: &IssueId) -> bool {
-        self.known_issues.contains(issue_id)
-    }
-
-    fn adjacency(
-        &self,
-        side: IssueGraphFilterSide,
-        dependency_type: IssueDependencyType,
-    ) -> Option<&HashMap<IssueId, Vec<IssueId>>> {
-        match side {
-            IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
-            IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
-        }
-    }
-}
-
-fn apply_graph_filters(
-    context: &IssueGraphContext,
-    filters: &[IssueGraphFilter],
-) -> Result<HashSet<IssueId>, StoreError> {
-    let mut intersection: Option<HashSet<IssueId>> = None;
-
-    for filter in filters {
-        let literal = filter.literal_issue_id();
-        if !context.contains_issue(literal) {
-            return Err(StoreError::IssueNotFound(literal.clone()));
-        }
-
-        let adjacency = context.adjacency(filter.wildcard_position(), filter.dependency_type);
-
-        let matches = collect_matches(adjacency, literal, filter.wildcard_kind());
-
-        match &mut intersection {
-            Some(existing) => existing.retain(|id| matches.contains(id)),
-            None => intersection = Some(matches),
-        }
-
-        if let Some(existing) = &intersection {
-            if existing.is_empty() {
-                break;
-            }
-        }
-    }
-
-    Ok(intersection.unwrap_or_default())
-}
-
-fn collect_matches(
-    adjacency: Option<&HashMap<IssueId, Vec<IssueId>>>,
-    literal: &IssueId,
-    wildcard: IssueGraphWildcard,
-) -> HashSet<IssueId> {
-    let Some(map) = adjacency else {
-        return HashSet::new();
-    };
-
-    match wildcard {
-        IssueGraphWildcard::Immediate => map
-            .get(literal)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect(),
-        IssueGraphWildcard::Transitive => {
-            let mut matches = HashSet::new();
-            let mut visited = HashSet::new();
-            let mut queue = VecDeque::new();
-
-            visited.insert(literal.clone());
-            queue.push_back(literal.clone());
-
-            while let Some(current) = queue.pop_front() {
-                if let Some(neighbors) = map.get(&current) {
-                    for neighbor in neighbors {
-                        if visited.insert(neighbor.clone()) {
-                            queue.push_back(neighbor.clone());
-                        }
-                        matches.insert(neighbor.clone());
-                    }
-                }
-            }
-
-            matches
-        }
-    }
-}
-
 #[async_trait]
 impl Store for MemoryStore {
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
@@ -358,8 +233,32 @@ impl Store for MemoryStore {
             return Ok(HashSet::new());
         }
 
-        let context = IssueGraphContext::new(self);
-        apply_graph_filters(&context, filters)
+        let mut forward = HashMap::new();
+        forward.insert(IssueDependencyType::ChildOf, self.issue_children.clone());
+        forward.insert(
+            IssueDependencyType::BlockedOn,
+            self.issue_blocked_on.clone(),
+        );
+
+        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
+            HashMap::new();
+        for (issue_id, issue) in self.issues.iter() {
+            for dependency in &issue.dependencies {
+                reverse
+                    .entry(dependency.dependency_type)
+                    .or_default()
+                    .entry(issue_id.clone())
+                    .or_default()
+                    .push(dependency.issue_id.clone());
+            }
+        }
+
+        let context = IssueGraphContext::from_dependency_maps(
+            self.issues.keys().cloned().collect(),
+            forward,
+            reverse,
+        );
+        context.apply_filters(filters)
     }
 
     async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {

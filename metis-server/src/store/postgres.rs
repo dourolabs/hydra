@@ -7,10 +7,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use metis_common::{
     IssueId, PatchId, TaskId,
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
-        IssueGraphWildcard,
-    },
+    issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     users::User,
 };
@@ -21,11 +18,9 @@ use sqlx::{
     migrate::Migrator,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    str::FromStr,
-    time::Duration,
-};
+use std::{collections::HashSet, str::FromStr, time::Duration};
+
+use super::issue_graph::IssueGraphContext;
 
 pub type PgStorePool = Pool<Postgres>;
 
@@ -156,23 +151,6 @@ impl PostgresStore {
         Ok(())
     }
 
-    async fn migrate_payload(
-        &self,
-        object_type: &str,
-        from_version: i32,
-        to_version: i32,
-        payload: Value,
-    ) -> Result<Value, StoreError> {
-        sqlx::query_scalar::<_, Value>("SELECT metis.migrate_payload($1, $2, $3, $4) AS payload")
-            .bind(object_type)
-            .bind(from_version)
-            .bind(to_version)
-            .bind(payload)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)
-    }
-
     async fn fetch_payload<T: DeserializeOwned>(
         &self,
         table: &str,
@@ -197,28 +175,9 @@ impl PostgresStore {
             return Ok(None);
         };
 
-        let migrated = self
-            .migrate_payload(
-                object_type,
-                row.schema_version,
-                target_version,
-                row.payload.clone(),
-            )
-            .await?;
+        ensure_schema_version(object_type, row.schema_version, target_version)?;
 
-        if row.schema_version != target_version {
-            let update =
-                format!("UPDATE {table} SET schema_version = $1, payload = $2 WHERE id = $3");
-            sqlx::query(&update)
-                .bind(target_version)
-                .bind(&migrated)
-                .bind(id)
-                .execute(&self.pool)
-                .await
-                .map_err(map_sqlx_error)?;
-        }
-
-        serde_json::from_value(migrated)
+        serde_json::from_value(row.payload)
             .map(Some)
             .map_err(map_serde_error(object_type))
     }
@@ -244,29 +203,10 @@ impl PostgresStore {
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-            let migrated = self
-                .migrate_payload(
-                    object_type,
-                    row.schema_version,
-                    target_version,
-                    row.payload.clone(),
-                )
-                .await?;
-
-            if row.schema_version != target_version {
-                let update =
-                    format!("UPDATE {table} SET schema_version = $1, payload = $2 WHERE id = $3");
-                sqlx::query(&update)
-                    .bind(target_version)
-                    .bind(&migrated)
-                    .bind(&row.id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-            }
+            ensure_schema_version(object_type, row.schema_version, target_version)?;
 
             let value: T =
-                serde_json::from_value(migrated).map_err(map_serde_error(object_type))?;
+                serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
             results.push((row.id, value));
         }
 
@@ -333,129 +273,18 @@ fn map_serde_error(object_type: &str) -> impl FnOnce(serde_json::Error) -> Store
     move |err| StoreError::Internal(format!("failed to encode/decode {object_type}: {err}"))
 }
 
-#[derive(Clone)]
-struct IssueGraphContext {
-    known_issues: HashSet<IssueId>,
-    forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
-    reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>>,
-}
-
-impl IssueGraphContext {
-    fn new(issues: &[(IssueId, Issue)]) -> Self {
-        let mut forward: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-        let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
-            HashMap::new();
-
-        for (issue_id, issue) in issues {
-            for dependency in &issue.dependencies {
-                forward
-                    .entry(dependency.dependency_type)
-                    .or_default()
-                    .entry(dependency.issue_id.clone())
-                    .or_default()
-                    .push(issue_id.clone());
-
-                reverse
-                    .entry(dependency.dependency_type)
-                    .or_default()
-                    .entry(issue_id.clone())
-                    .or_default()
-                    .push(dependency.issue_id.clone());
-            }
-        }
-
-        Self {
-            known_issues: issues.iter().map(|(id, _)| id.clone()).collect(),
-            forward,
-            reverse,
-        }
+fn ensure_schema_version(
+    object_type: &str,
+    schema_version: i32,
+    target_version: i32,
+) -> Result<(), StoreError> {
+    if schema_version != target_version {
+        return Err(StoreError::Internal(format!(
+            "unexpected {object_type} schema version {schema_version} (expected {target_version})"
+        )));
     }
 
-    fn contains_issue(&self, issue_id: &IssueId) -> bool {
-        self.known_issues.contains(issue_id)
-    }
-
-    fn adjacency(
-        &self,
-        side: IssueGraphFilterSide,
-        dependency_type: IssueDependencyType,
-    ) -> Option<&HashMap<IssueId, Vec<IssueId>>> {
-        match side {
-            IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
-            IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
-        }
-    }
-}
-
-fn apply_graph_filters(
-    context: &IssueGraphContext,
-    filters: &[IssueGraphFilter],
-) -> Result<HashSet<IssueId>, StoreError> {
-    let mut intersection: Option<HashSet<IssueId>> = None;
-
-    for filter in filters {
-        let literal = filter.literal_issue_id();
-        if !context.contains_issue(literal) {
-            return Err(StoreError::IssueNotFound(literal.clone()));
-        }
-
-        let adjacency = context.adjacency(filter.wildcard_position(), filter.dependency_type);
-        let matches = collect_matches(adjacency, literal, filter.wildcard_kind());
-
-        match &mut intersection {
-            Some(existing) => existing.retain(|id| matches.contains(id)),
-            None => intersection = Some(matches),
-        }
-
-        if let Some(existing) = &intersection {
-            if existing.is_empty() {
-                break;
-            }
-        }
-    }
-
-    Ok(intersection.unwrap_or_default())
-}
-
-fn collect_matches(
-    adjacency: Option<&HashMap<IssueId, Vec<IssueId>>>,
-    literal: &IssueId,
-    wildcard: IssueGraphWildcard,
-) -> HashSet<IssueId> {
-    let Some(map) = adjacency else {
-        return HashSet::new();
-    };
-
-    match wildcard {
-        IssueGraphWildcard::Immediate => map
-            .get(literal)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect(),
-        IssueGraphWildcard::Transitive => {
-            let mut matches = HashSet::new();
-            let mut visited = HashSet::new();
-            let mut queue = VecDeque::new();
-
-            visited.insert(literal.clone());
-            queue.push_back(literal.clone());
-
-            while let Some(current) = queue.pop_front() {
-                if let Some(neighbors) = map.get(&current) {
-                    for neighbor in neighbors {
-                        if visited.insert(neighbor.clone()) {
-                            queue.push_back(neighbor.clone());
-                        }
-                        matches.insert(neighbor.clone());
-                    }
-                }
-            }
-
-            matches
-        }
-    }
+    Ok(())
 }
 
 #[async_trait]
@@ -519,8 +348,8 @@ impl Store for PostgresStore {
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
         let issues = self.list_issues().await?;
-        let context = IssueGraphContext::new(&issues);
-        apply_graph_filters(&context, filters)
+        let context = IssueGraphContext::from_issues(&issues);
+        context.apply_filters(filters)
     }
 
     async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {
@@ -630,256 +459,6 @@ impl Store for PostgresStore {
                 }
             }
         }
-
-        #[cfg(test)]
-        mod tests {
-            use super::*;
-            use metis_common::{
-                RepoName,
-                issues::{
-                    Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
-                },
-                jobs::BundleSpec,
-                patches::{Patch, PatchStatus},
-                users::User,
-            };
-            use std::{collections::HashSet, str::FromStr};
-
-            #[allow(dead_code)]
-            fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
-                Issue {
-                    issue_type: IssueType::Task,
-                    description: "details".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: None,
-                    todo_list: vec![TodoItem {
-                        description: "todo".to_string(),
-                        is_done: false,
-                    }],
-                    dependencies,
-                    patches: Vec::new(),
-                }
-            }
-
-            #[allow(dead_code)]
-            fn sample_patch() -> Patch {
-                Patch {
-                    title: "patch title".to_string(),
-                    description: "desc".to_string(),
-                    diff: "diff".to_string(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    created_by: None,
-                    reviews: Vec::new(),
-                    service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
-                    github: None,
-                }
-            }
-
-            #[allow(dead_code)]
-            fn sample_task() -> Task {
-                Task {
-                    prompt: "prompt".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some("metis-worker:latest".to_string()),
-                    env_vars: Default::default(),
-                }
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn issue_round_trip(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-
-                let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
-                let issue = store
-                    .add_issue(sample_issue(vec![IssueDependency {
-                        dependency_type: IssueDependencyType::ChildOf,
-                        issue_id: parent.clone(),
-                    }]))
-                    .await
-                    .unwrap();
-
-                let fetched = store.get_issue(&issue).await.unwrap();
-                assert_eq!(fetched.dependencies.len(), 1);
-
-                let issues: HashSet<_> = store
-                    .list_issues()
-                    .await
-                    .unwrap()
-                    .into_iter()
-                    .map(|(id, _)| id)
-                    .collect();
-                assert!(issues.contains(&issue));
-
-                let children = store.get_issue_children(&parent).await.unwrap();
-                assert_eq!(children, vec![issue.clone()]);
-
-                let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
-                let mut updated_issue = sample_issue(vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: new_parent.clone(),
-                }]);
-                updated_issue.patches = Vec::new();
-                store.update_issue(&issue, updated_issue).await.unwrap();
-
-                assert!(store.get_issue_children(&parent).await.unwrap().is_empty());
-                assert_eq!(
-                    store.get_issue_children(&new_parent).await.unwrap(),
-                    vec![issue]
-                );
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn add_issue_rejects_missing_dependency(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-                let missing = IssueId::new();
-
-                let err = store
-                    .add_issue(sample_issue(vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: missing.clone(),
-                    }]))
-                    .await
-                    .unwrap_err();
-
-                assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
-
-                let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
-                let err = store
-                    .update_issue(
-                        &issue_id,
-                        sample_issue(vec![IssueDependency {
-                            dependency_type: IssueDependencyType::ChildOf,
-                            issue_id: missing.clone(),
-                        }]),
-                    )
-                    .await
-                    .unwrap_err();
-                assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn issue_graph_searches_blockers(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-                let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
-                let blocked = store
-                    .add_issue(sample_issue(vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: blocker.clone(),
-                    }]))
-                    .await
-                    .unwrap();
-
-                let blocked_list = store.get_issue_blocked_on(&blocker).await.unwrap();
-                assert_eq!(blocked_list, vec![blocked.clone()]);
-
-                let filter: IssueGraphFilter = format!("*:blocked-on:{blocker}").parse().unwrap();
-                let matches = store.search_issue_graph(&[filter]).await.unwrap();
-                assert_eq!(matches, HashSet::from([blocked]));
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn patch_associations_round_trip(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-                let patch_id = store.add_patch(sample_patch()).await.unwrap();
-                let mut issue = sample_issue(vec![]);
-                issue.patches = vec![patch_id.clone()];
-                let issue_id = store.add_issue(issue).await.unwrap();
-
-                let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
-                assert_eq!(issues, vec![issue_id]);
-
-                let mut updated = sample_patch();
-                updated.title = "updated".to_string();
-                store
-                    .update_patch(&patch_id, updated.clone())
-                    .await
-                    .unwrap();
-                assert_eq!(store.get_patch(&patch_id).await.unwrap().title, "updated");
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn task_lifecycle_updates_status(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-                let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
-
-                let mut task = sample_task();
-                task.spawned_from = Some(issue_id.clone());
-                let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
-                assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
-
-                store.mark_task_running(&task_id, Utc::now()).await.unwrap();
-                assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Running);
-
-                store
-                    .mark_task_complete(&task_id, Ok(()), Some("done".into()), Utc::now())
-                    .await
-                    .unwrap();
-                assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
-
-                let tasks = store.get_tasks_for_issue(&issue_id).await.unwrap();
-                assert_eq!(tasks, vec![task_id.clone()]);
-
-                let mut updated_task = task.clone();
-                updated_task.spawned_from = None;
-                store
-                    .update_task(&task_id, updated_task.clone())
-                    .await
-                    .unwrap();
-                assert_eq!(store.get_task(&task_id).await.unwrap(), updated_task);
-                assert!(
-                    store
-                        .get_tasks_for_issue(&issue_id)
-                        .await
-                        .unwrap()
-                        .is_empty()
-                );
-
-                let complete = store
-                    .list_tasks_with_status(Status::Complete)
-                    .await
-                    .unwrap();
-                assert_eq!(complete, vec![task_id]);
-
-                let explicit_id = TaskId::new();
-                store
-                    .add_task_with_id(explicit_id.clone(), sample_task(), Utc::now())
-                    .await
-                    .unwrap();
-                let all_tasks = store.list_tasks().await.unwrap();
-                assert!(all_tasks.contains(&explicit_id));
-            }
-
-            #[sqlx::test(migrations = "./migrations")]
-            async fn user_management_round_trip(pool: PgStorePool) {
-                let mut store = PostgresStore::new(pool);
-                let user = User {
-                    username: "alice".to_string(),
-                    github_token: "token".to_string(),
-                };
-                store.add_user(user.clone()).await.unwrap();
-
-                let users = store.list_users().await.unwrap();
-                assert_eq!(users.len(), 1);
-                assert_eq!(users[0], user);
-
-                let updated = store
-                    .set_user_github_token("alice", "new-token".to_string())
-                    .await
-                    .unwrap();
-                assert_eq!(updated.github_token, "new-token");
-
-                store.delete_user("alice").await.unwrap();
-                assert!(store.list_users().await.unwrap().is_empty());
-
-                let err = store.delete_user("alice").await.unwrap_err();
-                assert!(matches!(err, StoreError::UserNotFound(name) if name == "alice"));
-            }
-        }
-
         Ok(results)
     }
 
@@ -1137,5 +716,272 @@ impl Store for PostgresStore {
             .await?;
 
         Ok(user)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metis_common::{
+        RepoName,
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
+        jobs::BundleSpec,
+        patches::{Patch, PatchStatus},
+        users::User,
+    };
+    use std::{collections::HashSet, str::FromStr};
+
+    #[allow(dead_code)]
+    fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
+        Issue {
+            issue_type: IssueType::Task,
+            description: "details".to_string(),
+            creator: String::new(),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            todo_list: vec![TodoItem {
+                description: "todo".to_string(),
+                is_done: false,
+            }],
+            dependencies,
+            patches: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn sample_patch() -> Patch {
+        Patch {
+            title: "patch title".to_string(),
+            description: "desc".to_string(),
+            diff: "diff".to_string(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: None,
+            reviews: Vec::new(),
+            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
+            github: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn sample_task() -> Task {
+        Task {
+            prompt: "prompt".to_string(),
+            context: BundleSpec::None,
+            spawned_from: None,
+            image: Some("metis-worker:latest".to_string()),
+            env_vars: Default::default(),
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn issue_round_trip(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+
+        let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let issue = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        let fetched = store.get_issue(&issue).await.unwrap();
+        assert_eq!(fetched.dependencies.len(), 1);
+
+        let issues: HashSet<_> = store
+            .list_issues()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert!(issues.contains(&issue));
+
+        let children = store.get_issue_children(&parent).await.unwrap();
+        assert_eq!(children, vec![issue.clone()]);
+
+        let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let mut updated_issue = sample_issue(vec![IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: new_parent.clone(),
+        }]);
+        updated_issue.patches = Vec::new();
+        store.update_issue(&issue, updated_issue).await.unwrap();
+
+        assert!(store.get_issue_children(&parent).await.unwrap().is_empty());
+        assert_eq!(
+            store.get_issue_children(&new_parent).await.unwrap(),
+            vec![issue]
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn add_issue_rejects_missing_dependency(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let missing = IssueId::new();
+
+        let err = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: missing.clone(),
+            }]))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
+
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let err = store
+            .update_issue(
+                &issue_id,
+                sample_issue(vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: missing.clone(),
+                }]),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidDependency(id) if id == missing));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn errors_on_schema_mismatch(pool: PgStorePool) {
+        let pool_for_update = pool.clone();
+        let mut store = PostgresStore::new(pool);
+
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        sqlx::query(&format!(
+            "UPDATE {TABLE_ISSUES} SET schema_version = $1 WHERE id = $2"
+        ))
+        .bind(ISSUE_SCHEMA_VERSION + 1)
+        .bind(issue_id.as_ref())
+        .execute(&pool_for_update)
+        .await
+        .unwrap();
+
+        let err = store.get_issue(&issue_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::Internal(message) if message.contains("schema version")));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn issue_graph_searches_blockers(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let blocked = store
+            .add_issue(sample_issue(vec![IssueDependency {
+                dependency_type: IssueDependencyType::BlockedOn,
+                issue_id: blocker.clone(),
+            }]))
+            .await
+            .unwrap();
+
+        let blocked_list = store.get_issue_blocked_on(&blocker).await.unwrap();
+        assert_eq!(blocked_list, vec![blocked.clone()]);
+
+        let filter: IssueGraphFilter = format!("*:blocked-on:{blocker}").parse().unwrap();
+        let matches = store.search_issue_graph(&[filter]).await.unwrap();
+        assert_eq!(matches, HashSet::from([blocked]));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn patch_associations_round_trip(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let patch_id = store.add_patch(sample_patch()).await.unwrap();
+        let mut issue = sample_issue(vec![]);
+        issue.patches = vec![patch_id.clone()];
+        let issue_id = store.add_issue(issue).await.unwrap();
+
+        let issues = store.get_issues_for_patch(&patch_id).await.unwrap();
+        assert_eq!(issues, vec![issue_id]);
+
+        let mut updated = sample_patch();
+        updated.title = "updated".to_string();
+        store
+            .update_patch(&patch_id, updated.clone())
+            .await
+            .unwrap();
+        assert_eq!(store.get_patch(&patch_id).await.unwrap().title, "updated");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn task_lifecycle_updates_status(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let mut task = sample_task();
+        task.spawned_from = Some(issue_id.clone());
+        let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
+        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
+
+        store.mark_task_running(&task_id, Utc::now()).await.unwrap();
+        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Running);
+
+        store
+            .mark_task_complete(&task_id, Ok(()), Some("done".into()), Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
+
+        let tasks = store.get_tasks_for_issue(&issue_id).await.unwrap();
+        assert_eq!(tasks, vec![task_id.clone()]);
+
+        let mut updated_task = task.clone();
+        updated_task.spawned_from = None;
+        store
+            .update_task(&task_id, updated_task.clone())
+            .await
+            .unwrap();
+        assert_eq!(store.get_task(&task_id).await.unwrap(), updated_task);
+        assert!(
+            store
+                .get_tasks_for_issue(&issue_id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let complete = store
+            .list_tasks_with_status(Status::Complete)
+            .await
+            .unwrap();
+        assert_eq!(complete, vec![task_id]);
+
+        let explicit_id = TaskId::new();
+        store
+            .add_task_with_id(explicit_id.clone(), sample_task(), Utc::now())
+            .await
+            .unwrap();
+        let all_tasks = store.list_tasks().await.unwrap();
+        assert!(all_tasks.contains(&explicit_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn user_management_round_trip(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let user = User {
+            username: "alice".to_string(),
+            github_token: "token".to_string(),
+        };
+        store.add_user(user.clone()).await.unwrap();
+
+        let users = store.list_users().await.unwrap();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0], user);
+
+        let updated = store
+            .set_user_github_token("alice", "new-token".to_string())
+            .await
+            .unwrap();
+        assert_eq!(updated.github_token, "new-token");
+
+        store.delete_user("alice").await.unwrap();
+        assert!(store.list_users().await.unwrap().is_empty());
+
+        let err = store.delete_user("alice").await.unwrap_err();
+        assert!(matches!(err, StoreError::UserNotFound(name) if name == "alice"));
     }
 }
