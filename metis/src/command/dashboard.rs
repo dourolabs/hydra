@@ -963,11 +963,12 @@ fn issue_creator_layout(area: Rect, focused: bool) -> IssueCreatorLayout {
 }
 
 fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
-    let delta = match mouse.kind {
-        MouseEventKind::ScrollUp => -1,
-        MouseEventKind::ScrollDown => 1,
-        _ => return false,
-    };
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+    ) {
+        return false;
+    }
 
     let size = match state.last_frame_size {
         Some(size) => size,
@@ -981,44 +982,52 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 
     if let Some(rect) = panels.user_owned {
         if rect_contains(rect, column, row) {
+            focus_status_panel(state, StatusPanelFocus::UserOwned);
             let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
             let content_len = issue_lines_len(&state.user_unowned_issue_lines);
-            let changed =
+            return matches!(
                 state
                     .user_unowned_issue_panel
-                    .apply_scroll_delta(delta, content_len, view_height);
-            state.status_panel_focus = StatusPanelFocus::UserOwned;
-            update_panel_focus(state);
-            return changed;
+                    .handle_mouse_event(mouse, content_len, view_height),
+                PanelEvent::Scrolled
+            );
         }
     }
 
     if rect_contains(panels.running, column, row) {
+        focus_status_panel(state, StatusPanelFocus::Running);
         let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
         let content_len = issue_lines_len(&state.issue_lines);
-        let changed = state
-            .running_issue_panel
-            .apply_scroll_delta(delta, content_len, view_height);
-        state.status_panel_focus = StatusPanelFocus::Running;
-        update_panel_focus(state);
-        return changed;
+        return matches!(
+            state
+                .running_issue_panel
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     if rect_contains(panels.completed, column, row) {
+        focus_status_panel(state, StatusPanelFocus::Completed);
         let rows = completed_issue_rows(&state.completed_issue_lines);
         let view_height =
             panel_content_height(panels.completed, state.completed_issue_panel.focused());
         let content_len = completed_rows_len(&rows);
-        let changed =
+        return matches!(
             state
                 .completed_issue_panel
-                .apply_scroll_delta(delta, content_len, view_height);
-        state.status_panel_focus = StatusPanelFocus::Completed;
-        update_panel_focus(state);
-        return changed;
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     false
+}
+
+fn focus_status_panel(state: &mut DashboardState, focus: StatusPanelFocus) {
+    state.selected_panel = PanelFocus::Status;
+    state.issue_draft.set_editing(false);
+    state.status_panel_focus = focus;
+    update_panel_focus(state);
 }
 
 fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -2521,6 +2530,7 @@ mod tests {
         };
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+        state.issue_draft.set_editing(true);
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
         let panels = issue_panel_layout(layout.issue_sections);
@@ -2536,6 +2546,9 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert!(!state.issue_draft.editing);
     }
 
     #[test]
@@ -2552,6 +2565,7 @@ mod tests {
         };
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+        state.issue_draft.set_editing(true);
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
         let panels = issue_panel_layout(layout.issue_sections);
@@ -2568,6 +2582,9 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.user_unowned_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::UserOwned);
+        assert!(!state.issue_draft.editing);
     }
 
     #[test]
@@ -2581,6 +2598,7 @@ mod tests {
         };
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+        state.issue_draft.set_editing(true);
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
         let panels = issue_panel_layout(layout.issue_sections);
@@ -2596,6 +2614,9 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.completed_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Completed);
+        assert!(!state.issue_draft.editing);
     }
 
     #[test]
