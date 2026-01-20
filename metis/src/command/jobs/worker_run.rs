@@ -416,7 +416,7 @@ fn checkout_local_branch(repo: &Repository, branch: &str) -> Result<()> {
     repo.set_head(&format!("refs/heads/{branch}"))
         .with_context(|| format!("failed to set HEAD to branch '{branch}'"))?;
     let mut checkout = CheckoutBuilder::new();
-    checkout.safe();
+    checkout.force();
     repo.checkout_head(Some(&mut checkout))
         .with_context(|| format!("failed to checkout branch '{branch}'"))?;
     Ok(())
@@ -700,6 +700,11 @@ mod tests {
             head_oid,
             "task head branch should match the clone's HEAD"
         );
+        let working_diff = workdir_diff(clone_dir.path())?;
+        assert!(
+            working_diff.trim().is_empty(),
+            "working directory should be clean after initialize_tracking_branches"
+        );
 
         Ok(())
     }
@@ -767,6 +772,11 @@ mod tests {
             initial_issue_head_target,
             reference_target(&updated_remote_repo, &head_ref_name)?,
             "issue head branch should not move during initialization"
+        );
+        let working_diff = workdir_diff(second_clone.path())?;
+        assert!(
+            working_diff.trim().is_empty(),
+            "working directory should be clean after initialize_tracking_branches"
         );
 
         Ok(())
