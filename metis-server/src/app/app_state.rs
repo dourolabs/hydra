@@ -1310,4 +1310,105 @@ mod tests {
             assert_eq!(job.status, JobStatus::Failed);
         }
     }
+
+    #[tokio::test]
+    async fn create_issue_inherits_creator_from_parent_when_empty() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        parent_issue.creator = "parent-creator".to_string();
+        let parent_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: parent_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        let child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
+        let child_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: child_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let store = state.store.read().await;
+        let stored_child = store.get_issue(&child_id).await.unwrap();
+        assert_eq!(stored_child.creator, "parent-creator");
+    }
+
+    #[tokio::test]
+    async fn create_issue_preserves_explicit_creator_with_parent() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        parent_issue.creator = "parent-creator".to_string();
+        let parent_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: parent_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let child_dependency = IssueDependency {
+            dependency_type: IssueDependencyType::ChildOf,
+            issue_id: parent_id.clone(),
+        };
+        let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
+        child_issue.creator = "explicit-creator".to_string();
+        let child_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue: child_issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let store = state.store.read().await;
+        let stored_child = store.get_issue(&child_id).await.unwrap();
+        assert_eq!(stored_child.creator, "explicit-creator");
+    }
+
+    #[tokio::test]
+    async fn create_issue_without_parent_keeps_empty_creator() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+
+        let issue = issue_with_status("solo", IssueStatus::Open, vec![]);
+        let issue_id = state
+            .upsert_issue(
+                None,
+                UpsertIssueRequest {
+                    issue,
+                    job_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let store = state.store.read().await;
+        let stored_issue = store.get_issue(&issue_id).await.unwrap();
+        assert!(stored_issue.creator.is_empty());
+    }
 }
