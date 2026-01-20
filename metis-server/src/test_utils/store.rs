@@ -5,6 +5,7 @@ use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
+    users::User,
 };
 use std::collections::HashSet;
 
@@ -146,6 +147,26 @@ impl Store for FailingStore {
         _last_message: Option<String>,
         _completion_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_user(&mut self, _user: User) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
+        fail()
+    }
+
+    async fn delete_user(&mut self, _username: &str) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn set_user_github_token(
+        &mut self,
+        _username: &str,
+        _github_token: String,
+    ) -> Result<User, StoreError> {
         fail()
     }
 }

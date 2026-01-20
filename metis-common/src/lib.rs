@@ -19,6 +19,7 @@ pub use repositories::{
     ServiceRepositoryInfo, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub mod task_status;
+pub mod users;
 
 #[cfg(test)]
 pub mod test_helpers {

@@ -6,6 +6,7 @@ use metis_common::{IssueId, MetisId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
+    users::User,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -138,6 +139,10 @@ pub enum StoreError {
     Internal(String),
     #[error("Invalid status transition: task is not in Pending state")]
     InvalidStatusTransition,
+    #[error("User not found: {0}")]
+    UserNotFound(String),
+    #[error("User already exists: {0}")]
+    UserAlreadyExists(String),
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -364,6 +369,22 @@ pub trait Store: Send + Sync {
         last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    /// Adds a new user to the store.
+    async fn add_user(&mut self, user: User) -> Result<(), StoreError>;
+
+    /// Lists all users in the store.
+    async fn list_users(&self) -> Result<Vec<User>, StoreError>;
+
+    /// Deletes a user from the store.
+    async fn delete_user(&mut self, username: &str) -> Result<(), StoreError>;
+
+    /// Updates the GitHub token for the requested user.
+    async fn set_user_github_token(
+        &mut self,
+        username: &str,
+        github_token: String,
+    ) -> Result<User, StoreError>;
 }
 
 pub use memory_store::MemoryStore;

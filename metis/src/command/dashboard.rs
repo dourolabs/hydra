@@ -963,11 +963,12 @@ fn issue_creator_layout(area: Rect, focused: bool) -> IssueCreatorLayout {
 }
 
 fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
-    let delta = match mouse.kind {
-        MouseEventKind::ScrollUp => -1,
-        MouseEventKind::ScrollDown => 1,
-        _ => return false,
-    };
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+    ) {
+        return false;
+    }
 
     let size = match state.last_frame_size {
         Some(size) => size,
@@ -983,25 +984,24 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         if rect_contains(rect, column, row) {
             let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
             let content_len = issue_lines_len(&state.user_unowned_issue_lines);
-            let changed =
+            return matches!(
                 state
                     .user_unowned_issue_panel
-                    .apply_scroll_delta(delta, content_len, view_height);
-            state.status_panel_focus = StatusPanelFocus::UserOwned;
-            update_panel_focus(state);
-            return changed;
+                    .handle_mouse_event(mouse, content_len, view_height),
+                PanelEvent::Scrolled
+            );
         }
     }
 
     if rect_contains(panels.running, column, row) {
         let view_height = panel_content_height(panels.running, state.running_issue_panel.focused());
         let content_len = issue_lines_len(&state.issue_lines);
-        let changed = state
-            .running_issue_panel
-            .apply_scroll_delta(delta, content_len, view_height);
-        state.status_panel_focus = StatusPanelFocus::Running;
-        update_panel_focus(state);
-        return changed;
+        return matches!(
+            state
+                .running_issue_panel
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     if rect_contains(panels.completed, column, row) {
@@ -1009,13 +1009,12 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         let view_height =
             panel_content_height(panels.completed, state.completed_issue_panel.focused());
         let content_len = completed_rows_len(&rows);
-        let changed =
+        return matches!(
             state
                 .completed_issue_panel
-                .apply_scroll_delta(delta, content_len, view_height);
-        state.status_panel_focus = StatusPanelFocus::Completed;
-        update_panel_focus(state);
-        return changed;
+                .handle_mouse_event(mouse, content_len, view_height),
+            PanelEvent::Scrolled
+        );
     }
 
     false
@@ -2520,6 +2519,9 @@ mod tests {
             issues,
             ..DashboardState::default()
         };
+        state.selected_panel = PanelFocus::Status;
+        state.status_panel_focus = StatusPanelFocus::Completed;
+        update_panel_focus(&mut state);
         update_views(&mut state);
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
 
@@ -2537,6 +2539,9 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.running_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.selected_panel, PanelFocus::Status);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Completed);
+        assert!(state.completed_issue_panel.focused());
     }
 
     #[test]
@@ -2597,6 +2602,76 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.completed_issue_panel.scroll_offset(), 1);
+    }
+
+    #[test]
+    fn mouse_scroll_on_unfocused_panel_routes_to_hovered_panel() {
+        let mut issues = (0..25)
+            .map(|index| issue(&format!("i-open-{index}"), IssueStatus::Open, vec![]))
+            .collect::<Vec<_>>();
+        issues.extend(
+            (0..25).map(|index| issue(&format!("i-closed-{index}"), IssueStatus::Closed, vec![])),
+        );
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Status;
+        state.status_panel_focus = StatusPanelFocus::Running;
+        update_panel_focus(&mut state);
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.completed.x + 1,
+            row: panels.completed.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+        assert_eq!(state.completed_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
+        assert!(!state.completed_issue_panel.focused());
+    }
+
+    #[test]
+    fn mouse_scroll_outside_panels_does_not_scroll_focused_panel() {
+        let issues = (0..25)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Status;
+        state.status_panel_focus = StatusPanelFocus::Running;
+        update_panel_focus(&mut state);
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: layout.header.x,
+            row: layout.header.y,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
     }
 
     #[test]

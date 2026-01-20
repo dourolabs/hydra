@@ -11,6 +11,7 @@ use metis_common::{
         IssueGraphWildcard, IssueStatus,
     },
     patches::Patch,
+    users::User,
 };
 
 /// An in-memory implementation of the Store trait.
@@ -34,6 +35,8 @@ pub struct MemoryStore {
     patch_issues: HashMap<PatchId, Vec<IssueId>>,
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<TaskId, TaskStatusLog>,
+    /// Maps usernames to their User data
+    users: HashMap<String, User>,
 }
 
 impl MemoryStore {
@@ -48,6 +51,7 @@ impl MemoryStore {
             issue_tasks: HashMap::new(),
             patch_issues: HashMap::new(),
             status_logs: HashMap::new(),
+            users: HashMap::new(),
         }
     }
 
@@ -771,6 +775,42 @@ impl Store for MemoryStore {
 
         Ok(())
     }
+
+    async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
+        if self.users.contains_key(&user.username) {
+            return Err(StoreError::UserAlreadyExists(user.username));
+        }
+
+        self.users.insert(user.username.clone(), user);
+        Ok(())
+    }
+
+    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
+        let mut users: Vec<User> = self.users.values().cloned().collect();
+        users.sort_by(|a, b| a.username.cmp(&b.username));
+        Ok(users)
+    }
+
+    async fn delete_user(&mut self, username: &str) -> Result<(), StoreError> {
+        if self.users.remove(username).is_none() {
+            return Err(StoreError::UserNotFound(username.to_string()));
+        }
+
+        Ok(())
+    }
+
+    async fn set_user_github_token(
+        &mut self,
+        username: &str,
+        github_token: String,
+    ) -> Result<User, StoreError> {
+        let user = self
+            .users
+            .get_mut(username)
+            .ok_or_else(|| StoreError::UserNotFound(username.to_string()))?;
+        user.github_token = github_token;
+        Ok(user.clone())
+    }
 }
 
 #[cfg(test)]
@@ -784,6 +824,7 @@ mod tests {
         },
         jobs::BundleSpec,
         patches::{Patch, PatchStatus},
+        users::User,
     };
     use std::{collections::HashSet, str::FromStr};
 
@@ -1633,5 +1674,39 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
+    }
+
+    #[tokio::test]
+    async fn set_user_github_token_overwrites_existing_value() {
+        let mut store = MemoryStore::new();
+        let username = "alice".to_string();
+
+        store
+            .add_user(User {
+                username: username.clone(),
+                github_token: "old-token".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let updated = store
+            .set_user_github_token(&username, "new-token".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(updated.github_token, "new-token");
+
+        let users = store.list_users().await.unwrap();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].github_token, "new-token");
+    }
+
+    #[tokio::test]
+    async fn delete_missing_user_returns_error() {
+        let mut store = MemoryStore::new();
+
+        let err = store.delete_user("missing-user").await.unwrap_err();
+
+        assert!(matches!(err, StoreError::UserNotFound(name) if name == "missing-user"));
     }
 }

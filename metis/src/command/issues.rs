@@ -1285,7 +1285,7 @@ mod tests {
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
+        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord,
         ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
         TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     };
@@ -1312,6 +1312,20 @@ mod tests {
 
     fn progress_vec(text: &str, author: Option<&str>) -> Vec<IssueProgressEntry> {
         vec![test_progress_entry(text, author)]
+    }
+
+    fn zero_timestamp() -> DateTime<Utc> {
+        Utc.timestamp_opt(0, 0).single().expect("valid timestamp")
+    }
+
+    fn normalize_progress_timestamps(
+        requests: &mut Vec<(Option<IssueId>, UpsertIssueRequest)>,
+    ) {
+        for (_, request) in requests.iter_mut() {
+            for entry in &mut request.issue.progress {
+                entry.timestamp = zero_timestamp();
+            }
+        }
     }
 
     #[tokio::test]
@@ -1662,8 +1676,10 @@ mod tests {
         .await
         .unwrap();
 
+        let mut upserts = client.recorded_issue_upserts();
+        normalize_progress_timestamps(&mut upserts);
         assert_eq!(
-            client.recorded_issue_upserts(),
+            upserts,
             vec![(
                 None,
                 UpsertIssueRequest {
@@ -1789,8 +1805,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(client.recorded_get_issue_requests(), vec![issue_id("i-9")]);
+        let mut upserts = client.recorded_issue_upserts();
+        normalize_progress_timestamps(&mut upserts);
         assert_eq!(
-            client.recorded_issue_upserts(),
+            upserts,
             vec![(
                 Some(issue_id("i-9")),
                 UpsertIssueRequest {

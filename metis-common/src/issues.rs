@@ -340,10 +340,7 @@ pub struct Issue {
     pub description: String,
     #[serde(default)]
     pub creator: String,
-    #[serde(
-        default = "default_progress_entries",
-        deserialize_with = "deserialize_progress_entries"
-    )]
+    #[serde(default)]
     pub progress: Vec<IssueProgressEntry>,
     #[serde(default)]
     pub status: IssueStatus,
@@ -368,40 +365,6 @@ impl Issue {
 
     pub fn latest_progress(&self) -> Option<&IssueProgressEntry> {
         self.progress.last()
-    }
-}
-
-fn default_progress_entries() -> Vec<IssueProgressEntry> {
-    Vec::new()
-}
-
-fn deserialize_progress_entries<'de, D>(
-    deserializer: D,
-) -> Result<Vec<IssueProgressEntry>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ProgressField {
-        Entries(Vec<IssueProgressEntry>),
-        Text(String),
-    }
-
-    let value = ProgressField::deserialize(deserializer)?;
-    match value {
-        ProgressField::Entries(entries) => Ok(entries),
-        ProgressField::Text(text) => {
-            if text.trim().is_empty() {
-                Ok(Vec::new())
-            } else {
-                Ok(vec![IssueProgressEntry {
-                    text,
-                    timestamp: Utc::now(),
-                    author: None,
-                }])
-            }
-        }
     }
 }
 
@@ -479,7 +442,7 @@ pub struct ListIssuesResponse {
 mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
-    use chrono::{DateTime, Utc};
+    use chrono::DateTime;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -654,20 +617,5 @@ mod tests {
 
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.progress, vec![entry]);
-    }
-
-    #[test]
-    fn issue_progress_accepts_legacy_string() {
-        let raw = r#"{"type":"task","description":"write docs","progress":"legacy notes"}"#;
-
-        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
-
-        assert_eq!(issue.progress.len(), 1);
-        assert_eq!(issue.progress[0].text, "legacy notes");
-        assert!(issue.progress[0].author.is_none());
-        assert!(
-            issue.progress[0].timestamp <= Utc::now(),
-            "timestamp should be initialized"
-        );
     }
 }

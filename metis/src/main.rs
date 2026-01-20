@@ -68,6 +68,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::repos::ReposCommand,
     },
+    /// Manage users.
+    Users {
+        #[command(subcommand)]
+        command: command::users::UsersCommand,
+    },
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
         /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
@@ -105,6 +110,7 @@ async fn dispatch(
         Commands::Dashboard { username } => command::dashboard::run(client, username).await?,
         Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
+        Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Chat {
             prompt,
             model,
