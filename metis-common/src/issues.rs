@@ -1,7 +1,7 @@
 pub use crate::IssueId;
 use crate::{PatchId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use std::{fmt, str::FromStr};
+use std::{collections::HashSet, fmt, future::Future, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -343,6 +343,56 @@ pub struct Issue {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
+}
+
+impl Issue {
+    pub async fn get_root_issue<F, Fut>(
+        &self,
+        issue_id: IssueId,
+        mut fetch_issue: F,
+    ) -> Result<IssueRecord, String>
+    where
+        F: FnMut(IssueId) -> Fut,
+        Fut: Future<Output = Result<IssueRecord, String>>,
+    {
+        let start_id = issue_id.clone();
+        let mut current_id = issue_id;
+        let mut current_issue = self.clone();
+        let mut visited = HashSet::new();
+
+        loop {
+            if !visited.insert(current_id.clone()) {
+                return Err(format!(
+                    "cycle detected while resolving root issue starting at '{start_id}'"
+                ));
+            }
+
+            let parent_id = current_issue
+                .dependencies
+                .iter()
+                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+                .map(|dependency| dependency.issue_id.clone());
+
+            let Some(parent_id) = parent_id else {
+                return Ok(IssueRecord {
+                    id: current_id,
+                    issue: current_issue,
+                });
+            };
+
+            if visited.contains(&parent_id) {
+                return Err(format!(
+                    "cycle detected while resolving root issue starting at '{start_id}' (parent '{parent_id}')"
+                ));
+            }
+
+            let parent = fetch_issue(parent_id.clone()).await.map_err(|err| {
+                format!("parent issue '{parent_id}' referenced by '{current_id}' is missing: {err}")
+            })?;
+            current_id = parent.id.clone();
+            current_issue = parent.issue;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

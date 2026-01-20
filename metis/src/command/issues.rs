@@ -373,49 +373,28 @@ pub(crate) async fn resolve_root_issue_creator(
     client: &dyn MetisClientInterface,
     issue_id: IssueId,
 ) -> Result<(IssueId, String)> {
-    let mut current_id = issue_id.clone();
-    let mut visited = HashSet::new();
-    let mut parent_source: Option<IssueId> = None;
+    let issue = client
+        .get_issue(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-    loop {
-        if !visited.insert(current_id.clone()) {
-            bail!("cycle detected while resolving root issue starting at '{issue_id}'");
-        }
+    let root = issue
+        .issue
+        .get_root_issue(issue.id.clone(), |parent_id| async move {
+            client
+                .get_issue(&parent_id)
+                .await
+                .map_err(|err| err.to_string())
+        })
+        .await
+        .map_err(|err| anyhow!(err))?;
 
-        let record = client
-            .get_issue(&current_id)
-            .await
-            .with_context(|| match &parent_source {
-                Some(parent_id) => {
-                    format!("parent issue '{current_id}' referenced by '{parent_id}' is missing")
-                }
-                None => format!("failed to fetch issue '{current_id}'"),
-            })?;
-
-        let parent_id = record
-            .issue
-            .dependencies
-            .iter()
-            .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-            .map(|dependency| dependency.issue_id.clone());
-
-        if let Some(parent_id) = parent_id {
-            if visited.contains(&parent_id) {
-                bail!(
-                    "cycle detected while resolving root issue starting at '{issue_id}' (parent '{parent_id}')"
-                );
-            }
-            parent_source = Some(current_id);
-            current_id = parent_id;
-            continue;
-        }
-
-        let creator = record.issue.creator.trim();
-        if creator.is_empty() {
-            bail!("root issue '{current_id}' has no creator");
-        }
-        return Ok((record.id, creator.to_string()));
+    let creator = root.issue.creator.trim();
+    if creator.is_empty() {
+        bail!("root issue '{}' has no creator", root.id);
     }
+
+    Ok((root.id, creator.to_string()))
 }
 
 async fn fetch_child_issues(
@@ -1442,6 +1421,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_root_issue_creator_traverses_dependencies() -> Result<()> {
+        let client = MockMetisClient::default();
+        let root_id = issue_id("i-root");
+        let parent_id = issue_id("i-parent");
+        let child_id = issue_id("i-child");
+
+        client.push_get_issue_response(issue_record(
+            child_id.clone(),
+            "child-owner",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent_id.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(
+            parent_id.clone(),
+            "parent-owner",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: root_id.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(root_id.clone(), " root-owner ", Vec::new()));
+
+        let (resolved_root, creator) =
+            resolve_root_issue_creator(&client, child_id.clone()).await?;
+
+        assert_eq!(resolved_root, root_id);
+        assert_eq!(creator, "root-owner");
+        assert_eq!(
+            client.recorded_get_issue_requests(),
+            vec![child_id, parent_id, root_id]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_root_issue_creator_detects_cycles() -> Result<()> {
+        let client = MockMetisClient::default();
+        let issue_a = issue_id("i-cycle-a");
+        let issue_b = issue_id("i-cycle-b");
+
+        client.push_get_issue_response(issue_record(
+            issue_a.clone(),
+            "owner-a",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: issue_b.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(
+            issue_b.clone(),
+            "owner-b",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: issue_a.clone(),
+            }],
+        ));
+
+        let error = resolve_root_issue_creator(&client, issue_a.clone())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("cycle detected"),
+            "expected cycle error, got: {error}"
+        );
+        assert_eq!(client.recorded_get_issue_requests(), vec![issue_a, issue_b]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_issues_filters_by_assignee() {
         let client = MockMetisClient::default();
         client.push_list_issues_response(ListIssuesResponse {
@@ -1669,81 +1723,6 @@ mod tests {
                 patches: vec![child_patch_record]
             }]
         );
-    }
-
-    #[tokio::test]
-    async fn resolve_root_issue_creator_traverses_dependencies() -> Result<()> {
-        let client = MockMetisClient::default();
-        let root_id = issue_id("i-root");
-        let parent_id = issue_id("i-parent");
-        let child_id = issue_id("i-child");
-
-        client.push_get_issue_response(issue_record(
-            child_id.clone(),
-            "child-owner",
-            vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent_id.clone(),
-            }],
-        ));
-        client.push_get_issue_response(issue_record(
-            parent_id.clone(),
-            "parent-owner",
-            vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: root_id.clone(),
-            }],
-        ));
-        client.push_get_issue_response(issue_record(root_id.clone(), " root-owner ", Vec::new()));
-
-        let (resolved_root, creator) =
-            resolve_root_issue_creator(&client, child_id.clone()).await?;
-
-        assert_eq!(resolved_root, root_id);
-        assert_eq!(creator, "root-owner");
-        assert_eq!(
-            client.recorded_get_issue_requests(),
-            vec![child_id, parent_id, root_id]
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn resolve_root_issue_creator_detects_cycles() -> Result<()> {
-        let client = MockMetisClient::default();
-        let issue_a = issue_id("i-cycle-a");
-        let issue_b = issue_id("i-cycle-b");
-
-        client.push_get_issue_response(issue_record(
-            issue_a.clone(),
-            "owner-a",
-            vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: issue_b.clone(),
-            }],
-        ));
-        client.push_get_issue_response(issue_record(
-            issue_b.clone(),
-            "owner-b",
-            vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: issue_a.clone(),
-            }],
-        ));
-
-        let error = resolve_root_issue_creator(&client, issue_a.clone())
-            .await
-            .unwrap_err()
-            .to_string();
-
-        assert!(
-            error.contains("cycle detected"),
-            "expected cycle error, got: {error}"
-        );
-        assert_eq!(client.recorded_get_issue_requests(), vec![issue_a, issue_b]);
-
-        Ok(())
     }
 
     #[tokio::test]
