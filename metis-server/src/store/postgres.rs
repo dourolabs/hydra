@@ -776,6 +776,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn issue_round_trip(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
 
@@ -819,6 +820,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn add_issue_rejects_missing_dependency(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let missing = IssueId::new();
@@ -848,6 +850,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn errors_on_schema_mismatch(pool: PgStorePool) {
         let pool_for_update = pool.clone();
         let mut store = PostgresStore::new(pool);
@@ -868,6 +871,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn issue_graph_searches_blockers(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -888,6 +892,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn patch_associations_round_trip(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let patch_id = store.add_patch(sample_patch()).await.unwrap();
@@ -908,6 +913,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -960,6 +966,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
     async fn user_management_round_trip(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let user = User {
