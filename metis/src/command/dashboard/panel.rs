@@ -23,7 +23,7 @@
 //! }
 //! ```
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -225,6 +225,26 @@ impl PanelState {
         PanelEvent::None
     }
 
+    /// Handles mouse scroll events without changing focus.
+    pub fn handle_mouse_event(
+        &mut self,
+        mouse: MouseEvent,
+        content_len: usize,
+        view_height: usize,
+    ) -> PanelEvent {
+        let delta = match mouse.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return PanelEvent::None,
+        };
+
+        if self.apply_scroll_delta(delta, content_len, view_height) {
+            return PanelEvent::Scrolled;
+        }
+
+        PanelEvent::None
+    }
+
     pub fn sync_scroll(&mut self, content_len: usize, view_height: usize) {
         let max_offset = max_scroll_offset(content_len, view_height);
         if self.scroll_offset > max_offset {
@@ -402,6 +422,31 @@ mod tests {
         let event = state.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 3);
         assert_eq!(state.scroll_offset(), 0);
         assert_eq!(event, PanelEvent::None);
+    }
+
+    #[test]
+    fn mouse_scroll_adjusts_offset_without_focus() {
+        let mut state = PanelState::new();
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        let event = state.handle_mouse_event(mouse, 10, 3);
+        assert_eq!(state.scroll_offset(), 1);
+        assert_eq!(event, PanelEvent::Scrolled);
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        let event = state.handle_mouse_event(mouse, 10, 3);
+        assert_eq!(state.scroll_offset(), 0);
+        assert_eq!(event, PanelEvent::Scrolled);
     }
 
     #[test]
