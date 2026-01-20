@@ -567,7 +567,7 @@ async fn create_issue(
         issue: Issue {
             issue_type,
             description: description.to_string(),
-            creator,
+            creator: creator.into(),
             progress,
             status,
             assignee,
@@ -633,7 +633,7 @@ async fn update_issue(
         if trimmed.is_empty() {
             bail!("Creator must not be empty.");
         }
-        Some(trimmed.to_string())
+        Some(trimmed.to_string().into())
     } else {
         None
     };
@@ -912,7 +912,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {creator}")?;
+        writeln!(writer, "Creator: {}", creator.username)?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -1012,7 +1012,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {creator}")?;
+    writeln!(writer, "{indent}Creator: {}", creator.username)?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1288,7 +1288,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: None,
@@ -1339,7 +1339,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
@@ -1378,7 +1378,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
@@ -1454,7 +1454,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Parent issue".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -1469,7 +1469,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Root issue".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some("owner".into()),
@@ -1487,7 +1487,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Bug,
                 description: "Child issue".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: String::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
@@ -1715,7 +1715,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: "Initial note".into(),
                 status: IssueStatus::Open,
                 assignee: Some("owner-a".into()),
@@ -1762,7 +1762,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Updated issue description".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: "New progress".into(),
                         status: IssueStatus::Closed,
                         assignee: Some("owner-b".into()),
@@ -1787,7 +1787,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: "Started work".into(),
                 status: IssueStatus::InProgress,
                 assignee: Some("owner-a".into()),
@@ -1830,7 +1830,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Existing issue".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::InProgress,
                         assignee: None,
@@ -1852,7 +1852,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: "Working on repro".into(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
@@ -1869,7 +1869,7 @@ mod tests {
                 issue: Issue {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
-                    creator: String::new(),
+                    creator: String::new().into(),
                     progress: String::new(),
                     status: IssueStatus::InProgress,
                     assignee: None,
@@ -1918,7 +1918,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "has todos".into(),
-                creator: String::new(),
+                creator: String::new().into(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -2113,7 +2113,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
@@ -2130,7 +2130,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -2165,7 +2165,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: "Main progress".into(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
@@ -2182,7 +2182,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -2199,7 +2199,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Child".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: "Child update".into(),
                         status: IssueStatus::InProgress,
                         assignee: None,
@@ -2240,7 +2240,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
@@ -2257,7 +2257,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Parent description".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -2277,7 +2277,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Bug,
                         description: "Child description".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: None,
@@ -2334,7 +2334,7 @@ mod tests {
                     issue: Issue {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
-                        creator: String::new(),
+                        creator: String::new().into(),
                         progress: String::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),

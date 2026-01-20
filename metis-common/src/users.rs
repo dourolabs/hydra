@@ -11,6 +11,20 @@ pub struct UserSummary {
     pub username: String,
 }
 
+impl From<String> for UserSummary {
+    fn from(username: String) -> Self {
+        Self { username }
+    }
+}
+
+impl From<&str> for UserSummary {
+    fn from(username: &str) -> Self {
+        Self {
+            username: username.to_string(),
+        }
+    }
+}
+
 impl From<User> for UserSummary {
     fn from(user: User) -> Self {
         Self {

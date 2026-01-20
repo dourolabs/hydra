@@ -1,5 +1,5 @@
 pub use crate::IssueId;
-use crate::{PatchId, TaskId};
+use crate::{PatchId, TaskId, users::UserSummary};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -329,8 +329,8 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(default)]
-    pub creator: String,
+    #[serde(default = "default_creator", deserialize_with = "deserialize_creator")]
+    pub creator: UserSummary,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -343,6 +343,31 @@ pub struct Issue {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
+}
+
+fn default_creator() -> UserSummary {
+    UserSummary {
+        username: String::new(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum CreatorField {
+    UserSummary(UserSummary),
+    LegacyString(String),
+}
+
+fn deserialize_creator<'de, D>(deserializer: D) -> Result<UserSummary, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<CreatorField>::deserialize(deserializer)?;
+    Ok(match raw {
+        None => default_creator(),
+        Some(CreatorField::UserSummary(summary)) => summary,
+        Some(CreatorField::LegacyString(username)) => UserSummary { username },
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -530,6 +555,33 @@ mod tests {
     }
 
     #[test]
+    fn issue_creator_defaults_when_missing() {
+        let raw = r#"{"type":"task","description":"write docs"}"#;
+
+        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
+
+        assert!(issue.creator.username.is_empty());
+    }
+
+    #[test]
+    fn issue_creator_accepts_null() {
+        let raw = r#"{"type":"task","description":"write docs","creator":null}"#;
+
+        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
+
+        assert!(issue.creator.username.is_empty());
+    }
+
+    #[test]
+    fn issue_creator_accepts_legacy_string() {
+        let raw = r#"{"type":"task","description":"write docs","creator":"alice"}"#;
+
+        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
+
+        assert_eq!(issue.creator.username, "alice");
+    }
+
+    #[test]
     fn issue_todo_list_round_trips_in_order() {
         let todos = vec![
             TodoItem {
@@ -544,7 +596,7 @@ mod tests {
         let issue = Issue {
             issue_type: IssueType::Task,
             description: "with todos".to_string(),
-            creator: String::new(),
+            creator: default_creator(),
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,

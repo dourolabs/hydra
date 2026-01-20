@@ -726,7 +726,7 @@ impl AppState {
                     }
                 }
 
-                if issue.creator.trim().is_empty() {
+                if issue.creator.username.trim().is_empty() {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
                     }) {
@@ -1066,7 +1066,7 @@ mod tests {
         Issue {
             issue_type: IssueType::Task,
             description: description.to_string(),
-            creator: String::new(),
+            creator: String::new().into(),
             progress: String::new(),
             status,
             assignee: None,
@@ -1317,7 +1317,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        parent_issue.creator = "parent-creator".into();
         let parent_id = state
             .upsert_issue(
                 None,
@@ -1347,7 +1347,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "parent-creator");
+        assert_eq!(stored_child.creator.username, "parent-creator");
     }
 
     #[tokio::test]
@@ -1356,7 +1356,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        parent_issue.creator = "parent-creator".into();
         let parent_id = state
             .upsert_issue(
                 None,
@@ -1373,7 +1373,7 @@ mod tests {
             issue_id: parent_id.clone(),
         };
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = "explicit-creator".to_string();
+        child_issue.creator = "explicit-creator".into();
         let child_id = state
             .upsert_issue(
                 None,
@@ -1387,7 +1387,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "explicit-creator");
+        assert_eq!(stored_child.creator.username, "explicit-creator");
     }
 
     #[tokio::test]
@@ -1409,6 +1409,6 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_issue = store.get_issue(&issue_id).await.unwrap();
-        assert!(stored_issue.creator.is_empty());
+        assert!(stored_issue.creator.username.is_empty());
     }
 }

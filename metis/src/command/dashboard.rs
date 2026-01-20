@@ -702,7 +702,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = creator.to_string();
+    let creator = creator.into();
 
     let request = UpsertIssueRequest {
         issue: Issue {
@@ -2804,7 +2804,7 @@ mod tests {
         assert_eq!(request.issue.status, IssueStatus::Open);
         assert_eq!(request.issue.description, "Draft release notes");
         assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
-        assert_eq!(request.issue.creator, " metis-user ");
+        assert_eq!(request.issue.creator.username, " metis-user ");
         assert!(request.issue.dependencies.is_empty());
     }
 }
