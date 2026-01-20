@@ -979,6 +979,11 @@ impl AppState {
             .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id, &patch)
             .await
     }
+
+    pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
+        let store = self.store.read().await;
+        issue_ready(store.as_ref(), issue_id).await
+    }
 }
 
 fn join_issue_ids(ids: &[IssueId]) -> String {
@@ -995,6 +1000,38 @@ fn join_item_numbers(numbers: &[usize]) -> String {
         .map(|value| value.to_string())
         .collect::<Vec<String>>()
         .join(", ")
+}
+
+async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
+    let issue = store.get_issue(issue_id).await?;
+
+    match issue.status {
+        IssueStatus::Closed | IssueStatus::Dropped => Ok(false),
+        IssueStatus::Open => {
+            for dependency in issue
+                .dependencies
+                .iter()
+                .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
+            {
+                let blocker = store.get_issue(&dependency.issue_id).await?;
+                if blocker.status != IssueStatus::Closed {
+                    return Ok(false);
+                }
+            }
+
+            Ok(true)
+        }
+        IssueStatus::InProgress => {
+            for child_id in store.get_issue_children(issue_id).await? {
+                let child = store.get_issue(&child_id).await?;
+                if child.status != IssueStatus::Closed {
+                    return Ok(false);
+                }
+            }
+
+            Ok(true)
+        }
+    }
 }
 
 async fn validate_issue_lifecycle(
@@ -1151,7 +1188,7 @@ mod tests {
     use crate::{
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
-        test_utils::{MockJobEngine, test_state_with_engine},
+        test_utils::{MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
     use metis_common::{
@@ -1200,6 +1237,160 @@ mod tests {
             dependencies,
             patches: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn open_issue_ready_when_not_blocked() {
+        let state = test_state();
+
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(issue_with_status("open", IssueStatus::Open, vec![]))
+                .await
+                .unwrap()
+        };
+
+        assert!(state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_issue_not_ready_when_blocked_on_open_issue() {
+        let state = test_state();
+
+        let (blocker_id, blocked_issue_id) = {
+            let mut store = state.store.write().await;
+            let blocker_id = store
+                .add_issue(issue_with_status("blocker", IssueStatus::Open, vec![]))
+                .await
+                .unwrap();
+            let blocked_issue_id = store
+                .add_issue(issue_with_status(
+                    "blocked",
+                    IssueStatus::Open,
+                    vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: blocker_id.clone(),
+                    }],
+                ))
+                .await
+                .unwrap();
+
+            (blocker_id, blocked_issue_id)
+        };
+
+        assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .update_issue(
+                    &blocker_id,
+                    issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(state.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn in_progress_issue_ready_after_children_closed() {
+        let state = test_state();
+
+        let (parent_id, child_id, child_dependencies) = {
+            let mut store = state.store.write().await;
+            let parent_id = store
+                .add_issue(issue_with_status("parent", IssueStatus::InProgress, vec![]))
+                .await
+                .unwrap();
+            let child_dependencies = vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent_id.clone(),
+            }];
+            let child_id = store
+                .add_issue(issue_with_status(
+                    "child",
+                    IssueStatus::Open,
+                    child_dependencies.clone(),
+                ))
+                .await
+                .unwrap();
+
+            (parent_id, child_id, child_dependencies)
+        };
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .update_issue(
+                    &child_id,
+                    issue_with_status("child", IssueStatus::Closed, child_dependencies),
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropped_issue_is_not_ready() {
+        let state = test_state();
+
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(issue_with_status("dropped", IssueStatus::Dropped, vec![]))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropped_blocker_keeps_issue_blocked() {
+        let state = test_state();
+
+        let blocked_issue_id = {
+            let mut store = state.store.write().await;
+            let blocker_id = store
+                .add_issue(issue_with_status("blocker", IssueStatus::Dropped, vec![]))
+                .await
+                .unwrap();
+            store
+                .add_issue(issue_with_status(
+                    "blocked",
+                    IssueStatus::Open,
+                    vec![IssueDependency {
+                        dependency_type: IssueDependencyType::BlockedOn,
+                        issue_id: blocker_id,
+                    }],
+                ))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn closed_issue_is_not_ready() {
+        let state = test_state();
+
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(issue_with_status("closed", IssueStatus::Closed, vec![]))
+                .await
+                .unwrap()
+        };
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
     }
 
     #[tokio::test]

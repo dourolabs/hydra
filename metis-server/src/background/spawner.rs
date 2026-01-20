@@ -126,7 +126,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let is_ready = store
+            let is_ready = state
                 .is_issue_ready(&issue_id)
                 .await
                 .context("failed to determine if issue is ready")?;
