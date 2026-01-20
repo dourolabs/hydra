@@ -732,9 +732,7 @@ impl AppState {
                     }) {
                         match store.get_issue(&parent_dependency.issue_id).await {
                             Ok(parent_issue) => {
-                                if issue.creator.trim().is_empty() {
-                                    issue.creator = parent_issue.creator;
-                                }
+                                issue.creator = parent_issue.creator;
                             }
                             Err(source @ StoreError::IssueNotFound(_)) => {
                                 return Err(UpsertIssueError::MissingDependency {
