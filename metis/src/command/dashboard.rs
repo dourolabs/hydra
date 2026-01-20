@@ -533,7 +533,6 @@ fn handle_panel_focus_key(state: &mut DashboardState) {
 }
 
 fn update_panel_focus(state: &mut DashboardState) {
-    normalize_status_panel_focus(state);
     let status_focused = state.selected_panel == PanelFocus::Status;
     state
         .issue_creator_panel
@@ -541,24 +540,12 @@ fn update_panel_focus(state: &mut DashboardState) {
     state
         .running_issue_panel
         .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Running);
-    state.user_unowned_issue_panel.set_focused(
-        status_focused
-            && state.status_panel_focus == StatusPanelFocus::UserOwned
-            && has_user_owned_panel(state),
-    );
+    state
+        .user_unowned_issue_panel
+        .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::UserOwned);
     state
         .completed_issue_panel
         .set_focused(status_focused && state.status_panel_focus == StatusPanelFocus::Completed);
-}
-
-fn normalize_status_panel_focus(state: &mut DashboardState) {
-    if !has_user_owned_panel(state) && state.status_panel_focus == StatusPanelFocus::UserOwned {
-        state.status_panel_focus = StatusPanelFocus::Running;
-    }
-}
-
-fn has_user_owned_panel(state: &DashboardState) -> bool {
-    !state.username.is_empty()
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -600,7 +587,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
     };
 
     let layout = dashboard_layout(size);
-    let panels = issue_panel_layout(layout.issue_sections, state);
+    let panels = issue_panel_layout(layout.issue_sections);
 
     match state.status_panel_focus {
         StatusPanelFocus::UserOwned => {
@@ -776,7 +763,7 @@ fn render_issue_sections(
     area: ratatui::layout::Rect,
     state: &mut DashboardState,
 ) {
-    let panels = issue_panel_layout(area, state);
+    let panels = issue_panel_layout(area);
 
     if let Some(rect) = panels.user_owned {
         let title = issue_list_title("Your Issues", &state.user_unowned_issue_lines);
@@ -939,33 +926,19 @@ struct IssueCreatorLayout {
     footer: Rect,
 }
 
-fn issue_panel_layout(area: Rect, state: &DashboardState) -> IssuePanelLayout {
-    let has_username = !state.username.is_empty();
-
-    if has_username {
-        let panels = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(USER_ISSUES_PANEL_HEIGHT),
-                Constraint::Fill(1),
-                Constraint::Fill(1),
-            ])
-            .split(area);
-        return IssuePanelLayout {
-            user_owned: Some(panels[0]),
-            running: panels[1],
-            completed: panels[2],
-        };
-    }
-
+fn issue_panel_layout(area: Rect) -> IssuePanelLayout {
     let panels = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .constraints([
+            Constraint::Length(USER_ISSUES_PANEL_HEIGHT),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+        ])
         .split(area);
     IssuePanelLayout {
-        user_owned: None,
-        running: panels[0],
-        completed: panels[1],
+        user_owned: Some(panels[0]),
+        running: panels[1],
+        completed: panels[2],
     }
 }
 
@@ -1006,7 +979,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
     };
 
     let layout = dashboard_layout(size);
-    let panels = issue_panel_layout(layout.issue_sections, state);
+    let panels = issue_panel_layout(layout.issue_sections);
     let row = mouse.row;
     let column = mouse.column;
 
@@ -1066,7 +1039,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
     };
 
     let layout = dashboard_layout(size);
-    let panels = issue_panel_layout(layout.issue_sections, state);
+    let panels = issue_panel_layout(layout.issue_sections);
 
     if let Some(rect) = panels.user_owned {
         let view_height = panel_content_height(rect, state.user_unowned_issue_panel.focused());
@@ -2569,7 +2542,7 @@ mod tests {
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
-        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let panels = issue_panel_layout(layout.issue_sections);
         let mouse = MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: panels.running.x + 1,
@@ -2600,7 +2573,7 @@ mod tests {
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
-        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let panels = issue_panel_layout(layout.issue_sections);
         let user_owned = panels.user_owned.expect("user-owned panel missing");
         let mouse = MouseEvent {
             kind: MouseEventKind::ScrollDown,
@@ -2629,7 +2602,7 @@ mod tests {
         state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
 
         let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
-        let panels = issue_panel_layout(layout.issue_sections, &state);
+        let panels = issue_panel_layout(layout.issue_sections);
         let mouse = MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: panels.completed.x + 1,
