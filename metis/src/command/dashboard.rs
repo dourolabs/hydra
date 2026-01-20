@@ -370,27 +370,12 @@ async fn run_dashboard_loop(
     update_panel_focus(&mut state);
     let mut needs_draw = true;
 
-    match refresh_jobs(client, &mut state).await {
-        Ok(changed) => needs_draw |= changed,
-        Err(err) => {
-            state.jobs_error = Some(format!("Failed to load jobs: {err}"));
-            needs_draw = true;
-        }
+    if let Err(err) = refresh_jobs(client, &mut state).await {
+        state.jobs_error = Some(format!("Failed to load jobs: {err}"));
     }
 
-    match refresh_records(client, &mut state).await {
-        Ok(changed) => needs_draw |= changed,
-        Err(err) => {
-            state.records_error = Some(format!("Failed to load issues: {err}"));
-            needs_draw = true;
-        }
-    }
-
-    if needs_draw {
-        state.last_frame_size = Some(terminal.size()?.into());
-        clamp_issue_scrolls(&mut state);
-        terminal.draw(|f| render(f, &mut state))?;
-        needs_draw = false;
+    if let Err(err) = refresh_records(client, &mut state).await {
+        state.records_error = Some(format!("Failed to load issues: {err}"));
     }
 
     let mut events = EventStream::new();
@@ -398,6 +383,13 @@ async fn run_dashboard_loop(
     let mut records_tick = tokio::time::interval(RECORD_REFRESH_INTERVAL);
 
     loop {
+        if needs_draw {
+            state.last_frame_size = Some(terminal.size()?.into());
+            clamp_issue_scrolls(&mut state);
+            terminal.draw(|f| render(f, &mut state))?;
+            needs_draw = false;
+        }
+
         tokio::select! {
             _ = jobs_tick.tick() => {
                 match refresh_jobs(client, &mut state).await {
@@ -467,13 +459,6 @@ async fn run_dashboard_loop(
                     None => break,
                 }
             }
-        }
-
-        if needs_draw {
-            state.last_frame_size = Some(terminal.size()?.into());
-            clamp_issue_scrolls(&mut state);
-            terminal.draw(|f| render(f, &mut state))?;
-            needs_draw = false;
         }
     }
 
