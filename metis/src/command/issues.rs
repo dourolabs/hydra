@@ -368,6 +368,56 @@ async fn fetch_parent_issues(
     Ok(parents)
 }
 
+#[allow(dead_code)]
+pub(crate) async fn resolve_root_issue_creator(
+    client: &dyn MetisClientInterface,
+    issue_id: IssueId,
+) -> Result<(IssueId, String)> {
+    let mut current_id = issue_id.clone();
+    let mut visited = HashSet::new();
+    let mut parent_source: Option<IssueId> = None;
+
+    loop {
+        if !visited.insert(current_id.clone()) {
+            bail!("cycle detected while resolving root issue starting at '{issue_id}'");
+        }
+
+        let record = client
+            .get_issue(&current_id)
+            .await
+            .with_context(|| match &parent_source {
+                Some(parent_id) => {
+                    format!("parent issue '{current_id}' referenced by '{parent_id}' is missing")
+                }
+                None => format!("failed to fetch issue '{current_id}'"),
+            })?;
+
+        let parent_id = record
+            .issue
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+            .map(|dependency| dependency.issue_id.clone());
+
+        if let Some(parent_id) = parent_id {
+            if visited.contains(&parent_id) {
+                bail!(
+                    "cycle detected while resolving root issue starting at '{issue_id}' (parent '{parent_id}')"
+                );
+            }
+            parent_source = Some(current_id);
+            current_id = parent_id;
+            continue;
+        }
+
+        let creator = record.issue.creator.trim();
+        if creator.is_empty() {
+            bail!("root issue '{current_id}' has no creator");
+        }
+        return Ok((record.id, creator.to_string()));
+    }
+}
+
 async fn fetch_child_issues(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
@@ -1263,9 +1313,10 @@ mod tests {
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use metis_common::issues::{
-        AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
-        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueDependency, IssueGraphSelector, IssueGraphWildcard,
+        IssueRecord, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+        UpsertIssueResponse,
     };
     use metis_common::patches::{Patch, PatchRecord, Review};
     use metis_common::RepoName;
@@ -1277,6 +1328,27 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    fn issue_record(
+        id: IssueId,
+        creator: impl Into<String>,
+        dependencies: Vec<IssueDependency>,
+    ) -> IssueRecord {
+        IssueRecord {
+            id: id.clone(),
+            issue: Issue {
+                issue_type: IssueType::Task,
+                description: format!("Issue {}", id.as_ref()),
+                creator: creator.into(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                todo_list: Vec::new(),
+                dependencies,
+                patches: Vec::new(),
+            },
+        }
     }
 
     #[tokio::test]
@@ -1597,6 +1669,81 @@ mod tests {
                 patches: vec![child_patch_record]
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_root_issue_creator_traverses_dependencies() -> Result<()> {
+        let client = MockMetisClient::default();
+        let root_id = issue_id("i-root");
+        let parent_id = issue_id("i-parent");
+        let child_id = issue_id("i-child");
+
+        client.push_get_issue_response(issue_record(
+            child_id.clone(),
+            "child-owner",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: parent_id.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(
+            parent_id.clone(),
+            "parent-owner",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: root_id.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(root_id.clone(), " root-owner ", Vec::new()));
+
+        let (resolved_root, creator) =
+            resolve_root_issue_creator(&client, child_id.clone()).await?;
+
+        assert_eq!(resolved_root, root_id);
+        assert_eq!(creator, "root-owner");
+        assert_eq!(
+            client.recorded_get_issue_requests(),
+            vec![child_id, parent_id, root_id]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_root_issue_creator_detects_cycles() -> Result<()> {
+        let client = MockMetisClient::default();
+        let issue_a = issue_id("i-cycle-a");
+        let issue_b = issue_id("i-cycle-b");
+
+        client.push_get_issue_response(issue_record(
+            issue_a.clone(),
+            "owner-a",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: issue_b.clone(),
+            }],
+        ));
+        client.push_get_issue_response(issue_record(
+            issue_b.clone(),
+            "owner-b",
+            vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: issue_a.clone(),
+            }],
+        ));
+
+        let error = resolve_root_issue_creator(&client, issue_a.clone())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("cycle detected"),
+            "expected cycle error, got: {error}"
+        );
+        assert_eq!(client.recorded_get_issue_requests(), vec![issue_a, issue_b]);
+
+        Ok(())
     }
 
     #[tokio::test]
