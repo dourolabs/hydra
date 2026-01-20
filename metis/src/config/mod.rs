@@ -29,7 +29,8 @@ pub struct ServerSection {
     pub url: String,
 }
 
-pub(crate) fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
+/// Expand a leading tilde to the user's home directory.
+pub fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
     let path = path.as_ref();
     match path.to_str() {
         Some(raw) if raw.starts_with('~') => PathBuf::from(shellexpand::tilde(raw).into_owned()),

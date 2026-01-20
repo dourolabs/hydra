@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     client::{MetisClient, MetisClientInterface},
@@ -133,5 +133,71 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
         .config
         .clone()
         .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
+    let resolved_path = config::expand_path(&config_path);
+    if !resolved_path.exists() {
+        return Err(anyhow!(
+            "No server URL provided and configuration file '{}' was not found. Use --server-url or --config.",
+            resolved_path.display()
+        ));
+    }
+
     AppConfig::load(&config_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_app_config, Cli};
+    use crate::constants::DEFAULT_CONFIG_FILE;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn base_cli() -> Cli {
+        Cli {
+            config: None,
+            server_url: None,
+            command: super::Commands::Agents { pretty: false },
+        }
+    }
+
+    #[test]
+    fn load_config_missing_allows_server_url_override() {
+        let cli = Cli {
+            server_url: Some("http://localhost:9000".to_string()),
+            ..base_cli()
+        };
+
+        let config = load_app_config(&cli).expect("config should load from server url");
+        assert_eq!(config.server.url, "http://localhost:9000");
+    }
+
+    #[test]
+    fn load_config_missing_without_server_url_errors() {
+        let temp = tempdir().expect("tempdir");
+        let missing_path = temp.path().join("missing.toml");
+        let cli = Cli {
+            config: Some(missing_path),
+            ..base_cli()
+        };
+
+        let err = load_app_config(&cli).expect_err("missing config should error");
+        assert!(
+            err.to_string().contains("No server URL provided"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_config_present_without_server_url_uses_config() {
+        let temp = tempdir().expect("tempdir");
+        let config_path = temp.path().join(DEFAULT_CONFIG_FILE);
+        std::fs::write(&config_path, "[server]\nurl = \"http://127.0.0.1:8080\"\n")
+            .expect("write config");
+
+        let cli = Cli {
+            config: Some(PathBuf::from(&config_path)),
+            ..base_cli()
+        };
+        let config = load_app_config(&cli).expect("config should load from file");
+        assert_eq!(config.server.url, "http://127.0.0.1:8080");
+    }
 }
