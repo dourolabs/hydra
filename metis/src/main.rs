@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     client::{MetisClient, MetisClientInterface},
@@ -17,18 +17,19 @@ use metis_common::constants::ENV_METIS_SERVER_URL;
     about = "Utility CLI for AI orchestrator prototypes"
 )]
 struct Cli {
-    /// Path to the CLI configuration file.
+    /// Optional path to the CLI configuration file.
     #[arg(long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
     /// Override the Metis server URL (also via METIS_SERVER_URL).
     #[arg(
-        long = "server-url",
+        long = "server",
         value_name = "URL",
         env = ENV_METIS_SERVER_URL,
-        global = true
+        global = true,
+        alias = "server-url"
     )]
-    server_url: Option<String>,
+    server: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -117,7 +118,7 @@ async fn dispatch(
 
 fn load_app_config(cli: &Cli) -> Result<AppConfig> {
     if let Some(url) = cli
-        .server_url
+        .server
         .as_deref()
         .map(str::trim)
         .filter(|url| !url.is_empty())
@@ -133,5 +134,11 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
         .config
         .clone()
         .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
+    if !config_path.exists() {
+        bail!(
+            "no config file found at '{}' and no --server provided",
+            config_path.display()
+        );
+    }
     AppConfig::load(&config_path)
 }
