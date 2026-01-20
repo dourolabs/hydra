@@ -11,20 +11,33 @@ use chrono::Utc;
 use metis_common::{
     TaskId,
     issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus,
-        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
-        UpsertIssueResponse,
+        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueProgressEntry,
+        IssueRecord, IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest,
+        SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     },
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
+
+fn progress_entry(text: &str) -> IssueProgressEntry {
+    IssueProgressEntry {
+        text: text.to_string(),
+        timestamp: Utc::now(),
+        author: None,
+    }
+}
+
+fn progress_entries(text: &str) -> Vec<IssueProgressEntry> {
+    vec![progress_entry(text)]
+}
 
 #[tokio::test]
 async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
+    let initial_progress = progress_entries("Initial progress");
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest {
@@ -32,7 +45,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "original details".to_string(),
                 creator: String::new(),
-                progress: "Initial progress".to_string(),
+                progress: initial_progress.clone(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -46,6 +59,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         .json()
         .await?;
 
+    let updated_progress = progress_entries("Updated progress");
     let updated: UpsertIssueResponse = client
         .put(format!(
             "{}/v1/issues/{}",
@@ -57,7 +71,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "updated details".to_string(),
                 creator: String::new(),
-                progress: "Updated progress".to_string(),
+                progress: updated_progress.clone(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -90,7 +104,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             issue_type: IssueType::Task,
             description: "updated details".to_string(),
             creator: String::new(),
-            progress: "Updated progress".to_string(),
+            progress: updated_progress,
             status: IssueStatus::InProgress,
             assignee: None,
             todo_list: Vec::new(),
@@ -113,7 +127,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "blocker".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -138,7 +152,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -163,7 +177,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -196,7 +210,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "blocker".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -220,7 +234,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "blocked".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -248,7 +262,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -273,7 +287,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 issue_type: IssueType::Task,
                 description: "child".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -298,7 +312,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -331,7 +345,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 issue_type: IssueType::Task,
                 description: "child".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -355,7 +369,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 issue_type: IssueType::Task,
                 description: "parent".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Closed,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -390,7 +404,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
         issue_type: IssueType::Task,
         description: "issue with todos".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Open,
         assignee: None,
         todo_list,
@@ -484,7 +498,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         issue_type: IssueType::Task,
         description: "dropped issue".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Open,
         assignee: None,
         todo_list: Vec::new(),
@@ -555,7 +569,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         issue_type: IssueType::Bug,
         description: "login fails for guests".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Open,
         assignee: None,
         todo_list: Vec::new(),
@@ -566,7 +580,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         issue_type: IssueType::Task,
         description: "assigned issue".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Open,
         assignee: Some("owner-1".to_string()),
         todo_list: Vec::new(),
@@ -577,7 +591,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         issue_type: IssueType::Task,
         description: "retire old endpoint".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Closed,
         assignee: None,
         todo_list: Vec::new(),
@@ -666,7 +680,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
                 issue_type: IssueType::Task,
                 description: "issue with todos".to_string(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: vec![initial_todo.clone()],

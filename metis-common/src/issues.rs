@@ -1,5 +1,6 @@
 pub use crate::IssueId;
 use crate::{PatchId, TaskId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -144,6 +145,14 @@ pub struct TodoListResponse {
     pub issue_id: IssueId,
     #[serde(default)]
     pub todo_list: Vec<TodoItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueProgressEntry {
+    pub text: String,
+    pub timestamp: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,8 +340,11 @@ pub struct Issue {
     pub description: String,
     #[serde(default)]
     pub creator: String,
-    #[serde(default)]
-    pub progress: String,
+    #[serde(
+        default = "default_progress_entries",
+        deserialize_with = "deserialize_progress_entries"
+    )]
+    pub progress: Vec<IssueProgressEntry>,
     #[serde(default)]
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -343,6 +355,54 @@ pub struct Issue {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
+}
+
+impl Issue {
+    pub fn progress_text(&self) -> String {
+        self.progress
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn latest_progress(&self) -> Option<&IssueProgressEntry> {
+        self.progress.last()
+    }
+}
+
+fn default_progress_entries() -> Vec<IssueProgressEntry> {
+    Vec::new()
+}
+
+fn deserialize_progress_entries<'de, D>(
+    deserializer: D,
+) -> Result<Vec<IssueProgressEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ProgressField {
+        Entries(Vec<IssueProgressEntry>),
+        Text(String),
+    }
+
+    let value = ProgressField::deserialize(deserializer)?;
+    match value {
+        ProgressField::Entries(entries) => Ok(entries),
+        ProgressField::Text(text) => {
+            if text.trim().is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![IssueProgressEntry {
+                    text,
+                    timestamp: Utc::now(),
+                    author: None,
+                }])
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,6 +479,7 @@ pub struct ListIssuesResponse {
 mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
+    use chrono::{DateTime, Utc};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -527,6 +588,7 @@ mod tests {
 
         assert!(issue.todo_list.is_empty());
         assert_eq!(issue.status, IssueStatus::Open);
+        assert!(issue.progress.is_empty());
     }
 
     #[test]
@@ -545,7 +607,7 @@ mod tests {
             issue_type: IssueType::Task,
             description: "with todos".to_string(),
             creator: String::new(),
-            progress: String::new(),
+            progress: Vec::new(),
             status: IssueStatus::Open,
             assignee: None,
             todo_list: todos.clone(),
@@ -558,5 +620,54 @@ mod tests {
 
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.todo_list, todos);
+        assert!(round_trip.progress.is_empty());
+    }
+
+    #[test]
+    fn issue_progress_entry_round_trips() {
+        let timestamp =
+            DateTime::from_timestamp(1_700_000_000, 0).expect("timestamp should be valid");
+        let entry = IssueProgressEntry {
+            text: "first update".to_string(),
+            timestamp,
+            author: Some("alice".to_string()),
+        };
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "with progress".to_string(),
+            creator: String::new(),
+            progress: vec![entry.clone()],
+            status: IssueStatus::Open,
+            assignee: None,
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&issue).expect("issue should serialize");
+        assert_eq!(value["progress"][0]["text"], json!("first update"));
+        assert_eq!(
+            value["progress"][0]["timestamp"],
+            json!("2023-11-14T22:13:20Z")
+        );
+        assert_eq!(value["progress"][0]["author"], json!("alice"));
+
+        let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
+        assert_eq!(round_trip.progress, vec![entry]);
+    }
+
+    #[test]
+    fn issue_progress_accepts_legacy_string() {
+        let raw = r#"{"type":"task","description":"write docs","progress":"legacy notes"}"#;
+
+        let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
+
+        assert_eq!(issue.progress.len(), 1);
+        assert_eq!(issue.progress[0].text, "legacy notes");
+        assert!(issue.progress[0].author.is_none());
+        assert!(
+            issue.progress[0].timestamp <= Utc::now(),
+            "timestamp should be initialized"
+        );
     }
 }

@@ -559,7 +559,7 @@ async fn create_merge_request_issue(
                 issue_type: IssueType::MergeRequest,
                 description,
                 creator,
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: Some(assignee),
                 todo_list: Vec::new(),

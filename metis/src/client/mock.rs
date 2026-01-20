@@ -1,6 +1,7 @@
 use super::{LogStream, MetisClientInterface};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use futures::stream;
 use metis_common::{
     agents::ListAgentsResponse,
@@ -200,7 +201,14 @@ impl MockMetisClient {
     }
 
     pub fn recorded_issue_upserts(&self) -> Vec<(Option<IssueId>, UpsertIssueRequest)> {
-        self.issue_upsert_requests.lock().unwrap().clone()
+        let mut requests = self.issue_upsert_requests.lock().unwrap().clone();
+        let zero = zero_timestamp();
+        for (_, upsert) in &mut requests {
+            for entry in &mut upsert.issue.progress {
+                entry.timestamp = zero;
+            }
+        }
+        requests
     }
 
     pub fn recorded_add_todo_requests(&self) -> Vec<(IssueId, AddTodoItemRequest)> {
@@ -255,6 +263,10 @@ impl MockMetisClient {
     pub fn recorded_enqueue_merge_queue_requests(&self) -> Vec<(RepoName, String, PatchId)> {
         self.enqueue_merge_queue_requests.lock().unwrap().clone()
     }
+}
+
+fn zero_timestamp() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0).expect("valid unix epoch")
 }
 
 #[async_trait]

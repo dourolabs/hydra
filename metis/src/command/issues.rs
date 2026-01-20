@@ -5,9 +5,9 @@ use clap::Subcommand;
 use metis_common::{
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
-        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
-        UpsertIssueRequest,
+        IssueGraphSelector, IssueGraphWildcard, IssueId, IssueProgressEntry, IssueRecord,
+        IssueStatus, IssueType, ReplaceTodoListRequest, SearchIssuesQuery,
+        SetTodoItemStatusRequest, TodoItem, UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
     PatchId,
@@ -526,6 +526,18 @@ async fn fetch_issues(
     Ok(issues)
 }
 
+fn progress_from_note(note: Option<String>, author: &str) -> Option<Vec<IssueProgressEntry>> {
+    note.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|text| {
+            vec![IssueProgressEntry {
+                text,
+                timestamp: Utc::now(),
+                author: Some(author.to_string()),
+            }]
+        })
+}
+
 async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
@@ -541,10 +553,6 @@ async fn create_issue(
     if description.is_empty() {
         bail!("Issue description must not be empty.");
     }
-
-    let progress = progress
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
 
     let creator = creator
         .or_else(|| env::var("METIS_USER").ok())
@@ -563,12 +571,14 @@ async fn create_issue(
         None => None,
     };
 
+    let progress_entries = progress_from_note(progress, &creator).unwrap_or_default();
+
     let request = UpsertIssueRequest {
         issue: Issue {
             issue_type,
             description: description.to_string(),
             creator,
-            progress,
+            progress: progress_entries,
             status,
             assignee,
             todo_list: Vec::new(),
@@ -654,7 +664,7 @@ async fn update_issue(
         Some(patches)
     };
 
-    let progress_update = if clear_progress {
+    let progress_note_update = if clear_progress {
         Some(String::new())
     } else {
         progress.map(|value| value.trim().to_string())
@@ -667,7 +677,7 @@ async fn update_issue(
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
-        && progress_update.is_none();
+        && progress_note_update.is_none();
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -677,11 +687,21 @@ async fn update_issue(
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
+    let resolved_creator = creator
+        .clone()
+        .unwrap_or_else(|| current.issue.creator.clone());
+
+    let progress_entries_update = match progress_note_update {
+        Some(value) if value.is_empty() => Some(Vec::new()),
+        Some(value) => progress_from_note(Some(value), &resolved_creator),
+        None => None,
+    };
+
     let updated_issue = Issue {
         issue_type: issue_type.unwrap_or(current.issue.issue_type),
         description: description.unwrap_or(current.issue.description),
         creator: creator.unwrap_or(current.issue.creator),
-        progress: progress_update.unwrap_or(current.issue.progress),
+        progress: progress_entries_update.unwrap_or(current.issue.progress),
         status: status.unwrap_or(current.issue.status),
         assignee: assignee.unwrap_or(current.issue.assignee),
         todo_list: current.issue.todo_list,
@@ -900,16 +920,17 @@ fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result
 
 fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
     for (index, issue_record) in issues.iter().enumerate() {
+        let issue = &issue_record.issue;
         let Issue {
             issue_type,
             description,
             creator,
-            progress,
             status,
             assignee,
             dependencies,
             ..
-        } = &issue_record.issue;
+        } = issue;
+        let progress_text = issue.progress_text();
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
         writeln!(writer, "Creator: {creator}")?;
@@ -924,10 +945,10 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         }
 
         writeln!(writer, "Progress:")?;
-        if progress.trim().is_empty() {
+        if progress_text.trim().is_empty() {
             writeln!(writer, "  -")?;
         } else {
-            for line in progress.lines() {
+            for line in progress_text.lines() {
                 writeln!(writer, "  {line}")?;
             }
         }
@@ -995,17 +1016,18 @@ fn write_issue_details_pretty(
         issue: issue_record,
         patches: patch_records,
     } = issue_with_patches;
+    let issue = &issue_record.issue;
     let Issue {
         issue_type,
         description,
         creator,
-        progress,
         status,
         assignee,
         dependencies,
         todo_list,
         ..
-    } = &issue_record.issue;
+    } = issue;
+    let progress_text = issue.progress_text();
 
     writeln!(
         writer,
@@ -1028,10 +1050,10 @@ fn write_issue_details_pretty(
     }
 
     writeln!(writer, "{indent}Progress:")?;
-    if progress.trim().is_empty() {
+    if progress_text.trim().is_empty() {
         writeln!(writer, "{indent}  -")?;
     } else {
-        for line in progress.lines() {
+        for line in progress_text.lines() {
             writeln!(writer, "{indent}  {line}")?;
         }
     }
@@ -1279,6 +1301,19 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
+    fn test_progress_entry(text: &str, author: Option<&str>) -> IssueProgressEntry {
+        let timestamp = Utc.timestamp_opt(0, 0).single().expect("valid timestamp");
+        IssueProgressEntry {
+            text: text.to_string(),
+            timestamp,
+            author: author.map(|value| value.to_string()),
+        }
+    }
+
+    fn progress_vec(text: &str, author: Option<&str>) -> Vec<IssueProgressEntry> {
+        vec![test_progress_entry(text, author)]
+    }
+
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let client = MockMetisClient::default();
@@ -1289,7 +1324,7 @@ mod tests {
                     issue_type: IssueType::Bug,
                     description: "First issue".into(),
                     creator: String::new(),
-                    progress: String::new(),
+                    progress: Vec::new(),
                     status: IssueStatus::Open,
                     assignee: None,
                     todo_list: Vec::new(),
@@ -1340,7 +1375,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "Edge case bug".into(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -1379,7 +1414,7 @@ mod tests {
                     issue_type: IssueType::Task,
                     description: "Edge case bug".into(),
                     creator: String::new(),
-                    progress: String::new(),
+                    progress: Vec::new(),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
                     todo_list: Vec::new(),
@@ -1455,7 +1490,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "Parent issue".into(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -1470,7 +1505,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "Root issue".into(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: Some("owner".into()),
                 todo_list: Vec::new(),
@@ -1488,7 +1523,7 @@ mod tests {
                 issue_type: IssueType::Bug,
                 description: "Child issue".into(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::InProgress,
                 assignee: None,
                 todo_list: Vec::new(),
@@ -1637,7 +1672,7 @@ mod tests {
                         status: IssueStatus::Closed,
                         description: "New issue description".into(),
                         creator: "creator-a".into(),
-                        progress: "Initial notes".into(),
+                        progress: progress_vec("Initial notes", Some("creator-a")),
                         assignee: Some("team-a".into()),
                         todo_list: Vec::new(),
                         dependencies,
@@ -1716,7 +1751,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "Initial issue".into(),
                 creator: String::new(),
-                progress: "Initial note".into(),
+                progress: progress_vec("Initial note", None),
                 status: IssueStatus::Open,
                 assignee: Some("owner-a".into()),
                 todo_list: Vec::new(),
@@ -1763,7 +1798,7 @@ mod tests {
                         issue_type: IssueType::Bug,
                         description: "Updated issue description".into(),
                         creator: String::new(),
-                        progress: "New progress".into(),
+                        progress: progress_vec("New progress", Some("")),
                         status: IssueStatus::Closed,
                         assignee: Some("owner-b".into()),
                         todo_list: Vec::new(),
@@ -1788,7 +1823,7 @@ mod tests {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
                 creator: String::new(),
-                progress: "Started work".into(),
+                progress: progress_vec("Started work", None),
                 status: IssueStatus::InProgress,
                 assignee: Some("owner-a".into()),
                 todo_list: Vec::new(),
@@ -1831,7 +1866,7 @@ mod tests {
                         issue_type: IssueType::Feature,
                         description: "Existing issue".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::InProgress,
                         assignee: None,
                         todo_list: Vec::new(),
@@ -1853,7 +1888,7 @@ mod tests {
                     issue_type: IssueType::Bug,
                     description: "First issue\nwith context".into(),
                     creator: String::new(),
-                    progress: "Working on repro".into(),
+                    progress: progress_vec("Working on repro", None),
                     status: IssueStatus::Open,
                     assignee: Some("owner-a".into()),
                     todo_list: Vec::new(),
@@ -1870,7 +1905,7 @@ mod tests {
                     issue_type: IssueType::Feature,
                     description: "Follow-up work".into(),
                     creator: String::new(),
-                    progress: String::new(),
+                    progress: Vec::new(),
                     status: IssueStatus::InProgress,
                     assignee: None,
                     todo_list: Vec::new(),
@@ -1919,7 +1954,7 @@ mod tests {
                 issue_type: IssueType::Task,
                 description: "has todos".into(),
                 creator: String::new(),
-                progress: String::new(),
+                progress: Vec::new(),
                 status: IssueStatus::Open,
                 assignee: None,
                 todo_list: todo_list.clone(),
@@ -2114,7 +2149,7 @@ mod tests {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
                         todo_list: Vec::new(),
@@ -2131,7 +2166,7 @@ mod tests {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: None,
                         todo_list: Vec::new(),
@@ -2166,7 +2201,7 @@ mod tests {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
                         creator: String::new(),
-                        progress: "Main progress".into(),
+                        progress: progress_vec("Main progress", None),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
                         todo_list: Vec::new(),
@@ -2183,7 +2218,7 @@ mod tests {
                         issue_type: IssueType::Feature,
                         description: "Parent".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: None,
                         todo_list: Vec::new(),
@@ -2200,7 +2235,7 @@ mod tests {
                         issue_type: IssueType::Bug,
                         description: "Child".into(),
                         creator: String::new(),
-                        progress: "Child update".into(),
+                        progress: progress_vec("Child update", None),
                         status: IssueStatus::InProgress,
                         assignee: None,
                         todo_list: Vec::new(),
@@ -2241,7 +2276,7 @@ mod tests {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
                         todo_list: root_todos.clone(),
@@ -2258,7 +2293,7 @@ mod tests {
                         issue_type: IssueType::Task,
                         description: "Parent description".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: None,
                         todo_list: vec![TodoItem {
@@ -2278,7 +2313,7 @@ mod tests {
                         issue_type: IssueType::Bug,
                         description: "Child description".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: None,
                         todo_list: vec![TodoItem {
@@ -2335,7 +2370,7 @@ mod tests {
                         issue_type: IssueType::Task,
                         description: "Main issue".into(),
                         creator: String::new(),
-                        progress: String::new(),
+                        progress: Vec::new(),
                         status: IssueStatus::Open,
                         assignee: Some("owner".into()),
                         todo_list: Vec::new(),

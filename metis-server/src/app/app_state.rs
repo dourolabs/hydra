@@ -1043,7 +1043,7 @@ mod tests {
             issue_type: IssueType::Task,
             description: description.to_string(),
             creator: String::new(),
-            progress: String::new(),
+            progress: Vec::new(),
             status,
             assignee: None,
             todo_list: Vec::new(),

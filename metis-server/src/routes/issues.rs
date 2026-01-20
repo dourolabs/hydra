@@ -346,8 +346,10 @@ fn issue_matches(
             return true;
         }
 
+        let progress_matches = issue.progress_text().to_lowercase().contains(term);
+
         return issue.description.to_lowercase().contains(term)
-            || issue.progress.to_lowercase().contains(term)
+            || progress_matches
             || issue.issue_type.as_str() == term
             || issue.status.as_str() == term
             || issue.creator.to_lowercase().contains(term)

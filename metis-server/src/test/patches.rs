@@ -146,7 +146,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         issue_type: IssueType::MergeRequest,
         description: "linked merge request".to_string(),
         creator: String::new(),
-        progress: String::new(),
+        progress: Vec::new(),
         status: IssueStatus::Open,
         assignee: None,
         todo_list: Vec::new(),

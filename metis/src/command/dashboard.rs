@@ -709,7 +709,7 @@ async fn submit_issue(
             issue_type: IssueType::Task,
             description: submission.prompt.trim().to_string(),
             creator,
-            progress: String::new(),
+            progress: Vec::new(),
             status: IssueStatus::Open,
             assignee,
             todo_list: Vec::new(),
@@ -1329,11 +1329,12 @@ async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueReco
 }
 
 fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
-    let issue = record.issue;
+    let ApiIssueRecord { id, issue } = record;
+    let progress = issue.progress_text();
     Some(IssueRecord {
-        id: record.id,
+        id,
         description: issue.description,
-        progress: issue.progress,
+        progress,
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
