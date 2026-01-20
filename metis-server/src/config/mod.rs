@@ -3,16 +3,11 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result};
-use metis_common::{
-    RepoName,
-    constants::{ENV_DATABASE_URL, ENV_METIS_DATABASE_URL},
-    jobs::BundleSpec,
-    repositories::ServiceRepositoryConfig,
-};
+use metis_common::{RepoName, jobs::BundleSpec, repositories::ServiceRepositoryConfig};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -83,20 +78,7 @@ pub struct DatabaseSection {
 
 impl DatabaseSection {
     pub fn database_url(&self) -> Option<String> {
-        self.url
-            .as_deref()
-            .and_then(non_empty)
-            .map(str::to_owned)
-            .or_else(|| {
-                env::var(ENV_METIS_DATABASE_URL)
-                    .ok()
-                    .and_then(|value| non_empty(&value).map(str::to_owned))
-            })
-            .or_else(|| {
-                env::var(ENV_DATABASE_URL)
-                    .ok()
-                    .and_then(|value| non_empty(&value).map(str::to_owned))
-            })
+        self.url.as_deref().and_then(non_empty).map(str::to_owned)
     }
 
     pub fn idle_timeout(&self) -> Option<u64> {
@@ -333,9 +315,6 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn scheduler_defaults_match_worker_intervals() {
@@ -374,65 +353,22 @@ mod tests {
     }
 
     #[test]
-    fn database_url_prefers_namespaced_env() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let _namespaced = EnvGuard::set(ENV_METIS_DATABASE_URL, "postgres://namespaced");
-        let _legacy = EnvGuard::set(ENV_DATABASE_URL, "postgres://legacy");
-
+    fn database_url_returns_none_when_unset() {
         let database = DatabaseSection {
             url: None,
-            ..Default::default()
-        };
-
-        assert_eq!(
-            database.database_url(),
-            Some("postgres://namespaced".to_string())
-        );
-    }
-
-    #[test]
-    fn database_url_ignores_blank_values() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let _namespaced = EnvGuard::set(ENV_METIS_DATABASE_URL, "   ");
-        let _legacy = EnvGuard::set(ENV_DATABASE_URL, "");
-
-        let database = DatabaseSection {
-            url: Some(" ".to_string()),
             ..Default::default()
         };
 
         assert_eq!(database.database_url(), None);
     }
 
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
+    #[test]
+    fn database_url_ignores_blank_values() {
+        let database = DatabaseSection {
+            url: Some(" ".to_string()),
+            ..Default::default()
+        };
 
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: tests serialize mutations through ENV_LOCK to avoid cross-thread races.
-            unsafe {
-                std::env::set_var(key, value);
-            }
-
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.original {
-                // SAFETY: the lock held by callers ensures environment updates are serialized.
-                unsafe {
-                    std::env::set_var(self.key, value);
-                }
-            } else {
-                unsafe {
-                    std::env::remove_var(self.key);
-                }
-            }
-        }
+        assert_eq!(database.database_url(), None);
     }
 }
