@@ -958,7 +958,7 @@ fn print_issue_description_pretty(
     writer: &mut impl Write,
 ) -> Result<()> {
     writeln!(writer, "Issue")?;
-    write_issue_details_pretty(&description.issue, "  ", writer)?;
+    write_issue_details_pretty(&description.issue, "  ", true, writer)?;
     writeln!(writer)?;
 
     writeln!(writer, "Parents:")?;
@@ -966,7 +966,7 @@ fn print_issue_description_pretty(
         writeln!(writer, "  none")?;
     } else {
         for parent in &description.parents {
-            write_issue_details_pretty(parent, "  ", writer)?;
+            write_issue_details_pretty(parent, "  ", false, writer)?;
             writeln!(writer)?;
         }
     }
@@ -976,7 +976,7 @@ fn print_issue_description_pretty(
         writeln!(writer, "  none")?;
     } else {
         for child in &description.children {
-            write_issue_details_pretty(child, "  ", writer)?;
+            write_issue_details_pretty(child, "  ", false, writer)?;
             writeln!(writer)?;
         }
     }
@@ -988,6 +988,7 @@ fn print_issue_description_pretty(
 fn write_issue_details_pretty(
     issue_with_patches: &IssueWithPatches,
     indent: &str,
+    show_todo_list: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
     let IssueWithPatches {
@@ -1002,6 +1003,7 @@ fn write_issue_details_pretty(
         status,
         assignee,
         dependencies,
+        todo_list,
         ..
     } = &issue_record.issue;
 
@@ -1032,6 +1034,10 @@ fn write_issue_details_pretty(
         for line in progress.lines() {
             writeln!(writer, "{indent}  {line}")?;
         }
+    }
+
+    if show_todo_list {
+        write_todo_list(indent, todo_list, writer)?;
     }
 
     if dependencies.is_empty() {
@@ -1214,6 +1220,33 @@ fn review_decision(is_approved: bool) -> &'static str {
     } else {
         "changes requested"
     }
+}
+
+fn write_todo_list(indent: &str, todo_list: &[TodoItem], writer: &mut impl Write) -> Result<()> {
+    writeln!(writer, "{indent}Todos:")?;
+    if todo_list.is_empty() {
+        writeln!(writer, "{indent}  none")?;
+        return Ok(());
+    }
+
+    for (index, item) in todo_list.iter().enumerate() {
+        let status = if item.is_done { "[x]" } else { "[ ]" };
+        let prefix = format!("{indent}  {}. {status} ", index + 1);
+        let continuation_indent = " ".repeat(prefix.len());
+        let mut lines = item.description.lines();
+
+        if let Some(first_line) = lines.next() {
+            writeln!(writer, "{prefix}{first_line}")?;
+        } else {
+            writeln!(writer, "{prefix}-")?;
+        }
+
+        for line in lines {
+            writeln!(writer, "{continuation_indent}{line}")?;
+        }
+    }
+
+    Ok(())
 }
 
 fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
@@ -2186,6 +2219,87 @@ mod tests {
         assert!(rendered.contains("Progress:\n    Main progress"));
         assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Creator: \n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
         assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Creator: \n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
+    }
+
+    #[test]
+    fn describe_issue_pretty_printer_shows_todos_for_root_issue_only() {
+        let root_todos = vec![
+            TodoItem {
+                description: "root todo".into(),
+                is_done: false,
+            },
+            TodoItem {
+                description: "root done".into(),
+                is_done: true,
+            },
+        ];
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-main"),
+                    issue: Issue {
+                        issue_type: IssueType::Task,
+                        description: "Main issue".into(),
+                        creator: String::new(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: Some("owner".into()),
+                        todo_list: root_todos.clone(),
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            },
+            parents: vec![IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-parent"),
+                    issue: Issue {
+                        issue_type: IssueType::Task,
+                        description: "Parent description".into(),
+                        creator: String::new(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: None,
+                        todo_list: vec![TodoItem {
+                            description: "parent todo".into(),
+                            is_done: false,
+                        }],
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            }],
+            children: vec![IssueWithPatches {
+                issue: IssueRecord {
+                    id: issue_id("i-child"),
+                    issue: Issue {
+                        issue_type: IssueType::Bug,
+                        description: "Child description".into(),
+                        creator: String::new(),
+                        progress: String::new(),
+                        status: IssueStatus::Open,
+                        assignee: None,
+                        todo_list: vec![TodoItem {
+                            description: "child todo".into(),
+                            is_done: true,
+                        }],
+                        dependencies: vec![],
+                        patches: Vec::new(),
+                    },
+                },
+                patches: Vec::new(),
+            }],
+        };
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("Todos:\n    1. [ ] root todo\n    2. [x] root done"));
+        assert!(!rendered.contains("parent todo"));
+        assert!(!rendered.contains("child todo"));
     }
 
     #[test]
