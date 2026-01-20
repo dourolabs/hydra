@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
+    future::Future,
     time::Duration,
 };
 
@@ -318,8 +319,14 @@ struct EventOutcome {
 
 pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
     let username = resolve_username(username);
+    ratatui::run(|terminal| {
+        block_on_dashboard_future(run_dashboard_loop(client, terminal, username))
+    })
+}
+
+fn block_on_dashboard_future<F: Future>(future: F) -> F::Output {
     let handle = tokio::runtime::Handle::current();
-    ratatui::run(|terminal| handle.block_on(run_dashboard_loop(client, terminal, username)))
+    handle.block_on(future)
 }
 
 fn resolve_username(username: Option<String>) -> Option<String> {
@@ -1938,7 +1945,9 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use std::any::Any;
     use std::collections::HashMap;
+    use std::panic::AssertUnwindSafe;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -1976,6 +1985,26 @@ mod tests {
             notes: None,
             status_log: log,
         }
+    }
+
+    #[tokio::test]
+    async fn dashboard_boot_panics_with_nested_runtime_block_on() {
+        let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            block_on_dashboard_future(async {});
+        }))
+        .expect_err("expected nested runtime panic");
+        let message = panic_message(panic);
+        assert!(message.contains("Cannot start a runtime from within a runtime"));
+    }
+
+    fn panic_message(panic: Box<dyn Any + Send>) -> String {
+        if let Some(message) = panic.downcast_ref::<&str>() {
+            return (*message).to_string();
+        }
+        if let Some(message) = panic.downcast_ref::<String>() {
+            return message.clone();
+        }
+        "unknown panic".to_string()
     }
 
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
