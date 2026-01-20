@@ -2642,6 +2642,38 @@ mod tests {
     }
 
     #[test]
+    fn mouse_scroll_outside_panels_does_not_scroll_focused_panel() {
+        let issues = (0..25)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
+            .collect();
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Status;
+        state.status_panel_focus = StatusPanelFocus::Running;
+        update_panel_focus(&mut state);
+        update_views(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: layout.header.x,
+            row: layout.header.y,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+        assert_eq!(state.status_panel_focus, StatusPanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
+    }
+
+    #[test]
     fn alt_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
         state.issue_draft.set_prompt("Ship dashboard");
