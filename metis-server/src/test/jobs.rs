@@ -736,9 +736,8 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     let store_read = store.read().await;
     let status = store_read.get_status(&job_id).await?;
     assert_eq!(status, Status::Complete);
-    let result = store_read.get_result(&job_id);
-    assert!(matches!(result, Some(Ok(()))));
     let status_log = store_read.get_status_log(&job_id).await?;
+    assert!(matches!(status_log.result(), Some(Ok(()))));
     assert_eq!(
         status_log.emitted_artifacts(),
         Some(vec![patch_id.clone().into()])
@@ -839,9 +838,9 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let store_read = state.store.read().await;
     let status = store_read.get_status(&job_id).await?;
     assert_eq!(status, Status::Failed);
-    let result = store_read.get_result(&job_id);
+    let status_log = store_read.get_status_log(&job_id).await?;
     assert!(matches!(
-        result,
+        status_log.result(),
         Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
     ));
     Ok(())

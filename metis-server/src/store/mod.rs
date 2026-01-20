@@ -195,18 +195,6 @@ pub trait Store: Send + Sync {
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
 
-    /// Gets the result of a task by its TaskId.
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId to look up
-    ///
-    /// # Returns
-    /// Some(Ok(())) if the task completed successfully,
-    /// Some(Err(TaskError)) if the task completed with an error,
-    /// None if the task doesn't exist or has no result yet
-    #[allow(dead_code)]
-    fn get_result(&self, id: &TaskId) -> Option<Result<(), TaskError>>;
-
     /// Records an emitted event for a running task.
     async fn emit_task_artifacts(
         &mut self,

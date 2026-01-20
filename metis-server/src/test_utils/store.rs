@@ -119,10 +119,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    fn get_result(&self, _id: &TaskId) -> Option<Result<(), TaskError>> {
-        None
-    }
-
     async fn emit_task_artifacts(
         &mut self,
         _id: &TaskId,
