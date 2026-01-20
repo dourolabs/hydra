@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use metis_common::task_status::Event;
-use metis_common::{IssueId, MetisId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide,
@@ -567,30 +567,6 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn emit_task_artifacts(
-        &mut self,
-        id: &TaskId,
-        artifact_ids: Vec<MetisId>,
-        at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let status_log = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(status_log.current_status(), Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        status_log.events.push(Event::Emitted { at, artifact_ids });
-
-        Ok(())
-    }
-
     async fn mark_task_complete(
         &mut self,
         id: &TaskId,
@@ -701,6 +677,7 @@ mod tests {
             diff: dummy_diff(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
+            created_by: None,
             reviews: Vec::new(),
             service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
             github: None,
@@ -785,6 +762,7 @@ mod tests {
             diff: dummy_diff(),
             status: PatchStatus::Open,
             is_automatic_backup: false,
+            created_by: None,
             reviews: Vec::new(),
             service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
             github: None,
@@ -809,6 +787,7 @@ mod tests {
                     diff: dummy_diff(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
+                    created_by: None,
                     reviews: Vec::new(),
                     service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
                     github: None,

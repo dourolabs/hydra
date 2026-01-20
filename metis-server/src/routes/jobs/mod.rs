@@ -11,9 +11,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     IssueId, TaskId,
-    issues::Issue,
     jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
-    patches::Patch,
 };
 use serde_json::json;
 use tracing::{error, info};
@@ -273,30 +271,10 @@ fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
 
 async fn job_notes_from_store(job_id: &TaskId, store: &dyn Store) -> Option<String> {
     let status_log = store.get_status_log(job_id).await.ok()?;
-    if let Err(err) = status_log.result()? {
-        return format_error_note(&err);
-    }
-
-    let artifact_ids = status_log.emitted_artifacts()?;
-    for artifact_id in artifact_ids {
-        if let Some(patch_id) = artifact_id.as_patch_id() {
-            if let Ok(patch) = store.get_patch(&patch_id).await {
-                if let Some(note) = note_from_patch(&patch) {
-                    return Some(note);
-                }
-            }
-        }
-
-        if let Some(issue_id) = artifact_id.as_issue_id() {
-            if let Ok(issue) = store.get_issue(&issue_id).await {
-                if let Some(note) = note_from_issue(&issue) {
-                    return Some(note);
-                }
-            }
-        }
-    }
-
-    None
+    status_log
+        .result()
+        .and_then(Result::err)
+        .and_then(format_error_note)
 }
 
 pub(crate) fn sanitize_note(note: &str) -> Option<String> {
@@ -308,18 +286,10 @@ pub(crate) fn sanitize_note(note: &str) -> Option<String> {
     }
 }
 
-fn format_error_note(error: &TaskError) -> Option<String> {
+fn format_error_note(error: TaskError) -> Option<String> {
     match error {
         TaskError::JobEngineError { reason } => {
-            sanitize_note(reason).map(|msg| format!("error: {msg}"))
+            sanitize_note(&reason).map(|msg| format!("error: {msg}"))
         }
     }
-}
-
-fn note_from_patch(patch: &Patch) -> Option<String> {
-    sanitize_note(&patch.title).or_else(|| sanitize_note(&patch.description))
-}
-
-fn note_from_issue(issue: &Issue) -> Option<String> {
-    sanitize_note(&issue.description)
 }

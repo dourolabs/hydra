@@ -23,6 +23,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
+        created_by: None,
         reviews: Vec::new(),
         service_repo_name: service_repo_name(),
         github: None,
@@ -32,7 +33,6 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         .post(format!("{}/v1/patches", server.base_url()))
         .json(&UpsertPatchRequest {
             patch: patch.clone(),
-            job_id: None,
         })
         .send()
         .await?;
@@ -58,7 +58,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
+async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
     let job_id = super::common::task_id("t-emit");
@@ -87,16 +87,16 @@ async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
         .post(format!("{}/v1/patches", server.base_url()))
         .json(&UpsertPatchRequest {
             patch: Patch {
-                title: "artifact for emit".to_string(),
-                description: "artifact for emit".to_string(),
+                title: "artifact with creator".to_string(),
+                description: "artifact with creator".to_string(),
                 diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
                 reviews: Vec::new(),
                 service_repo_name: service_repo_name(),
                 github: None,
             },
-            job_id: Some(job_id.clone()),
         })
         .send()
         .await?;
@@ -104,14 +104,11 @@ async fn creating_patch_with_job_id_emits_event() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let created: UpsertPatchResponse = response.json().await?;
 
-    let emitted = {
+    let patch = {
         let store_read = store.read().await;
-        store_read
-            .get_status_log(&job_id)
-            .await?
-            .emitted_artifacts()
+        store_read.get_patch(&created.patch_id).await?
     };
-    assert_eq!(emitted, Some(vec![created.patch_id.into()]));
+    assert_eq!(patch.created_by, Some(job_id));
     Ok(())
 }
 
@@ -126,6 +123,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
+        created_by: None,
         reviews: Vec::new(),
         service_repo_name: service_repo_name(),
         github: None,
@@ -135,7 +133,6 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         .post(format!("{}/v1/patches", server.base_url()))
         .json(&UpsertPatchRequest {
             patch: base_patch.clone(),
-            job_id: None,
         })
         .send()
         .await?
@@ -175,7 +172,6 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         ))
         .json(&UpsertPatchRequest {
             patch: merged_patch,
-            job_id: None,
         })
         .send()
         .await?
@@ -207,6 +203,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
+        created_by: None,
         reviews: Vec::new(),
         service_repo_name: service_repo_name(),
         github: None,
@@ -217,6 +214,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         diff: patch_diff(),
         status: PatchStatus::Open,
         is_automatic_backup: false,
+        created_by: None,
         reviews: Vec::new(),
         service_repo_name: service_repo_name(),
         github: None,
@@ -225,10 +223,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     for patch in [patch.clone(), filtered_patch.clone()] {
         let response = client
             .post(format!("{}/v1/patches", server.base_url()))
-            .json(&UpsertPatchRequest {
-                patch,
-                job_id: None,
-            })
+            .json(&UpsertPatchRequest { patch })
             .send()
             .await?;
         assert!(response.status().is_success());

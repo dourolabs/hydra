@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, MetisId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
@@ -191,14 +191,6 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
-
-    /// Records an emitted event for a running task.
-    async fn emit_task_artifacts(
-        &mut self,
-        id: &TaskId,
-        artifact_ids: Vec<MetisId>,
-        at: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
 
     /// Marks a task as running.
     ///

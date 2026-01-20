@@ -159,9 +159,6 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
 
 fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
     match err {
-        UpsertPatchError::JobIdProvidedForUpdate => {
-            ApiError::bad_request("job_id may only be provided when creating a patch")
-        }
         UpsertPatchError::JobNotFound { job_id, .. } => {
             error!(job_id = %job_id, "job not found when creating patch");
             ApiError::not_found(format!("job '{job_id}' not found"))
@@ -173,8 +170,8 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
             ))
         }
         UpsertPatchError::JobNotRunning { job_id, .. } => {
-            error!(job_id = %job_id, "job not running when recording patch artifacts");
-            ApiError::bad_request("job_id must reference a running job to record emitted artifacts")
+            error!(job_id = %job_id, "job not running when recording patch metadata");
+            ApiError::bad_request("created_by must reference a running job")
         }
         UpsertPatchError::PatchNotFound { patch_id, .. } => {
             error!(patch_id = %patch_id, "patch not found");
@@ -208,10 +205,6 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))
-        }
-        UpsertPatchError::EmitArtifacts { job_id, source } => {
-            error!(job_id = %job_id, error = %source, "failed to emit artifacts");
-            ApiError::internal(anyhow!("failed to emit artifacts for '{job_id}': {source}"))
         }
     }
 }

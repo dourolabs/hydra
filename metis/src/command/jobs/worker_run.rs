@@ -600,7 +600,7 @@ mod tests {
         let requests = client.recorded_patch_upserts();
         assert_eq!(requests.len(), 1, "expected a single patch submission");
         let (_, request) = &requests[0];
-        assert_eq!(request.job_id, Some(job_id));
+        assert_eq!(request.patch.created_by, Some(job_id));
         assert_eq!(request.patch.title, "final output line");
         assert_eq!(request.patch.description, "final output line");
         assert!(

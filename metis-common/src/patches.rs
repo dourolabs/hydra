@@ -132,6 +132,8 @@ pub struct Patch {
     /// True when the patch is an automatic backup created from a job's output after tool-use patch generation failed.
     #[serde(default)]
     pub is_automatic_backup: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<TaskId>,
     #[serde(default)]
     pub reviews: Vec<Review>,
     /// Name of the configured service repository this patch targets, when known.
@@ -149,8 +151,6 @@ pub struct PatchRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<TaskId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

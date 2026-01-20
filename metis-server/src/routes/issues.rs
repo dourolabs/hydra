@@ -1,7 +1,6 @@
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
     routes::jobs::ApiError,
-    routes::map_emit_error,
     store::StoreError,
 };
 use anyhow::anyhow;
@@ -295,10 +294,7 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
             ))
         }
         UpsertIssueError::JobNotRunning { .. } => {
-            ApiError::bad_request("job_id must reference a running job to record emitted artifacts")
-        }
-        UpsertIssueError::EmitArtifacts { job_id, source } => {
-            map_emit_error(source, job_id.as_ref())
+            ApiError::bad_request("job_id must reference a running job")
         }
         UpsertIssueError::TaskLookup { issue_id, source } => {
             map_issue_error(source, Some(&issue_id))

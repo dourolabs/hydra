@@ -708,13 +708,11 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
                 reviews: Vec::new(),
                 service_repo_name: service_repo_name(),
                 github: None,
             })
-            .await?;
-        store_write
-            .emit_task_artifacts(&job_id, vec![patch_id.clone().into()], Utc::now())
             .await?;
     }
     let server = spawn_test_server_with_state(state).await?;
@@ -738,10 +736,8 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     assert_eq!(status, Status::Complete);
     let status_log = store_read.get_status_log(&job_id).await?;
     assert!(matches!(status_log.result(), Some(Ok(()))));
-    assert_eq!(
-        status_log.emitted_artifacts(),
-        Some(vec![patch_id.clone().into()])
-    );
+    let patch = store_read.get_patch(&patch_id).await?;
+    assert_eq!(patch.created_by, Some(job_id));
 
     Ok(())
 }
@@ -891,7 +887,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<()> {
+async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
     let store = state.store.clone();
@@ -920,13 +916,11 @@ async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<
                 diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
                 reviews: Vec::new(),
                 service_repo_name: service_repo_name(),
                 github: None,
             })
-            .await?;
-        store_write
-            .emit_task_artifacts(&job_id, vec![patch_id.clone().into()], Utc::now())
             .await?;
         store_write
             .mark_task_complete(&job_id, Ok(()), None, Utc::now())
@@ -942,16 +936,7 @@ async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<
 
     assert!(response.status().is_success());
     let summary: JobRecord = response.json().await?;
-    let emitted_ids = summary
-        .status_log
-        .events
-        .iter()
-        .find_map(|event| match event {
-            Event::Emitted { artifact_ids, .. } => Some(artifact_ids.clone()),
-            _ => None,
-        })
-        .unwrap();
-    assert_eq!(emitted_ids, vec![patch_id.clone().into()]);
+    assert_eq!(summary.status_log.current_status(), Status::Complete);
 
     let patch_response = client
         .get(format!("{}/v1/patches/{patch_id}", server.base_url()))
@@ -969,6 +954,7 @@ async fn job_output_can_be_retrieved_via_events_and_patches() -> anyhow::Result<
     assert_eq!(title, "all good");
     assert_eq!(description, "all good");
     assert_eq!(diff, patch_diff());
+    assert_eq!(patch_record.patch.created_by, Some(job_id));
     Ok(())
 }
 
@@ -1038,20 +1024,18 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         store_write
             .mark_task_running(&parent_job_id, Utc::now())
             .await?;
-        let parent_patch_id = store_write
+        let _parent_patch_id = store_write
             .add_patch(Patch {
                 title: "done".to_string(),
                 description: "done".to_string(),
                 diff: patch_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: Some(parent_job_id.clone()),
                 reviews: Vec::new(),
                 service_repo_name: service_repo_name(),
                 github: None,
             })
-            .await?;
-        store_write
-            .emit_task_artifacts(&parent_job_id, vec![parent_patch_id.into()], Utc::now())
             .await?;
         store_write
             .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
