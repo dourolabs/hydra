@@ -9,6 +9,7 @@ use metis_common::{
 use std::collections::HashSet;
 
 mod memory_store;
+pub mod postgres;
 
 pub use metis_common::jobs::Task;
 pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};

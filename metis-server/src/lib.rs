@@ -18,7 +18,7 @@ use crate::app::{AppState, ServiceState};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
-use crate::store::{MemoryStore, Store};
+use crate::store::{MemoryStore, Store, postgres};
 use axum::{
     Json, Router,
     routing::{delete, get, post, put},
@@ -150,6 +150,14 @@ pub async fn run() -> anyhow::Result<()> {
         client: kube_client,
     };
 
+    let postgres_pool = postgres::init_pool(&app_config.database).await?;
+    if let Some(pool) = &postgres_pool {
+        postgres::run_migrations(pool).await?;
+        info!("connected to Postgres and applied migrations");
+    } else {
+        info!("no Postgres database configured; using in-memory store");
+    }
+
     let store: Arc<RwLock<Box<dyn Store>>> = Arc::new(RwLock::new(Box::new(MemoryStore::new())));
 
     let spawners = build_spawners(&app_config);
@@ -160,6 +168,7 @@ pub async fn run() -> anyhow::Result<()> {
         store,
         job_engine: Arc::new(job_engine),
         spawners,
+        postgres_pool,
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;

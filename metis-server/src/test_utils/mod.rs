@@ -1,6 +1,9 @@
 use crate::{
     app::{AppState, ServiceState},
-    config::{AppConfig, BackgroundSection, KubernetesSection, MetisSection, ServiceSection},
+    config::{
+        AppConfig, BackgroundSection, DatabaseSection, KubernetesSection, MetisSection,
+        ServiceSection,
+    },
     job_engine::JobEngine,
     run_with_state,
     store::MemoryStore,
@@ -39,6 +42,7 @@ pub fn test_app_config() -> AppConfig {
     AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
+        database: DatabaseSection::default(),
         service: ServiceSection::default(),
         background: BackgroundSection::default(),
     }
@@ -51,6 +55,7 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
         spawners: Vec::new(),
+        postgres_pool: None,
     }
 }
 
