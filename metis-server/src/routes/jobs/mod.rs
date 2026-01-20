@@ -1,6 +1,6 @@
 use crate::{
-    app::{AppState, BundleResolutionError, CreateJobError},
-    store::{Store, StoreError, TaskError, TaskResolutionError},
+    app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
+    store::{Store, StoreError, TaskError},
 };
 use axum::{
     Json, async_trait,
