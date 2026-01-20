@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use metis_common::{
     MetisId, PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
-    issues::{IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest},
+    issues::{IssueDependencyType, IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest},
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     jobs::CreateJobRequest,
     merge_queues::MergeQueue,
@@ -653,7 +653,7 @@ impl AppState {
         issue_id: Option<IssueId>,
         request: UpsertIssueRequest,
     ) -> Result<IssueId, UpsertIssueError> {
-        let UpsertIssueRequest { issue, job_id } = request;
+        let UpsertIssueRequest { mut issue, job_id } = request;
         let mut tasks_to_kill = Vec::new();
 
         let mut store = self.store.write().await;
@@ -723,6 +723,30 @@ impl AppState {
                             job_id: job_id.clone(),
                             status: Some(status),
                         });
+                    }
+                }
+
+                if issue.creator.trim().is_empty() {
+                    if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
+                        dependency.dependency_type == IssueDependencyType::ChildOf
+                    }) {
+                        match store.get_issue(&parent_dependency.issue_id).await {
+                            Ok(parent_issue) => {
+                                issue.creator = parent_issue.creator;
+                            }
+                            Err(source @ StoreError::IssueNotFound(_)) => {
+                                return Err(UpsertIssueError::MissingDependency {
+                                    dependency_id: parent_dependency.issue_id.clone(),
+                                    source,
+                                });
+                            }
+                            Err(source) => {
+                                return Err(UpsertIssueError::Store {
+                                    source,
+                                    issue_id: None,
+                                });
+                            }
+                        }
                     }
                 }
 
