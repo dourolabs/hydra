@@ -1,7 +1,7 @@
 use crate::store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, MetisId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
@@ -116,15 +116,6 @@ impl Store for FailingStore {
     }
 
     async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        fail()
-    }
-
-    async fn emit_task_artifacts(
-        &mut self,
-        _id: &TaskId,
-        _artifacts: Vec<MetisId>,
-        _timestamp: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
         fail()
     }
 

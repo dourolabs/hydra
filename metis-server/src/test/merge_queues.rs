@@ -58,6 +58,7 @@ async fn state_with_repo_and_patch(
         diff,
         status: PatchStatus::Open,
         is_automatic_backup: false,
+        created_by: None,
         reviews: Vec::new(),
         service_repo_name: repo.clone(),
         github: None,

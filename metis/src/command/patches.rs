@@ -437,7 +437,6 @@ async fn update_patch(
             &patch_id,
             &UpsertPatchRequest {
                 patch: updated_patch,
-                job_id: None,
             },
         )
         .await
@@ -623,6 +622,7 @@ pub async fn create_patch_artifact_from_repo(
         diff,
         status: PatchStatus::Open,
         is_automatic_backup,
+        created_by: job_id.clone(),
         reviews: Vec::new(),
         service_repo_name: service_repo_name.clone(),
         github: None,
@@ -630,7 +630,6 @@ pub async fn create_patch_artifact_from_repo(
     let response = client
         .create_patch(&UpsertPatchRequest {
             patch: patch_payload.clone(),
-            job_id: job_id.clone(),
         })
         .await
         .context("failed to create patch")?;
@@ -650,7 +649,6 @@ pub async fn create_patch_artifact_from_repo(
                 &response.patch_id,
                 &UpsertPatchRequest {
                     patch: patch_payload,
-                    job_id: None,
                 },
             )
             .await
@@ -800,7 +798,6 @@ async fn review_patch(
             &id,
             &UpsertPatchRequest {
                 patch: record.patch,
-                job_id: None,
             },
         )
         .await
@@ -1116,6 +1113,7 @@ mod tests {
         });
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
+        let job_id_clone = job_id.clone();
         create_patch(
             &client,
             patch_title.clone(),
@@ -1152,12 +1150,13 @@ mod tests {
             "expected provided description to be applied"
         );
         assert_eq!(patch.diff, expected_diff);
+        assert_eq!(patch.created_by, Some(job_id_clone));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn create_patch_uses_provided_job_id() -> Result<()> {
+    async fn create_patch_sets_created_by_from_job_id() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
@@ -1182,7 +1181,7 @@ mod tests {
         });
 
         let title = "patch with job title".to_string();
-        let job_id = Some(job_id);
+        let job_id_opt = Some(job_id.clone());
         let description = "patch with job id".to_string();
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
 
@@ -1190,7 +1189,7 @@ mod tests {
             &client,
             title.clone(),
             description.clone(),
-            job_id.clone(),
+            job_id_opt.clone(),
             false,
             None,
             None,
@@ -1205,10 +1204,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
 
         let (_, request) = &requests[0];
-        assert_eq!(
-            request.job_id, job_id,
-            "job id should be forwarded to the patch request"
-        );
+        assert_eq!(request.patch.created_by, job_id_opt);
 
         assert_eq!(request.patch.title, title);
         assert_eq!(request.patch.description, description);
@@ -1361,13 +1357,14 @@ mod tests {
         });
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
 
+        let job_id = task_id("t-job-automatic");
         let _ = create_patch_artifact_from_repo(
             &client,
             &repo_path,
             diff,
             "backup patch".to_string(),
             "backup description".to_string(),
-            Some(task_id("t-job-automatic")),
+            Some(job_id.clone()),
             false,
             None,
             true,
@@ -1379,6 +1376,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one patch upsert");
         let (_, request) = &requests[0];
         assert!(request.patch.is_automatic_backup);
+        assert_eq!(request.patch.created_by, Some(job_id));
         Ok(())
     }
 
@@ -1386,8 +1384,9 @@ mod tests {
     async fn create_patch_uses_service_repo_name_from_job() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
+        let job_id = task_id("t-job-service");
         client.push_get_job_response(JobRecord {
-            id: task_id("t-job-service"),
+            id: job_id.clone(),
             task: Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::ServiceRepository {
@@ -1410,7 +1409,7 @@ mod tests {
             &client,
             "backup patch".to_string(),
             "backup description".to_string(),
-            Some(task_id("t-job-service")),
+            Some(job_id.clone()),
             false,
             None,
             None,
@@ -1429,6 +1428,7 @@ mod tests {
             "dourolabs/api".to_string(),
             "service repo name should be derived from the job context"
         );
+        assert_eq!(request.patch.created_by, Some(job_id));
         Ok(())
     }
 
@@ -1498,6 +1498,7 @@ mod tests {
                 diff: sample_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: None,
                 reviews: vec![existing_review.clone()],
                 service_repo_name: sample_repo_name(),
                 github: None,
@@ -1551,6 +1552,7 @@ mod tests {
                 diff: sample_diff(),
                 status: PatchStatus::Open,
                 is_automatic_backup: false,
+                created_by: None,
                 reviews: vec![Review {
                     contents: "looks ok".to_string(),
                     is_approved: false,
@@ -1589,6 +1591,7 @@ mod tests {
                         diff: sample_diff(),
                         status: PatchStatus::Closed,
                         is_automatic_backup: false,
+                        created_by: None,
                         reviews: vec![Review {
                             contents: "looks ok".to_string(),
                             is_approved: false,
@@ -1598,7 +1601,6 @@ mod tests {
                         service_repo_name: sample_repo_name(),
                         github: None,
                     },
-                    job_id: None,
                 }
             )]
         );

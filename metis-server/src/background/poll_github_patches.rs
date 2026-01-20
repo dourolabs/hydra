@@ -288,7 +288,6 @@ async fn sync_patch_from_github(
                 Some(patch_id.clone()),
                 UpsertPatchRequest {
                     patch: latest_patch,
-                    job_id: None,
                 },
             )
             .await
@@ -711,6 +710,7 @@ mod tests {
                     diff: sample_diff(),
                     status: PatchStatus::Open,
                     is_automatic_backup: false,
+                    created_by: None,
                     reviews: Vec::new(),
                     service_repo_name: RepoName::from_str("dourolabs/api")?,
                     github: Some(GithubPr {

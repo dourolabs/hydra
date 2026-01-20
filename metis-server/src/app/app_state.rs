@@ -6,7 +6,7 @@ use crate::{
 };
 use chrono::{Duration, Utc};
 use metis_common::{
-    MetisId, PatchId, RepoName, TaskId,
+    PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
     issues::{
         Issue, IssueDependencyType, IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
@@ -63,8 +63,6 @@ pub enum SetJobStatusError {
 
 #[derive(Debug, Error)]
 pub enum UpsertPatchError {
-    #[error("job_id may only be provided when creating a patch")]
-    JobIdProvidedForUpdate,
     #[error("job '{job_id}' not found")]
     JobNotFound {
         #[source]
@@ -77,7 +75,7 @@ pub enum UpsertPatchError {
         source: StoreError,
         job_id: TaskId,
     },
-    #[error("job_id must reference a running job to record emitted artifacts")]
+    #[error("created_by must reference a running job")]
     JobNotRunning {
         job_id: TaskId,
         status: Option<Status>,
@@ -92,12 +90,6 @@ pub enum UpsertPatchError {
     Store {
         #[source]
         source: StoreError,
-    },
-    #[error("failed to emit artifacts for '{job_id}'")]
-    EmitArtifacts {
-        #[source]
-        source: StoreError,
-        job_id: TaskId,
     },
     #[error("failed to load merge-request issues for patch '{patch_id}'")]
     MergeRequestLookup {
@@ -148,16 +140,10 @@ pub enum UpsertIssueError {
         source: StoreError,
         job_id: TaskId,
     },
-    #[error("job_id must reference a running job to record emitted artifacts")]
+    #[error("job_id must reference a running job")]
     JobNotRunning {
         job_id: TaskId,
         status: Option<Status>,
-    },
-    #[error("failed to emit artifacts for '{job_id}'")]
-    EmitArtifacts {
-        #[source]
-        source: StoreError,
-        job_id: TaskId,
     },
     #[error("failed to read tasks for dropped issue '{issue_id}'")]
     TaskLookup {
@@ -499,16 +485,12 @@ impl AppState {
         patch_id: Option<PatchId>,
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest { patch, job_id } = request;
+        let UpsertPatchRequest { mut patch } = request;
 
         let mut should_close_merge_requests = false;
         let mut store = self.store.write().await;
         let patch_id = match patch_id {
             Some(id) => {
-                if job_id.is_some() {
-                    return Err(UpsertPatchError::JobIdProvidedForUpdate);
-                }
-
                 let existing_patch = store.get_patch(&id).await.map_err(|source| match source {
                     StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
                         patch_id: id.clone(),
@@ -520,6 +502,7 @@ impl AppState {
                 should_close_merge_requests = matches!(existing_patch.status, PatchStatus::Open)
                     && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
+                patch.created_by = existing_patch.created_by;
                 store
                     .update_patch(&id, patch)
                     .await
@@ -534,7 +517,7 @@ impl AppState {
                 id
             }
             None => {
-                if let Some(ref job_id) = job_id {
+                if let Some(ref job_id) = patch.created_by {
                     let status = store
                         .get_status(job_id)
                         .await
@@ -557,7 +540,7 @@ impl AppState {
                     }
                 }
 
-                let id = store
+                store
                     .add_patch(patch)
                     .await
                     .map_err(|source| match source {
@@ -566,31 +549,7 @@ impl AppState {
                             source: StoreError::PatchNotFound(id),
                         },
                         other => UpsertPatchError::Store { source: other },
-                    })?;
-
-                if let Some(job_id) = job_id {
-                    store
-                        .emit_task_artifacts(&job_id, vec![id.clone().into()], Utc::now())
-                        .await
-                        .map_err(|source| match source {
-                            StoreError::TaskNotFound(_) => UpsertPatchError::JobNotFound {
-                                job_id: job_id.clone(),
-                                source,
-                            },
-                            StoreError::InvalidStatusTransition => {
-                                UpsertPatchError::JobNotRunning {
-                                    job_id: job_id.clone(),
-                                    status: None,
-                                }
-                            }
-                            other => UpsertPatchError::EmitArtifacts {
-                                job_id: job_id.clone(),
-                                source: other,
-                            },
-                        })?;
-                }
-
-                id
+                    })?
             }
         };
 
@@ -789,7 +748,7 @@ impl AppState {
                     });
                 }
 
-                let id = store
+                store
                     .add_issue(issue)
                     .await
                     .map_err(|source| match source {
@@ -803,19 +762,7 @@ impl AppState {
                             source: other,
                             issue_id: None,
                         },
-                    })?;
-
-                if let Some(job_id) = job_id {
-                    store
-                        .emit_task_artifacts(&job_id, vec![MetisId::from(id.clone())], Utc::now())
-                        .await
-                        .map_err(|source| UpsertIssueError::EmitArtifacts {
-                            job_id: job_id.clone(),
-                            source,
-                        })?;
-                }
-
-                id
+                    })?
             }
         };
 

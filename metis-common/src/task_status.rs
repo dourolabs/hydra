@@ -1,4 +1,3 @@
-use crate::MetisId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -26,11 +25,6 @@ pub enum Event {
     },
     Started {
         at: DateTime<Utc>,
-    },
-    Emitted {
-        at: DateTime<Utc>,
-        /// MetisIds for any artifacts produced by the task at this moment.
-        artifact_ids: Vec<MetisId>,
     },
     Completed {
         at: DateTime<Utc>,
@@ -63,13 +57,13 @@ impl TaskStatusLog {
         self.events
             .iter()
             .rev()
-            .find_map(|event| match event {
-                Event::Created { status, .. } => Some(*status),
-                Event::Started { .. } => Some(Status::Running),
-                Event::Completed { .. } => Some(Status::Complete),
-                Event::Failed { .. } => Some(Status::Failed),
-                Event::Emitted { .. } => None,
+            .map(|event| match event {
+                Event::Created { status, .. } => *status,
+                Event::Started { .. } => Status::Running,
+                Event::Completed { .. } => Status::Complete,
+                Event::Failed { .. } => Status::Failed,
             })
+            .next()
             .unwrap_or(Status::Pending)
     }
 
@@ -101,76 +95,28 @@ impl TaskStatusLog {
             _ => None,
         })
     }
-
-    pub fn emitted_artifacts(&self) -> Option<Vec<MetisId>> {
-        let mut artifact_ids = Vec::new();
-
-        for event in &self.events {
-            if let Event::Emitted {
-                artifact_ids: ids, ..
-            } = event
-            {
-                artifact_ids.extend(ids.clone());
-            }
-        }
-
-        if artifact_ids.is_empty() {
-            None
-        } else {
-            Some(artifact_ids)
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IssueId, PatchId};
     use chrono::Utc;
 
     #[test]
-    fn current_status_ignores_emitted_events() {
+    fn result_returns_last_completion_state() {
         let now = Utc::now();
         let mut log = TaskStatusLog::new(Status::Pending, now);
         log.events.push(Event::Started { at: now });
-        let artifact_1: MetisId = IssueId::new().into();
-        let artifact_2: MetisId = PatchId::new().into();
-        log.events.push(Event::Emitted {
+        log.events.push(Event::Failed {
             at: now,
-            artifact_ids: vec![artifact_1.clone(), artifact_2.clone()],
+            error: TaskError::JobEngineError {
+                reason: "boom".to_string(),
+            },
         });
 
-        assert_eq!(log.current_status(), Status::Running);
-    }
-
-    #[test]
-    fn emitted_artifacts_returns_none_when_missing() {
-        let now = Utc::now();
-        let log = TaskStatusLog::new(Status::Pending, now);
-
-        assert_eq!(log.emitted_artifacts(), None);
-    }
-
-    #[test]
-    fn emitted_artifacts_collects_all_in_order() {
-        let now = Utc::now();
-        let mut log = TaskStatusLog::new(Status::Pending, now);
-        log.events.push(Event::Started { at: now });
-        let artifact_1: MetisId = IssueId::new().into();
-        let artifact_2: MetisId = PatchId::new().into();
-        let artifact_3: MetisId = IssueId::new().into();
-        log.events.push(Event::Emitted {
-            at: now,
-            artifact_ids: vec![artifact_1.clone()],
-        });
-        log.events.push(Event::Emitted {
-            at: now,
-            artifact_ids: vec![artifact_2.clone(), artifact_3.clone()],
-        });
-
-        assert_eq!(
-            log.emitted_artifacts(),
-            Some(vec![artifact_1, artifact_2, artifact_3])
-        );
+        assert!(matches!(
+            log.result(),
+            Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
+        ));
     }
 }
