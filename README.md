@@ -96,6 +96,17 @@ The Dioxus CLI is required to run the local dashboard server.
    dx serve
    ```
 
+### Postgres for local development
+
+Use the helper script to run a local Postgres container with persistent data in a Docker volume:
+
+```bash
+./scripts/dev-postgres.sh start
+./scripts/dev-postgres.sh status   # shows container status and connection string
+```
+
+By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.toml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
+
 ### Running metis-server in a kind cluster
 
 For local development with a kind (Kubernetes in Docker) cluster:
@@ -131,7 +142,7 @@ For local development with a kind (Kubernetes in Docker) cluster:
    ./scripts/service.sh start
    ```
 
-   Starting the server will reference the `OPENAI_API_KEY` and `GH_TOKEN` environment variables and provide them to the server -- you can set these on the command line if you haven't exported them.
+   Starting the server will also deploy a Postgres pod/service inside the cluster and wire `database.url` in the server ConfigMap to it. Override defaults via `POSTGRES_*` or `SERVER_DATABASE_URL` if needed. The script still references the `OPENAI_API_KEY` and `GH_TOKEN` environment variables and provides them to the server -- you can set these on the command line if you haven't exported them.
 
    This script creates the `metis` namespace, RBAC resources, ConfigMap, and Deployment for the server.
 

@@ -21,6 +21,16 @@ SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/metis}"
 SERVER_CONFIG_FILE_NAME="${SERVER_CONFIG_FILE_NAME:-config.toml}"
 SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
 
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+POSTGRES_SERVICE_NAME="${POSTGRES_SERVICE_NAME:-postgres}"
+POSTGRES_DB="${POSTGRES_DB:-metis}"
+POSTGRES_USER="${POSTGRES_USER:-metis}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-metis}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_DATA_PATH="${POSTGRES_DATA_PATH:-/var/lib/postgresql/data}"
+POSTGRES_SERVICE_HOSTNAME="${POSTGRES_SERVICE_HOSTNAME:-${POSTGRES_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local}"
+SERVER_DATABASE_URL="${SERVER_DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVICE_HOSTNAME}:${POSTGRES_PORT}/${POSTGRES_DB}}"
+
 # Config generation defaults (can be overridden by env vars)
 SERVER_OPENAI_API_KEY="${SERVER_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
 DEFAULT_KUBECONFIG_PATH="${KUBECONFIG:-~/.kube/config}"
@@ -49,6 +59,9 @@ echo "Server image:             ${SERVER_IMAGE}"
 echo "Client image:             ${CLIENT_IMAGE}"
 echo "Server replicas (start):  ${SERVER_REPLICAS}"
 echo "Server service type:      ${SERVER_SERVICE_TYPE}"
+echo "Postgres image:           ${POSTGRES_IMAGE}"
+echo "Postgres service:         ${POSTGRES_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:${POSTGRES_PORT}"
+echo "Postgres database/user:   ${POSTGRES_DB}/${POSTGRES_USER}"
 echo "Server config ConfigMap:  ${SERVER_CONFIGMAP_NAME}"
 echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
 echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
@@ -69,6 +82,9 @@ namespace = "${NAMESPACE}"
 worker_image = "${CLIENT_IMAGE}"
 server_hostname = "server.${NAMESPACE}.svc.cluster.local"
 OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
+
+[database]
+url = "${SERVER_DATABASE_URL}"
 
 [service.repositories]
 [service.repositories."dourolabs/metis"]
@@ -238,6 +254,53 @@ metadata:
 data:
   ${SERVER_CONFIG_FILE_NAME}: |
 $(generate_server_config | sed 's/^/    /')
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${POSTGRES_SERVICE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ${POSTGRES_SERVICE_NAME}
+  ports:
+    - name: postgres
+      port: ${POSTGRES_PORT}
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${POSTGRES_SERVICE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${POSTGRES_SERVICE_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${POSTGRES_SERVICE_NAME}
+    spec:
+      containers:
+        - name: postgres
+          image: ${POSTGRES_IMAGE}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "${POSTGRES_DB}"
+            - name: POSTGRES_USER
+              value: "${POSTGRES_USER}"
+            - name: POSTGRES_PASSWORD
+              value: "${POSTGRES_PASSWORD}"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: ${POSTGRES_DATA_PATH}
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
