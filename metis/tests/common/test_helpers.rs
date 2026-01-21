@@ -64,16 +64,27 @@ impl TestEnvironment {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn run_as_worker(
         &self,
         commands: Vec<String>,
         job_id: TaskId,
     ) -> Result<Vec<CommandOutput>> {
+        self.run_as_worker_with_failure(commands, job_id, false)
+            .await
+    }
+
+    pub async fn run_as_worker_with_failure(
+        &self,
+        commands: Vec<String>,
+        job_id: TaskId,
+        fail_after_run: bool,
+    ) -> Result<Vec<CommandOutput>> {
         let temp_dir =
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
 
-        let bash_commands = BashCommands::new(commands);
+        let bash_commands = BashCommands::new_with_failure(commands, fail_after_run);
 
         let run_result = metis::command::jobs::worker_run::run(
             &self.client,
