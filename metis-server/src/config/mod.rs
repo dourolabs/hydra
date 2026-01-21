@@ -2,8 +2,9 @@ pub mod kube;
 
 pub use kube::build_kube_client;
 
+use crate::domain::jobs::BundleSpec;
 use anyhow::{Context, Result};
-use metis_common::{RepoName, jobs::BundleSpec, repositories::ServiceRepositoryConfig};
+use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
 use serde::Deserialize;
 use std::{
     collections::HashMap,

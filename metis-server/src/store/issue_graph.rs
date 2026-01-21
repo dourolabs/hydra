@@ -1,12 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::StoreError;
-use metis_common::{
-    IssueId,
-    issues::{
-        Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
-    },
+use crate::domain::issues::{
+    Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
 };
+use metis_common::IssueId;
 
 pub(crate) struct IssueGraphContext {
     known_issues: HashSet<IssueId>,

@@ -1,3 +1,6 @@
+use crate::domain::jobs::{
+    CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery,
+};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::{Store, StoreError, TaskError},
@@ -9,10 +12,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
-use metis_common::{
-    IssueId, TaskId,
-    jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
-};
+use metis_common::{IssueId, TaskId};
 use serde_json::json;
 use tracing::{error, info};
 

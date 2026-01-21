@@ -1,16 +1,17 @@
 use crate::{
     config::DatabaseSection,
+    domain::{
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
+        patches::Patch,
+        task_status::Event,
+        users::{User, Username},
+    },
     store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use metis_common::{
-    IssueId, PatchId, TaskId,
-    issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
-    patches::Patch,
-    users::{User, Username},
-};
+use metis_common::{IssueId, PatchId, TaskId};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -675,9 +676,7 @@ impl Store for PostgresStore {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        status_log
-            .events
-            .push(metis_common::task_status::Event::Started { at: start_time });
+        status_log.events.push(Event::Started { at: start_time });
 
         self.update_payload(
             TABLE_TASK_STATUS_LOGS,
@@ -703,11 +702,11 @@ impl Store for PostgresStore {
         }
 
         let event = match result {
-            Ok(()) => metis_common::task_status::Event::Completed {
+            Ok(()) => Event::Completed {
                 at: end_time,
                 last_message,
             },
-            Err(error) => metis_common::task_status::Event::Failed {
+            Err(error) => Event::Failed {
                 at: end_time,
                 error,
             },
@@ -801,13 +800,13 @@ impl Store for PostgresStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metis_common::{
-        RepoName,
+    use crate::domain::{
         issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
         jobs::BundleSpec,
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
+    use metis_common::RepoName;
     use std::{collections::HashSet, str::FromStr};
 
     #[allow(dead_code)]

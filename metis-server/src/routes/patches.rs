@@ -1,3 +1,7 @@
+use crate::domain::patches::{
+    ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+    UpsertPatchResponse,
+};
 use crate::{
     app::{AppState, UpsertPatchError},
     routes::jobs::ApiError,
@@ -9,13 +13,7 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{
-    PatchId,
-    patches::{
-        ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-        UpsertPatchResponse,
-    },
-};
+use metis_common::PatchId;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]

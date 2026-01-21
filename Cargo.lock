@@ -3484,6 +3484,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "shellexpand",
  "sqlx",
  "tempfile",

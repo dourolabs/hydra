@@ -116,9 +116,9 @@ impl ScheduledWorker for RunSpawnersWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::jobs::BundleSpec;
     use crate::{background::spawner::Spawner, test::test_state};
     use anyhow::anyhow;
-    use metis_common::jobs::BundleSpec;
     use std::{collections::HashMap, sync::Arc};
 
     #[derive(Clone)]
