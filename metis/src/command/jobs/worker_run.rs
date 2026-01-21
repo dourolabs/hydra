@@ -460,7 +460,7 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{
-        client::MockMetisClient,
+        client::MetisClient,
         git::{
             clone_repo as git_clone_repo, commit_changes as git_commit_changes,
             configure_repo as git_configure_repo, current_branch as git_current_branch,
@@ -469,7 +469,9 @@ mod tests {
         test_utils::ids::{patch_id, task_id},
     };
     use git2::{build::CheckoutBuilder, Oid, Repository};
-    use metis_common::patches::UpsertPatchResponse;
+    use httpmock::prelude::*;
+    use metis_common::patches::{Patch, PatchStatus, UpsertPatchRequest, UpsertPatchResponse};
+    use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
     fn init_git_repo(repo_path: &Path) -> Result<String> {
@@ -580,12 +582,32 @@ mod tests {
         std::fs::write(repo_path.join("README.md"), "updated content\n")?;
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
-        let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-123"),
-        });
         let job_id = task_id("t-job-123");
         let repo_name = RepoName::from_str("dourolabs/example")?;
+        let diff = workdir_diff(repo_path)?;
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: "final output line".to_string(),
+                description: "final output line".to_string(),
+                diff: diff.clone(),
+                status: PatchStatus::Open,
+                is_automatic_backup: true,
+                created_by: Some(job_id.clone()),
+                reviews: Vec::new(),
+                service_repo_name: repo_name.clone(),
+                github: None,
+            },
+        };
+        let server = MockServer::start();
+        let patch_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/patches")
+                .json_body_obj(&expected_request);
+            then.status(200).json_body_obj(&UpsertPatchResponse {
+                patch_id: patch_id("p-123"),
+            });
+        });
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
 
         submit_patch_artifact_if_present(
             &client,
@@ -597,26 +619,13 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected a single patch submission");
-        let (_, request) = &requests[0];
-        assert_eq!(request.patch.created_by, Some(job_id));
-        assert_eq!(request.patch.title, "final output line");
-        assert_eq!(request.patch.description, "final output line");
+        patch_mock.assert();
         assert!(
-            request.patch.is_automatic_backup,
-            "worker-run patches should be marked as automatic backups"
-        );
-        assert_eq!(
-            request.patch.service_repo_name, repo_name,
-            "patch should record the provided service repository"
-        );
-        assert!(
-            request.patch.diff.contains("updated content"),
+            expected_request.patch.diff.contains("updated content"),
             "patch should include modifications made by the worker"
         );
         assert!(
-            request.patch.diff.contains("untracked.txt"),
+            expected_request.patch.diff.contains("untracked.txt"),
             "patch should include untracked files"
         );
 
@@ -631,7 +640,14 @@ mod tests {
         let base_commit =
             resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
 
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let patch_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/patches");
+            then.status(200).json_body_obj(&UpsertPatchResponse {
+                patch_id: patch_id("p-456"),
+            });
+        });
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
         let job_id = task_id("t-job-456");
         let repo_name = RepoName::from_str("dourolabs/example")?;
         submit_patch_artifact_if_present(
@@ -644,11 +660,7 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert!(
-            requests.is_empty(),
-            "no patch should be submitted when the repository has no changes"
-        );
+        patch_mock.assert_hits(0);
 
         Ok(())
     }
