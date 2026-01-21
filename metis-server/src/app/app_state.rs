@@ -1,6 +1,13 @@
 use crate::{
     background::Spawner,
     config::AppConfig,
+    domain::{
+        issues::{
+            Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
+        },
+        jobs::CreateJobRequest,
+        patches::{PatchStatus, UpsertPatchRequest},
+    },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
 };
@@ -8,13 +15,9 @@ use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
     constants::ENV_METIS_ID,
-    issues::{
-        Issue, IssueDependencyType, IssueId, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
-    },
+    issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
-    jobs::CreateJobRequest,
     merge_queues::MergeQueue,
-    patches::{PatchStatus, UpsertPatchRequest},
 };
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
@@ -231,7 +234,7 @@ impl AppState {
             store
                 .mark_task_complete(
                     &job_id,
-                    status.to_result(),
+                    status.to_result().map_err(TaskError::from),
                     status.last_message(),
                     Utc::now(),
                 )
@@ -977,14 +980,6 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
 
             Ok(true)
         }
-        status => {
-            warn!(
-                issue_id = %issue_id,
-                ?status,
-                "unsupported issue status encountered; treating as not ready"
-            );
-            Ok(false)
-        }
     }
 }
 
@@ -1140,19 +1135,19 @@ async fn active_tasks_for_issue(
 mod tests {
     use super::UpsertIssueError;
     use crate::{
+        domain::{
+            issues::{
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
+                UpsertIssueRequest,
+            },
+            jobs::{BundleSpec, Task},
+        },
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
         test_utils::{MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
-    use metis_common::{
-        IssueId, TaskId,
-        issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
-            UpsertIssueRequest,
-        },
-        jobs::{BundleSpec, Task},
-    };
+    use metis_common::{IssueId, TaskId};
     use std::{collections::HashMap, sync::Arc};
 
     fn sample_task() -> Task {

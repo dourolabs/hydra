@@ -1,3 +1,8 @@
+use crate::domain::issues::{
+    AddTodoItemRequest, Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
+    ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
+    TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+};
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
     store::StoreError,
@@ -8,14 +13,7 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{
-    api::v1::ApiError,
-    api::v1::issues::{
-        AddTodoItemRequest, Issue, IssueId, IssueRecord, IssueStatus, IssueType,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
-        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
-    },
-};
+use metis_common::{IssueId, api::v1::ApiError};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]

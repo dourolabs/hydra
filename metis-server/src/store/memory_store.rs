@@ -4,14 +4,13 @@ use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
-use metis_common::task_status::Event;
-use metis_common::{IssueId, PatchId, TaskId};
-use metis_common::{
+use crate::domain::{
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
+    task_status::Event,
     users::{User, Username},
 };
-use tracing::warn;
+use metis_common::{IssueId, PatchId, TaskId};
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -79,7 +78,6 @@ impl MemoryStore {
                         }
                     }
                 }
-                other => warn!(?other, "unsupported dependency type in removal"),
             }
         }
 
@@ -103,7 +101,6 @@ impl MemoryStore {
                         blocked.push(issue_id.clone());
                     }
                 }
-                other => warn!(?other, "unsupported dependency type in update"),
             }
         }
     }
@@ -546,9 +543,7 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use metis_common::{
-        RepoName,
+    use crate::domain::{
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
         },
@@ -556,6 +551,8 @@ mod tests {
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
+    use chrono::Utc;
+    use metis_common::RepoName;
     use std::{collections::HashSet, str::FromStr};
 
     fn spawn_task() -> Task {

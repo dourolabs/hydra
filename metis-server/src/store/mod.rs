@@ -1,19 +1,19 @@
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, TaskId};
-use metis_common::{
+use crate::domain::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
 };
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use metis_common::{IssueId, PatchId, TaskId};
 use std::collections::HashSet;
 
 mod issue_graph;
 mod memory_store;
 pub mod postgres;
 
-pub use metis_common::jobs::Task;
-pub use metis_common::task_status::{Status, TaskError, TaskStatusLog};
+pub use crate::domain::jobs::Task;
+pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]

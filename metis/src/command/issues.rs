@@ -1239,16 +1239,21 @@ fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
+    use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
-        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        ListIssuesResponse, ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem,
+        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use metis_common::patches::{Patch, PatchRecord, Review};
-    use metis_common::RepoName;
+    use metis_common::{
+        PatchId,
+        patches::{Patch, PatchRecord, Review},
+        RepoName,
+    };
+    use reqwest::Client as HttpClient;
     use std::str::FromStr;
 
     fn sample_diff() -> String {
@@ -1259,24 +1264,60 @@ mod tests {
         RepoName::from_str("dourolabs/example").unwrap()
     }
 
+    fn metis_client(server: &MockServer) -> MetisClient {
+        MetisClient::with_http_client(server.base_url(), HttpClient::new()).unwrap()
+    }
+
+    fn api_issue_record(
+        id: &str,
+        issue_type: IssueType,
+        description: &str,
+        status: IssueStatus,
+        assignee: Option<&str>,
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+    ) -> IssueRecord {
+        IssueRecord::new(
+            issue_id(id),
+            Issue::new(
+                issue_type,
+                description.into(),
+                String::new(),
+                String::new(),
+                status,
+                assignee.map(str::to_string),
+                Vec::new(),
+                dependencies,
+                patches,
+            ),
+        )
+    }
+
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
-        let client = MockMetisClient::default();
-        client.push_list_issues_response(ListIssuesResponse {
-            issues: vec![IssueRecord {
-                id: issue_id("i-1"),
-                issue: Issue {
-                    issue_type: IssueType::Bug,
-                    description: "First issue".into(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: None,
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                },
-            }],
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let issues_response = ListIssuesResponse::new(vec![IssueRecord::new(
+            issue_id("i-1"),
+            Issue::new(
+                IssueType::Bug,
+                "First issue".into(),
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+        )]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("issue_type", IssueType::Bug.as_str())
+                .query_param("status", IssueStatus::Open.as_str())
+                .query_param("q", "bug");
+            then.status(200).json_body_obj(&issues_response);
         });
 
         let issues = fetch_issues(
@@ -1291,16 +1332,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_list_issue_queries(),
-            vec![SearchIssuesQuery {
-                issue_type: Some(IssueType::Bug),
-                status: Some(IssueStatus::Open),
-                assignee: None,
-                q: Some("bug".into()),
-                graph_filters: Vec::new(),
-            }]
-        );
+        list_mock.assert();
+        assert_eq!(list_mock.hits(), 1);
 
         let mut output = Vec::new();
         print_issues_jsonl(&issues, &mut output).unwrap();
@@ -1313,25 +1346,32 @@ mod tests {
 
     #[tokio::test]
     async fn list_issues_by_id_returns_single_issue() {
-        let client = MockMetisClient::default();
-        client.push_get_issue_response(IssueRecord {
-            id: issue_id("i-123"),
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "Edge case bug".into(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::InProgress,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let issue_id = issue_id("i-123");
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Edge case bug".into(),
+                String::new(),
+                String::new(),
+                IssueStatus::InProgress,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+        );
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{issue_id}").as_str());
+            then.status(200).json_body_obj(&issue_record);
         });
 
         let issues = fetch_issues(
             &client,
-            Some(issue_id("i-123")),
+            Some(issue_id.clone()),
             Some(IssueType::Task),
             Some(IssueStatus::InProgress),
             None,
@@ -1341,32 +1381,35 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_get_issue_requests(),
-            vec![issue_id("i-123")]
-        );
+        get_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].id, issue_id("i-123"));
+        assert_eq!(issues[0].id, issue_id);
     }
 
     #[tokio::test]
     async fn list_issues_filters_by_assignee() {
-        let client = MockMetisClient::default();
-        client.push_list_issues_response(ListIssuesResponse {
-            issues: vec![IssueRecord {
-                id: issue_id("i-7"),
-                issue: Issue {
-                    issue_type: IssueType::Task,
-                    description: "Edge case bug".into(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("owner-a".into()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                },
-            }],
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let issues_response = ListIssuesResponse::new(vec![IssueRecord::new(
+            issue_id("i-7"),
+            Issue::new(
+                IssueType::Task,
+                "Edge case bug".into(),
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                Some("owner-a".into()),
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+        )]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("assignee", "OWNER-A");
+            then.status(200).json_body_obj(&issues_response);
         });
 
         let issues = fetch_issues(
@@ -1381,109 +1424,110 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_list_issue_queries(),
-            vec![SearchIssuesQuery {
-                issue_type: None,
-                status: None,
-                assignee: Some("OWNER-A".into()),
-                q: None,
-                graph_filters: Vec::new(),
-            }]
-        );
+        list_mock.assert();
+        assert_eq!(list_mock.hits(), 1);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].id, issue_id("i-7"));
     }
 
     #[tokio::test]
     async fn list_issues_includes_graph_filters_in_query() {
-        let client = MockMetisClient::default();
-        client.push_list_issues_response(ListIssuesResponse { issues: vec![] });
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let filters = vec![
             parse_issue_graph_filter("*:child-of:i-abcd").unwrap(),
             parse_issue_graph_filter("i-efgh:blocked-on:**").unwrap(),
         ];
+        let graph_query = filters
+            .iter()
+            .map(|filter| filter.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("graph", graph_query.as_str());
+            then.status(200)
+                .json_body_obj(&ListIssuesResponse::new(vec![]));
+        });
 
         let _ = fetch_issues(&client, None, None, None, None, None, filters.clone())
             .await
             .unwrap();
 
-        assert_eq!(
-            client.recorded_list_issue_queries(),
-            vec![SearchIssuesQuery {
-                issue_type: None,
-                status: None,
-                assignee: None,
-                q: None,
-                graph_filters: filters,
-            }]
-        );
+        list_mock.assert();
+        assert_eq!(list_mock.hits(), 1);
     }
 
     #[tokio::test]
     async fn describe_issue_collects_related_issues_and_children() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let root_id = issue_id("i-root");
         let parent_id = issue_id("i-parent");
         let root_patch_id = patch_id("p-root");
         let parent_patch_id = patch_id("p-parent");
         let child_patch_id = patch_id("p-child");
 
-        let parent_issue = IssueRecord {
-            id: parent_id.clone(),
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "Parent issue".into(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: vec![parent_patch_id.clone()],
-            },
-        };
+        let parent_issue = api_issue_record(
+            "i-parent",
+            IssueType::Task,
+            "Parent issue",
+            IssueStatus::Open,
+            None,
+            vec![],
+            vec![parent_patch_id.clone()],
+        );
 
-        let root_issue = IssueRecord {
-            id: root_id.clone(),
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "Root issue".into(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("owner".into()),
-                todo_list: Vec::new(),
-                dependencies: vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: parent_id.clone(),
-                }],
-                patches: vec![root_patch_id.clone()],
-            },
-        };
+        let root_issue = api_issue_record(
+            "i-root",
+            IssueType::Task,
+            "Root issue",
+            IssueStatus::Open,
+            Some("owner"),
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+            vec![root_patch_id.clone()],
+        );
 
-        let child_issue = IssueRecord {
-            id: issue_id("i-child"),
-            issue: Issue {
-                issue_type: IssueType::Bug,
-                description: "Child issue".into(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::InProgress,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: root_id.clone(),
-                }],
-                patches: vec![child_patch_id.clone()],
-            },
-        };
+        let child_issue = api_issue_record(
+            "i-child",
+            IssueType::Bug,
+            "Child issue",
+            IssueStatus::InProgress,
+            None,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                root_id.clone(),
+            )],
+            vec![child_patch_id.clone()],
+        );
 
-        client.push_get_issue_response(root_issue.clone());
-        client.push_get_issue_response(parent_issue.clone());
-        client.push_list_issues_response(ListIssuesResponse {
-            issues: vec![child_issue.clone()],
+        let root_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{root_id}").as_str());
+            then.status(200).json_body_obj(&root_issue);
+        });
+        let parent_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{parent_id}").as_str());
+            then.status(200).json_body_obj(&parent_issue);
+        });
+        let graph_query = IssueGraphFilter::new(
+            IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
+            IssueDependencyType::ChildOf,
+            IssueGraphSelector::Issue(root_id.clone()),
+        )
+        .unwrap()
+        .to_string();
+        let list_children_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("graph", graph_query.as_str());
+            then.status(200)
+                .json_body_obj(&ListIssuesResponse::new(vec![child_issue.clone()]));
         });
         let root_patch_record = PatchRecord {
             id: root_patch_id.clone(),
@@ -1527,38 +1571,38 @@ mod tests {
                 github: None,
             },
         };
-        client.push_get_patch_response(root_patch_record.clone());
-        client.push_get_patch_response(parent_patch_record.clone());
-        client.push_get_patch_response(child_patch_record.clone());
+        let root_patch_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{root_patch_id}").as_str());
+            then.status(200).json_body_obj(&root_patch_record);
+        });
+        let parent_patch_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{parent_patch_id}").as_str());
+            then.status(200).json_body_obj(&parent_patch_record);
+        });
+        let child_patch_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{child_patch_id}").as_str());
+            then.status(200).json_body_obj(&child_patch_record);
+        });
 
         let description = collect_issue_description(&client, root_id.clone())
             .await
             .unwrap();
 
-        assert_eq!(
-            client.recorded_get_issue_requests(),
-            vec![root_id.clone(), parent_id.clone()]
-        );
-        assert_eq!(
-            client.recorded_get_patch_requests(),
-            vec![
-                root_patch_id.clone(),
-                parent_patch_id.clone(),
-                child_patch_id.clone()
-            ]
-        );
-        assert_eq!(
-            client.recorded_list_issue_queries(),
-            vec![SearchIssuesQuery {
-                graph_filters: vec![IssueGraphFilter::new(
-                    IssueGraphSelector::Wildcard(IssueGraphWildcard::Transitive),
-                    IssueDependencyType::ChildOf,
-                    IssueGraphSelector::Issue(root_id.clone()),
-                )
-                .unwrap()],
-                ..SearchIssuesQuery::default()
-            }]
-        );
+        root_issue_mock.assert();
+        parent_issue_mock.assert();
+        list_children_mock.assert();
+        root_patch_mock.assert();
+        parent_patch_mock.assert();
+        child_patch_mock.assert();
+        assert_eq!(root_issue_mock.hits(), 1);
+        assert_eq!(parent_issue_mock.hits(), 1);
+        assert_eq!(list_children_mock.hits(), 1);
+        assert_eq!(root_patch_mock.hits(), 1);
+        assert_eq!(parent_patch_mock.hits(), 1);
+        assert_eq!(child_patch_mock.hits(), 1);
         assert_eq!(
             description.issue,
             IssueWithPatches {
@@ -1584,10 +1628,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_issue_submits_issue_record() {
-        let client = MockMetisClient::default();
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-456"),
-        });
+        let server = MockServer::start();
+        let client = metis_client(&server);
         std::env::set_var("METIS_USER", "creator-a");
 
         let dependencies = vec![IssueDependency {
@@ -1595,6 +1637,28 @@ mod tests {
             issue_id: issue_id("i-1"),
         }];
         let patch_ids = vec![patch_id("p-123")];
+        let create_request = UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::MergeRequest,
+                status: IssueStatus::Closed,
+                description: "New issue description".into(),
+                creator: "creator-a".into(),
+                progress: "Initial notes".into(),
+                assignee: Some("team-a".into()),
+                todo_list: Vec::new(),
+                dependencies: dependencies.clone(),
+                patches: patch_ids.clone(),
+            },
+            job_id: None,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200).json_body_obj(&UpsertIssueResponse {
+                issue_id: issue_id("i-456"),
+            });
+        });
 
         create_issue(
             &client,
@@ -1610,31 +1674,15 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_issue_upserts(),
-            vec![(
-                None,
-                UpsertIssueRequest {
-                    issue: Issue {
-                        issue_type: IssueType::MergeRequest,
-                        status: IssueStatus::Closed,
-                        description: "New issue description".into(),
-                        creator: "creator-a".into(),
-                        progress: "Initial notes".into(),
-                        assignee: Some("team-a".into()),
-                        todo_list: Vec::new(),
-                        dependencies,
-                        patches: patch_ids,
-                    },
-                    job_id: None,
-                }
-            )]
-        );
+        create_mock.assert();
+        assert_eq!(create_mock.hits(), 1);
+        std::env::remove_var("METIS_USER");
     }
 
     #[tokio::test]
     async fn create_issue_requires_description() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         assert!(create_issue(
             &client,
             IssueType::Bug,
@@ -1652,7 +1700,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_issue_rejects_empty_assignee() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         assert!(create_issue(
             &client,
             IssueType::Bug,
@@ -1692,31 +1741,55 @@ mod tests {
 
     #[tokio::test]
     async fn update_issue_modifies_requested_fields() {
-        let client = MockMetisClient::default();
-        client.push_get_issue_response(IssueRecord {
-            id: issue_id("i-9"),
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let target_issue_id = issue_id("i-9");
+        let current_issue = api_issue_record(
+            "i-9",
+            IssueType::Task,
+            "Initial issue",
+            IssueStatus::Open,
+            Some("owner-a"),
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                issue_id("i-1"),
+            )],
+            Vec::new(),
+        );
+        let updated_request = UpsertIssueRequest {
             issue: Issue {
-                issue_type: IssueType::Task,
-                description: "Initial issue".into(),
+                issue_type: IssueType::Bug,
+                description: "Updated issue description".into(),
                 creator: String::new(),
-                progress: "Initial note".into(),
-                status: IssueStatus::Open,
-                assignee: Some("owner-a".into()),
+                progress: "New progress".into(),
+                status: IssueStatus::Closed,
+                assignee: Some("owner-b".into()),
                 todo_list: Vec::new(),
                 dependencies: vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-1"),
+                    dependency_type: IssueDependencyType::BlockedOn,
+                    issue_id: issue_id("i-2"),
                 }],
-                patches: Vec::new(),
+                patches: vec![patch_id("p-3")],
             },
+            job_id: None,
+        };
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
         });
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-9"),
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str())
+                .json_body_obj(&updated_request);
+            then.status(200).json_body_obj(&UpsertIssueResponse {
+                issue_id: target_issue_id.clone(),
+            });
         });
 
         update_issue(
             &client,
-            issue_id("i-9"),
+            target_issue_id,
             Some(IssueType::Bug),
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
@@ -1736,37 +1809,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(client.recorded_get_issue_requests(), vec![issue_id("i-9")]);
-        assert_eq!(
-            client.recorded_issue_upserts(),
-            vec![(
-                Some(issue_id("i-9")),
-                UpsertIssueRequest {
-                    issue: Issue {
-                        issue_type: IssueType::Bug,
-                        description: "Updated issue description".into(),
-                        creator: String::new(),
-                        progress: "New progress".into(),
-                        status: IssueStatus::Closed,
-                        assignee: Some("owner-b".into()),
-                        todo_list: Vec::new(),
-                        dependencies: vec![IssueDependency {
-                            dependency_type: IssueDependencyType::BlockedOn,
-                            issue_id: issue_id("i-2"),
-                        }],
-                        patches: vec![patch_id("p-3")],
-                    },
-                    job_id: None,
-                }
-            )]
-        );
+        get_mock.assert();
+        update_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+        assert_eq!(update_mock.hits(), 1);
     }
 
     #[tokio::test]
     async fn update_issue_allows_clearing_assignee_and_dependencies() {
-        let client = MockMetisClient::default();
-        client.push_get_issue_response(IssueRecord {
-            id: issue_id("i-10"),
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let target_issue_id = issue_id("i-10");
+        let current_issue = IssueRecord {
+            id: target_issue_id.clone(),
             issue: Issue {
                 issue_type: IssueType::Feature,
                 description: "Existing issue".into(),
@@ -1781,14 +1836,38 @@ mod tests {
                 }],
                 patches: Vec::new(),
             },
+        };
+        let update_request = UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::Feature,
+                description: "Existing issue".into(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::InProgress,
+                assignee: None,
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            },
+            job_id: None,
+        };
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
         });
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-10"),
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str())
+                .json_body_obj(&update_request);
+            then.status(200).json_body_obj(&UpsertIssueResponse {
+                issue_id: target_issue_id.clone(),
+            });
         });
 
         update_issue(
             &client,
-            issue_id("i-10"),
+            target_issue_id,
             None,
             None,
             None,
@@ -1805,26 +1884,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_issue_upserts(),
-            vec![(
-                Some(issue_id("i-10")),
-                UpsertIssueRequest {
-                    issue: Issue {
-                        issue_type: IssueType::Feature,
-                        description: "Existing issue".into(),
-                        creator: String::new(),
-                        progress: String::new(),
-                        status: IssueStatus::InProgress,
-                        assignee: None,
-                        todo_list: Vec::new(),
-                        dependencies: vec![],
-                        patches: Vec::new(),
-                    },
-                    job_id: None,
-                }
-            )]
-        );
+        get_mock.assert();
+        update_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+        assert_eq!(update_mock.hits(), 1);
     }
 
     #[test]
@@ -1884,42 +1947,58 @@ mod tests {
 
     #[tokio::test]
     async fn todo_command_fetches_existing_list() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let issue_id = issue_id("i-todo");
         let todo_list = vec![
             TodoItem::new("write docs".into(), false),
             TodoItem::new("add tests".into(), true),
         ];
-        client.push_get_issue_response(IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "has todos".into(),
-                String::new(),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                todo_list.clone(),
-                vec![],
-                Vec::new(),
-            ),
-        ));
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{issue_id}").as_str());
+            then.status(200).json_body_obj(&IssueRecord {
+                id: issue_id.clone(),
+                issue: Issue {
+                    issue_type: IssueType::Task,
+                    description: "has todos".into(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    todo_list: todo_list.clone(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                },
+            });
+        });
 
         let resolved = resolve_todo_list(&client, &issue_id, None, None, None, None)
             .await
             .unwrap();
 
-        assert_eq!(client.recorded_get_issue_requests(), vec![issue_id]);
+        get_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
         assert_eq!(resolved, todo_list);
     }
 
     #[tokio::test]
     async fn todo_command_adds_item_and_parses_done_prefix() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let issue_id = issue_id("i-add");
-        client.push_add_todo_response(TodoListResponse {
-            issue_id: issue_id.clone(),
-            todo_list: Vec::new(),
+        let add_request = AddTodoItemRequest {
+            description: "finish docs".into(),
+            is_done: true,
+        };
+        let add_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{issue_id}/todo-items").as_str())
+                .json_body_obj(&add_request);
+            then.status(200).json_body_obj(&TodoListResponse {
+                issue_id: issue_id.clone(),
+                todo_list: Vec::new(),
+            });
         });
 
         let updated = resolve_todo_list(
@@ -1933,76 +2012,79 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_add_todo_requests(),
-            vec![(
-                issue_id.clone(),
-                AddTodoItemRequest {
-                    description: "finish docs".into(),
-                    is_done: true,
-                }
-            )]
-        );
+        add_mock.assert();
+        assert_eq!(add_mock.hits(), 1);
         assert!(updated.is_empty());
     }
 
     #[tokio::test]
     async fn todo_command_marks_item_done_and_undone() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let issue_id = issue_id("i-done");
-        client.push_set_todo_status_response(TodoListResponse::new(
-            issue_id.clone(),
-            vec![TodoItem::new("first".into(), true)],
-        ));
+        let mark_done_request = SetTodoItemStatusRequest { is_done: true };
+        let mark_done_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{issue_id}/todo-items/1").as_str())
+                .json_body_obj(&mark_done_request);
+            then.status(200).json_body_obj(&TodoListResponse {
+                issue_id: issue_id.clone(),
+                todo_list: vec![TodoItem {
+                    description: "first".into(),
+                    is_done: true,
+                }],
+            });
+        });
 
         let done_list = resolve_todo_list(&client, &issue_id, None, Some(1), None, None)
             .await
             .unwrap();
-        assert_eq!(
-            client.recorded_set_todo_status_requests(),
-            vec![(
-                issue_id.clone(),
-                1,
-                SetTodoItemStatusRequest { is_done: true }
-            )]
-        );
+        mark_done_mock.assert();
+        assert_eq!(mark_done_mock.hits(), 1);
         assert!(done_list[0].is_done);
 
-        client.push_set_todo_status_response(TodoListResponse::new(
-            issue_id.clone(),
-            vec![TodoItem::new("first".into(), false)],
-        ));
+        let mark_undone_request = SetTodoItemStatusRequest { is_done: false };
+        let mark_undone_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{issue_id}/todo-items/1").as_str())
+                .json_body_obj(&mark_undone_request);
+            then.status(200).json_body_obj(&TodoListResponse {
+                issue_id: issue_id.clone(),
+                todo_list: vec![TodoItem {
+                    description: "first".into(),
+                    is_done: false,
+                }],
+            });
+        });
 
         let undone_list = resolve_todo_list(&client, &issue_id, None, None, Some(1), None)
             .await
             .unwrap();
-        assert_eq!(
-            client.recorded_set_todo_status_requests(),
-            vec![
-                (
-                    issue_id.clone(),
-                    1,
-                    SetTodoItemStatusRequest { is_done: true }
-                ),
-                (
-                    issue_id.clone(),
-                    1,
-                    SetTodoItemStatusRequest { is_done: false }
-                )
-            ]
-        );
+        mark_undone_mock.assert();
+        assert_eq!(mark_undone_mock.hits(), 1);
         assert!(!undone_list[0].is_done);
     }
 
     #[tokio::test]
     async fn todo_command_replaces_list_with_parsed_items() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let issue_id = issue_id("i-replace");
         let parsed = vec![
             TodoItem::new("first item".into(), false),
             TodoItem::new("second".into(), true),
         ];
-        client.push_replace_todo_response(TodoListResponse::new(issue_id.clone(), parsed.clone()));
+        let replace_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{issue_id}/todo-items").as_str())
+                .json_body_obj(&ReplaceTodoListRequest {
+                    todo_list: parsed.clone(),
+                });
+            then.status(200).json_body_obj(&TodoListResponse {
+                issue_id: issue_id.clone(),
+                todo_list: parsed.clone(),
+            });
+        });
 
         let resolved = resolve_todo_list(
             &client,
@@ -2015,15 +2097,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            client.recorded_replace_todo_requests(),
-            vec![(
-                issue_id,
-                ReplaceTodoListRequest {
-                    todo_list: parsed.clone()
-                }
-            )]
-        );
+        replace_mock.assert();
+        assert_eq!(replace_mock.hits(), 1);
         assert_eq!(resolved, parsed);
     }
 

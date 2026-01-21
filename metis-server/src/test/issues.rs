@@ -1,5 +1,14 @@
 use super::common::default_image;
 use crate::{
+    domain::{
+        issues::{
+            AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord,
+            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+            SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+            UpsertIssueResponse,
+        },
+        jobs::BundleSpec,
+    },
     job_engine::{JobEngine, JobStatus},
     store::Task,
     test_utils::{
@@ -8,15 +17,7 @@ use crate::{
     },
 };
 use chrono::Utc;
-use metis_common::{
-    PatchId, TaskId,
-    issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus,
-        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
-        UpsertIssueResponse,
-    },
-};
+use metis_common::{PatchId, TaskId};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -610,13 +611,13 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         store
             .add_task_with_id(
                 task_id.clone(),
-                Task::new(
-                    "do work".to_string(),
-                    metis_common::jobs::BundleSpec::None,
-                    Some(created.issue_id.clone()),
-                    Some(default_image()),
-                    HashMap::new(),
-                ),
+                Task {
+                    prompt: "do work".to_string(),
+                    context: BundleSpec::None,
+                    spawned_from: Some(created.issue_id.clone()),
+                    image: Some(default_image()),
+                    env_vars: HashMap::new(),
+                },
                 Utc::now(),
             )
             .await?;
@@ -653,7 +654,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let issue = issue(
+    let base_issue = issue(
         IssueType::Bug,
         "login fails for guests",
         String::new(),
@@ -687,7 +688,11 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         Vec::new(),
     );
 
-    for issue in [issue.clone(), assigned_issue.clone(), closed_issue.clone()] {
+    for issue in [
+        base_issue.clone(),
+        assigned_issue.clone(),
+        closed_issue.clone(),
+    ] {
         let response = client
             .post(format!("{}/v1/issues", server.base_url()))
             .json(&UpsertIssueRequest::new(issue, None))
@@ -711,7 +716,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(filtered_issues.issues.len(), 1);
-    assert_eq!(filtered_issues.issues[0].issue, issue);
+    assert_eq!(filtered_issues.issues[0].issue, base_issue);
 
     let filtered_by_assignee: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))

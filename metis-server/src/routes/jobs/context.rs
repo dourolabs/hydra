@@ -1,9 +1,9 @@
+use crate::domain::jobs::WorkerContext;
 use crate::{
     app::{AppState, TaskExt},
     routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{Json, extract::State};
-use metis_common::api::v1::jobs::WorkerContext;
 use tracing::{error, info};
 
 pub async fn get_job_context(

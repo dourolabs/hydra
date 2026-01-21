@@ -1,22 +1,23 @@
 #[cfg(test)]
 use crate::app::TaskExt;
+#[cfg(test)]
+use crate::domain::issues::{IssueDependency, IssueType};
 use crate::{
     app::AppState,
     config::AgentQueueConfig,
+    domain::{
+        issues::{Issue, IssueDependencyType, IssueStatus},
+        jobs::BundleSpec,
+    },
     store::{Status, Store, StoreError, Task},
 };
 use anyhow::Context;
 use async_trait::async_trait;
+use metis_common::IssueId;
 #[cfg(test)]
 use metis_common::RepoName;
 #[cfg(test)]
 use metis_common::constants::ENV_GH_TOKEN;
-#[cfg(test)]
-use metis_common::issues::{IssueDependency, IssueType};
-use metis_common::{
-    issues::{Issue, IssueDependencyType, IssueId, IssueStatus},
-    jobs::BundleSpec,
-};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -206,13 +207,13 @@ async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
         app::{ServiceRepository, ServiceState},
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
         test::test_state,
     };
     use chrono::Utc;
-    use metis_common::jobs::{Bundle, BundleSpec};
     use std::sync::Arc;
 
     fn queue(agent_name: &str) -> AgentQueue {

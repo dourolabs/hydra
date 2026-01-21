@@ -1,12 +1,12 @@
 use crate::{
     app::{ServiceRepository, ServiceState},
+    domain::patches::{Patch, PatchStatus},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
-    patches::{Patch, PatchStatus},
 };
 use reqwest::StatusCode;
 use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
@@ -15,13 +15,13 @@ use tempfile::TempDir;
 fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let mut state = test_state();
-    let repository = ServiceRepository {
-        name: repo.clone(),
-        remote_url: format!("https://example.com/{}.git", repo.as_str()),
-        default_branch: None,
-        github_token: None,
-        default_image: None,
-    };
+    let repository = ServiceRepository::new(
+        repo.clone(),
+        format!("https://example.com/{}.git", repo.as_str()),
+        None,
+        None,
+        None,
+    );
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
         repo, repository,
     )])));
@@ -188,9 +188,7 @@ async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
             "{}/v1/merge-queues/dourolabs/api/main/patches",
             server.base_url()
         ))
-        .json(&EnqueueMergePatchRequest {
-            patch_id: patch_id.clone(),
-        })
+            .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
         .send()
         .await?;
 
@@ -233,9 +231,7 @@ async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
             "{}/v1/merge-queues/unknown/unknown/main/patches",
             server.base_url()
         ))
-        .json(&EnqueueMergePatchRequest {
-            patch_id: PatchId::new(),
-        })
+            .json(&EnqueueMergePatchRequest::new(PatchId::new()))
         .send()
         .await?;
 

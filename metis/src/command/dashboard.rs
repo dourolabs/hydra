@@ -131,7 +131,6 @@ struct IssueDraft {
     assignee_index: usize,
     validation_error: Option<String>,
     info_message: Option<String>,
-    editing: bool,
     is_submitting: bool,
 }
 
@@ -143,10 +142,9 @@ impl Default for IssueDraft {
             assignee_index: 0,
             validation_error: None,
             info_message: None,
-            editing: false,
             is_submitting: false,
         };
-        draft.configure_prompt();
+        draft.configure_prompt(false);
         draft
     }
 }
@@ -157,19 +155,14 @@ impl IssueDraft {
     }
 
     #[cfg(test)]
-    fn set_prompt(&mut self, prompt: &str) {
+    fn set_prompt(&mut self, prompt: &str, focused: bool) {
         self.prompt = TextArea::from(prompt.lines());
-        self.configure_prompt();
+        self.configure_prompt(focused);
     }
 
-    fn clear_prompt(&mut self) {
+    fn clear_prompt(&mut self, focused: bool) {
         self.prompt = TextArea::default();
-        self.configure_prompt();
-    }
-
-    fn set_editing(&mut self, editing: bool) {
-        self.editing = editing;
-        self.configure_prompt();
+        self.configure_prompt(focused);
     }
 
     fn selected_assignee(&self) -> Option<&str> {
@@ -197,17 +190,13 @@ impl IssueDraft {
         self.info_message = None;
     }
 
-    fn configure_prompt(&mut self) {
-        let placeholder = if self.editing {
-            "Describe the work to create a new issue.\nType to describe the work for a new issue."
-        } else {
-            "Describe the work to create a new issue.\nPress Tab to focus the prompt."
-        };
+    fn configure_prompt(&mut self, focused: bool) {
+        let placeholder = "Describe the work to create a new issue.";
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
             .set_placeholder_style(Style::default().fg(Color::DarkGray));
         self.prompt.set_style(Style::default());
-        if self.editing {
+        if focused {
             self.prompt
                 .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
             self.prompt
@@ -226,7 +215,6 @@ impl PartialEq for IssueDraft {
             && self.assignee_index == other.assignee_index
             && self.validation_error == other.validation_error
             && self.info_message == other.info_message
-            && self.editing == other.editing
             && self.is_submitting == other.is_submitting
     }
 }
@@ -263,7 +251,7 @@ impl Default for DashboardState {
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
         issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-        issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut running_issue_panel);
@@ -297,7 +285,7 @@ impl Default for DashboardState {
 
 fn configure_status_panel_keybindings(panel: &mut PanelState) {
     panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-    panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+    panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
 }
 
 struct IssueSubmission {
@@ -326,7 +314,6 @@ async fn run_dashboard_loop(
         username: username.unwrap_or_else(whoami::username),
         ..DashboardState::default()
     };
-    state.issue_draft.set_editing(true);
     update_panel_focus(&mut state);
     let mut needs_draw = true;
 
@@ -460,7 +447,9 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if state.issue_draft.editing && state.issue_draft.prompt.insert_str(text) {
+            if state.selected_panel == PanelFocus::NewIssue
+                && state.issue_draft.prompt.insert_str(text)
+            {
                 state.issue_draft.note_edit();
                 state.selected_panel = PanelFocus::NewIssue;
             }
@@ -504,7 +493,7 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
 }
 
 fn is_panel_focus_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty() && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+    key.code == KeyCode::Tab && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
@@ -512,13 +501,11 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
 }
 
 fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
-    state.selected_panel = match key.code {
-        KeyCode::BackTab => prev_panel_focus(state.selected_panel),
-        _ => next_panel_focus(state.selected_panel),
+    state.selected_panel = if key.modifiers.contains(KeyModifiers::SHIFT) {
+        prev_panel_focus(state.selected_panel)
+    } else {
+        next_panel_focus(state.selected_panel)
     };
-    state
-        .issue_draft
-        .set_editing(state.selected_panel == PanelFocus::NewIssue);
     update_panel_focus(state);
 }
 
@@ -541,6 +528,9 @@ fn prev_panel_focus(current: PanelFocus) -> PanelFocus {
 }
 
 fn update_panel_focus(state: &mut DashboardState) {
+    state
+        .issue_draft
+        .configure_prompt(state.selected_panel == PanelFocus::NewIssue);
     state
         .issue_creator_panel
         .set_focused(state.selected_panel == PanelFocus::NewIssue);
@@ -573,10 +563,6 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     if is_issue_submit_key(key) {
         state.selected_panel = PanelFocus::NewIssue;
         return attempt_issue_submit(state);
-    }
-
-    if !state.issue_draft.editing {
-        return None;
     }
 
     if state.issue_draft.prompt.input(key) {
@@ -667,7 +653,6 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     if prompt.is_empty() {
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = None;
-        state.issue_draft.set_editing(true);
         return None;
     }
 
@@ -689,8 +674,8 @@ fn handle_issue_submission_result(
     state.issue_draft.is_submitting = false;
     match result {
         Ok(issue_id) => {
-            state.issue_draft.clear_prompt();
-            state.issue_draft.set_editing(false);
+            let focused = state.selected_panel == PanelFocus::NewIssue;
+            state.issue_draft.clear_prompt(focused);
             state.issue_draft.validation_error = None;
             state.issue_draft.info_message =
                 Some(format!("Created issue {issue_id} for @{assignee}."));
@@ -808,13 +793,8 @@ fn render_issue_creator(
     area: ratatui::layout::Rect,
     state: &mut DashboardState,
 ) {
-    let title = if state.issue_draft.editing {
-        "New issue (editing)"
-    } else {
-        "New issue"
-    };
     frame.render_stateful_widget(
-        Panel::new(title, Vec::new()),
+        Panel::new("New issue", Vec::new()),
         area,
         &mut state.issue_creator_panel,
     );
@@ -853,7 +833,7 @@ fn render_issue_creator(
             info.clone(),
             Style::default().fg(Color::Green),
         ))
-    } else if draft.editing {
+    } else if state.selected_panel == PanelFocus::NewIssue {
         Line::from(Span::styled(
             "Alt+A to cycle assignee. Alt+Enter to validate. Tab/Shift+Tab switches panels.",
             Style::default().fg(Color::DarkGray),
@@ -1874,13 +1854,15 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{Event as CrosstermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use httpmock::prelude::*;
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use serde_json::json;
     use std::collections::HashMap;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
@@ -1905,20 +1887,15 @@ mod tests {
                 });
             }
             Status::Pending => {}
+            other => unreachable!("unsupported task status variant: {other:?}"),
         }
 
-        JobRecord {
-            id: task_id(id),
-            task: Task {
-                prompt: "0".into(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                image: None,
-                env_vars: HashMap::new(),
-            },
-            notes: None,
-            status_log: log,
-        }
+        JobRecord::new(
+            task_id(id),
+            Task::new("0".into(), BundleSpec::None, None, None, HashMap::new()),
+            None,
+            log,
+        )
     }
 
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
@@ -1941,6 +1918,14 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
         }
+    }
+
+    fn child_of(issue_ref: &str) -> IssueDependency {
+        IssueDependency::new(IssueDependencyType::ChildOf, issue_id(issue_ref))
+    }
+
+    fn blocked_on(issue_ref: &str) -> IssueDependency {
+        IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
     }
 
     fn job_details_with_issue(
@@ -1985,14 +1970,7 @@ mod tests {
     fn issue_lines_sorted_by_status_and_nested() {
         let issues = vec![
             issue("i-1", IssueStatus::Open, vec![]),
-            issue(
-                "i-3",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-1"),
-                }],
-            ),
+            issue("i-3", IssueStatus::Closed, vec![child_of("i-1")]),
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
@@ -2011,16 +1989,7 @@ mod tests {
             issue(
                 "i-1",
                 IssueStatus::Open,
-                vec![
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: issue_id("i-closed"),
-                    },
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: issue_id("i-open"),
-                    },
-                ],
+                vec![blocked_on("i-closed"), blocked_on("i-open")],
             ),
             issue("i-closed", IssueStatus::Closed, vec![]),
             issue("i-open", IssueStatus::Open, vec![]),
@@ -2108,18 +2077,12 @@ mod tests {
             issue(
                 "i-parent",
                 IssueStatus::InProgress,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
             issue(
                 "i-root",
                 IssueStatus::InProgress,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-grand"),
-                }],
+                vec![child_of("i-grand")],
             ),
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
@@ -2146,19 +2109,13 @@ mod tests {
             issue(
                 "i-child",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
             issue("i-root-open", IssueStatus::Open, vec![]),
             issue(
                 "i-child-open",
                 IssueStatus::Open,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root-closed-with-open-child"),
-                }],
+                vec![child_of("i-root-closed-with-open-child")],
             ),
             issue("i-root-closed-with-open-child", IssueStatus::Closed, vec![]),
         ];
@@ -2185,10 +2142,7 @@ mod tests {
             issue(
                 "i-dropped-child",
                 IssueStatus::Dropped,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-dropped-root"),
-                }],
+                vec![child_of("i-dropped-root")],
             ),
             issue("i-open", IssueStatus::Open, vec![]),
         ];
@@ -2221,18 +2175,12 @@ mod tests {
             issue(
                 "i-child",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-child"),
-                }],
+                vec![child_of("i-child")],
             ),
         ];
 
@@ -2254,18 +2202,12 @@ mod tests {
             issue(
                 "i-child",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-child"),
-                }],
+                vec![child_of("i-child")],
             ),
         ];
 
@@ -2281,10 +2223,7 @@ mod tests {
             issue(
                 "i-child",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
         ];
 
@@ -2369,10 +2308,7 @@ mod tests {
             issue(
                 "i-child-open",
                 IssueStatus::Open,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-closed-root"),
-                }],
+                vec![child_of("i-closed-root")],
             ),
             issue("i-open-root", IssueStatus::Open, vec![]),
         ];
@@ -2402,7 +2338,7 @@ mod tests {
     #[test]
     fn attempt_issue_submit_requires_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("   ");
+        state.issue_draft.set_prompt("   ", true);
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -2411,14 +2347,13 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
-        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
     #[test]
     fn attempt_issue_submit_rejects_whitespace_only_with_newlines() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("\n  \n");
+        state.issue_draft.set_prompt("\n  \n", true);
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -2427,14 +2362,13 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
-        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
     #[test]
     fn attempt_issue_submit_sets_loading_state() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = attempt_issue_submit(&mut state).expect("submission missing");
@@ -2450,8 +2384,7 @@ mod tests {
             selected_panel: PanelFocus::NewIssue,
             ..Default::default()
         };
-        state.issue_draft.set_prompt("Ship dashboard");
-        state.issue_draft.set_editing(true);
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.is_submitting = true;
 
         handle_issue_submission_result(&mut state, "pm", Ok(issue_id("i-new")));
@@ -2496,7 +2429,7 @@ mod tests {
     #[test]
     fn tab_switches_focus_away_from_new_issue_panel() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
@@ -2506,7 +2439,6 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::UserOwned);
-        assert!(!state.issue_draft.editing);
     }
 
     #[test]
@@ -2524,11 +2456,10 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::NewIssue);
-        assert!(state.issue_draft.editing);
     }
 
     #[test]
-    fn backtab_moves_focus_to_previous_panel() {
+    fn shift_tab_moves_focus_to_previous_panel() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::UserOwned,
             ..DashboardState::default()
@@ -2536,14 +2467,13 @@ mod tests {
         update_panel_focus(&mut state);
 
         let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)),
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)),
             &mut state,
         );
 
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::NewIssue);
-        assert!(state.issue_draft.editing);
     }
 
     #[test]
@@ -2709,7 +2639,7 @@ mod tests {
     #[test]
     fn alt_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission =
@@ -2722,9 +2652,9 @@ mod tests {
     }
 
     #[test]
-    fn q_does_not_quit_when_editing_issue_prompt() {
+    fn q_inserts_into_issue_prompt_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
@@ -2737,9 +2667,9 @@ mod tests {
     }
 
     #[test]
-    fn shift_q_does_not_quit_when_editing_issue_prompt() {
+    fn shift_q_inserts_into_issue_prompt_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT)),
@@ -2752,8 +2682,12 @@ mod tests {
     }
 
     #[test]
-    fn q_does_not_quit_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
+    fn q_does_not_edit_issue_prompt_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
@@ -2766,8 +2700,12 @@ mod tests {
     }
 
     #[test]
-    fn escape_does_not_quit_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
+    fn escape_does_not_quit_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -2780,9 +2718,9 @@ mod tests {
     }
 
     #[test]
-    fn escape_does_not_quit_when_editing_issue_prompt() {
+    fn escape_does_not_quit_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -2796,7 +2734,7 @@ mod tests {
     #[test]
     fn paste_event_inserts_prompt_text() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = Some("old message".to_string());
 
@@ -2814,10 +2752,25 @@ mod tests {
 
     #[tokio::test]
     async fn submit_issue_sends_task_request() {
-        let client = MockMetisClient::default();
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-new"),
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/issues").json_body(json!({
+                "issue": {
+                    "type": "task",
+                    "description": "Draft release notes",
+                    "creator": " metis-user ",
+                    "progress": "",
+                    "status": "open",
+                    "assignee": "alice",
+                    "dependencies": [],
+                    "patches": []
+                }
+            }));
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
         });
+
+        let client = MetisClient::new(server.base_url()).expect("failed to create client");
 
         let submission = IssueSubmission {
             prompt: "Draft release notes".to_string(),
@@ -2829,15 +2782,6 @@ mod tests {
             .expect("submission failed");
 
         assert_eq!(created, issue_id("i-new"));
-
-        let requests = client.recorded_issue_upserts();
-        assert_eq!(requests.len(), 1);
-        let (_, request) = &requests[0];
-        assert_eq!(request.issue.issue_type, IssueType::Task);
-        assert_eq!(request.issue.status, IssueStatus::Open);
-        assert_eq!(request.issue.description, "Draft release notes");
-        assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
-        assert_eq!(request.issue.creator, " metis-user ");
-        assert!(request.issue.dependencies.is_empty());
+        mock.assert();
     }
 }

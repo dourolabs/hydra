@@ -3,6 +3,7 @@
 pub mod app;
 pub mod background;
 pub mod config;
+pub mod domain;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod routes;

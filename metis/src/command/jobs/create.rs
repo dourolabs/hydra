@@ -205,13 +205,15 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
     use crate::test_utils::ids;
     use chrono::{Duration as ChronoDuration, Utc};
+    use httpmock::prelude::*;
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, Task},
         task_status::{Event, Status, TaskStatusLog},
     };
+    use reqwest::Client as HttpClient;
     use std::collections::HashMap;
 
     fn task_id(value: &str) -> TaskId {
@@ -235,35 +237,59 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_uses_injected_client_and_waits_for_completion() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let job_id = task_id("t-job-123");
 
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-123")));
-        client.push_log_lines(["first log line\n", "second log line\n"]);
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "test prompt".to_string());
+        let create_request = CreateJobRequest {
+            prompt: "test prompt".to_string(),
+            image: None,
+            context: BundleSpec::None,
+            variables: variables.clone(),
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/jobs")
+                .json_body_obj(&create_request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: job_id.clone(),
+            });
+        });
+        let logs_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/jobs/{job_id}/logs"))
+                .query_param("watch", "true");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: first log line\n\ndata: second log line\n\n");
+        });
+
         let start_time = Utc::now();
-        client.push_list_jobs_response(ListJobsResponse::new(vec![job_record(
-            "t-job-123",
-            TaskStatusLog::from_events(vec![
-                Event::Created {
-                    at: start_time,
-                    status: Status::Pending,
+        let completed_jobs = ListJobsResponse {
+            jobs: vec![job_record(
+                job_id.as_ref(),
+                TaskStatusLog {
+                    events: vec![
+                        Event::Created {
+                            at: start_time,
+                            status: Status::Pending,
+                        },
+                        Event::Started { at: start_time },
+                        Event::Completed {
+                            at: start_time + ChronoDuration::seconds(1),
+                            last_message: None,
+                        },
+                    ],
                 },
-                Event::Started { at: start_time },
-            ]),
-        )]));
-        client.push_list_jobs_response(ListJobsResponse::new(vec![job_record(
-            "t-job-123",
-            TaskStatusLog::from_events(vec![
-                Event::Created {
-                    at: start_time,
-                    status: Status::Pending,
-                },
-                Event::Started { at: start_time },
-                Event::Completed {
-                    at: start_time + ChronoDuration::seconds(1),
-                    last_message: None,
-                },
-            ]),
-        )]));
+            )],
+        };
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/jobs/");
+            then.status(200).json_body_obj(&completed_jobs);
+        });
 
         run(
             &client,
@@ -277,24 +303,33 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        let request = &requests[0];
-        assert_eq!(request.prompt, "test prompt");
-        assert_eq!(
-            request.variables.get("PROMPT"),
-            Some(&"test prompt".to_string())
-        );
-        assert_eq!(request.context, BundleSpec::None);
-        assert!(client.create_job_responses.lock().unwrap().is_empty());
-        assert!(client.list_jobs_responses.lock().unwrap().is_empty());
-        assert!(client.log_responses.lock().unwrap().is_empty());
+        create_mock.assert();
+        logs_mock.assert();
+        list_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_accepts_service_repository_context() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-service")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "test prompt".to_string());
+        let request = CreateJobRequest {
+            prompt: "test prompt".to_string(),
+            image: None,
+            context: BundleSpec::ServiceRepository {
+                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
+                rev: Some("feature".into()),
+            },
+            variables,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-service"),
+            });
+        });
 
         run(
             &client,
@@ -308,23 +343,31 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].context,
-            BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
-                rev: Some("feature".into())
-            }
-        );
-        assert_eq!(requests[0].prompt, "test prompt");
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_service_repositories() {
-        let client = MockMetisClient::default();
-        client
-            .push_create_job_response(CreateJobResponse::new(task_id("t-job-service-default-rev")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "test prompt".to_string());
+        let request = CreateJobRequest {
+            prompt: "test prompt".to_string(),
+            image: None,
+            context: BundleSpec::ServiceRepository {
+                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
+                rev: Some("main".into()),
+            },
+            variables,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-service-default-rev"),
+            });
+        });
 
         run(
             &client,
@@ -338,21 +381,31 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].context,
-            BundleSpec::ServiceRepository {
-                name: RepoName::from_str("dourolabs/service-repo").unwrap(),
-                rev: Some("main".into())
-            }
-        );
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-git")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "test prompt".to_string());
+        let request = CreateJobRequest {
+            prompt: "test prompt".to_string(),
+            image: None,
+            context: BundleSpec::GitRepository {
+                url: "https://example.com/repo.git".into(),
+                rev: "main".into(),
+            },
+            variables,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-git"),
+            });
+        });
 
         run(
             &client,
@@ -366,21 +419,31 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].context,
-            BundleSpec::GitRepository {
-                url: "https://example.com/repo.git".into(),
-                rev: "main".into()
-            }
-        );
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_git_urls() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-git-default-rev")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "test prompt".to_string());
+        let request = CreateJobRequest {
+            prompt: "test prompt".to_string(),
+            image: None,
+            context: BundleSpec::GitRepository {
+                url: "https://example.com/repo.git".into(),
+                rev: "main".into(),
+            },
+            variables,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-git-default-rev"),
+            });
+        });
 
         run(
             &client,
@@ -394,21 +457,28 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].context,
-            BundleSpec::GitRepository {
-                url: "https://example.com/repo.git".into(),
-                rev: "main".into()
-            }
-        );
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_allows_overriding_image() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-image")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let mut variables = HashMap::new();
+        variables.insert("PROMPT".to_string(), "custom image".to_string());
+        let request = CreateJobRequest {
+            prompt: "custom image".to_string(),
+            image: Some("ghcr.io/example/metis:dev".to_string()),
+            context: BundleSpec::None,
+            variables,
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-image"),
+            });
+        });
 
         run(
             &client,
@@ -422,19 +492,29 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].image,
-            Some("ghcr.io/example/metis:dev".to_string())
-        );
-        assert_eq!(requests[0].context, BundleSpec::None);
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_forwards_cli_variables_into_job_request() {
-        let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-with-vars")));
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let request = CreateJobRequest {
+            prompt: "variable prompt".to_string(),
+            image: None,
+            context: BundleSpec::None,
+            variables: HashMap::from([
+                ("PROMPT".to_string(), "variable prompt".to_string()),
+                ("FOO".to_string(), "bar".to_string()),
+            ]),
+        };
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs").json_body_obj(&request);
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("t-job-with-vars"),
+            });
+        });
 
         run(
             &client,
@@ -448,21 +528,25 @@ mod tests {
         .await
         .unwrap();
 
-        let requests = client.recorded_requests();
-        assert_eq!(requests.len(), 1);
-        let vars = &requests[0].variables;
-        assert_eq!(vars.get("FOO"), Some(&"bar".to_string()));
-        assert_eq!(vars.get("PROMPT"), Some(&"variable prompt".to_string()));
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn spawn_requires_prompt() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client =
+            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/jobs");
+            then.status(200).json_body_obj(&CreateJobResponse {
+                job_id: task_id("unused"),
+            });
+        });
 
         let result = run(&client, false, None, None, None, vec![], vec![]).await;
 
         assert!(result.is_err());
-        assert!(client.recorded_requests().is_empty());
+        create_mock.assert_hits(0);
     }
 
     #[test]

@@ -1,12 +1,14 @@
-use crate::store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use crate::{
+    domain::{
+        issues::{Issue, IssueGraphFilter},
+        patches::Patch,
+        users::{User, Username},
+    },
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, PatchId, TaskId};
-use metis_common::{
-    issues::{Issue, IssueGraphFilter},
-    patches::Patch,
-    users::{User, Username},
-};
 use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.

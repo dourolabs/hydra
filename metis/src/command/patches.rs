@@ -964,30 +964,28 @@ async fn open_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::MetisClient;
     use crate::git::{
         commit_changes as git_commit_changes, configure_repo as git_configure_repo,
         resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
     };
-    use crate::{
-        client::MockMetisClient,
-        test_utils::ids::{issue_id, patch_id, task_id},
-    };
+    use crate::test_utils::ids::{issue_id, patch_id, task_id};
     use anyhow::{anyhow, Context};
     use git2::Repository;
+    use httpmock::{prelude::*, Mock};
     use metis_common::{
         issues::{
-            IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueResponse,
+            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+            UpsertIssueRequest, UpsertIssueResponse,
         },
         jobs::{BundleSpec, JobRecord, Task},
-        merge_queues::MergeQueue,
-        patches::{
-            GitOid, ListPatchesResponse, Patch, PatchRecord, Review, SearchPatchesQuery,
-            UpsertPatchResponse,
-        },
+        merge_queues::{EnqueueMergePatchRequest, MergeQueue},
+        patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
         RepoName,
     };
-    use std::{fs, path::Path, str::FromStr};
+    use reqwest::Client as HttpClient;
+    use std::{env, fs, path::Path, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -995,6 +993,54 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    fn metis_client(server: &MockServer) -> MetisClient {
+        MetisClient::with_http_client(server.base_url(), HttpClient::new())
+            .expect("failed to create metis client")
+    }
+
+    fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/jobs/{}", job.id.as_ref()));
+            then.status(200).json_body_obj(&job);
+        })
+    }
+
+    fn mock_create_patch(
+        server: &MockServer,
+        expected_request: UpsertPatchRequest,
+        response: UpsertPatchResponse,
+    ) -> Mock {
+        server.mock(move |when, then| {
+            when.method(POST)
+                .path("/v1/patches")
+                .json_body_obj(&expected_request);
+            then.status(200).json_body_obj(&response);
+        })
+    }
+
+    fn mock_get_patch(server: &MockServer, patch: PatchRecord) -> Mock {
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{}", patch.id.as_ref()));
+            then.status(200).json_body_obj(&patch);
+        })
+    }
+
+    fn mock_update_patch(
+        server: &MockServer,
+        patch_id: PatchId,
+        expected_request: UpsertPatchRequest,
+        response: UpsertPatchResponse,
+    ) -> Mock {
+        server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/patches/{}", patch_id.as_ref()))
+                .json_body_obj(&expected_request);
+            then.status(200).json_body_obj(&response);
+        })
     }
 
     fn initialize_repo_with_changes(
@@ -1037,30 +1083,37 @@ mod tests {
 
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
-        let client = MockMetisClient::default();
-        client.push_list_patches_response(ListPatchesResponse::new(vec![]));
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/patches")
+                .query_param("q", "login");
+            then.status(200)
+                .json_body_obj(&ListPatchesResponse { patches: vec![] });
+        });
 
         list_patches(&client, None, Some("login".to_string()), false).await?;
 
-        let queries = client.recorded_list_patch_queries();
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].q.as_deref(), Some("login"));
+        mock.assert();
         Ok(())
     }
 
     #[tokio::test]
     async fn list_patches_emits_no_output_for_empty_results() -> Result<()> {
-        let client = MockMetisClient::default();
-        client.push_list_patches_response(ListPatchesResponse::new(vec![]));
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/patches");
+            then.status(200)
+                .json_body_obj(&ListPatchesResponse { patches: vec![] });
+        });
 
         let mut output = Vec::new();
         list_patches_with_writer(&client, None, None, false, &mut output).await?;
 
         assert!(output.is_empty());
-        assert_eq!(
-            client.recorded_list_patch_queries(),
-            vec![SearchPatchesQuery::new(None)]
-        );
+        mock.assert();
         Ok(())
     }
 
@@ -1071,26 +1124,45 @@ mod tests {
         let issue_id = issue_id("i-diff");
         let base_branch = format!("metis/{}/base", issue_id.as_ref());
         create_branch_at(&repo_path, &base_branch, base_commit)?;
-        let client = MockMetisClient::default();
-        client.push_get_job_response(JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
+        let job_record = JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                None,
-                None,
-                Default::default(),
-            ),
-            None,
-            TaskStatusLog::from_events(Vec::new()),
-        ));
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-1")));
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        };
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
         let job_id_clone = job_id.clone();
+        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: patch_title.clone(),
+                description: patch_description.clone(),
+                diff: expected_diff.clone(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: Some(job_id_clone.clone()),
+                reviews: Vec::new(),
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let patch_response = UpsertPatchResponse {
+            patch_id: patch_id("p-1"),
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let job_mock = mock_get_job(&server, job_record.clone());
+        let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         create_patch(
             &client,
             patch_title.clone(),
@@ -1106,28 +1178,8 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected one patch upsert");
-
-        let (_, request) = &requests[0];
-        let patch = &request.patch;
-        let generated_title = &patch.title;
-        let generated_description = &patch.description;
-        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
-        assert!(
-            !patch.is_automatic_backup,
-            "manual patch creation should not be marked as an automatic backup"
-        );
-        assert_eq!(
-            generated_title, &patch_title,
-            "expected provided title to be applied"
-        );
-        assert_eq!(
-            generated_description, &patch_description,
-            "expected provided description to be applied"
-        );
-        assert_eq!(patch.diff, expected_diff);
-        assert_eq!(patch.created_by, Some(job_id_clone));
+        job_mock.assert();
+        patch_mock.assert();
 
         Ok(())
     }
@@ -1136,29 +1188,48 @@ mod tests {
     async fn create_patch_sets_created_by_from_job_id() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
 
-        let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-2")));
         let job_id = task_id("t-job-1234");
-        client.push_get_job_response(JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
+        let job_record = JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                None,
-                None,
-                Default::default(),
-            ),
-            None,
-            TaskStatusLog::from_events(Vec::new()),
-        ));
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        };
 
         let title = "patch with job title".to_string();
         let job_id_opt = Some(job_id.clone());
         let description = "patch with job id".to_string();
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: title.clone(),
+                description: description.clone(),
+                diff: expected_diff,
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: job_id_opt.clone(),
+                reviews: Vec::new(),
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let patch_response = UpsertPatchResponse {
+            patch_id: patch_id("p-2"),
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let job_mock = mock_get_job(&server, job_record.clone());
+        let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
 
         create_patch(
             &client,
@@ -1175,14 +1246,8 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected one patch upsert");
-
-        let (_, request) = &requests[0];
-        assert_eq!(request.patch.created_by, job_id_opt);
-
-        assert_eq!(request.patch.title, title);
-        assert_eq!(request.patch.description, description);
+        job_mock.assert();
+        patch_mock.assert();
 
         Ok(())
     }
@@ -1190,7 +1255,8 @@ mod tests {
     #[tokio::test]
     async fn create_patch_errors_without_job_id() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let result = create_patch(
             &client,
@@ -1219,7 +1285,8 @@ mod tests {
     #[tokio::test]
     async fn create_patch_requires_github_token_when_creating_pr() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
 
         let result = create_patch(
@@ -1253,33 +1320,78 @@ mod tests {
         let parent_issue = issue_id("i-parent");
         let base_branch = format!("metis/{}/base", parent_issue.as_ref());
         create_branch_at(&repo_path, &base_branch, base_commit)?;
-        let client = MockMetisClient::default();
-        client.push_get_job_response(JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
+        let job_record = JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                None,
-                None,
-                Default::default(),
-            ),
-            None,
-            TaskStatusLog::from_events(Vec::new()),
-        ));
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        };
         let created_patch_id = patch_id("p-merge");
-        client.push_upsert_patch_response(UpsertPatchResponse::new(created_patch_id.clone()));
-        client.push_upsert_issue_response(UpsertIssueResponse::new(issue_id("i-merge")));
-
-        let title = "custom patch title".to_string();
-        let description = "custom patch description".to_string();
+        let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
+        let expected_patch_request = UpsertPatchRequest {
+            patch: Patch {
+                title: "custom patch title".to_string(),
+                description: "custom patch description".to_string(),
+                diff: expected_diff,
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
+                reviews: Vec::new(),
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let issue_request = UpsertIssueRequest {
+            issue: Issue {
+                issue_type: IssueType::MergeRequest,
+                description: format!(
+                    "Review patch {}: custom patch title",
+                    created_patch_id.as_ref()
+                ),
+                creator: "unknown".to_string(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("owner-a".to_string()),
+                todo_list: Vec::new(),
+                dependencies: vec![IssueDependency {
+                    dependency_type: IssueDependencyType::ChildOf,
+                    issue_id: parent_issue.clone(),
+                }],
+                patches: vec![created_patch_id.clone()],
+            },
+            job_id: None,
+        };
+        let patch_response = UpsertPatchResponse {
+            patch_id: created_patch_id.clone(),
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let job_mock = mock_get_job(&server, job_record.clone());
+        let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
+        let original_user = env::var("METIS_USER");
+        env::remove_var("METIS_USER");
+        let issue_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&issue_request);
+            then.status(200).json_body_obj(&UpsertIssueResponse {
+                issue_id: issue_id("i-merge"),
+            });
+        });
 
         create_patch(
             &client,
-            title.clone(),
-            description.clone(),
+            "custom patch title".to_string(),
+            "custom patch description".to_string(),
             Some(job_id),
             false,
             None,
@@ -1291,30 +1403,14 @@ mod tests {
         )
         .await?;
 
-        assert!(client.recorded_get_patch_requests().is_empty());
-
-        let issue_requests = client.recorded_issue_upserts();
-        assert_eq!(issue_requests.len(), 1);
-        let (issue_id, request) = &issue_requests[0];
-        assert!(issue_id.is_none());
-        assert_eq!(request.issue.issue_type, IssueType::MergeRequest);
-        assert_eq!(request.issue.status, IssueStatus::Open);
-        assert_eq!(request.issue.assignee.as_deref(), Some("owner-a"));
-        assert_eq!(
-            request.issue.dependencies,
-            vec![IssueDependency::new(
-                IssueDependencyType::ChildOf,
-                parent_issue.clone()
-            )]
-        );
-        assert_eq!(request.issue.patches, vec![created_patch_id.clone()]);
-        assert!(
-            request
-                .issue
-                .description
-                .contains(created_patch_id.as_ref()),
-            "description should link to patch id"
-        );
+        job_mock.assert();
+        patch_mock.assert();
+        issue_mock.assert();
+        if let Ok(value) = original_user {
+            env::set_var("METIS_USER", value);
+        } else {
+            env::remove_var("METIS_USER");
+        }
 
         Ok(())
     }
@@ -1322,15 +1418,31 @@ mod tests {
     #[tokio::test]
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-automatic")));
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
-
         let job_id = task_id("t-job-automatic");
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: "backup patch".to_string(),
+                description: "backup description".to_string(),
+                diff: diff.clone(),
+                status: PatchStatus::Open,
+                is_automatic_backup: true,
+                created_by: Some(job_id.clone()),
+                reviews: Vec::new(),
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let patch_response = UpsertPatchResponse {
+            patch_id: patch_id("p-automatic"),
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let _ = create_patch_artifact_from_repo(
             &client,
             &repo_path,
-            diff,
+            diff.clone(),
             "backup patch".to_string(),
             "backup description".to_string(),
             Some(job_id.clone()),
@@ -1341,36 +1453,52 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected one patch upsert");
-        let (_, request) = &requests[0];
-        assert!(request.patch.is_automatic_backup);
-        assert_eq!(request.patch.created_by, Some(job_id));
+        patch_mock.assert();
+        assert_eq!(patch_mock.hits(), 1);
         Ok(())
     }
 
     #[tokio::test]
     async fn create_patch_uses_service_repo_name_from_job() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
-        let client = MockMetisClient::default();
         let job_id = task_id("t-job-service");
-        client.push_get_job_response(JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::ServiceRepository {
+        let job_record = JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::ServiceRepository {
                     name: RepoName::from_str("dourolabs/api")?,
                     rev: None,
                 },
-                None,
-                None,
-                Default::default(),
-            ),
-            None,
-            TaskStatusLog::from_events(Vec::new()),
-        ));
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-service")));
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        };
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: "backup patch".to_string(),
+                description: "backup description".to_string(),
+                diff: expected_diff,
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: Some(job_id.clone()),
+                reviews: Vec::new(),
+                service_repo_name: RepoName::from_str("dourolabs/api")?,
+                github: None,
+            },
+        };
+        let patch_response = UpsertPatchResponse {
+            patch_id: patch_id("p-service"),
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let job_mock = mock_get_job(&server, job_record.clone());
+        let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
 
         create_patch(
             &client,
@@ -1387,21 +1515,15 @@ mod tests {
         )
         .await?;
 
-        let requests = client.recorded_patch_upserts();
-        assert_eq!(requests.len(), 1, "expected one patch upsert");
-        let (_, request) = &requests[0];
-        assert_eq!(
-            request.patch.service_repo_name.to_string(),
-            "dourolabs/api".to_string(),
-            "service repo name should be derived from the job context"
-        );
-        assert_eq!(request.patch.created_by, Some(job_id));
+        job_mock.assert();
+        patch_mock.assert();
         Ok(())
     }
 
     #[tokio::test]
     async fn resolve_service_repo_name_requires_job_id() -> Result<()> {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
 
         let error = resolve_service_repo_name(&client, None).await.unwrap_err();
 
@@ -1416,23 +1538,25 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_service_repo_name_errors_for_non_service_job() -> Result<()> {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let job_id = task_id("t-job-non-service");
-        client.push_get_job_response(JobRecord::new(
-            job_id.clone(),
-            Task::new(
-                "0".to_string(),
-                BundleSpec::GitRepository {
+        let job_record = JobRecord {
+            id: job_id.clone(),
+            task: Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::GitRepository {
                     url: "https://github.com/dourolabs/example".to_string(),
                     rev: "main".to_string(),
                 },
-                None,
-                None,
-                Default::default(),
-            ),
-            None,
-            TaskStatusLog::from_events(Vec::new()),
-        ));
+                spawned_from: None,
+                image: None,
+                env_vars: Default::default(),
+            },
+            notes: None,
+            status_log: TaskStatusLog { events: Vec::new() },
+        };
+        let job_mock = mock_get_job(&server, job_record.clone());
 
         let error = resolve_service_repo_name(&client, Some(&job_id))
             .await
@@ -1444,91 +1568,125 @@ mod tests {
                 .contains("does not reference a service repository"),
             "error should indicate missing service repository context"
         );
+        job_mock.assert();
         Ok(())
     }
 
     #[tokio::test]
     async fn review_patch_appends_review() -> Result<()> {
-        let client = MockMetisClient::default();
         let existing_submitted_at = Utc::now();
-        let existing_review = Review::new(
-            "needs work".to_string(),
-            false,
-            "bob".to_string(),
-            Some(existing_submitted_at),
-        );
-        client.push_get_patch_response(PatchRecord::new(
-            patch_id("p-123"),
-            Patch::new(
-                "reviewed patch".to_string(),
-                "description".to_string(),
-                sample_diff(),
-                PatchStatus::Open,
-                false,
-                None,
-                vec![existing_review.clone()],
-                sample_repo_name(),
-                None,
-            ),
-        ));
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-123")));
+        let existing_review = Review {
+            contents: "needs work".to_string(),
+            is_approved: false,
+            author: "bob".to_string(),
+            submitted_at: Some(existing_submitted_at),
+        };
+        let review_patch_id = patch_id("p-review");
+        let patch_record = PatchRecord {
+            id: review_patch_id.clone(),
+            patch: Patch {
+                title: "reviewed patch".to_string(),
+                description: "description".to_string(),
+                diff: sample_diff(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: None,
+                reviews: vec![existing_review.clone()],
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let get_mock = mock_get_patch(&server, patch_record.clone());
+        let patch_id_for_mock = review_patch_id.clone();
+        let update_mock = server.mock(move |when, then| {
+            when.method(PUT)
+                .path(format!("/v1/patches/{}", patch_id_for_mock.as_ref()))
+                .json_body_partial(
+                    r#"{
+                        "patch": {
+                            "title": "reviewed patch",
+                            "description": "description",
+                            "reviews": [
+                                {"contents": "needs work", "is_approved": false, "author": "bob"},
+                                {"contents": "looks good now", "is_approved": true, "author": "alice"}
+                            ]
+                        }
+                    }"#,
+                )
+                .body_contains("submitted_at");
+            then.status(200)
+                .json_body_obj(&UpsertPatchResponse {
+                    patch_id: patch_id("p-123"),
+                });
+        });
 
         review_patch(
             &client,
-            patch_id("p-123"),
+            review_patch_id.clone(),
             "alice".to_string(),
             "looks good now".to_string(),
             true,
         )
         .await?;
 
-        assert_eq!(
-            client.recorded_get_patch_requests(),
-            vec![patch_id("p-123")]
-        );
-        let updates = client.recorded_patch_upserts();
-        assert_eq!(updates.len(), 1, "expected one patch update");
-
-        let (patch_id_opt, request) = &updates[0];
-        assert_eq!(patch_id_opt, &Some(patch_id("p-123")));
-        let reviews = &request.patch.reviews;
-        assert_eq!(reviews.len(), 2);
-        assert_eq!(reviews[0], existing_review);
-        let new_review = &reviews[1];
-        assert_eq!(new_review.contents, "looks good now");
-        assert!(new_review.is_approved);
-        assert_eq!(new_review.author, "alice");
-        assert!(
-            new_review.submitted_at.is_some(),
-            "new reviews should include a timestamp"
-        );
+        get_mock.assert();
+        update_mock.assert();
 
         Ok(())
     }
 
     #[tokio::test]
     async fn update_patch_modifies_requested_fields() -> Result<()> {
-        let client = MockMetisClient::default();
-        client.push_get_patch_response(PatchRecord::new(
+        let patch_record = PatchRecord {
+            id: patch_id("p-update"),
+            patch: Patch {
+                title: "Initial title".to_string(),
+                description: "Initial description".to_string(),
+                diff: sample_diff(),
+                status: PatchStatus::Open,
+                is_automatic_backup: false,
+                created_by: None,
+                reviews: vec![Review {
+                    contents: "looks ok".to_string(),
+                    is_approved: false,
+                    author: "sam".to_string(),
+                    submitted_at: None,
+                }],
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let expected_request = UpsertPatchRequest {
+            patch: Patch {
+                title: "Updated title".to_string(),
+                description: "Updated description".to_string(),
+                diff: sample_diff(),
+                status: PatchStatus::Closed,
+                is_automatic_backup: false,
+                created_by: None,
+                reviews: vec![Review {
+                    contents: "looks ok".to_string(),
+                    is_approved: false,
+                    author: "sam".to_string(),
+                    submitted_at: None,
+                }],
+                service_repo_name: sample_repo_name(),
+                github: None,
+            },
+        };
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let get_mock = mock_get_patch(&server, patch_record.clone());
+        let update_mock = mock_update_patch(
+            &server,
             patch_id("p-update"),
-            Patch::new(
-                "Initial title".to_string(),
-                "Initial description".to_string(),
-                sample_diff(),
-                PatchStatus::Open,
-                false,
-                None,
-                vec![Review::new(
-                    "looks ok".to_string(),
-                    false,
-                    "sam".to_string(),
-                    None,
-                )],
-                sample_repo_name(),
-                None,
-            ),
-        ));
-        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-update")));
+            expected_request,
+            UpsertPatchResponse {
+                patch_id: patch_id("p-update"),
+            },
+        );
 
         update_patch(
             &client,
@@ -1539,55 +1697,36 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(
-            client.recorded_get_patch_requests(),
-            vec![patch_id("p-update")]
-        );
-        assert_eq!(
-            client.recorded_patch_upserts(),
-            vec![(
-                Some(patch_id("p-update")),
-                UpsertPatchRequest::new(Patch::new(
-                    "Updated title".to_string(),
-                    "Updated description".to_string(),
-                    sample_diff(),
-                    PatchStatus::Closed,
-                    false,
-                    None,
-                    vec![Review::new(
-                        "looks ok".to_string(),
-                        false,
-                        "sam".to_string(),
-                        None,
-                    )],
-                    sample_repo_name(),
-                    None,
-                ))
-            )]
-        );
+        get_mock.assert();
+        update_mock.assert();
 
         Ok(())
     }
 
     #[tokio::test]
     async fn update_patch_rejects_empty_updates() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let result = update_patch(&client, patch_id("p-empty"), None, None, None).await;
 
         assert!(result.is_err(), "expected update to reject empty payload");
-        assert!(
-            client.recorded_get_patch_requests().is_empty(),
-            "patch should not be fetched when no fields provided"
-        );
     }
 
     #[tokio::test]
     async fn merge_queue_fetches_queue_and_writes_json() -> Result<()> {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let repo = sample_repo_name();
         let branch = "main".to_string();
         let queued_patch = patch_id("p-queue-001");
-        client.push_merge_queue_response(MergeQueue::new(vec![queued_patch.clone()]));
+        let merge_queue = MergeQueue {
+            patches: vec![queued_patch.clone()],
+        };
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/merge-queues/dourolabs/example/main/patches");
+            then.status(200).json_body_obj(&merge_queue);
+        });
 
         let mut output = Vec::new();
         merge_queue_with_writer(
@@ -1600,16 +1739,10 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(
-            client.recorded_merge_queue_requests(),
-            vec![(repo, branch.clone())]
-        );
+        mock.assert();
         assert_eq!(
             String::from_utf8(output)?,
-            format!(
-                "{}\n",
-                serde_json::to_string(&MergeQueue::new(vec![queued_patch]))?
-            )
+            format!("{}\n", serde_json::to_string(&merge_queue)?)
         );
 
         Ok(())
@@ -1617,11 +1750,22 @@ mod tests {
 
     #[tokio::test]
     async fn merge_queue_enqueues_patch_and_pretty_prints() -> Result<()> {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = metis_client(&server);
         let repo = sample_repo_name();
         let branch = "feature".to_string();
         let patch = patch_id("p-queue-002");
-        client.push_enqueue_merge_queue_response(MergeQueue::new(vec![patch.clone()]));
+        let merge_queue = MergeQueue {
+            patches: vec![patch.clone()],
+        };
+        let enqueue_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/merge-queues/dourolabs/example/feature/patches")
+                .json_body_obj(&EnqueueMergePatchRequest {
+                    patch_id: patch.clone(),
+                });
+            then.status(200).json_body_obj(&merge_queue);
+        });
 
         let mut output = Vec::new();
         merge_queue_with_writer(
@@ -1634,14 +1778,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(
-            client.recorded_enqueue_merge_queue_requests(),
-            vec![(repo.clone(), branch.clone(), patch.clone())]
-        );
-        assert!(
-            client.recorded_merge_queue_requests().is_empty(),
-            "enqueue should not call fetch endpoint"
-        );
+        enqueue_mock.assert();
         assert_eq!(
             String::from_utf8(output)?,
             format!("Merge queue for {repo}:{branch}\n- {patch}\n")

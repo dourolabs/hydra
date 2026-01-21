@@ -1,11 +1,11 @@
+use crate::domain::users::{
+    CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
+    UpsertUserResponse, User, UserSummary, Username,
+};
 use crate::{app::AppState, routes::jobs::ApiError, store::StoreError};
 use axum::{
     Json,
     extract::{Path, State},
-};
-use metis_common::api::v1::users::{
-    CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-    UpsertUserResponse, User, UserSummary, Username,
 };
 use tracing::{error, info};
 

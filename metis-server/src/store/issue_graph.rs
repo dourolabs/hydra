@@ -1,13 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::StoreError;
-use metis_common::{
-    IssueId,
-    issues::{
-        Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
-    },
+use crate::domain::issues::{
+    Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
 };
-use tracing::warn;
+use metis_common::IssueId;
 
 pub(crate) struct IssueGraphContext {
     known_issues: HashSet<IssueId>,
@@ -97,10 +94,6 @@ impl IssueGraphContext {
         match side {
             IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
             IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
-            other => {
-                warn!(?other, "unsupported issue graph filter side");
-                None
-            }
         }
     }
 }
@@ -141,10 +134,6 @@ fn collect_matches(
             }
 
             matches
-        }
-        other => {
-            warn!(?other, "unsupported issue graph wildcard");
-            HashSet::new()
         }
     }
 }

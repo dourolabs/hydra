@@ -1,3 +1,6 @@
+use crate::domain::jobs::{
+    CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery,
+};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::{Store, StoreError, TaskError},
@@ -8,12 +11,7 @@ use axum::{
     http::request::Parts,
 };
 use chrono::{DateTime, Utc};
-use metis_common::{
-    IssueId, TaskId,
-    api::v1::jobs::{
-        CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery,
-    },
-};
+use metis_common::{IssueId, TaskId};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -247,6 +245,5 @@ fn format_error_note(error: TaskError) -> Option<String> {
         TaskError::JobEngineError { reason } => {
             sanitize_note(&reason).map(|msg| format!("error: {msg}"))
         }
-        other => sanitize_note(&format!("error: {other:?}")),
     }
 }

@@ -1,16 +1,19 @@
 use super::common::{default_image, patch_diff, service_repo_name};
 use crate::{
+    domain::{
+        issues::{
+            Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest, UpsertIssueResponse,
+        },
+        jobs::BundleSpec,
+        patches::{
+            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+            UpsertPatchRequest, UpsertPatchResponse,
+        },
+    },
     store::Task,
     test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
 };
 use chrono::Utc;
-use metis_common::{
-    issues::{Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest, UpsertIssueResponse},
-    patches::{
-        ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
-        UpsertPatchRequest, UpsertPatchResponse,
-    },
-};
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -68,7 +71,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 job_id.clone(),
                 Task {
                     prompt: "0".to_string(),
-                    context: metis_common::jobs::BundleSpec::None,
+                    context: BundleSpec::None,
                     spawned_from: None,
                     image: Some(default_image),
                     env_vars: HashMap::new(),

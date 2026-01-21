@@ -1085,14 +1085,14 @@ mod tests {
     #[tokio::test]
     async fn list_repositories_fetches_config_without_secrets() -> Result<()> {
         let server = MockServer::start();
-        let repositories = vec![ServiceRepositoryInfo {
-            name: RepoName::from_str("dourolabs/metis")?,
-            remote_url: "https://example.com/repo.git".to_string(),
-            default_branch: Some("main".to_string()),
-            default_image: Some("ghcr.io/example/repo:main".to_string()),
-            github_token_present: true,
-        }];
-        let payload = ListRepositoriesResponse { repositories };
+        let repositories = vec![ServiceRepositoryInfo::new(
+            RepoName::from_str("dourolabs/metis")?,
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            Some("ghcr.io/example/repo:main".to_string()),
+            true,
+        )];
+        let payload = ListRepositoriesResponse::new(repositories);
 
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -1120,24 +1120,22 @@ mod tests {
     async fn create_repository_sends_payload_and_parses_response() -> Result<()> {
         let server = MockServer::start();
         let repo_name = RepoName::from_str("dourolabs/new-repo")?;
-        let request = CreateRepositoryRequest {
-            name: repo_name.clone(),
-            repository: ServiceRepositoryConfig {
-                remote_url: "https://example.com/new-repo.git".to_string(),
-                default_branch: Some("main".to_string()),
-                github_token: Some("token-123".to_string()),
-                default_image: Some("ghcr.io/example/new-repo:main".to_string()),
-            },
-        };
-        let response_body = UpsertRepositoryResponse {
-            repository: ServiceRepositoryInfo {
-                name: repo_name.clone(),
-                remote_url: request.repository.remote_url.clone(),
-                default_branch: request.repository.default_branch.clone(),
-                default_image: request.repository.default_image.clone(),
-                github_token_present: true,
-            },
-        };
+        let request = CreateRepositoryRequest::new(
+            repo_name.clone(),
+            ServiceRepositoryConfig::new(
+                "https://example.com/new-repo.git".to_string(),
+                Some("main".to_string()),
+                Some("token-123".to_string()),
+                Some("ghcr.io/example/new-repo:main".to_string()),
+            ),
+        );
+        let response_body = UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
+            repo_name.clone(),
+            request.repository.remote_url.clone(),
+            request.repository.default_branch.clone(),
+            request.repository.default_image.clone(),
+            true,
+        ));
 
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/repositories").json_body(json!({
@@ -1169,14 +1167,12 @@ mod tests {
     async fn update_repository_includes_repo_and_propagates_errors() -> Result<()> {
         let server = MockServer::start();
         let repo_name = RepoName::from_str("dourolabs/missing")?;
-        let request = UpdateRepositoryRequest {
-            repository: ServiceRepositoryConfig {
-                remote_url: "https://example.com/updated.git".to_string(),
-                default_branch: None,
-                github_token: None,
-                default_image: None,
-            },
-        };
+        let request = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
+            "https://example.com/updated.git".to_string(),
+            None,
+            None,
+            None,
+        ));
 
         let mock = server.mock(|when, then| {
             when.method(PUT)

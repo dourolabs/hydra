@@ -4,8 +4,9 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
-use metis_common::api::v1::job_status::{
-    GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse,
+use metis_common::api::v1::{
+    job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
+    task_status::TaskStatusLog as ApiTaskStatusLog,
 };
 use tracing::{error, info};
 
@@ -59,6 +60,7 @@ pub async fn get_job_status(
         ApiError::internal(anyhow!("Failed to load status log: {err}"))
     })?;
 
+    let status_log: ApiTaskStatusLog = status_log.into();
     info!(job_id = %job_id, "get_job_status completed");
     Ok(Json(GetJobStatusResponse::new(job_id, status_log)))
 }

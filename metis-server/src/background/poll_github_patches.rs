@@ -1,16 +1,14 @@
 use crate::{
     AppState,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
-};
-use anyhow::{Context, anyhow};
-use chrono::{DateTime, Utc};
-use metis_common::{
-    PatchId, RepoName,
-    patches::{
-        GithubCiFailure, GithubCiState, GithubCiStatus, Patch, PatchStatus, Review,
+    domain::patches::{
+        GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
         UpsertPatchRequest,
     },
 };
+use anyhow::{Context, anyhow};
+use chrono::{DateTime, Utc};
+use metis_common::{PatchId, RepoName};
 use octocrab::{
     Octocrab,
     models::{
@@ -299,7 +297,7 @@ async fn sync_patch_from_github(
 async fn maybe_post_ci_failure_review_and_close(
     patch_id: &PatchId,
     client: &Octocrab,
-    github: &metis_common::patches::GithubPr,
+    github: &GithubPr,
     pr: &PullRequest,
     ci_status: &GithubCiStatus,
     reviews: &mut Vec<Review>,
@@ -537,7 +535,7 @@ fn github_client(token: String) -> anyhow::Result<Octocrab> {
 
 async fn fetch_ci_status(
     client: &Octocrab,
-    github: &metis_common::patches::GithubPr,
+    github: &GithubPr,
     pr: &PullRequest,
 ) -> anyhow::Result<GithubCiStatus> {
     let head_sha = pr.head.sha.clone();
@@ -659,7 +657,6 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use metis_common::patches::GithubPr;
     use serde_json::json;
     use std::{collections::HashMap, str::FromStr, sync::Arc};
     use tokio::sync::RwLock;
