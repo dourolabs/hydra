@@ -1,5 +1,6 @@
 use crate::{IssueId, RepoName, TaskId, task_status::TaskStatusLog};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +62,7 @@ impl CreateJobRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BundleSpec {
@@ -80,6 +81,8 @@ pub enum BundleSpec {
         #[serde(default)]
         rev: Option<String>,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 impl Default for BundleSpec {
@@ -93,11 +96,47 @@ impl From<Bundle> for BundleSpec {
         match bundle {
             Bundle::None => BundleSpec::None,
             Bundle::GitRepository { url, rev } => BundleSpec::GitRepository { url, rev },
+            Bundle::Unknown => BundleSpec::Unknown,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BundleSpecHelper {
+    #[serde(rename = "none")]
+    None,
+    GitRepository {
+        url: String,
+        rev: String,
+    },
+    ServiceRepository {
+        name: RepoName,
+        #[serde(default)]
+        rev: Option<String>,
+    },
+}
+
+impl<'de> Deserialize<'de> for BundleSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<BundleSpecHelper>(value) {
+            Ok(BundleSpecHelper::None) => Ok(BundleSpec::None),
+            Ok(BundleSpecHelper::GitRepository { url, rev }) => {
+                Ok(BundleSpec::GitRepository { url, rev })
+            }
+            Ok(BundleSpecHelper::ServiceRepository { name, rev }) => {
+                Ok(BundleSpec::ServiceRepository { name, rev })
+            }
+            Err(_) => Ok(BundleSpec::Unknown),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Bundle {
@@ -109,6 +148,33 @@ pub enum Bundle {
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
     },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BundleHelper {
+    #[serde(rename = "none")]
+    None,
+    GitRepository {
+        url: String,
+        rev: String,
+    },
+}
+
+impl<'de> Deserialize<'de> for Bundle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<BundleHelper>(value) {
+            Ok(BundleHelper::None) => Ok(Bundle::None),
+            Ok(BundleHelper::GitRepository { url, rev }) => Ok(Bundle::GitRepository { url, rev }),
+            Err(_) => Ok(Bundle::Unknown),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

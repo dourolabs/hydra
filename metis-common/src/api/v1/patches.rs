@@ -10,6 +10,8 @@ pub enum PatchStatus {
     Open,
     Closed,
     Merged,
+    #[serde(other)]
+    Unknown,
 }
 
 impl Default for PatchStatus {
@@ -24,6 +26,7 @@ impl PatchStatus {
             PatchStatus::Open => "open",
             PatchStatus::Closed => "closed",
             PatchStatus::Merged => "merged",
+            PatchStatus::Unknown => "unknown",
         }
     }
 }
@@ -275,6 +278,8 @@ pub enum GithubCiState {
     Pending,
     Success,
     Failed,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

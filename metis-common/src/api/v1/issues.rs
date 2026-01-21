@@ -12,6 +12,8 @@ pub enum IssueStatus {
     InProgress,
     Closed,
     Dropped,
+    #[serde(other)]
+    Unknown,
 }
 
 impl IssueStatus {
@@ -21,6 +23,7 @@ impl IssueStatus {
             IssueStatus::InProgress => "in-progress",
             IssueStatus::Closed => "closed",
             IssueStatus::Dropped => "dropped",
+            IssueStatus::Unknown => "unknown",
         }
     }
 }
@@ -56,6 +59,8 @@ pub enum IssueType {
     Chore,
     #[serde(rename = "merge-request")]
     MergeRequest,
+    #[serde(other)]
+    Unknown,
 }
 
 impl IssueType {
@@ -66,6 +71,7 @@ impl IssueType {
             IssueType::Task => "task",
             IssueType::Chore => "chore",
             IssueType::MergeRequest => "merge-request",
+            IssueType::Unknown => "unknown",
         }
     }
 }
@@ -98,6 +104,8 @@ impl FromStr for IssueType {
 pub enum IssueDependencyType {
     ChildOf,
     BlockedOn,
+    #[serde(other)]
+    Unknown,
 }
 
 impl IssueDependencyType {
@@ -105,6 +113,7 @@ impl IssueDependencyType {
         match self {
             IssueDependencyType::ChildOf => "child-of",
             IssueDependencyType::BlockedOn => "blocked-on",
+            IssueDependencyType::Unknown => "unknown",
         }
     }
 }
