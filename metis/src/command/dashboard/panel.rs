@@ -368,7 +368,7 @@ fn format_key_code(code: KeyCode) -> String {
         KeyCode::PageUp => "PageUp".to_string(),
         KeyCode::PageDown => "PageDown".to_string(),
         KeyCode::Tab => "Tab".to_string(),
-        KeyCode::BackTab => "BackTab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
         KeyCode::Delete => "Delete".to_string(),
         KeyCode::Insert => "Insert".to_string(),
         KeyCode::F(value) => format!("F{value}"),
@@ -495,6 +495,15 @@ mod tests {
         let footer_y = area.y + area.height - 2;
         let footer = row_text(&buffer, footer_y, area.width);
         assert!(!footer.contains("j/k or Up/Down"));
+    }
+
+    #[test]
+    fn backtab_keybinding_displays_as_shift_tab() {
+        let binding = PanelKeybinding::new(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+
+        let label = format_keybinding(&binding);
+
+        assert_eq!(label, "Shift+Tab");
     }
 
     #[test]

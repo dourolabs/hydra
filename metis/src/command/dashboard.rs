@@ -251,7 +251,7 @@ impl Default for DashboardState {
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
         issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
+        issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut running_issue_panel);
@@ -285,7 +285,7 @@ impl Default for DashboardState {
 
 fn configure_status_panel_keybindings(panel: &mut PanelState) {
     panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-    panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
+    panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 }
 
 struct IssueSubmission {
