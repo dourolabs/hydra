@@ -1,6 +1,4 @@
-use crate::domain::jobs::{
-    CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery,
-};
+use crate::domain::jobs::{CreateJobRequest, JobRecord, ListJobsResponse, SearchJobsQuery};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::{Store, StoreError, TaskError},
@@ -11,7 +9,7 @@ use axum::{
     http::request::Parts,
 };
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, TaskId};
+use metis_common::{IssueId, TaskId, api::v1};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -23,10 +21,11 @@ pub mod status;
 
 pub async fn create_job(
     State(state): State<AppState>,
-    Json(payload): Json<CreateJobRequest>,
-) -> Result<Json<CreateJobResponse>, ApiError> {
+    Json(payload): Json<v1::jobs::CreateJobRequest>,
+) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let job_id = state.create_job(payload).await.map_err(|err| match err {
+    let request: CreateJobRequest = payload.into();
+    let job_id = state.create_job(request).await.map_err(|err| match err {
         CreateJobError::TaskResolution(err) => ApiError::from(err),
         CreateJobError::Store { source, job_id } => {
             error!(error = %source, job_id = %job_id, "failed to store task");
@@ -39,13 +38,14 @@ pub async fn create_job(
         "task stored, will be started by background thread"
     );
 
-    Ok(Json(CreateJobResponse::new(job_id)))
+    Ok(Json(v1::jobs::CreateJobResponse::new(job_id)))
 }
 
 pub async fn list_jobs(
     State(state): State<AppState>,
-    Query(query): Query<SearchJobsQuery>,
-) -> Result<Json<ListJobsResponse>, ApiError> {
+    Query(query): Query<v1::jobs::SearchJobsQuery>,
+) -> Result<Json<v1::jobs::ListJobsResponse>, ApiError> {
+    let query: SearchJobsQuery = query.into();
     info!(
         query = ?query.q,
         spawned_from = ?query.spawned_from,
@@ -110,13 +110,14 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
-    Ok(Json(ListJobsResponse::new(summaries)))
+    let response: v1::jobs::ListJobsResponse = ListJobsResponse::new(summaries).into();
+    Ok(Json(response))
 }
 
 pub async fn get_job(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<JobRecord>, ApiError> {
+) -> Result<Json<v1::jobs::JobRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
     let store_read = state.store.read().await;
@@ -135,6 +136,7 @@ pub async fn get_job(
             }
         })?;
 
+    let summary: v1::jobs::JobRecord = summary.into();
     info!(job_id = %summary.id, "get_job completed successfully");
     Ok(Json(summary))
 }

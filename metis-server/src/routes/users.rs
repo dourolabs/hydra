@@ -7,11 +7,12 @@ use axum::{
     Json,
     extract::{Path, State},
 };
+use metis_common::api::v1;
 use tracing::{error, info};
 
 pub async fn list_users(
     State(state): State<AppState>,
-) -> Result<Json<ListUsersResponse>, ApiError> {
+) -> Result<Json<v1::users::ListUsersResponse>, ApiError> {
     info!("list_users invoked");
     let store = state.store.read().await;
     let users = store.list_users().await.map_err(|err| {
@@ -22,13 +23,15 @@ pub async fn list_users(
     let summaries = users.into_iter().map(UserSummary::from).collect::<Vec<_>>();
     info!(user_count = summaries.len(), "list_users completed");
 
-    Ok(Json(ListUsersResponse::new(summaries)))
+    let response: v1::users::ListUsersResponse = ListUsersResponse::new(summaries).into();
+    Ok(Json(response))
 }
 
 pub async fn create_user(
     State(state): State<AppState>,
-    Json(payload): Json<CreateUserRequest>,
-) -> Result<Json<UpsertUserResponse>, ApiError> {
+    Json(payload): Json<v1::users::CreateUserRequest>,
+) -> Result<Json<v1::users::UpsertUserResponse>, ApiError> {
+    let payload: CreateUserRequest = payload.into();
     let username: Username = normalize_non_empty("username", payload.username.into())?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
@@ -58,13 +61,15 @@ pub async fn create_user(
         })?;
 
     info!(username = %username, "create_user completed");
-    Ok(Json(UpsertUserResponse::new(UserSummary::from(user))))
+    let response: v1::users::UpsertUserResponse =
+        UpsertUserResponse::new(UserSummary::from(user)).into();
+    Ok(Json(response))
 }
 
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(username): Path<String>,
-) -> Result<Json<DeleteUserResponse>, ApiError> {
+) -> Result<Json<v1::users::DeleteUserResponse>, ApiError> {
     let username: Username = normalize_non_empty("username", username)?.into();
     info!(username = %username, "delete_user invoked");
 
@@ -86,14 +91,16 @@ pub async fn delete_user(
         })?;
 
     info!(username = %username, "delete_user completed");
-    Ok(Json(DeleteUserResponse::new(username)))
+    let response: v1::users::DeleteUserResponse = DeleteUserResponse::new(username).into();
+    Ok(Json(response))
 }
 
 pub async fn set_github_token(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    Json(payload): Json<UpdateGithubTokenRequest>,
-) -> Result<Json<UpsertUserResponse>, ApiError> {
+    Json(payload): Json<v1::users::UpdateGithubTokenRequest>,
+) -> Result<Json<v1::users::UpsertUserResponse>, ApiError> {
+    let payload: UpdateGithubTokenRequest = payload.into();
     let username: Username = normalize_non_empty("username", username)?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
@@ -117,7 +124,9 @@ pub async fn set_github_token(
         })?;
 
     info!(username = %username, "set_github_token completed");
-    Ok(Json(UpsertUserResponse::new(UserSummary::from(updated))))
+    let response: v1::users::UpsertUserResponse =
+        UpsertUserResponse::new(UserSummary::from(updated)).into();
+    Ok(Json(response))
 }
 
 fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
