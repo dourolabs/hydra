@@ -255,8 +255,11 @@ fn write_repository_details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
+    use httpmock::prelude::*;
     use metis_common::repositories::{ListRepositoriesResponse, UpsertRepositoryResponse};
+    use reqwest::Client as HttpClient;
+    use serde_json::json;
     use std::str::FromStr;
 
     fn sample_upsert_args() -> UpsertRepositoryArgs {
@@ -282,11 +285,15 @@ mod tests {
         }
     }
 
+    fn mock_client(server: &MockServer) -> MetisClient {
+        MetisClient::with_http_client(server.base_url(), HttpClient::new())
+            .expect("mock client creation should not fail")
+    }
+
     #[tokio::test]
     async fn list_repositories_prints_all_fields() {
-        let client = MockMetisClient::default();
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        client.push_list_repositories_response(ListRepositoriesResponse {
+        let repositories = ListRepositoriesResponse {
             repositories: vec![
                 sample_repository_info(&repo_name),
                 ServiceRepositoryInfo {
@@ -297,7 +304,13 @@ mod tests {
                     github_token_present: false,
                 },
             ],
+        };
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&repositories);
         });
+        let client = mock_client(&server);
 
         let repositories = fetch_repositories(&client).await.unwrap();
         let mut output = Vec::new();
@@ -312,46 +325,48 @@ mod tests {
         assert!(output.contains("github_token: set"));
         assert!(output.contains("dourolabs/api"));
         assert!(output.contains("github_token: not set"));
+
+        list_mock.assert();
     }
 
     #[tokio::test]
     async fn list_repositories_reports_client_error() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(500);
+        });
+        let client = mock_client(&server);
 
         let error = fetch_repositories(&client).await.unwrap_err();
         assert!(
             error.to_string().contains("failed to list repositories"),
             "error should include context: {error:?}"
         );
+
+        list_mock.assert();
     }
 
     #[tokio::test]
     async fn create_repository_sends_request_and_prints_result() {
-        let client = MockMetisClient::default();
         let args = sample_upsert_args();
-        client.push_create_repository_response(UpsertRepositoryResponse {
-            repository: sample_repository_info(&args.name),
+        let server = MockServer::start();
+        let repository = sample_repository_info(&args.name);
+        let create_mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/repositories").json_body(json!({
+                "name": "dourolabs/metis",
+                "remote_url": "https://example.com/metis.git",
+                "default_branch": "main",
+                "default_image": "ghcr.io/dourolabs/metis:latest",
+                "github_token": "token-123"
+            }));
+            then.status(200).json_body_obj(&UpsertRepositoryResponse {
+                repository: repository.clone(),
+            });
         });
+        let client = mock_client(&server);
 
         let repository = create_repository(&client, args.clone()).await.unwrap();
-
-        let requests = client.recorded_create_repository_requests();
-        assert_eq!(requests.len(), 1);
-        let request = &requests[0];
-        assert_eq!(request.name, args.name);
-        assert_eq!(request.repository.remote_url, args.remote_url);
-        assert_eq!(
-            request.repository.default_branch.as_deref(),
-            args.default_branch.as_deref()
-        );
-        assert_eq!(
-            request.repository.default_image.as_deref(),
-            args.default_image.as_deref()
-        );
-        assert_eq!(
-            request.repository.github_token.as_deref(),
-            args.github_token.as_deref()
-        );
 
         let mut output = Vec::new();
         print_single_repository("Created repository", &repository, &mut output).unwrap();
@@ -359,11 +374,14 @@ mod tests {
         assert!(output.contains("Created repository:"));
         assert!(output.contains("dourolabs/metis"));
         assert!(output.contains("github_token: set"));
+
+        create_mock.assert();
     }
 
     #[tokio::test]
     async fn create_repository_rejects_empty_remote_url() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let client = mock_client(&server);
         let mut args = sample_upsert_args();
         args.remote_url = "   ".to_string();
 
@@ -376,35 +394,35 @@ mod tests {
 
     #[tokio::test]
     async fn update_repository_sends_request_and_allows_clearing_fields() {
-        let client = MockMetisClient::default();
         let mut args = sample_upsert_args();
         args.clear_default_branch = true;
         args.default_branch = None;
         args.clear_github_token = true;
         args.github_token = None;
         args.default_image = Some("ghcr.io/dourolabs/metis:stable".to_string());
-        client.push_update_repository_response(UpsertRepositoryResponse {
-            repository: ServiceRepositoryInfo {
-                name: args.name.clone(),
-                remote_url: args.remote_url.clone(),
-                default_branch: None,
-                default_image: args.default_image.clone(),
-                github_token_present: false,
-            },
+        let server = MockServer::start();
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": null,
+                    "default_image": "ghcr.io/dourolabs/metis:stable",
+                    "github_token": null
+                }));
+            then.status(200).json_body_obj(&UpsertRepositoryResponse {
+                repository: ServiceRepositoryInfo {
+                    name: args.name.clone(),
+                    remote_url: args.remote_url.clone(),
+                    default_branch: None,
+                    default_image: args.default_image.clone(),
+                    github_token_present: false,
+                },
+            });
         });
+        let client = mock_client(&server);
 
         let repository = update_repository(&client, args.clone()).await.unwrap();
-        let requests = client.recorded_update_repository_requests();
-        assert_eq!(requests.len(), 1);
-        let (name, request) = &requests[0];
-        assert_eq!(name, &args.name);
-        assert_eq!(request.repository.remote_url, args.remote_url);
-        assert!(request.repository.default_branch.is_none());
-        assert_eq!(
-            request.repository.default_image.as_deref(),
-            args.default_image.as_deref()
-        );
-        assert!(request.repository.github_token.is_none());
 
         let mut output = Vec::new();
         print_single_repository("Updated repository", &repository, &mut output).unwrap();
@@ -412,11 +430,25 @@ mod tests {
         assert!(output.contains("Updated repository:"));
         assert!(output.contains("default_branch: <none>"));
         assert!(output.contains("github_token: not set"));
+
+        update_mock.assert();
     }
 
     #[tokio::test]
     async fn update_repository_reports_client_error() {
-        let client = MockMetisClient::default();
+        let server = MockServer::start();
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:latest",
+                    "github_token": "token-123"
+                }));
+            then.status(404);
+        });
+        let client = mock_client(&server);
         let args = sample_upsert_args();
 
         let error = update_repository(&client, args).await.unwrap_err();
@@ -424,5 +456,7 @@ mod tests {
             error.to_string().contains("failed to update repository"),
             "error should include context: {error:?}"
         );
+
+        update_mock.assert();
     }
 }
