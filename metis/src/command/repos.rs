@@ -291,18 +291,16 @@ mod tests {
     #[tokio::test]
     async fn list_repositories_prints_all_fields() {
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        let repositories = ListRepositoriesResponse {
-            repositories: vec![
-                sample_repository_info(&repo_name),
-                ServiceRepositoryInfo {
-                    name: RepoName::from_str("dourolabs/api").unwrap(),
-                    remote_url: "git@github.com:dourolabs/api.git".to_string(),
-                    default_branch: None,
-                    default_image: None,
-                    github_token_present: false,
-                },
-            ],
-        };
+        let repositories = ListRepositoriesResponse::new(vec![
+            sample_repository_info(&repo_name),
+            ServiceRepositoryInfo::new(
+                RepoName::from_str("dourolabs/api").unwrap(),
+                "git@github.com:dourolabs/api.git".to_string(),
+                None,
+                None,
+                false,
+            ),
+        ]);
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -358,9 +356,8 @@ mod tests {
                 "default_image": "ghcr.io/dourolabs/metis:latest",
                 "github_token": "token-123"
             }));
-            then.status(200).json_body_obj(&UpsertRepositoryResponse {
-                repository: repository.clone(),
-            });
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(repository.clone()));
         });
         let client = mock_client(&server);
 
@@ -408,15 +405,14 @@ mod tests {
                     "default_image": "ghcr.io/dourolabs/metis:stable",
                     "github_token": null
                 }));
-            then.status(200).json_body_obj(&UpsertRepositoryResponse {
-                repository: ServiceRepositoryInfo {
-                    name: args.name.clone(),
-                    remote_url: args.remote_url.clone(),
-                    default_branch: None,
-                    default_image: args.default_image.clone(),
-                    github_token_present: false,
-                },
-            });
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
+                    args.name.clone(),
+                    args.remote_url.clone(),
+                    None,
+                    args.default_image.clone(),
+                    false,
+                )));
         });
         let client = mock_client(&server);
 

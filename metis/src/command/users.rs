@@ -160,16 +160,10 @@ mod tests {
     #[tokio::test]
     async fn list_users_prints_jsonl_without_tokens() {
         let server = MockServer::start();
-        let payload = ListUsersResponse {
-            users: vec![
-                UserSummary {
-                    username: Username::from("alice"),
-                },
-                UserSummary {
-                    username: Username::from("bob"),
-                },
-            ],
-        };
+        let payload = ListUsersResponse::new(vec![
+            UserSummary::new(Username::from("alice")),
+            UserSummary::new(Username::from("bob")),
+        ]);
 
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/users");
@@ -197,11 +191,7 @@ mod tests {
             username: "alice".to_string(),
             github_token: "token-123".to_string(),
         };
-        let response = UpsertUserResponse {
-            user: UserSummary {
-                username: Username::from("alice"),
-            },
-        };
+        let response = UpsertUserResponse::new(UserSummary::new(Username::from("alice")));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/users").json_body(json!({
                 "username": "alice",
@@ -225,9 +215,8 @@ mod tests {
         let client = MetisClient::new(server.base_url()).unwrap();
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/users/alice");
-            then.status(200).json_body_obj(&DeleteUserResponse {
-                username: Username::from("alice"),
-            });
+            then.status(200)
+                .json_body_obj(&DeleteUserResponse::new(Username::from("alice")));
         });
 
         let deleted = delete_user(&client, "  alice ").await.unwrap();

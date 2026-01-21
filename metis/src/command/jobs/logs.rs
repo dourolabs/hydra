@@ -129,9 +129,10 @@ mod tests {
             when.method(GET)
                 .path("/v1/jobs/")
                 .query_param("spawned_from", issue_id.as_ref());
-            then.status(200).json_body_obj(&ListJobsResponse {
-                jobs: vec![job_record("t-newest", 5), job_record("t-older", 0)],
-            });
+            then.status(200).json_body_obj(&ListJobsResponse::new(vec![
+                job_record("t-newest", 5),
+                job_record("t-older", 0),
+            ]));
         });
         let log_mock = server.mock(|when, then| {
             when.method(GET)

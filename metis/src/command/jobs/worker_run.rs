@@ -586,27 +586,24 @@ mod tests {
         let job_id = task_id("t-job-123");
         let repo_name = RepoName::from_str("dourolabs/example")?;
         let diff = workdir_diff(repo_path)?;
-        let expected_request = UpsertPatchRequest {
-            patch: Patch {
-                title: "final output line".to_string(),
-                description: "final output line".to_string(),
-                diff: diff.clone(),
-                status: PatchStatus::Open,
-                is_automatic_backup: true,
-                created_by: Some(job_id.clone()),
-                reviews: Vec::new(),
-                service_repo_name: repo_name.clone(),
-                github: None,
-            },
-        };
+        let expected_request = UpsertPatchRequest::new(Patch::new(
+            "final output line".to_string(),
+            "final output line".to_string(),
+            diff.clone(),
+            PatchStatus::Open,
+            true,
+            Some(job_id.clone()),
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        ));
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/patches")
                 .json_body_obj(&expected_request);
-            then.status(200).json_body_obj(&UpsertPatchResponse {
-                patch_id: patch_id("p-123"),
-            });
+            then.status(200)
+                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
         });
         let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
 
@@ -644,9 +641,8 @@ mod tests {
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/patches");
-            then.status(200).json_body_obj(&UpsertPatchResponse {
-                patch_id: patch_id("p-456"),
-            });
+            then.status(200)
+                .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456")));
         });
         let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
         let job_id = task_id("t-job-456");

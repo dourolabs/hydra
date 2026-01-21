@@ -188,7 +188,7 @@ async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
             "{}/v1/merge-queues/dourolabs/api/main/patches",
             server.base_url()
         ))
-            .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
+        .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
         .send()
         .await?;
 
@@ -231,7 +231,7 @@ async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
             "{}/v1/merge-queues/unknown/unknown/main/patches",
             server.base_url()
         ))
-            .json(&EnqueueMergePatchRequest::new(PatchId::new()))
+        .json(&EnqueueMergePatchRequest::new(PatchId::new()))
         .send()
         .await?;
 

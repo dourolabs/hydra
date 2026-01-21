@@ -2079,11 +2079,7 @@ mod tests {
                 IssueStatus::InProgress,
                 vec![child_of("i-root")],
             ),
-            issue(
-                "i-root",
-                IssueStatus::InProgress,
-                vec![child_of("i-grand")],
-            ),
+            issue("i-root", IssueStatus::InProgress, vec![child_of("i-grand")]),
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
@@ -2106,11 +2102,7 @@ mod tests {
     fn completed_issue_lines_include_closed_roots_with_closed_descendants() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![child_of("i-root")],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue("i-root-open", IssueStatus::Open, vec![]),
             issue(
                 "i-child-open",
@@ -2172,11 +2164,7 @@ mod tests {
     fn completed_issue_lines_track_nested_depth() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![child_of("i-root")],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
@@ -2199,11 +2187,7 @@ mod tests {
     fn completed_issue_list_title_counts_descendants() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![child_of("i-root")],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
@@ -2220,11 +2204,7 @@ mod tests {
     fn completed_issue_rows_include_descendants_after_root() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![child_of("i-root")],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
         ];
 
         let lines = build_completed_issue_lines(&issues, &[]);

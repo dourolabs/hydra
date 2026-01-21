@@ -414,9 +414,7 @@ mod tests {
         let server = MockServer::start();
         let client = MetisClient::new(server.base_url()).expect("should construct client");
 
-        let list_response = ListJobsResponse {
-            jobs: vec![sample_job("t-job-1")],
-        };
+        let list_response = ListJobsResponse::new(vec![sample_job("t-job-1")]);
 
         let mock = server.mock(|when, then| {
             when.method(GET)
