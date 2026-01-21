@@ -1237,9 +1237,3 @@ mod tests {
         assert!(stream.next().await.is_none());
     }
 }
-
-#[cfg(test)]
-mod mock;
-
-#[cfg(test)]
-pub use mock::MockMetisClient;
