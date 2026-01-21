@@ -31,7 +31,7 @@ struct Cli {
     server_url: Option<String>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -103,7 +103,7 @@ async fn dispatch(
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
 ) -> Result<()> {
-    match cli.command {
+    match resolve_command(cli.command) {
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
@@ -119,6 +119,10 @@ async fn dispatch(
     }
 
     Ok(())
+}
+
+fn resolve_command(command: Option<Commands>) -> Commands {
+    command.unwrap_or(Commands::Dashboard { username: None })
 }
 
 fn load_app_config(cli: &Cli) -> Result<AppConfig> {
@@ -152,8 +156,9 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_app_config, Cli};
+    use super::{load_app_config, resolve_command, Cli, Commands};
     use crate::constants::DEFAULT_CONFIG_FILE;
+    use clap::Parser;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -161,7 +166,7 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
-            command: super::Commands::Agents { pretty: false },
+            command: Some(super::Commands::Agents { pretty: false }),
         }
     }
 
@@ -205,5 +210,16 @@ mod tests {
         };
         let config = load_app_config(&cli).expect("config should load from file");
         assert_eq!(config.server.url, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn parse_without_subcommand_defaults_to_dashboard() {
+        let cli = Cli::try_parse_from(["metis"]).expect("parse");
+        let command = resolve_command(cli.command);
+
+        match command {
+            Commands::Dashboard { username } => assert!(username.is_none()),
+            _ => panic!("expected dashboard default"),
+        }
     }
 }
