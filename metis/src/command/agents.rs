@@ -46,13 +46,15 @@ fn print_agents_pretty(agents: &[AgentRecord], writer: &mut impl Write) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
+    use httpmock::prelude::*;
     use metis_common::agents::{AgentRecord, ListAgentsResponse};
+    use reqwest::Client as HttpClient;
 
     #[tokio::test]
-    async fn list_agents_fetches_agents_and_prints_jsonl() {
-        let client = MockMetisClient::default();
-        client.push_list_agents_response(ListAgentsResponse {
+    async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
+        let server = MockServer::start();
+        let list_agents_response = ListAgentsResponse {
             agents: vec![
                 AgentRecord {
                     name: "alpha".into(),
@@ -61,15 +63,24 @@ mod tests {
                     name: "beta".into(),
                 },
             ],
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents");
+            then.status(200).json_body_obj(&list_agents_response);
         });
 
-        let agents = fetch_agents(&client).await.unwrap();
-        assert_eq!(client.recorded_list_agents_calls(), 1);
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+
+        let agents = fetch_agents(&client).await?;
+        mock.assert();
 
         let mut output = Vec::new();
-        print_agents_jsonl(&agents, &mut output).unwrap();
-        let output = String::from_utf8(output).unwrap();
+        print_agents_jsonl(&agents, &mut output)?;
+        let output = String::from_utf8(output)?;
         assert!(output.contains("\"name\":\"alpha\""));
         assert!(output.contains("\"name\":\"beta\""));
+
+        Ok(())
     }
 }
