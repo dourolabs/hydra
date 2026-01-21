@@ -1868,13 +1868,15 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{Event as CrosstermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use httpmock::prelude::*;
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use serde_json::json;
     use std::collections::HashMap;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
@@ -2808,10 +2810,26 @@ mod tests {
 
     #[tokio::test]
     async fn submit_issue_sends_task_request() {
-        let client = MockMetisClient::default();
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-new"),
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/issues").json_body(json!({
+                "issue": {
+                    "type": "task",
+                    "description": "Draft release notes",
+                    "creator": " metis-user ",
+                    "progress": "",
+                    "status": "open",
+                    "assignee": "alice",
+                    "dependencies": [],
+                    "patches": []
+                }
+            }));
+            then.status(200).json_body_obj(&UpsertIssueResponse {
+                issue_id: issue_id("i-new"),
+            });
         });
+
+        let client = MetisClient::new(server.base_url()).expect("failed to create client");
 
         let submission = IssueSubmission {
             prompt: "Draft release notes".to_string(),
@@ -2823,15 +2841,6 @@ mod tests {
             .expect("submission failed");
 
         assert_eq!(created, issue_id("i-new"));
-
-        let requests = client.recorded_issue_upserts();
-        assert_eq!(requests.len(), 1);
-        let (_, request) = &requests[0];
-        assert_eq!(request.issue.issue_type, IssueType::Task);
-        assert_eq!(request.issue.status, IssueStatus::Open);
-        assert_eq!(request.issue.description, "Draft release notes");
-        assert_eq!(request.issue.assignee.as_deref(), Some("alice"));
-        assert_eq!(request.issue.creator, " metis-user ");
-        assert!(request.issue.dependencies.is_empty());
+        mock.assert();
     }
 }
