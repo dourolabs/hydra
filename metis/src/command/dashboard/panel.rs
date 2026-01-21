@@ -91,7 +91,8 @@ impl StatefulWidget for Panel<'_> {
         };
 
         let view_height = content_area.height as usize;
-        state.sync_scroll(self.content.len(), view_height);
+        let content_len = wrapped_content_len(&self.content, content_area.width);
+        state.sync_scroll(content_len, view_height);
         let scroll_offset = state.scroll_offset.min(u16::MAX as usize) as u16;
 
         let paragraph = Paragraph::new(self.content)
@@ -335,6 +336,23 @@ fn max_scroll_offset(content_len: usize, view_height: usize) -> usize {
     content_len.saturating_sub(view_height)
 }
 
+pub(crate) fn wrapped_content_len(content: &[Line], width: u16) -> usize {
+    let width = width as usize;
+    if width == 0 {
+        return 0;
+    }
+    content
+        .iter()
+        .map(|line| wrapped_line_len(line, width))
+        .sum()
+}
+
+fn wrapped_line_len(line: &Line, width: usize) -> usize {
+    let line_width = line.width();
+    let wrapped = line_width.saturating_add(width.saturating_sub(1)) / width;
+    wrapped.max(1)
+}
+
 fn format_keybinding(binding: &PanelKeybinding) -> String {
     let mut parts = Vec::new();
     let modifiers = binding.modifiers;
@@ -512,6 +530,66 @@ mod tests {
         state.scroll_offset = 10;
         state.sync_scroll(5, 3);
         assert_eq!(state.scroll_offset, 2);
+    }
+
+    #[test]
+    fn short_content_does_not_scroll() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let event = state.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 1, 3);
+
+        assert_eq!(state.scroll_offset(), 0);
+        assert_eq!(event, PanelEvent::None);
+    }
+
+    #[test]
+    fn scroll_reaches_bottom_and_top() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let content_len = 5;
+        let view_height = 2;
+        for _ in 0..10 {
+            state.handle_key_event(
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                content_len,
+                view_height,
+            );
+        }
+        assert_eq!(state.scroll_offset(), 3);
+
+        for _ in 0..10 {
+            state.handle_key_event(
+                KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+                content_len,
+                view_height,
+            );
+        }
+        assert_eq!(state.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn wrapped_content_len_counts_wrapped_lines() {
+        let content = vec![Line::from("12345678")];
+
+        let content_len = wrapped_content_len(&content, 4);
+
+        assert_eq!(content_len, 2);
+    }
+
+    #[test]
+    fn render_keeps_scroll_offset_for_wrapped_content() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+        state.scroll_offset = 1;
+
+        let area = Rect::new(0, 0, 6, 4);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", vec![Line::from("12345678")]);
+        panel.render(area, &mut buffer, &mut state);
+
+        assert_eq!(state.scroll_offset(), 1);
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
