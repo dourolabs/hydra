@@ -3,7 +3,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
-    IssueId, TaskId,
+    IssueId, MetisId, TaskId,
 };
 use std::path::PathBuf;
 
@@ -67,9 +67,9 @@ pub enum JobsCommand {
     },
     /// Show logs for an existing Metis job.
     Logs {
-        /// Job identifier returned by `metis jobs create` or `metis jobs list`.
+        /// Job identifier returned by `metis jobs create` or `metis jobs list`, or an IssueId to stream the most recent job spawned from that issue.
         #[arg(value_name = "ID")]
-        id: TaskId,
+        id: MetisId,
 
         /// Stream logs if the job is still running.
         #[arg(short = 'w', long = "watch")]
