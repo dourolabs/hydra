@@ -201,7 +201,7 @@ impl IssueDraft {
         let placeholder = if self.editing {
             "Describe the work to create a new issue.\nType to describe the work for a new issue."
         } else {
-            "Describe the work to create a new issue.\nPress Tab to focus the prompt."
+            "Describe the work to create a new issue."
         };
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
