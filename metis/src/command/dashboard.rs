@@ -836,16 +836,8 @@ fn render_issue_creator(
             info.clone(),
             Style::default().fg(Color::Green),
         ))
-    } else if state.selected_panel == PanelFocus::NewIssue {
-        Line::from(Span::styled(
-            "Alt+A to cycle assignee. Alt+Enter to validate. Tab/Shift+Tab switches panels.",
-            Style::default().fg(Color::DarkGray),
-        ))
     } else {
-        Line::from(Span::styled(
-            "Tab/Shift+Tab to change panels. Alt+A to cycle assignee. Alt+Enter to validate.",
-            Style::default().fg(Color::DarkGray),
-        ))
+        Line::from("")
     };
     frame.render_widget(Paragraph::new(footer), sections.footer);
 }
