@@ -133,7 +133,7 @@ If the issue is new / no patches have been created yet:
 3. Update the issue tracker to mark the task as in-progress (if not already in-progress): "metis issues update \$METIS_ISSUE_ID --status in-progress
 4. Implement a patch to address the issue.
 5. Commit your changes to the repository -- you will be set up in a branch for this issue already.
-6. Submit the patch as a pull request and assign to $(whoami) by running "metis patches create --github --title <title> --description <description> --assignee $(whoami)"
+6. Submit the patch as a pull request and assign to the issue creator (from the "creator" field in "metis issues describe") by running "metis patches create --github --title <title> --description <description> --assignee <creator>"
 
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
