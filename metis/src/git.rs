@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{
@@ -271,6 +274,7 @@ pub fn push_branch(repo_root: &Path, branch: &str, github_token: Option<&str>) -
 }
 
 fn diff_to_string(diff: &Diff) -> Result<String> {
+    let _no_color = disable_diff_color();
     let mut output = String::new();
     diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
         output.push(line.origin());
@@ -278,46 +282,55 @@ fn diff_to_string(diff: &Diff) -> Result<String> {
         true
     })
     .context("failed to render diff as patch text")?;
-    Ok(strip_ansi_codes(&output))
+    Ok(output)
 }
 
-fn strip_ansi_codes(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            match chars.peek() {
-                Some('[') => {
-                    chars.next();
-                    for code in chars.by_ref() {
-                        if ('@'..='~').contains(&code) {
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                Some(']') => {
-                    chars.next();
-                    loop {
-                        match chars.next() {
-                            Some('\u{7}') => break,
-                            Some('\u{1b}') if matches!(chars.peek(), Some('\\')) => {
-                                chars.next();
-                                break;
-                            }
-                            Some(_) => continue,
-                            None => break,
-                        }
-                    }
-                    continue;
-                }
-                _ => {}
+fn disable_diff_color() -> EnvGuard {
+    let git_config_parameters = env::var("GIT_CONFIG_PARAMETERS")
+        .map(|existing| format!("{existing}\ncolor.ui=never"))
+        .unwrap_or_else(|_| "color.ui=never".to_string());
+    EnvGuard::set(&[
+        ("NO_COLOR", Some("1")),
+        ("CLICOLOR_FORCE", Some("0")),
+        ("FORCE_COLOR", Some("0")),
+        (
+            "GIT_CONFIG_PARAMETERS",
+            Some(git_config_parameters.as_str()),
+        ),
+        ("GIT_DIFF_OPTS", Some("--no-color")),
+    ])
+}
+
+struct EnvGuard {
+    previous: Vec<(String, Option<String>)>,
+}
+
+impl EnvGuard {
+    fn set(pairs: &[(&str, Option<&str>)]) -> EnvGuard {
+        let mut previous = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            let key_string = key.to_string();
+            let original = env::var(key).ok();
+            match value {
+                Some(new_value) => env::set_var(key, new_value),
+                None => env::remove_var(key),
+            }
+            previous.push((key_string, original));
+        }
+        EnvGuard { previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, original) in self.previous.drain(..) {
+            if let Some(value) = original {
+                env::set_var(key, value);
+            } else {
+                env::remove_var(key);
             }
         }
-
-        result.push(ch);
     }
-    result
 }
 
 fn remote_callbacks(github_token: Option<&str>) -> RemoteCallbacks<'static> {
@@ -381,18 +394,64 @@ pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ansi_codes;
+    use std::path::Path;
+
+    use anyhow::{Context, Result};
+    use git2::{Repository, Signature};
+    use tempfile::tempdir;
+
+    use super::{workdir_diff, EnvGuard};
 
     #[test]
-    fn strip_ansi_removes_escape_sequences() {
-        let colored = "line\n\u{1b}[31mremoved\u{1b}[0m\n\u{1b}[32madded\u{1b}[0m\n";
-        let cleaned = strip_ansi_codes(colored);
-        assert_eq!(cleaned, "line\nremoved\nadded\n");
+    fn workdir_diff_omits_color_codes_even_when_forced() -> Result<()> {
+        let tempdir = tempdir().context("failed to create tempdir for diff test")?;
+        let repo = Repository::init(tempdir.path()).context("failed to init repo")?;
+        let signature =
+            Signature::now("Diff Tester", "diff.tester@example.com").context("signature")?;
+
+        let file_path = tempdir.path().join("file.txt");
+        std::fs::write(&file_path, "first line\n")?;
+        stage_and_commit(&repo, &file_path, &signature, "init")?;
+
+        std::fs::write(&file_path, "first line\nsecond line\n")?;
+
+        let _color_env = EnvGuard::set(&[
+            ("TERM", Some("xterm-256color")),
+            ("COLORTERM", Some("truecolor")),
+            ("CLICOLOR_FORCE", Some("1")),
+            ("FORCE_COLOR", Some("1")),
+            ("GIT_CONFIG_PARAMETERS", Some("color.ui=always")),
+        ]);
+
+        let diff = workdir_diff(tempdir.path())?;
+        assert!(
+            !diff.contains('\u{1b}'),
+            "diff unexpectedly contained ANSI escapes: {diff:?}"
+        );
+
+        Ok(())
     }
 
-    #[test]
-    fn strip_ansi_preserves_plain_text() {
-        let plain = "line\nanother\n";
-        assert_eq!(strip_ansi_codes(plain), plain);
+    fn stage_and_commit(
+        repo: &Repository,
+        path: &Path,
+        signature: &Signature<'_>,
+        message: &str,
+    ) -> Result<()> {
+        let workdir = repo
+            .workdir()
+            .context("repository does not have a working directory")?;
+        let relative = path
+            .strip_prefix(workdir)
+            .context("path not within repository")?;
+        let mut index = repo.index().context("failed to open index")?;
+        index
+            .add_path(relative)
+            .context("failed to add path to index")?;
+        let tree_id = index.write_tree().context("failed to write tree")?;
+        let tree = repo.find_tree(tree_id).context("failed to find tree")?;
+        repo.commit(Some("HEAD"), signature, signature, message, &tree, &[])
+            .context("failed to commit")?;
+        Ok(())
     }
 }
