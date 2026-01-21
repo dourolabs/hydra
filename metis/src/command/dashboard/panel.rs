@@ -144,6 +144,7 @@ pub struct PanelState {
     scrollbar_state: ScrollbarState,
     focused: bool,
     keybindings: Vec<PanelKeybinding>,
+    scroll_keys_enabled: bool,
 }
 
 impl Default for PanelState {
@@ -159,6 +160,7 @@ impl PanelState {
             scrollbar_state: ScrollbarState::default(),
             focused: false,
             keybindings: Vec::new(),
+            scroll_keys_enabled: true,
         }
     }
 
@@ -192,6 +194,10 @@ impl PanelState {
         }
     }
 
+    pub fn set_scroll_keys_enabled(&mut self, enabled: bool) {
+        self.scroll_keys_enabled = enabled;
+    }
+
     pub fn clear_keybindings(&mut self) {
         self.keybindings.clear();
     }
@@ -207,7 +213,7 @@ impl PanelState {
             return PanelEvent::None;
         }
 
-        if is_scroll_key(key) {
+        if self.scroll_keys_enabled && is_scroll_key(key) {
             if self.apply_scroll_delta(scroll_delta(key), content_len, view_height) {
                 return PanelEvent::Scrolled;
             }
@@ -305,7 +311,9 @@ fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
         spans.push(Span::styled(label.to_string(), label_style));
     };
 
-    push_binding("j/k or Up/Down".to_string(), "Scroll");
+    if state.scroll_keys_enabled {
+        push_binding("j/k or Up/Down".to_string(), "Scroll");
+    }
     for binding in &state.keybindings {
         push_binding(format_keybinding(binding), &binding.label);
     }
@@ -429,6 +437,17 @@ mod tests {
     }
 
     #[test]
+    fn scroll_keys_do_not_fire_when_disabled() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+        state.set_scroll_keys_enabled(false);
+
+        let event = state.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 3);
+        assert_eq!(state.scroll_offset(), 0);
+        assert_eq!(event, PanelEvent::None);
+    }
+
+    #[test]
     fn vim_keys_adjust_offset_when_focused() {
         let mut state = PanelState::new();
         state.set_focused(true);
@@ -509,6 +528,24 @@ mod tests {
         let footer_y = area.y + area.height - 2;
         let footer = row_text(&buffer, footer_y, area.width);
         assert!(footer.contains("j/k or Up/Down"));
+        assert!(footer.contains("r Refresh"));
+    }
+
+    #[test]
+    fn focused_panel_hides_scroll_binding_when_disabled() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+        state.set_scroll_keys_enabled(false);
+        state.register_keybinding(KeyCode::Char('r'), KeyModifiers::NONE, "Refresh");
+
+        let area = Rect::new(0, 0, 36, 5);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", Vec::new());
+        panel.render(area, &mut buffer, &mut state);
+
+        let footer_y = area.y + area.height - 2;
+        let footer = row_text(&buffer, footer_y, area.width);
+        assert!(!footer.contains("j/k or Up/Down"));
         assert!(footer.contains("r Refresh"));
     }
 
