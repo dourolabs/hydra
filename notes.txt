@@ -23,6 +23,8 @@ Use ```cargo check --workspace``` for a quick compile pass before full builds.
 
 Run ```cargo fmt --all``` and ```cargo clippy --workspace --all-targets -- -D warnings``` before opening a pull request.
 
+Run ```cargo test --workspace``` to exercise the full suite before submitting changes.
+
 `./scripts/docker-build.sh` will build docker images for codex and metis-server, and additionally push those images into kind's image repository.
 
 `./scripts/service.sh` lets you start/stop/restart the server inside the kubernetes cluster. Typical usage is:
