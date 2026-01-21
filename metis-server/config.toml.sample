@@ -41,6 +41,8 @@ name = "agent-a"
 prompt = "You are agent-a working on assigned issues."
 # Maximum number of times to spawn a task for the same issue state.
 max_tries = 3
+# Maximum number of simultaneously running jobs for this queue (defaults to unlimited).
+max_simultaneous = 1
 # Optional: override the worker image for this queue (falls back to metis.worker_image)
 image = "metis-worker:latest"
 

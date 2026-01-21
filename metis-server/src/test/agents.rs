@@ -1,7 +1,7 @@
 use crate::domain::jobs::BundleSpec;
 use crate::{
     app::{AppState, ServiceState},
-    config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
+    config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
     store::MemoryStore,
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
 };
@@ -19,6 +19,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
             context: BundleSpec::None,
             image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
+            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             env_vars: HashMap::new(),
         })
         .collect();

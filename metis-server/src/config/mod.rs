@@ -155,6 +155,8 @@ pub struct AgentQueueConfig {
     pub image: Option<String>,
     #[serde(default = "default_agent_max_tries")]
     pub max_tries: u32,
+    #[serde(default = "default_agent_max_simultaneous")]
+    pub max_simultaneous: u32,
     #[serde(default)]
     pub env_vars: HashMap<String, String>,
 }
@@ -241,6 +243,7 @@ fn default_worker_image() -> String {
 }
 
 pub const DEFAULT_AGENT_MAX_TRIES: u32 = 3;
+pub const DEFAULT_AGENT_MAX_SIMULTANEOUS: u32 = u32::MAX;
 const fn default_min_connections() -> u32 {
     1
 }
@@ -267,6 +270,10 @@ fn default_bundle_spec() -> BundleSpec {
 
 const fn default_agent_max_tries() -> u32 {
     DEFAULT_AGENT_MAX_TRIES
+}
+
+const fn default_agent_max_simultaneous() -> u32 {
+    DEFAULT_AGENT_MAX_SIMULTANEOUS
 }
 
 const fn default_github_poll_interval_secs() -> u64 {
