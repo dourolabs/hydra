@@ -1005,7 +1005,10 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 }
 
 fn handle_mouse_click(mouse: MouseEvent, state: &mut DashboardState) -> bool {
-    if !matches!(mouse.kind, MouseEventKind::Down(_)) {
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_)
+    ) {
         return false;
     }
 
@@ -2713,6 +2716,33 @@ mod tests {
         let panels = issue_panel_layout(layout.issue_sections);
         let mouse = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
+        assert!(!state.issue_creator_panel.focused());
+    }
+
+    #[test]
+    fn mouse_release_focuses_running_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::NewIssue,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
             column: panels.running.x + 1,
             row: panels.running.y + 1,
             modifiers: KeyModifiers::NONE,
