@@ -838,11 +838,11 @@ fn render_issue_creator(
     };
     let footer_columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(assignee_width)])
+        .constraints([Constraint::Length(assignee_width), Constraint::Min(0)])
         .split(sections.footer);
-    frame.render_widget(Paragraph::new(footer), footer_columns[0]);
+    frame.render_widget(Paragraph::new(assignee_line), footer_columns[0]);
     frame.render_widget(
-        Paragraph::new(assignee_line).alignment(Alignment::Right),
+        Paragraph::new(footer).alignment(Alignment::Right),
         footer_columns[1],
     );
 }
