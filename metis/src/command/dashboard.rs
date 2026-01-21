@@ -1381,18 +1381,22 @@ fn update_views(state: &mut DashboardState) -> bool {
 }
 
 fn update_assignee_options(state: &mut DashboardState) {
+    let fallback = "pm";
+    let preferred = state
+        .issue_draft
+        .selected_assignee()
+        .unwrap_or(fallback)
+        .to_string();
     let options = build_assignee_options(&state.issues);
     if options != state.issue_draft.assignees {
         state.issue_draft.assignees = options;
     }
 
-    let fallback = "pm";
-    let preferred = state.issue_draft.selected_assignee().unwrap_or(fallback);
     let next_index = state
         .issue_draft
         .assignees
         .iter()
-        .position(|assignee| assignee == preferred)
+        .position(|assignee| assignee == &preferred)
         .or_else(|| {
             state
                 .issue_draft
@@ -2340,6 +2344,18 @@ mod tests {
         assert!(options.contains(&"alice".to_string()));
         assert!(options.contains(&"bob".to_string()));
         assert_eq!(options.len(), 3);
+    }
+
+    #[test]
+    fn update_assignee_options_keeps_pm_as_default() {
+        let mut state = DashboardState {
+            issues: vec![issue_with_assignee("i-1", IssueStatus::Open, Some("alice"))],
+            ..DashboardState::default()
+        };
+
+        update_assignee_options(&mut state);
+
+        assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
     }
 
     #[test]
