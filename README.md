@@ -105,7 +105,7 @@ Use the helper script to run a local Postgres container with persistent data in 
 ./scripts/dev-postgres.sh status   # shows container status and connection string
 ```
 
-By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.toml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
+By default the container listens on `localhost:5432` with database `metis` and user/password `postgres`/`postgres`. Point `metis-server/config.toml` at it (e.g., `url = "postgres://postgres:postgres@localhost:5432/metis"`).
 
 ### Running metis-server in a kind cluster
 

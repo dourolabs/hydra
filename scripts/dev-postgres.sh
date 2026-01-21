@@ -7,15 +7,15 @@ POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 POSTGRES_CONTAINER_NAME="${POSTGRES_CONTAINER_NAME:-metis-postgres}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_DB="${POSTGRES_DB:-metis}"
-POSTGRES_USER="${POSTGRES_USER:-metis}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-metis}"
+POSTGRES_USER="${POSTGRES_USER:-postgres}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 POSTGRES_VOLUME="${POSTGRES_VOLUME:-metis-postgres-data}"
 
 connection_url="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/${POSTGRES_DB}"
 
 usage() {
   cat <<EOF
-Usage: $0 [start|stop|status|destroy]
+Usage: $0 [start|stop|status|destroy|reset]
 
 Environment overrides:
   POSTGRES_IMAGE            Image to run (default: ${POSTGRES_IMAGE})
@@ -71,6 +71,9 @@ start_container() {
 
   echo "Postgres is running on localhost:${POSTGRES_PORT}"
   echo "Connection string: ${connection_url}"
+  echo
+  echo "If you need a clean slate (for example after changing credentials), run:"
+  echo "  $0 reset"
 }
 
 stop_container() {
@@ -102,6 +105,15 @@ destroy_container() {
   fi
 }
 
+reset_container() {
+  echo "Resetting Postgres container and removing data volume..."
+  local previous_remove="${REMOVE_VOLUME:-0}"
+  REMOVE_VOLUME=1
+  destroy_container
+  REMOVE_VOLUME="${previous_remove}"
+  echo "Reset complete. Run '$0 start' to launch a fresh instance."
+}
+
 print_status() {
   if container_running; then
     echo "Postgres container '${POSTGRES_CONTAINER_NAME}' is running."
@@ -130,6 +142,9 @@ case "${COMMAND}" in
     ;;
   destroy)
     destroy_container
+    ;;
+  reset)
+    reset_container
     ;;
   *)
     usage

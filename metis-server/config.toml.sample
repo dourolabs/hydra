@@ -13,8 +13,8 @@ OPENAI_API_KEY = ""
 # PostgreSQL connection string. Leave empty to use the in-memory store; environment
 # variables are not consulted. For Kubernetes via ./scripts/service.sh, point
 # at the in-cluster service:
-# url = "postgres://metis:metis@postgres.metis.svc.cluster.local:5432/metis"
-url = "postgres://metis:metis@localhost:5432/metis"
+# url = "postgres://postgres:postgres@postgres.metis.svc.cluster.local:5432/metis"
+url = "postgres://postgres:postgres@localhost:5432/metis"
 # Maximum number of pooled connections (minimum defaults to 1).
 max_connections = 5
 # Minimum number of pooled connections to keep open.
