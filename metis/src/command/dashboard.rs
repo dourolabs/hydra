@@ -950,56 +950,58 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         return false;
     }
 
+    let hovered_panel = match panel_at_position(state, mouse.column, mouse.row) {
+        Some(panel) => panel,
+        None => return false,
+    };
+
     let size = match state.last_frame_size {
         Some(size) => size,
         None => return false,
     };
-
     let layout = dashboard_layout(size);
     let panels = issue_panel_layout(layout.issue_sections);
-    let row = mouse.row;
-    let column = mouse.column;
 
-    if let Some(rect) = panels.user_owned {
-        if rect_contains(rect, column, row) {
+    match hovered_panel {
+        PanelFocus::UserOwned => {
+            let Some(rect) = panels.user_owned else {
+                return false;
+            };
             let lines = issue_line_lines(
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
             );
             let (content_len, view_height) = panel_scroll_metrics(rect, &lines);
-            return matches!(
+            matches!(
                 state
                     .user_unowned_issue_panel
                     .handle_mouse_event(mouse, content_len, view_height),
                 PanelEvent::Scrolled
-            );
+            )
         }
+        PanelFocus::Running => {
+            let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+            let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
+            matches!(
+                state
+                    .running_issue_panel
+                    .handle_mouse_event(mouse, content_len, view_height),
+                PanelEvent::Scrolled
+            )
+        }
+        PanelFocus::Completed => {
+            let rows = completed_issue_rows(&state.completed_issue_lines);
+            let lines = issue_line_lines(&rows, "No completed issues");
+            let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
+            matches!(
+                state
+                    .completed_issue_panel
+                    .handle_mouse_event(mouse, content_len, view_height),
+                PanelEvent::Scrolled
+            )
+        }
+        PanelFocus::NewIssue => false,
     }
-
-    if rect_contains(panels.running, column, row) {
-        let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
-        let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
-        return matches!(
-            state
-                .running_issue_panel
-                .handle_mouse_event(mouse, content_len, view_height),
-            PanelEvent::Scrolled
-        );
-    }
-
-    if rect_contains(panels.completed, column, row) {
-        let rows = completed_issue_rows(&state.completed_issue_lines);
-        let lines = issue_line_lines(&rows, "No completed issues");
-        let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
-        return matches!(
-            state
-                .completed_issue_panel
-                .handle_mouse_event(mouse, content_len, view_height),
-            PanelEvent::Scrolled
-        );
-    }
-
-    false
 }
 
 fn handle_mouse_click(mouse: MouseEvent, state: &mut DashboardState) -> bool {
@@ -1007,51 +1009,17 @@ fn handle_mouse_click(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         return false;
     }
 
-    let size = match state.last_frame_size {
-        Some(size) => size,
+    let hovered_panel = match panel_at_position(state, mouse.column, mouse.row) {
+        Some(panel) => panel,
         None => return false,
     };
 
-    let layout = dashboard_layout(size);
-    let panels = issue_panel_layout(layout.issue_sections);
-    let row = mouse.row;
-    let column = mouse.column;
-
-    if rect_contains(layout.issue_creator, column, row) {
-        if state.selected_panel != PanelFocus::NewIssue {
-            state.selected_panel = PanelFocus::NewIssue;
-            update_panel_focus(state);
-        }
-        return true;
+    if state.selected_panel != hovered_panel {
+        state.selected_panel = hovered_panel;
+        update_panel_focus(state);
     }
 
-    if let Some(rect) = panels.user_owned {
-        if rect_contains(rect, column, row) {
-            if state.selected_panel != PanelFocus::UserOwned {
-                state.selected_panel = PanelFocus::UserOwned;
-                update_panel_focus(state);
-            }
-            return true;
-        }
-    }
-
-    if rect_contains(panels.running, column, row) {
-        if state.selected_panel != PanelFocus::Running {
-            state.selected_panel = PanelFocus::Running;
-            update_panel_focus(state);
-        }
-        return true;
-    }
-
-    if rect_contains(panels.completed, column, row) {
-        if state.selected_panel != PanelFocus::Completed {
-            state.selected_panel = PanelFocus::Completed;
-            update_panel_focus(state);
-        }
-        return true;
-    }
-
-    false
+    true
 }
 
 fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -1059,6 +1027,31 @@ fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
         && column < rect.x.saturating_add(rect.width)
         && row >= rect.y
         && row < rect.y.saturating_add(rect.height)
+}
+
+fn panel_at_position(state: &DashboardState, column: u16, row: u16) -> Option<PanelFocus> {
+    let size = state.last_frame_size?;
+    let layout = dashboard_layout(size);
+    if rect_contains(layout.issue_creator, column, row) {
+        return Some(PanelFocus::NewIssue);
+    }
+
+    let panels = issue_panel_layout(layout.issue_sections);
+    if let Some(rect) = panels.user_owned {
+        if rect_contains(rect, column, row) {
+            return Some(PanelFocus::UserOwned);
+        }
+    }
+
+    if rect_contains(panels.running, column, row) {
+        return Some(PanelFocus::Running);
+    }
+
+    if rect_contains(panels.completed, column, row) {
+        return Some(PanelFocus::Completed);
+    }
+
+    None
 }
 
 fn clamp_issue_scrolls(state: &mut DashboardState) {
