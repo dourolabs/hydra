@@ -4,7 +4,9 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{Json, extract::State};
-use metis_common::job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse};
+use metis_common::api::v1::job_status::{
+    GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse,
+};
 use tracing::{error, info};
 
 pub async fn set_job_status(
@@ -58,5 +60,5 @@ pub async fn get_job_status(
     })?;
 
     info!(job_id = %job_id, "get_job_status completed");
-    Ok(Json(GetJobStatusResponse { job_id, status_log }))
+    Ok(Json(GetJobStatusResponse::new(job_id, status_log)))
 }

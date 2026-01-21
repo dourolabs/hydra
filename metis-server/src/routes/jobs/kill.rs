@@ -1,6 +1,6 @@
 use crate::{app::AppState, job_engine::JobEngineError};
 use axum::{Json, extract::State};
-use metis_common::jobs::KillJobResponse;
+use metis_common::api::v1::jobs::KillJobResponse;
 use tracing::{error, info};
 
 use super::{ApiError, JobIdPath};
@@ -37,8 +37,8 @@ pub async fn kill_job(
 
     info!(job_id = %job_id, "kill_job completed successfully");
 
-    Ok(Json(KillJobResponse {
+    Ok(Json(KillJobResponse::new(
         job_id,
-        status: "killed".to_string(),
-    }))
+        "killed".to_string(),
+    )))
 }

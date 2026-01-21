@@ -12,7 +12,7 @@ use axum::{
     },
 };
 use futures::{StreamExt, channel::mpsc};
-use metis_common::logs::LogsQuery;
+use metis_common::api::v1::logs::LogsQuery;
 use std::convert::Infallible;
 use tracing::{error, info};
 

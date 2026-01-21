@@ -189,13 +189,7 @@ impl AppState {
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
-        let task = Task {
-            prompt: request.prompt,
-            context: request.context,
-            spawned_from: None,
-            image: request.image,
-            env_vars,
-        };
+        let task = Task::new(request.prompt, request.context, None, request.image, env_vars);
 
         task.resolve(self.service_state.as_ref(), &fallback_image)
             .await?;
@@ -485,7 +479,7 @@ impl AppState {
         patch_id: Option<PatchId>,
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest { mut patch } = request;
+        let UpsertPatchRequest { mut patch, .. } = request;
 
         let mut should_close_merge_requests = false;
         let mut store = self.store.write().await;
@@ -615,7 +609,7 @@ impl AppState {
         issue_id: Option<IssueId>,
         request: UpsertIssueRequest,
     ) -> Result<IssueId, UpsertIssueError> {
-        let UpsertIssueRequest { mut issue, job_id } = request;
+        let UpsertIssueRequest { mut issue, job_id, .. } = request;
         let mut tasks_to_kill = Vec::new();
 
         let mut store = self.store.write().await;
@@ -1149,23 +1143,23 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     fn sample_task() -> Task {
-        Task {
-            prompt: "Spawn me".to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: Some("worker:latest".to_string()),
-            env_vars: HashMap::new(),
-        }
+        Task::new(
+            "Spawn me".to_string(),
+            BundleSpec::None,
+            None,
+            Some("worker:latest".to_string()),
+            HashMap::new(),
+        )
     }
 
     fn task_for_issue(issue_id: &IssueId) -> Task {
-        Task {
-            prompt: "Spawn me".to_string(),
-            context: BundleSpec::None,
-            spawned_from: Some(issue_id.clone()),
-            image: Some("worker:latest".to_string()),
-            env_vars: HashMap::new(),
-        }
+        Task::new(
+            "Spawn me".to_string(),
+            BundleSpec::None,
+            Some(issue_id.clone()),
+            Some("worker:latest".to_string()),
+            HashMap::new(),
+        )
     }
 
     fn issue_with_status(
@@ -1173,17 +1167,17 @@ mod tests {
         status: IssueStatus,
         dependencies: Vec<IssueDependency>,
     ) -> Issue {
-        Issue {
-            issue_type: IssueType::Task,
-            description: description.to_string(),
-            creator: String::new(),
-            progress: String::new(),
+        Issue::new(
+            IssueType::Task,
+            description.to_string(),
+            String::new(),
+            String::new(),
             status,
-            assignee: None,
-            todo_list: Vec::new(),
+            None,
+            Vec::new(),
             dependencies,
-            patches: Vec::new(),
-        }
+            Vec::new(),
+        )
     }
 
     #[tokio::test]

@@ -2,6 +2,7 @@ use crate::RepoName;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ServiceRepositoryConfig {
     pub remote_url: String,
     #[serde(default)]
@@ -12,7 +13,24 @@ pub struct ServiceRepositoryConfig {
     pub default_image: Option<String>,
 }
 
+impl ServiceRepositoryConfig {
+    pub fn new(
+        remote_url: String,
+        default_branch: Option<String>,
+        github_token: Option<String>,
+        default_image: Option<String>,
+    ) -> Self {
+        Self {
+            remote_url,
+            default_branch,
+            github_token,
+            default_image,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ServiceRepository {
     pub name: RepoName,
     pub remote_url: String,
@@ -38,6 +56,22 @@ impl ServiceRepository {
             github_token_present: self.github_token_present(),
         }
     }
+
+    pub fn new(
+        name: RepoName,
+        remote_url: String,
+        default_branch: Option<String>,
+        github_token: Option<String>,
+        default_image: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            remote_url,
+            default_branch,
+            github_token,
+            default_image,
+        }
+    }
 }
 
 impl From<(RepoName, ServiceRepositoryConfig)> for ServiceRepository {
@@ -53,6 +87,7 @@ impl From<(RepoName, ServiceRepositoryConfig)> for ServiceRepository {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ServiceRepositoryInfo {
     pub name: RepoName,
     pub remote_url: String,
@@ -64,6 +99,24 @@ pub struct ServiceRepositoryInfo {
     pub github_token_present: bool,
 }
 
+impl ServiceRepositoryInfo {
+    pub fn new(
+        name: RepoName,
+        remote_url: String,
+        default_branch: Option<String>,
+        default_image: Option<String>,
+        github_token_present: bool,
+    ) -> Self {
+        Self {
+            name,
+            remote_url,
+            default_branch,
+            default_image,
+            github_token_present,
+        }
+    }
+}
+
 fn token_present(token: &Option<String>) -> bool {
     token
         .as_deref()
@@ -72,26 +125,54 @@ fn token_present(token: &Option<String>) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CreateRepositoryRequest {
     pub name: RepoName,
     #[serde(flatten)]
     pub repository: ServiceRepositoryConfig,
 }
 
+impl CreateRepositoryRequest {
+    pub fn new(name: RepoName, repository: ServiceRepositoryConfig) -> Self {
+        Self { name, repository }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpdateRepositoryRequest {
     #[serde(flatten)]
     pub repository: ServiceRepositoryConfig,
 }
 
+impl UpdateRepositoryRequest {
+    pub fn new(repository: ServiceRepositoryConfig) -> Self {
+        Self { repository }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertRepositoryResponse {
     pub repository: ServiceRepositoryInfo,
 }
 
+impl UpsertRepositoryResponse {
+    pub fn new(repository: ServiceRepositoryInfo) -> Self {
+        Self { repository }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ListRepositoriesResponse {
     pub repositories: Vec<ServiceRepositoryInfo>,
+}
+
+impl ListRepositoriesResponse {
+    pub fn new(repositories: Vec<ServiceRepositoryInfo>) -> Self {
+        Self { repositories }
+    }
 }
 
 #[cfg(test)]

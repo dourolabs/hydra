@@ -4,6 +4,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
+#[non_exhaustive]
 pub struct Username(String);
 
 impl Username {
@@ -49,12 +50,23 @@ impl Borrow<str> for Username {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct User {
     pub username: Username,
     pub github_token: String,
 }
 
+impl User {
+    pub fn new(username: Username, github_token: String) -> Self {
+        Self {
+            username,
+            github_token,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UserSummary {
     pub username: Username,
 }
@@ -67,28 +79,72 @@ impl From<User> for UserSummary {
     }
 }
 
+impl UserSummary {
+    pub fn new(username: Username) -> Self {
+        Self { username }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CreateUserRequest {
     pub username: Username,
     pub github_token: String,
 }
 
+impl CreateUserRequest {
+    pub fn new(username: Username, github_token: String) -> Self {
+        Self {
+            username,
+            github_token,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpdateGithubTokenRequest {
     pub github_token: String,
 }
 
+impl UpdateGithubTokenRequest {
+    pub fn new(github_token: String) -> Self {
+        Self { github_token }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertUserResponse {
     pub user: UserSummary,
 }
 
+impl UpsertUserResponse {
+    pub fn new(user: UserSummary) -> Self {
+        Self { user }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DeleteUserResponse {
     pub username: Username,
 }
 
+impl DeleteUserResponse {
+    pub fn new(username: Username) -> Self {
+        Self { username }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ListUsersResponse {
     pub users: Vec<UserSummary>,
+}
+
+impl ListUsersResponse {
+    pub fn new(users: Vec<UserSummary>) -> Self {
+        Self { users }
+    }
 }

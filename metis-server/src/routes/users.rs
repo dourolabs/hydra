@@ -3,7 +3,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use metis_common::users::{
+use metis_common::api::v1::users::{
     CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
     UpsertUserResponse, User, UserSummary, Username,
 };
@@ -22,7 +22,7 @@ pub async fn list_users(
     let summaries = users.into_iter().map(UserSummary::from).collect::<Vec<_>>();
     info!(user_count = summaries.len(), "list_users completed");
 
-    Ok(Json(ListUsersResponse { users: summaries }))
+    Ok(Json(ListUsersResponse::new(summaries)))
 }
 
 pub async fn create_user(
@@ -33,10 +33,7 @@ pub async fn create_user(
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     info!(username = %username, "create_user invoked");
 
-    let user = User {
-        username: username.clone(),
-        github_token,
-    };
+    let user = User::new(username.clone(), github_token);
 
     let mut store = state.store.write().await;
     store
@@ -56,9 +53,7 @@ pub async fn create_user(
         })?;
 
     info!(username = %username, "create_user completed");
-    Ok(Json(UpsertUserResponse {
-        user: UserSummary::from(user),
-    }))
+    Ok(Json(UpsertUserResponse::new(UserSummary::from(user))))
 }
 
 pub async fn delete_user(
@@ -86,7 +81,7 @@ pub async fn delete_user(
         })?;
 
     info!(username = %username, "delete_user completed");
-    Ok(Json(DeleteUserResponse { username }))
+    Ok(Json(DeleteUserResponse::new(username)))
 }
 
 pub async fn set_github_token(
@@ -116,9 +111,7 @@ pub async fn set_github_token(
         })?;
 
     info!(username = %username, "set_github_token completed");
-    Ok(Json(UpsertUserResponse {
-        user: UserSummary::from(updated),
-    }))
+    Ok(Json(UpsertUserResponse::new(UserSummary::from(updated))))
 }
 
 fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {

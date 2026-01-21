@@ -1,18 +1,20 @@
 use crate::{
     app::{AppState, RepositoryError, ServiceRepository, ServiceRepositoryConfig},
     config::non_empty,
-    routes::jobs::ApiError,
 };
 use axum::{
     Json,
     extract::{Path, State},
 };
 use metis_common::{
-    RepoName,
-    repositories::{
-        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-        UpsertRepositoryResponse,
+    api::v1::{
+        repositories::{
+            CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
+            UpsertRepositoryResponse,
+        },
+        ApiError,
     },
+    RepoName,
 };
 use tracing::{error, info};
 
@@ -21,7 +23,7 @@ pub async fn list_repositories(
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
     let repositories = state.service_state.list_repository_info().await;
-    let response = ListRepositoriesResponse { repositories };
+    let response = ListRepositoriesResponse::new(repositories);
     info!(
         repository_count = response.repositories.len(),
         "list_repositories completed"
@@ -42,9 +44,9 @@ pub async fn create_repository(
         .map_err(map_repository_error)?;
 
     info!(repository = %created.name, "create_repository completed");
-    Ok(Json(UpsertRepositoryResponse {
-        repository: created.without_secret(),
-    }))
+    Ok(Json(UpsertRepositoryResponse::new(
+        created.without_secret(),
+    )))
 }
 
 pub async fn update_repository(
@@ -64,9 +66,9 @@ pub async fn update_repository(
         .map_err(map_repository_error)?;
 
     info!(repository = %name, "update_repository completed");
-    Ok(Json(UpsertRepositoryResponse {
-        repository: updated.without_secret(),
-    }))
+    Ok(Json(UpsertRepositoryResponse::new(
+        updated.without_secret(),
+    )))
 }
 
 fn build_repository(
