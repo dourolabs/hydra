@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use git2::Oid;
+use metis_common::api::v1 as api;
 use metis_common::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -310,9 +311,246 @@ impl ListPatchesResponse {
     }
 }
 
+impl From<api::patches::PatchStatus> for PatchStatus {
+    fn from(value: api::patches::PatchStatus) -> Self {
+        match value {
+            api::patches::PatchStatus::Open => PatchStatus::Open,
+            api::patches::PatchStatus::Closed => PatchStatus::Closed,
+            api::patches::PatchStatus::Merged => PatchStatus::Merged,
+            _ => unreachable!("unsupported PatchStatus variant"),
+        }
+    }
+}
+
+impl From<PatchStatus> for api::patches::PatchStatus {
+    fn from(value: PatchStatus) -> Self {
+        match value {
+            PatchStatus::Open => api::patches::PatchStatus::Open,
+            PatchStatus::Closed => api::patches::PatchStatus::Closed,
+            PatchStatus::Merged => api::patches::PatchStatus::Merged,
+        }
+    }
+}
+
+impl From<api::patches::Review> for Review {
+    fn from(value: api::patches::Review) -> Self {
+        Review {
+            contents: value.contents,
+            is_approved: value.is_approved,
+            author: value.author,
+            submitted_at: value.submitted_at,
+        }
+    }
+}
+
+impl From<Review> for api::patches::Review {
+    fn from(value: Review) -> Self {
+        api::patches::Review::new(
+            value.contents,
+            value.is_approved,
+            value.author,
+            value.submitted_at,
+        )
+    }
+}
+
+impl From<api::patches::GithubPr> for GithubPr {
+    fn from(value: api::patches::GithubPr) -> Self {
+        GithubPr {
+            owner: value.owner,
+            repo: value.repo,
+            number: value.number,
+            head_ref: value.head_ref,
+            base_ref: value.base_ref,
+            url: value.url,
+            ci: value.ci.map(Into::into),
+        }
+    }
+}
+
+impl From<GithubPr> for api::patches::GithubPr {
+    fn from(value: GithubPr) -> Self {
+        api::patches::GithubPr::new(
+            value.owner,
+            value.repo,
+            value.number,
+            value.head_ref,
+            value.base_ref,
+            value.url,
+            value.ci.map(Into::into),
+        )
+    }
+}
+
+impl From<api::patches::GitOid> for GitOid {
+    fn from(value: api::patches::GitOid) -> Self {
+        GitOid(value.0)
+    }
+}
+
+impl From<GitOid> for api::patches::GitOid {
+    fn from(value: GitOid) -> Self {
+        api::patches::GitOid::from(value.0)
+    }
+}
+
+impl From<api::patches::Patch> for Patch {
+    fn from(value: api::patches::Patch) -> Self {
+        Patch {
+            title: value.title,
+            description: value.description,
+            diff: value.diff,
+            status: value.status.into(),
+            is_automatic_backup: value.is_automatic_backup,
+            created_by: value.created_by,
+            reviews: value.reviews.into_iter().map(Into::into).collect(),
+            service_repo_name: value.service_repo_name,
+            github: value.github.map(Into::into),
+        }
+    }
+}
+
+impl From<Patch> for api::patches::Patch {
+    fn from(value: Patch) -> Self {
+        api::patches::Patch::new(
+            value.title,
+            value.description,
+            value.diff,
+            value.status.into(),
+            value.is_automatic_backup,
+            value.created_by,
+            value.reviews.into_iter().map(Into::into).collect(),
+            value.service_repo_name,
+            value.github.map(Into::into),
+        )
+    }
+}
+
+impl From<api::patches::PatchRecord> for PatchRecord {
+    fn from(value: api::patches::PatchRecord) -> Self {
+        PatchRecord {
+            id: value.id,
+            patch: value.patch.into(),
+        }
+    }
+}
+
+impl From<PatchRecord> for api::patches::PatchRecord {
+    fn from(value: PatchRecord) -> Self {
+        api::patches::PatchRecord::new(value.id, value.patch.into())
+    }
+}
+
+impl From<api::patches::UpsertPatchRequest> for UpsertPatchRequest {
+    fn from(value: api::patches::UpsertPatchRequest) -> Self {
+        UpsertPatchRequest {
+            patch: value.patch.into(),
+        }
+    }
+}
+
+impl From<UpsertPatchRequest> for api::patches::UpsertPatchRequest {
+    fn from(value: UpsertPatchRequest) -> Self {
+        api::patches::UpsertPatchRequest::new(value.patch.into())
+    }
+}
+
+impl From<api::patches::UpsertPatchResponse> for UpsertPatchResponse {
+    fn from(value: api::patches::UpsertPatchResponse) -> Self {
+        UpsertPatchResponse {
+            patch_id: value.patch_id,
+        }
+    }
+}
+
+impl From<UpsertPatchResponse> for api::patches::UpsertPatchResponse {
+    fn from(value: UpsertPatchResponse) -> Self {
+        api::patches::UpsertPatchResponse::new(value.patch_id)
+    }
+}
+
+impl From<api::patches::SearchPatchesQuery> for SearchPatchesQuery {
+    fn from(value: api::patches::SearchPatchesQuery) -> Self {
+        SearchPatchesQuery { q: value.q }
+    }
+}
+
+impl From<SearchPatchesQuery> for api::patches::SearchPatchesQuery {
+    fn from(value: SearchPatchesQuery) -> Self {
+        api::patches::SearchPatchesQuery::new(value.q)
+    }
+}
+
+impl From<api::patches::GithubCiState> for GithubCiState {
+    fn from(value: api::patches::GithubCiState) -> Self {
+        match value {
+            api::patches::GithubCiState::Pending => GithubCiState::Pending,
+            api::patches::GithubCiState::Success => GithubCiState::Success,
+            api::patches::GithubCiState::Failed => GithubCiState::Failed,
+            _ => unreachable!("unsupported GithubCiState variant"),
+        }
+    }
+}
+
+impl From<GithubCiState> for api::patches::GithubCiState {
+    fn from(value: GithubCiState) -> Self {
+        match value {
+            GithubCiState::Pending => api::patches::GithubCiState::Pending,
+            GithubCiState::Success => api::patches::GithubCiState::Success,
+            GithubCiState::Failed => api::patches::GithubCiState::Failed,
+        }
+    }
+}
+
+impl From<api::patches::GithubCiFailure> for GithubCiFailure {
+    fn from(value: api::patches::GithubCiFailure) -> Self {
+        GithubCiFailure {
+            name: value.name,
+            summary: value.summary,
+            details_url: value.details_url,
+        }
+    }
+}
+
+impl From<GithubCiFailure> for api::patches::GithubCiFailure {
+    fn from(value: GithubCiFailure) -> Self {
+        api::patches::GithubCiFailure::new(value.name, value.summary, value.details_url)
+    }
+}
+
+impl From<api::patches::GithubCiStatus> for GithubCiStatus {
+    fn from(value: api::patches::GithubCiStatus) -> Self {
+        GithubCiStatus {
+            state: value.state.into(),
+            failure: value.failure.map(Into::into),
+        }
+    }
+}
+
+impl From<GithubCiStatus> for api::patches::GithubCiStatus {
+    fn from(value: GithubCiStatus) -> Self {
+        api::patches::GithubCiStatus::new(value.state.into(), value.failure.map(Into::into))
+    }
+}
+
+impl From<api::patches::ListPatchesResponse> for ListPatchesResponse {
+    fn from(value: api::patches::ListPatchesResponse) -> Self {
+        ListPatchesResponse {
+            patches: value.patches.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListPatchesResponse> for api::patches::ListPatchesResponse {
+    fn from(value: ListPatchesResponse) -> Self {
+        api::patches::ListPatchesResponse::new(value.patches.into_iter().map(Into::into).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metis_common::api::v1 as api;
     use serde::Serialize;
     use std::collections::HashMap;
 
@@ -362,5 +600,22 @@ mod tests {
         let params: HashMap<_, _> = params.into_iter().collect();
 
         assert_eq!(params.get("q").map(String::as_str), Some("my search"));
+    }
+
+    #[test]
+    fn github_ci_status_converts_between_domain_and_api() {
+        let domain = GithubCiStatus {
+            state: GithubCiState::Failed,
+            failure: Some(GithubCiFailure {
+                name: "build".to_string(),
+                summary: Some("compilation error".to_string()),
+                details_url: None,
+            }),
+        };
+
+        let api_value: api::patches::GithubCiStatus = domain.clone().into();
+        let round_trip: GithubCiStatus = api_value.into();
+
+        assert_eq!(round_trip, domain);
     }
 }

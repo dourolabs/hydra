@@ -1,4 +1,5 @@
 use super::task_status::TaskStatusLog;
+use metis_common::api::v1 as api;
 use metis_common::{IssueId, RepoName, TaskId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -79,6 +80,35 @@ impl From<Bundle> for BundleSpec {
     }
 }
 
+impl From<api::jobs::BundleSpec> for BundleSpec {
+    fn from(value: api::jobs::BundleSpec) -> Self {
+        match value {
+            api::jobs::BundleSpec::None => BundleSpec::None,
+            api::jobs::BundleSpec::GitRepository { url, rev } => {
+                BundleSpec::GitRepository { url, rev }
+            }
+            api::jobs::BundleSpec::ServiceRepository { name, rev } => {
+                BundleSpec::ServiceRepository { name, rev }
+            }
+            _ => unreachable!("unsupported bundle spec variant"),
+        }
+    }
+}
+
+impl From<BundleSpec> for api::jobs::BundleSpec {
+    fn from(value: BundleSpec) -> Self {
+        match value {
+            BundleSpec::None => api::jobs::BundleSpec::None,
+            BundleSpec::GitRepository { url, rev } => {
+                api::jobs::BundleSpec::GitRepository { url, rev }
+            }
+            BundleSpec::ServiceRepository { name, rev } => {
+                api::jobs::BundleSpec::ServiceRepository { name, rev }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Bundle {
@@ -90,6 +120,25 @@ pub enum Bundle {
         /// Specific git revision (branch, tag, or commit) to checkout after cloning.
         rev: String,
     },
+}
+
+impl From<api::jobs::Bundle> for Bundle {
+    fn from(value: api::jobs::Bundle) -> Self {
+        match value {
+            api::jobs::Bundle::None => Bundle::None,
+            api::jobs::Bundle::GitRepository { url, rev } => Bundle::GitRepository { url, rev },
+            _ => unreachable!("unsupported bundle variant"),
+        }
+    }
+}
+
+impl From<Bundle> for api::jobs::Bundle {
+    fn from(value: Bundle) -> Self {
+        match value {
+            Bundle::None => api::jobs::Bundle::None,
+            Bundle::GitRepository { url, rev } => api::jobs::Bundle::GitRepository { url, rev },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,12 +225,156 @@ impl KillJobResponse {
     }
 }
 
+impl From<api::jobs::Task> for Task {
+    fn from(value: api::jobs::Task) -> Self {
+        Task {
+            prompt: value.prompt,
+            context: value.context.into(),
+            spawned_from: value.spawned_from,
+            image: value.image,
+            env_vars: value.env_vars,
+        }
+    }
+}
+
+impl From<Task> for api::jobs::Task {
+    fn from(value: Task) -> Self {
+        api::jobs::Task::new(
+            value.prompt,
+            value.context.into(),
+            value.spawned_from,
+            value.image,
+            value.env_vars,
+        )
+    }
+}
+
+impl From<api::jobs::CreateJobRequest> for CreateJobRequest {
+    fn from(value: api::jobs::CreateJobRequest) -> Self {
+        CreateJobRequest {
+            prompt: value.prompt,
+            image: value.image,
+            context: value.context.into(),
+            variables: value.variables,
+        }
+    }
+}
+
+impl From<CreateJobRequest> for api::jobs::CreateJobRequest {
+    fn from(value: CreateJobRequest) -> Self {
+        api::jobs::CreateJobRequest::new(
+            value.prompt,
+            value.image,
+            value.context.into(),
+            value.variables,
+        )
+    }
+}
+
+impl From<api::jobs::WorkerContext> for WorkerContext {
+    fn from(value: api::jobs::WorkerContext) -> Self {
+        WorkerContext {
+            request_context: value.request_context.into(),
+            prompt: value.prompt,
+            variables: value.variables,
+        }
+    }
+}
+
+impl From<WorkerContext> for api::jobs::WorkerContext {
+    fn from(value: WorkerContext) -> Self {
+        api::jobs::WorkerContext::new(value.request_context.into(), value.prompt, value.variables)
+    }
+}
+
+impl From<api::jobs::CreateJobResponse> for CreateJobResponse {
+    fn from(value: api::jobs::CreateJobResponse) -> Self {
+        CreateJobResponse {
+            job_id: value.job_id,
+        }
+    }
+}
+
+impl From<CreateJobResponse> for api::jobs::CreateJobResponse {
+    fn from(value: CreateJobResponse) -> Self {
+        api::jobs::CreateJobResponse::new(value.job_id)
+    }
+}
+
+impl From<api::jobs::JobRecord> for JobRecord {
+    fn from(value: api::jobs::JobRecord) -> Self {
+        JobRecord {
+            id: value.id,
+            task: value.task.into(),
+            notes: value.notes,
+            status_log: value.status_log.into(),
+        }
+    }
+}
+
+impl From<JobRecord> for api::jobs::JobRecord {
+    fn from(value: JobRecord) -> Self {
+        api::jobs::JobRecord::new(
+            value.id,
+            value.task.into(),
+            value.notes,
+            value.status_log.into(),
+        )
+    }
+}
+
+impl From<api::jobs::ListJobsResponse> for ListJobsResponse {
+    fn from(value: api::jobs::ListJobsResponse) -> Self {
+        ListJobsResponse {
+            jobs: value.jobs.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListJobsResponse> for api::jobs::ListJobsResponse {
+    fn from(value: ListJobsResponse) -> Self {
+        api::jobs::ListJobsResponse::new(value.jobs.into_iter().map(Into::into).collect())
+    }
+}
+
+impl From<api::jobs::SearchJobsQuery> for SearchJobsQuery {
+    fn from(value: api::jobs::SearchJobsQuery) -> Self {
+        SearchJobsQuery {
+            q: value.q,
+            spawned_from: value.spawned_from,
+        }
+    }
+}
+
+impl From<SearchJobsQuery> for api::jobs::SearchJobsQuery {
+    fn from(value: SearchJobsQuery) -> Self {
+        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from)
+    }
+}
+
+impl From<api::jobs::KillJobResponse> for KillJobResponse {
+    fn from(value: api::jobs::KillJobResponse) -> Self {
+        KillJobResponse {
+            job_id: value.job_id,
+            status: value.status,
+        }
+    }
+}
+
+impl From<KillJobResponse> for api::jobs::KillJobResponse {
+    fn from(value: KillJobResponse) -> Self {
+        api::jobs::KillJobResponse::new(value.job_id, value.status)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SearchJobsQuery;
-    use metis_common::IssueId;
+    use super::{BundleSpec, SearchJobsQuery};
+    use metis_common::api::v1 as api;
+    use metis_common::{IssueId, RepoName};
     use serde::Serialize;
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
         let encoded = serde_urlencoded::to_string(value).unwrap();
@@ -215,5 +408,19 @@ mod tests {
             params.is_empty(),
             "expected no query params for empty SearchJobsQuery"
         );
+    }
+
+    #[test]
+    fn bundle_spec_converts_between_domain_and_api() {
+        let repo = RepoName::from_str("dourolabs/metis").unwrap();
+        let domain = BundleSpec::ServiceRepository {
+            name: repo.clone(),
+            rev: Some("main".to_string()),
+        };
+
+        let api_spec: api::jobs::BundleSpec = domain.clone().into();
+        let round_trip: BundleSpec = api_spec.into();
+
+        assert_eq!(round_trip, domain);
     }
 }
