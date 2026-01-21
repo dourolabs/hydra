@@ -250,6 +250,7 @@ struct DashboardState {
 impl Default for DashboardState {
     fn default() -> Self {
         let mut issue_creator_panel = PanelState::new();
+        issue_creator_panel.set_scroll_keys_enabled(false);
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
         issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
@@ -1849,6 +1850,8 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use ratatui::buffer::Buffer;
+    use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -2462,6 +2465,21 @@ mod tests {
     }
 
     #[test]
+    fn new_issue_panel_hides_scroll_keybinding() {
+        let mut state = DashboardState::default();
+
+        let area = Rect::new(0, 0, 50, 6);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("New issue", Vec::new());
+        panel.render(area, &mut buffer, &mut state.issue_creator_panel);
+
+        let footer_y = area.y + area.height - 2;
+        let footer = row_text(&buffer, footer_y, area.width);
+        assert!(!footer.contains("j/k or Up/Down"));
+        assert!(footer.contains("Alt+a"));
+    }
+
+    #[test]
     fn mouse_scroll_down_updates_running_issue_offset() {
         let issues = (0..25)
             .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, vec![]))
@@ -2792,5 +2810,13 @@ mod tests {
 
         assert_eq!(created, issue_id("i-new"));
         mock.assert();
+    }
+
+    fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
+        let mut row = String::new();
+        for x in 0..width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        row.trim_end().to_string()
     }
 }
