@@ -10,7 +10,7 @@ use git2::{
     ErrorCode, FetchOptions, IndexAddOption, PushOptions, RemoteCallbacks, Repository,
     RevparseMode, Status, StatusOptions,
 };
-use metis_common::patches::GitOid;
+use metis_common::{patches::GitOid, EnvGuard};
 
 fn repo_for_path(path: &Path) -> Result<Repository> {
     Repository::discover(path).with_context(|| {
@@ -301,38 +301,6 @@ fn disable_diff_color() -> EnvGuard {
     ])
 }
 
-struct EnvGuard {
-    previous: Vec<(String, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn set(pairs: &[(&str, Option<&str>)]) -> EnvGuard {
-        let mut previous = Vec::with_capacity(pairs.len());
-        for (key, value) in pairs {
-            let key_string = key.to_string();
-            let original = env::var(key).ok();
-            match value {
-                Some(new_value) => env::set_var(key, new_value),
-                None => env::remove_var(key),
-            }
-            previous.push((key_string, original));
-        }
-        EnvGuard { previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (key, original) in self.previous.drain(..) {
-            if let Some(value) = original {
-                env::set_var(key, value);
-            } else {
-                env::remove_var(key);
-            }
-        }
-    }
-}
-
 fn remote_callbacks(github_token: Option<&str>) -> RemoteCallbacks<'static> {
     let token = github_token.map(|value| value.to_string());
     let mut callbacks = RemoteCallbacks::new();
@@ -400,7 +368,8 @@ mod tests {
     use git2::{Repository, Signature};
     use tempfile::tempdir;
 
-    use super::{workdir_diff, EnvGuard};
+    use super::workdir_diff;
+    use metis_common::EnvGuard;
 
     #[test]
     fn workdir_diff_omits_color_codes_even_when_forced() -> Result<()> {
