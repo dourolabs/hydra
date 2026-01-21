@@ -70,7 +70,7 @@ pub async fn delete_user(
 
     let mut store = state.store.write().await;
     store
-        .delete_user(username.as_str())
+        .delete_user(&username)
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
@@ -100,7 +100,7 @@ pub async fn set_github_token(
 
     let mut store = state.store.write().await;
     let updated = store
-        .set_user_github_token(username.as_str(), github_token)
+        .set_user_github_token(&username, github_token)
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {

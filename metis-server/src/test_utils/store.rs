@@ -5,7 +5,7 @@ use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
-    users::User,
+    users::{User, Username},
 };
 use std::collections::HashSet;
 
@@ -141,13 +141,13 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_user(&mut self, _username: &str) -> Result<(), StoreError> {
+    async fn delete_user(&mut self, _username: &Username) -> Result<(), StoreError> {
         fail()
     }
 
     async fn set_user_github_token(
         &mut self,
-        _username: &str,
+        _username: &Username,
         _github_token: String,
     ) -> Result<User, StoreError> {
         fail()

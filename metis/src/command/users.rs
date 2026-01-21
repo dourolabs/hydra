@@ -88,7 +88,7 @@ async fn create_user(
 }
 
 async fn delete_user(client: &dyn MetisClientInterface, username: &str) -> Result<Username> {
-    let username = normalize_non_empty(username, "username")?;
+    let username: Username = normalize_non_empty(username, "username")?.into();
     let response = client
         .delete_user(&username)
         .await
@@ -100,7 +100,7 @@ async fn set_github_token(
     client: &dyn MetisClientInterface,
     args: UserCredentialsArgs,
 ) -> Result<UserSummary> {
-    let username = normalize_non_empty(&args.username, "username")?;
+    let username: Username = normalize_non_empty(&args.username, "username")?.into();
     let request = UpdateGithubTokenRequest {
         github_token: normalize_non_empty(&args.github_token, "github token")?,
     };
@@ -216,7 +216,7 @@ mod tests {
         let deleted = delete_user(&client, "  alice ").await.unwrap();
         assert_eq!(deleted.as_str(), "alice");
         let requests = client.recorded_delete_user_requests();
-        assert_eq!(requests, vec!["alice".to_string()]);
+        assert_eq!(requests, vec![Username::from("alice")]);
     }
 
     #[tokio::test]

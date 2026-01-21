@@ -9,7 +9,7 @@ use metis_common::{
     IssueId, PatchId, TaskId,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
-    users::User,
+    users::{User, Username},
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -734,7 +734,7 @@ impl Store for PostgresStore {
         .map_err(map_sqlx_error)?;
 
         if exists > 0 {
-            return Err(StoreError::UserAlreadyExists(user.username.to_string()));
+            return Err(StoreError::UserAlreadyExists(user.username.clone()));
         }
 
         self.insert_payload(
@@ -758,16 +758,16 @@ impl Store for PostgresStore {
         Ok(users)
     }
 
-    async fn delete_user(&mut self, username: &str) -> Result<(), StoreError> {
+    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError> {
         let query = format!("DELETE FROM {TABLE_USERS} WHERE id = $1");
         let result = sqlx::query(&query)
-            .bind(username)
+            .bind(username.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         if result.rows_affected() == 0 {
-            return Err(StoreError::UserNotFound(username.to_string()));
+            return Err(StoreError::UserNotFound(username.clone()));
         }
 
         Ok(())
@@ -775,18 +775,24 @@ impl Store for PostgresStore {
 
     async fn set_user_github_token(
         &mut self,
-        username: &str,
+        username: &Username,
         github_token: String,
     ) -> Result<User, StoreError> {
         let mut user: User = self
-            .fetch_payload(TABLE_USERS, "user", username, USER_SCHEMA_VERSION)
+            .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
-            .ok_or_else(|| StoreError::UserNotFound(username.to_string()))?;
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
 
         user.github_token = github_token;
 
-        self.update_payload(TABLE_USERS, "user", username, USER_SCHEMA_VERSION, &user)
-            .await?;
+        self.update_payload(
+            TABLE_USERS,
+            "user",
+            username.as_str(),
+            USER_SCHEMA_VERSION,
+            &user,
+        )
+        .await?;
 
         Ok(user)
     }
@@ -1077,16 +1083,17 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0], user);
 
+        let username = Username::from("alice");
         let updated = store
-            .set_user_github_token("alice", "new-token".to_string())
+            .set_user_github_token(&username, "new-token".to_string())
             .await
             .unwrap();
         assert_eq!(updated.github_token, "new-token");
 
-        store.delete_user("alice").await.unwrap();
+        store.delete_user(&username).await.unwrap();
         assert!(store.list_users().await.unwrap().is_empty());
 
-        let err = store.delete_user("alice").await.unwrap_err();
-        assert!(matches!(err, StoreError::UserNotFound(name) if name == "alice"));
+        let err = store.delete_user(&username).await.unwrap_err();
+        assert!(matches!(err, StoreError::UserNotFound(name) if name == username));
     }
 }

@@ -26,7 +26,7 @@ use metis_common::{
     },
     users::{
         CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-        UpsertUserResponse,
+        UpsertUserResponse, Username,
     },
     IssueId, PatchId, RepoName, TaskId,
 };
@@ -67,8 +67,8 @@ pub struct MockMetisClient {
     pub create_repository_requests: Mutex<Vec<CreateRepositoryRequest>>,
     pub update_repository_requests: Mutex<Vec<(RepoName, UpdateRepositoryRequest)>>,
     pub create_user_requests: Mutex<Vec<CreateUserRequest>>,
-    pub delete_user_requests: Mutex<Vec<String>>,
-    pub set_user_github_token_requests: Mutex<Vec<(String, UpdateGithubTokenRequest)>>,
+    pub delete_user_requests: Mutex<Vec<Username>>,
+    pub set_user_github_token_requests: Mutex<Vec<(Username, UpdateGithubTokenRequest)>>,
     pub issue_get_requests: Mutex<Vec<IssueId>>,
     pub patch_get_requests: Mutex<Vec<PatchId>>,
     pub job_get_requests: Mutex<Vec<TaskId>>,
@@ -273,13 +273,13 @@ impl MockMetisClient {
         self.create_user_requests.lock().unwrap().clone()
     }
 
-    pub fn recorded_delete_user_requests(&self) -> Vec<String> {
+    pub fn recorded_delete_user_requests(&self) -> Vec<Username> {
         self.delete_user_requests.lock().unwrap().clone()
     }
 
     pub fn recorded_set_user_github_token_requests(
         &self,
-    ) -> Vec<(String, UpdateGithubTokenRequest)> {
+    ) -> Vec<(Username, UpdateGithubTokenRequest)> {
         self.set_user_github_token_requests.lock().unwrap().clone()
     }
 
@@ -587,11 +587,11 @@ impl MetisClientInterface for MockMetisClient {
             .ok_or_else(|| anyhow!("no mock response configured for create_user"))
     }
 
-    async fn delete_user(&self, username: &str) -> Result<DeleteUserResponse> {
+    async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
         self.delete_user_requests
             .lock()
             .unwrap()
-            .push(username.to_string());
+            .push(username.clone());
         self.delete_user_responses
             .lock()
             .unwrap()
@@ -601,13 +601,13 @@ impl MetisClientInterface for MockMetisClient {
 
     async fn set_user_github_token(
         &self,
-        username: &str,
+        username: &Username,
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse> {
         self.set_user_github_token_requests
             .lock()
             .unwrap()
-            .push((username.to_string(), request.clone()));
+            .push((username.clone(), request.clone()));
         self.set_user_github_token_responses
             .lock()
             .unwrap()

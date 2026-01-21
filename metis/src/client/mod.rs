@@ -26,7 +26,7 @@ use metis_common::{
     },
     users::{
         CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-        UpsertUserResponse,
+        UpsertUserResponse, Username,
     },
     IssueId, PatchId, RepoName, TaskId,
 };
@@ -109,10 +109,10 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertRepositoryResponse>;
     async fn list_users(&self) -> Result<ListUsersResponse>;
     async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse>;
-    async fn delete_user(&self, username: &str) -> Result<DeleteUserResponse>;
+    async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse>;
     async fn set_user_github_token(
         &self,
-        username: &str,
+        username: &Username,
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
@@ -696,7 +696,7 @@ impl MetisClient {
     }
 
     /// Call `DELETE /v1/users/:username` to remove a user.
-    pub async fn delete_user(&self, username: &str) -> Result<DeleteUserResponse> {
+    pub async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
         let url = self.endpoint(&format!("/v1/users/{username}"))?;
         let response = self
             .http
@@ -716,7 +716,7 @@ impl MetisClient {
     /// Call `PUT /v1/users/:username/github-token` to update a user's GitHub token.
     pub async fn set_user_github_token(
         &self,
-        username: &str,
+        username: &Username,
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse> {
         let url = self.endpoint(&format!("/v1/users/{username}/github-token"))?;
@@ -1043,13 +1043,13 @@ impl MetisClientInterface for MetisClient {
         MetisClient::create_user(self, request).await
     }
 
-    async fn delete_user(&self, username: &str) -> Result<DeleteUserResponse> {
+    async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
         MetisClient::delete_user(self, username).await
     }
 
     async fn set_user_github_token(
         &self,
-        username: &str,
+        username: &Username,
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse> {
         MetisClient::set_user_github_token(self, username, request).await
