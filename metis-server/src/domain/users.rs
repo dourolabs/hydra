@@ -51,18 +51,26 @@ impl Borrow<str> for Username {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     pub username: Username,
+    pub github_user_id: Option<u64>,
+    pub github_username: Option<String>,
     pub github_token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub username: Username,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_username: Option<String>,
 }
 
 impl From<User> for UserSummary {
     fn from(user: User) -> Self {
         Self {
             username: user.username,
+            github_user_id: user.github_user_id,
+            github_username: user.github_username,
         }
     }
 }
@@ -70,12 +78,20 @@ impl From<User> for UserSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: Username,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_username: Option<String>,
     pub github_token: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateGithubTokenRequest {
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_username: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -151,6 +151,8 @@ impl Store for FailingStore {
         &mut self,
         _username: &Username,
         _github_token: String,
+        _github_username: Option<String>,
+        _github_user_id: Option<u64>,
     ) -> Result<User, StoreError> {
         fail()
     }

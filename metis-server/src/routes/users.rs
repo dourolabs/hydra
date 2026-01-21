@@ -31,10 +31,14 @@ pub async fn create_user(
 ) -> Result<Json<UpsertUserResponse>, ApiError> {
     let username: Username = normalize_non_empty("username", payload.username.into())?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
+    let github_username = normalize_optional_non_empty("github_username", payload.github_username)?;
+    let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
     info!(username = %username, "create_user invoked");
 
     let user = User {
         username: username.clone(),
+        github_user_id,
+        github_username,
         github_token,
     };
 
@@ -96,11 +100,13 @@ pub async fn set_github_token(
 ) -> Result<Json<UpsertUserResponse>, ApiError> {
     let username: Username = normalize_non_empty("username", username)?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
+    let github_username = normalize_optional_non_empty("github_username", payload.github_username)?;
+    let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
     info!(username = %username, "set_github_token invoked");
 
     let mut store = state.store.write().await;
     let updated = store
-        .set_user_github_token(&username, github_token)
+        .set_user_github_token(&username, github_token, github_username, github_user_id)
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
@@ -128,4 +134,23 @@ fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
     }
 
     Ok(trimmed.to_string())
+}
+
+fn normalize_optional_non_empty(
+    field: &str,
+    value: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    value
+        .map(|value| normalize_non_empty(field, value))
+        .transpose()
+}
+
+fn normalize_optional_positive(field: &str, value: Option<u64>) -> Result<Option<u64>, ApiError> {
+    match value {
+        Some(0) => Err(ApiError::bad_request(format!(
+            "{field} must be greater than zero"
+        ))),
+        Some(value) => Ok(Some(value)),
+        None => Ok(None),
+    }
 }
