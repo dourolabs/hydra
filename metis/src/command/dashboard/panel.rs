@@ -1,7 +1,7 @@
 //! Stateful panel widget for the TUI dashboard.
 //!
-//! The panel renders titled content with scrolling and an optional keybinding
-//! footer when focused.
+//! The panel renders titled content with scrolling and a keybinding footer that
+//! dims when unfocused.
 //!
 //! ```no_run
 //! use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -80,15 +80,12 @@ impl StatefulWidget for Panel<'_> {
             return;
         }
 
-        let (content_area, keybinding_area) = if state.focused {
-            let sections = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(inner);
-            (sections[0], Some(sections[1]))
-        } else {
-            (inner, None)
-        };
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        let content_area = sections[0];
+        let keybinding_area = sections[1];
 
         let view_height = content_area.height as usize;
         let content_len = wrapped_content_len(&self.content, content_area.width);
@@ -100,11 +97,9 @@ impl StatefulWidget for Panel<'_> {
             .wrap(Wrap { trim: false });
         paragraph.render(content_area, buf);
 
-        if let Some(area) = keybinding_area {
-            let line = keybinding_line(state);
-            let footer = Paragraph::new(line).wrap(Wrap { trim: true });
-            footer.render(area, buf);
-        }
+        let line = keybinding_line(state, state.focused);
+        let footer = Paragraph::new(line).wrap(Wrap { trim: true });
+        footer.render(keybinding_area, buf);
 
         if content_area.height > 0 && content_area.width > 0 && content_len > view_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -284,23 +279,30 @@ impl PanelState {
     }
 }
 
-fn keybinding_line(state: &PanelState) -> Line<'static> {
+fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
+    let (key_style, label_style) = if focused {
+        (
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::DarkGray),
+        )
+    } else {
+        (
+            Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )
+    };
     let mut spans = Vec::new();
     let mut push_binding = |key_label: String, label: &str| {
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled(
-            key_label,
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(key_label, key_style));
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            label.to_string(),
-            Style::default().fg(Color::DarkGray),
-        ));
+        spans.push(Span::styled(label.to_string(), label_style));
     };
 
     push_binding("j/k or Up/Down".to_string(), "Scroll");
@@ -511,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn unfocused_panel_hides_keybinding_footer() {
+    fn unfocused_panel_renders_keybinding_footer() {
         let mut state = PanelState::new();
 
         let area = Rect::new(0, 0, 36, 5);
@@ -521,7 +523,7 @@ mod tests {
 
         let footer_y = area.y + area.height - 2;
         let footer = row_text(&buffer, footer_y, area.width);
-        assert!(!footer.contains("j/k or Up/Down"));
+        assert!(footer.contains("j/k or Up/Down"));
     }
 
     #[test]

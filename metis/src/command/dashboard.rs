@@ -596,8 +596,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
             );
-            let (content_len, view_height) =
-                panel_scroll_metrics(area, state.user_unowned_issue_panel.focused(), &lines);
+            let (content_len, view_height) = panel_scroll_metrics(area, &lines);
             if view_height == 0 {
                 return false;
             }
@@ -610,8 +609,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         }
         PanelFocus::Running => {
             let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
-            let (content_len, view_height) =
-                panel_scroll_metrics(panels.running, state.running_issue_panel.focused(), &lines);
+            let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
             if view_height == 0 {
                 return false;
             }
@@ -625,11 +623,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
             let lines = issue_line_lines(&rows, "No completed issues");
-            let (content_len, view_height) = panel_scroll_metrics(
-                panels.completed,
-                state.completed_issue_panel.focused(),
-                &lines,
-            );
+            let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
             if view_height == 0 {
                 return false;
             }
@@ -808,7 +802,7 @@ fn render_issue_creator(
         &mut state.issue_creator_panel,
     );
 
-    let sections = issue_creator_layout(area, state.issue_creator_panel.focused());
+    let sections = issue_creator_layout(area);
     let draft = &state.issue_draft;
     let prompt_label = Line::from(Span::styled(
         "Prompt",
@@ -939,8 +933,8 @@ fn issue_panel_layout(area: Rect) -> IssuePanelLayout {
     }
 }
 
-fn issue_creator_layout(area: Rect, focused: bool) -> IssueCreatorLayout {
-    let inner = panel_content_area(area, focused);
+fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
+    let inner = panel_content_area(area);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -987,8 +981,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
             );
-            let (content_len, view_height) =
-                panel_scroll_metrics(rect, state.user_unowned_issue_panel.focused(), &lines);
+            let (content_len, view_height) = panel_scroll_metrics(rect, &lines);
             return matches!(
                 state
                     .user_unowned_issue_panel
@@ -1000,8 +993,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
 
     if rect_contains(panels.running, column, row) {
         let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
-        let (content_len, view_height) =
-            panel_scroll_metrics(panels.running, state.running_issue_panel.focused(), &lines);
+        let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
         return matches!(
             state
                 .running_issue_panel
@@ -1013,11 +1005,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
     if rect_contains(panels.completed, column, row) {
         let rows = completed_issue_rows(&state.completed_issue_lines);
         let lines = issue_line_lines(&rows, "No completed issues");
-        let (content_len, view_height) = panel_scroll_metrics(
-            panels.completed,
-            state.completed_issue_panel.focused(),
-            &lines,
-        );
+        let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
         return matches!(
             state
                 .completed_issue_panel
@@ -1050,8 +1038,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
         );
-        let (content_len, view_height) =
-            panel_scroll_metrics(rect, state.user_unowned_issue_panel.focused(), &lines);
+        let (content_len, view_height) = panel_scroll_metrics(rect, &lines);
         state
             .user_unowned_issue_panel
             .sync_scroll(content_len, view_height);
@@ -1060,28 +1047,20 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
     }
 
     let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
-    let (running_len, running_view_height) = panel_scroll_metrics(
-        panels.running,
-        state.running_issue_panel.focused(),
-        &running_lines,
-    );
+    let (running_len, running_view_height) = panel_scroll_metrics(panels.running, &running_lines);
     state
         .running_issue_panel
         .sync_scroll(running_len, running_view_height);
 
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
     let completed_lines = issue_line_lines(&completed_rows, "No completed issues");
-    let (completed_len, completed_view_height) = panel_scroll_metrics(
-        panels.completed,
-        state.completed_issue_panel.focused(),
-        &completed_lines,
-    );
+    let (completed_len, completed_view_height) =
+        panel_scroll_metrics(panels.completed, &completed_lines);
     state
         .completed_issue_panel
         .sync_scroll(completed_len, completed_view_height);
 
-    let creator_layout =
-        issue_creator_layout(layout.issue_creator, state.issue_creator_panel.focused());
+    let creator_layout = issue_creator_layout(layout.issue_creator);
     let prompt_view_height = creator_layout.prompt_input.height as usize;
     let prompt_lines = state.issue_draft.prompt.lines().len();
     let cursor_row = state.issue_draft.prompt.cursor().0;
@@ -1176,12 +1155,12 @@ fn issue_line_lines(issue_lines: &[IssueLine], empty_message: &str) -> Vec<Line<
         .collect()
 }
 
-fn panel_content_area(area: Rect, focused: bool) -> Rect {
+fn panel_content_area(area: Rect) -> Rect {
     let inner = area.inner(Margin {
         vertical: 1,
         horizontal: 1,
     });
-    if !focused || inner.height == 0 {
+    if inner.height == 0 {
         return inner;
     }
 
@@ -1191,8 +1170,8 @@ fn panel_content_area(area: Rect, focused: bool) -> Rect {
     }
 }
 
-fn panel_scroll_metrics(area: Rect, focused: bool, lines: &[Line]) -> (usize, usize) {
-    let content_area = panel_content_area(area, focused);
+fn panel_scroll_metrics(area: Rect, lines: &[Line]) -> (usize, usize) {
+    let content_area = panel_content_area(area);
     let view_height = content_area.height as usize;
     let content_len = wrapped_content_len(lines, content_area.width);
     (content_len, view_height)
