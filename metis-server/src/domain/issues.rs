@@ -1,6 +1,8 @@
+use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -486,9 +488,394 @@ impl ListIssuesResponse {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum IssueConversionError {
+    #[error("invalid graph filter '{filter}': {reason}")]
+    InvalidGraphFilter {
+        filter: IssueGraphFilter,
+        reason: String,
+    },
+}
+
+impl From<api::issues::IssueStatus> for IssueStatus {
+    fn from(value: api::issues::IssueStatus) -> Self {
+        match value {
+            api::issues::IssueStatus::Open => IssueStatus::Open,
+            api::issues::IssueStatus::InProgress => IssueStatus::InProgress,
+            api::issues::IssueStatus::Closed => IssueStatus::Closed,
+            api::issues::IssueStatus::Dropped => IssueStatus::Dropped,
+            _ => unreachable!("unsupported IssueStatus variant"),
+        }
+    }
+}
+
+impl From<IssueStatus> for api::issues::IssueStatus {
+    fn from(value: IssueStatus) -> Self {
+        match value {
+            IssueStatus::Open => api::issues::IssueStatus::Open,
+            IssueStatus::InProgress => api::issues::IssueStatus::InProgress,
+            IssueStatus::Closed => api::issues::IssueStatus::Closed,
+            IssueStatus::Dropped => api::issues::IssueStatus::Dropped,
+        }
+    }
+}
+
+impl From<api::issues::IssueType> for IssueType {
+    fn from(value: api::issues::IssueType) -> Self {
+        match value {
+            api::issues::IssueType::Bug => IssueType::Bug,
+            api::issues::IssueType::Feature => IssueType::Feature,
+            api::issues::IssueType::Task => IssueType::Task,
+            api::issues::IssueType::Chore => IssueType::Chore,
+            api::issues::IssueType::MergeRequest => IssueType::MergeRequest,
+            _ => unreachable!("unsupported IssueType variant"),
+        }
+    }
+}
+
+impl From<IssueType> for api::issues::IssueType {
+    fn from(value: IssueType) -> Self {
+        match value {
+            IssueType::Bug => api::issues::IssueType::Bug,
+            IssueType::Feature => api::issues::IssueType::Feature,
+            IssueType::Task => api::issues::IssueType::Task,
+            IssueType::Chore => api::issues::IssueType::Chore,
+            IssueType::MergeRequest => api::issues::IssueType::MergeRequest,
+        }
+    }
+}
+
+impl From<api::issues::IssueDependencyType> for IssueDependencyType {
+    fn from(value: api::issues::IssueDependencyType) -> Self {
+        match value {
+            api::issues::IssueDependencyType::ChildOf => IssueDependencyType::ChildOf,
+            api::issues::IssueDependencyType::BlockedOn => IssueDependencyType::BlockedOn,
+            _ => unreachable!("unsupported IssueDependencyType variant"),
+        }
+    }
+}
+
+impl From<IssueDependencyType> for api::issues::IssueDependencyType {
+    fn from(value: IssueDependencyType) -> Self {
+        match value {
+            IssueDependencyType::ChildOf => api::issues::IssueDependencyType::ChildOf,
+            IssueDependencyType::BlockedOn => api::issues::IssueDependencyType::BlockedOn,
+        }
+    }
+}
+
+impl From<api::issues::IssueDependency> for IssueDependency {
+    fn from(value: api::issues::IssueDependency) -> Self {
+        Self {
+            dependency_type: value.dependency_type.into(),
+            issue_id: value.issue_id,
+        }
+    }
+}
+
+impl From<IssueDependency> for api::issues::IssueDependency {
+    fn from(value: IssueDependency) -> Self {
+        api::issues::IssueDependency::new(value.dependency_type.into(), value.issue_id)
+    }
+}
+
+impl From<api::issues::TodoItem> for TodoItem {
+    fn from(value: api::issues::TodoItem) -> Self {
+        Self {
+            description: value.description,
+            is_done: value.is_done,
+        }
+    }
+}
+
+impl From<TodoItem> for api::issues::TodoItem {
+    fn from(value: TodoItem) -> Self {
+        api::issues::TodoItem::new(value.description, value.is_done)
+    }
+}
+
+impl From<api::issues::TodoListResponse> for TodoListResponse {
+    fn from(value: api::issues::TodoListResponse) -> Self {
+        Self {
+            issue_id: value.issue_id,
+            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<TodoListResponse> for api::issues::TodoListResponse {
+    fn from(value: TodoListResponse) -> Self {
+        api::issues::TodoListResponse::new(
+            value.issue_id,
+            value.todo_list.into_iter().map(Into::into).collect(),
+        )
+    }
+}
+
+impl From<api::issues::AddTodoItemRequest> for AddTodoItemRequest {
+    fn from(value: api::issues::AddTodoItemRequest) -> Self {
+        Self {
+            description: value.description,
+            is_done: value.is_done,
+        }
+    }
+}
+
+impl From<AddTodoItemRequest> for api::issues::AddTodoItemRequest {
+    fn from(value: AddTodoItemRequest) -> Self {
+        api::issues::AddTodoItemRequest::new(value.description, value.is_done)
+    }
+}
+
+impl From<api::issues::ReplaceTodoListRequest> for ReplaceTodoListRequest {
+    fn from(value: api::issues::ReplaceTodoListRequest) -> Self {
+        Self {
+            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ReplaceTodoListRequest> for api::issues::ReplaceTodoListRequest {
+    fn from(value: ReplaceTodoListRequest) -> Self {
+        api::issues::ReplaceTodoListRequest::new(
+            value.todo_list.into_iter().map(Into::into).collect(),
+        )
+    }
+}
+
+impl From<api::issues::SetTodoItemStatusRequest> for SetTodoItemStatusRequest {
+    fn from(value: api::issues::SetTodoItemStatusRequest) -> Self {
+        Self {
+            is_done: value.is_done,
+        }
+    }
+}
+
+impl From<SetTodoItemStatusRequest> for api::issues::SetTodoItemStatusRequest {
+    fn from(value: SetTodoItemStatusRequest) -> Self {
+        api::issues::SetTodoItemStatusRequest::new(value.is_done)
+    }
+}
+
+impl From<api::issues::IssueGraphFilterSide> for IssueGraphFilterSide {
+    fn from(value: api::issues::IssueGraphFilterSide) -> Self {
+        match value {
+            api::issues::IssueGraphFilterSide::Left => IssueGraphFilterSide::Left,
+            api::issues::IssueGraphFilterSide::Right => IssueGraphFilterSide::Right,
+            _ => unreachable!("unsupported IssueGraphFilterSide variant"),
+        }
+    }
+}
+
+impl From<IssueGraphFilterSide> for api::issues::IssueGraphFilterSide {
+    fn from(value: IssueGraphFilterSide) -> Self {
+        match value {
+            IssueGraphFilterSide::Left => api::issues::IssueGraphFilterSide::Left,
+            IssueGraphFilterSide::Right => api::issues::IssueGraphFilterSide::Right,
+        }
+    }
+}
+
+impl From<api::issues::IssueGraphWildcard> for IssueGraphWildcard {
+    fn from(value: api::issues::IssueGraphWildcard) -> Self {
+        match value {
+            api::issues::IssueGraphWildcard::Immediate => IssueGraphWildcard::Immediate,
+            api::issues::IssueGraphWildcard::Transitive => IssueGraphWildcard::Transitive,
+            _ => unreachable!("unsupported IssueGraphWildcard variant"),
+        }
+    }
+}
+
+impl From<IssueGraphWildcard> for api::issues::IssueGraphWildcard {
+    fn from(value: IssueGraphWildcard) -> Self {
+        match value {
+            IssueGraphWildcard::Immediate => api::issues::IssueGraphWildcard::Immediate,
+            IssueGraphWildcard::Transitive => api::issues::IssueGraphWildcard::Transitive,
+        }
+    }
+}
+
+impl From<api::issues::IssueGraphSelector> for IssueGraphSelector {
+    fn from(value: api::issues::IssueGraphSelector) -> Self {
+        match value {
+            api::issues::IssueGraphSelector::Issue(id) => IssueGraphSelector::Issue(id),
+            api::issues::IssueGraphSelector::Wildcard(kind) => {
+                IssueGraphSelector::Wildcard(kind.into())
+            }
+            _ => unreachable!("unsupported IssueGraphSelector variant"),
+        }
+    }
+}
+
+impl From<IssueGraphSelector> for api::issues::IssueGraphSelector {
+    fn from(value: IssueGraphSelector) -> Self {
+        match value {
+            IssueGraphSelector::Issue(id) => api::issues::IssueGraphSelector::Issue(id),
+            IssueGraphSelector::Wildcard(kind) => {
+                api::issues::IssueGraphSelector::Wildcard(kind.into())
+            }
+        }
+    }
+}
+
+impl From<api::issues::IssueGraphFilter> for IssueGraphFilter {
+    fn from(value: api::issues::IssueGraphFilter) -> Self {
+        IssueGraphFilter {
+            lhs: value.lhs.into(),
+            dependency_type: value.dependency_type.into(),
+            rhs: value.rhs.into(),
+        }
+    }
+}
+
+impl TryFrom<IssueGraphFilter> for api::issues::IssueGraphFilter {
+    type Error = IssueConversionError;
+
+    fn try_from(value: IssueGraphFilter) -> Result<Self, Self::Error> {
+        api::issues::IssueGraphFilter::new(
+            value.lhs.clone().into(),
+            value.dependency_type.into(),
+            value.rhs.clone().into(),
+        )
+        .map_err(|reason| IssueConversionError::InvalidGraphFilter {
+            filter: value,
+            reason,
+        })
+    }
+}
+
+impl From<api::issues::Issue> for Issue {
+    fn from(value: api::issues::Issue) -> Self {
+        Self {
+            issue_type: value.issue_type.into(),
+            description: value.description,
+            creator: value.creator,
+            progress: value.progress,
+            status: value.status.into(),
+            assignee: value.assignee,
+            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
+            dependencies: value.dependencies.into_iter().map(Into::into).collect(),
+            patches: value.patches,
+        }
+    }
+}
+
+impl From<Issue> for api::issues::Issue {
+    fn from(value: Issue) -> Self {
+        api::issues::Issue::new(
+            value.issue_type.into(),
+            value.description,
+            value.creator,
+            value.progress,
+            value.status.into(),
+            value.assignee,
+            value.todo_list.into_iter().map(Into::into).collect(),
+            value.dependencies.into_iter().map(Into::into).collect(),
+            value.patches,
+        )
+    }
+}
+
+impl From<api::issues::IssueRecord> for IssueRecord {
+    fn from(value: api::issues::IssueRecord) -> Self {
+        IssueRecord {
+            id: value.id,
+            issue: value.issue.into(),
+        }
+    }
+}
+
+impl From<IssueRecord> for api::issues::IssueRecord {
+    fn from(value: IssueRecord) -> Self {
+        api::issues::IssueRecord::new(value.id, value.issue.into())
+    }
+}
+
+impl From<api::issues::UpsertIssueRequest> for UpsertIssueRequest {
+    fn from(value: api::issues::UpsertIssueRequest) -> Self {
+        Self {
+            issue: value.issue.into(),
+            job_id: value.job_id,
+        }
+    }
+}
+
+impl From<UpsertIssueRequest> for api::issues::UpsertIssueRequest {
+    fn from(value: UpsertIssueRequest) -> Self {
+        api::issues::UpsertIssueRequest::new(value.issue.into(), value.job_id)
+    }
+}
+
+impl From<api::issues::UpsertIssueResponse> for UpsertIssueResponse {
+    fn from(value: api::issues::UpsertIssueResponse) -> Self {
+        Self {
+            issue_id: value.issue_id,
+        }
+    }
+}
+
+impl From<UpsertIssueResponse> for api::issues::UpsertIssueResponse {
+    fn from(value: UpsertIssueResponse) -> Self {
+        api::issues::UpsertIssueResponse::new(value.issue_id)
+    }
+}
+
+impl From<api::issues::SearchIssuesQuery> for SearchIssuesQuery {
+    fn from(value: api::issues::SearchIssuesQuery) -> Self {
+        Self {
+            issue_type: value.issue_type.map(Into::into),
+            status: value.status.map(Into::into),
+            assignee: value.assignee,
+            q: value.q,
+            graph_filters: value.graph_filters.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl TryFrom<SearchIssuesQuery> for api::issues::SearchIssuesQuery {
+    type Error = IssueConversionError;
+
+    fn try_from(value: SearchIssuesQuery) -> Result<Self, Self::Error> {
+        let graph_filters = value
+            .graph_filters
+            .into_iter()
+            .map(api::issues::IssueGraphFilter::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(api::issues::SearchIssuesQuery::new(
+            value.issue_type.map(Into::into),
+            value.status.map(Into::into),
+            value.assignee,
+            value.q,
+            graph_filters,
+        ))
+    }
+}
+
+impl From<api::issues::ListIssuesResponse> for ListIssuesResponse {
+    fn from(value: api::issues::ListIssuesResponse) -> Self {
+        Self {
+            issues: value.issues.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListIssuesResponse> for api::issues::ListIssuesResponse {
+    fn from(value: ListIssuesResponse) -> Self {
+        api::issues::ListIssuesResponse::new(
+            value
+                .issues
+                .into_iter()
+                .map(api::issues::IssueRecord::from)
+                .collect(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metis_common::api::v1 as api;
     use metis_common::{IssueId, PatchId, TaskId};
     use serde::Serialize;
     use serde_json::json;
@@ -630,5 +1017,38 @@ mod tests {
         assert_eq!(decoded.issue.issue_type, payload.issue.issue_type);
         assert_eq!(decoded.issue.description, payload.issue.description);
         assert_eq!(decoded.issue.todo_list.len(), 1);
+    }
+
+    #[test]
+    fn issue_graph_filter_conversion_rejects_missing_wildcard() {
+        let left = IssueId::new();
+        let right = IssueId::new();
+        let filter = IssueGraphFilter::new(
+            IssueGraphSelector::Issue(left),
+            IssueDependencyType::ChildOf,
+            IssueGraphSelector::Issue(right),
+        );
+
+        let result = api::issues::IssueGraphFilter::try_from(filter);
+        assert!(matches!(
+            result,
+            Err(IssueConversionError::InvalidGraphFilter { .. })
+        ));
+    }
+
+    #[test]
+    fn issue_graph_filter_converts_with_single_wildcard() {
+        let issue_id = IssueId::new();
+        let filter = IssueGraphFilter::new(
+            IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate),
+            IssueDependencyType::BlockedOn,
+            IssueGraphSelector::Issue(issue_id),
+        );
+
+        let api_filter: api::issues::IssueGraphFilter =
+            api::issues::IssueGraphFilter::try_from(filter.clone())
+                .expect("conversion should work");
+
+        assert_eq!(api_filter.to_string(), filter.to_string());
     }
 }

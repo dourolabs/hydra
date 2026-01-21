@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use metis_common::api::v1::task_status as api_task_status;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,33 +98,33 @@ impl TaskStatusLog {
     }
 }
 
-impl From<metis_common::task_status::Status> for Status {
-    fn from(value: metis_common::task_status::Status) -> Self {
+impl From<api_task_status::Status> for Status {
+    fn from(value: api_task_status::Status) -> Self {
         match value {
-            metis_common::task_status::Status::Pending => Status::Pending,
-            metis_common::task_status::Status::Running => Status::Running,
-            metis_common::task_status::Status::Complete => Status::Complete,
-            metis_common::task_status::Status::Failed => Status::Failed,
+            api_task_status::Status::Pending => Status::Pending,
+            api_task_status::Status::Running => Status::Running,
+            api_task_status::Status::Complete => Status::Complete,
+            api_task_status::Status::Failed => Status::Failed,
             other => panic!("unsupported task status variant: {other:?}"),
         }
     }
 }
 
-impl From<Status> for metis_common::task_status::Status {
+impl From<Status> for api_task_status::Status {
     fn from(value: Status) -> Self {
         match value {
-            Status::Pending => metis_common::task_status::Status::Pending,
-            Status::Running => metis_common::task_status::Status::Running,
-            Status::Complete => metis_common::task_status::Status::Complete,
-            Status::Failed => metis_common::task_status::Status::Failed,
+            Status::Pending => api_task_status::Status::Pending,
+            Status::Running => api_task_status::Status::Running,
+            Status::Complete => api_task_status::Status::Complete,
+            Status::Failed => api_task_status::Status::Failed,
         }
     }
 }
 
-impl From<metis_common::task_status::TaskError> for TaskError {
-    fn from(value: metis_common::task_status::TaskError) -> Self {
+impl From<api_task_status::TaskError> for TaskError {
+    fn from(value: api_task_status::TaskError) -> Self {
         match value {
-            metis_common::task_status::TaskError::JobEngineError { reason } => {
+            api_task_status::TaskError::JobEngineError { reason } => {
                 TaskError::JobEngineError { reason }
             }
             other => panic!("unsupported task error variant: {other:?}"),
@@ -131,28 +132,28 @@ impl From<metis_common::task_status::TaskError> for TaskError {
     }
 }
 
-impl From<TaskError> for metis_common::task_status::TaskError {
+impl From<TaskError> for api_task_status::TaskError {
     fn from(value: TaskError) -> Self {
         match value {
             TaskError::JobEngineError { reason } => {
-                metis_common::task_status::TaskError::JobEngineError { reason }
+                api_task_status::TaskError::JobEngineError { reason }
             }
         }
     }
 }
 
-impl From<metis_common::task_status::Event> for Event {
-    fn from(value: metis_common::task_status::Event) -> Self {
+impl From<api_task_status::Event> for Event {
+    fn from(value: api_task_status::Event) -> Self {
         match value {
-            metis_common::task_status::Event::Created { at, status } => Event::Created {
+            api_task_status::Event::Created { at, status } => Event::Created {
                 at,
                 status: status.into(),
             },
-            metis_common::task_status::Event::Started { at } => Event::Started { at },
-            metis_common::task_status::Event::Completed { at, last_message } => {
+            api_task_status::Event::Started { at } => Event::Started { at },
+            api_task_status::Event::Completed { at, last_message } => {
                 Event::Completed { at, last_message }
             }
-            metis_common::task_status::Event::Failed { at, error } => Event::Failed {
+            api_task_status::Event::Failed { at, error } => Event::Failed {
                 at,
                 error: error.into(),
             },
@@ -161,18 +162,18 @@ impl From<metis_common::task_status::Event> for Event {
     }
 }
 
-impl From<Event> for metis_common::task_status::Event {
+impl From<Event> for api_task_status::Event {
     fn from(value: Event) -> Self {
         match value {
-            Event::Created { at, status } => metis_common::task_status::Event::Created {
+            Event::Created { at, status } => api_task_status::Event::Created {
                 at,
                 status: status.into(),
             },
-            Event::Started { at } => metis_common::task_status::Event::Started { at },
+            Event::Started { at } => api_task_status::Event::Started { at },
             Event::Completed { at, last_message } => {
-                metis_common::task_status::Event::Completed { at, last_message }
+                api_task_status::Event::Completed { at, last_message }
             }
-            Event::Failed { at, error } => metis_common::task_status::Event::Failed {
+            Event::Failed { at, error } => api_task_status::Event::Failed {
                 at,
                 error: error.into(),
             },
@@ -180,17 +181,17 @@ impl From<Event> for metis_common::task_status::Event {
     }
 }
 
-impl From<metis_common::task_status::TaskStatusLog> for TaskStatusLog {
-    fn from(value: metis_common::task_status::TaskStatusLog) -> Self {
+impl From<api_task_status::TaskStatusLog> for TaskStatusLog {
+    fn from(value: api_task_status::TaskStatusLog) -> Self {
         Self {
             events: value.events.into_iter().map(Event::from).collect(),
         }
     }
 }
 
-impl From<TaskStatusLog> for metis_common::task_status::TaskStatusLog {
+impl From<TaskStatusLog> for api_task_status::TaskStatusLog {
     fn from(value: TaskStatusLog) -> Self {
-        metis_common::task_status::TaskStatusLog::from_events(
+        api_task_status::TaskStatusLog::from_events(
             value.events.into_iter().map(Into::into).collect(),
         )
     }

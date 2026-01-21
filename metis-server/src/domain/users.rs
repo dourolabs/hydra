@@ -1,3 +1,4 @@
+use metis_common::api::v1 as api;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::fmt;
@@ -154,5 +155,141 @@ pub struct ListUsersResponse {
 impl ListUsersResponse {
     pub fn new(users: Vec<UserSummary>) -> Self {
         Self { users }
+    }
+}
+
+impl From<api::users::Username> for Username {
+    fn from(value: api::users::Username) -> Self {
+        Username(value.into())
+    }
+}
+
+impl From<Username> for api::users::Username {
+    fn from(value: Username) -> Self {
+        api::users::Username::from(value.0)
+    }
+}
+
+impl From<api::users::User> for User {
+    fn from(value: api::users::User) -> Self {
+        User {
+            username: value.username.into(),
+            github_user_id: value.github_user_id,
+            github_token: value.github_token,
+        }
+    }
+}
+
+impl From<User> for api::users::User {
+    fn from(value: User) -> Self {
+        let mut user = api::users::User::new(value.username.into(), value.github_token);
+        user.github_user_id = value.github_user_id;
+        user
+    }
+}
+
+impl From<api::users::UserSummary> for UserSummary {
+    fn from(value: api::users::UserSummary) -> Self {
+        UserSummary {
+            username: value.username.into(),
+            github_user_id: value.github_user_id,
+        }
+    }
+}
+
+impl From<UserSummary> for api::users::UserSummary {
+    fn from(value: UserSummary) -> Self {
+        let mut summary = api::users::UserSummary::new(value.username.into());
+        summary.github_user_id = value.github_user_id;
+        summary
+    }
+}
+
+impl From<api::users::CreateUserRequest> for CreateUserRequest {
+    fn from(value: api::users::CreateUserRequest) -> Self {
+        CreateUserRequest {
+            username: value.username.into(),
+            github_user_id: value.github_user_id,
+            github_token: value.github_token,
+        }
+    }
+}
+
+impl From<CreateUserRequest> for api::users::CreateUserRequest {
+    fn from(value: CreateUserRequest) -> Self {
+        api::users::CreateUserRequest::new(value.username.into(), value.github_token)
+            .with_github_user_id(value.github_user_id)
+    }
+}
+
+impl From<api::users::UpdateGithubTokenRequest> for UpdateGithubTokenRequest {
+    fn from(value: api::users::UpdateGithubTokenRequest) -> Self {
+        UpdateGithubTokenRequest {
+            github_token: value.github_token,
+            github_user_id: value.github_user_id,
+        }
+    }
+}
+
+impl From<UpdateGithubTokenRequest> for api::users::UpdateGithubTokenRequest {
+    fn from(value: UpdateGithubTokenRequest) -> Self {
+        api::users::UpdateGithubTokenRequest::new(value.github_token)
+            .with_github_user_id(value.github_user_id)
+    }
+}
+
+impl From<api::users::UpsertUserResponse> for UpsertUserResponse {
+    fn from(value: api::users::UpsertUserResponse) -> Self {
+        UpsertUserResponse {
+            user: value.user.into(),
+        }
+    }
+}
+
+impl From<UpsertUserResponse> for api::users::UpsertUserResponse {
+    fn from(value: UpsertUserResponse) -> Self {
+        api::users::UpsertUserResponse::new(value.user.into())
+    }
+}
+
+impl From<api::users::DeleteUserResponse> for DeleteUserResponse {
+    fn from(value: api::users::DeleteUserResponse) -> Self {
+        DeleteUserResponse {
+            username: value.username.into(),
+        }
+    }
+}
+
+impl From<DeleteUserResponse> for api::users::DeleteUserResponse {
+    fn from(value: DeleteUserResponse) -> Self {
+        api::users::DeleteUserResponse::new(value.username.into())
+    }
+}
+
+impl From<api::users::ListUsersResponse> for ListUsersResponse {
+    fn from(value: api::users::ListUsersResponse) -> Self {
+        ListUsersResponse {
+            users: value.users.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListUsersResponse> for api::users::ListUsersResponse {
+    fn from(value: ListUsersResponse) -> Self {
+        api::users::ListUsersResponse::new(value.users.into_iter().map(Into::into).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn username_converts_between_domain_and_api() {
+        let domain = Username::from("metis");
+        let api_value: api::users::Username = domain.clone().into();
+        let round_trip: Username = api_value.into();
+
+        assert_eq!(round_trip, domain);
     }
 }
