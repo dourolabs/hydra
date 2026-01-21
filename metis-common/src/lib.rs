@@ -20,6 +20,8 @@ pub use repositories::{
 };
 pub mod task_status;
 pub mod users;
+pub mod util;
+pub use util::EnvGuard;
 
 #[cfg(test)]
 pub mod test_helpers {
