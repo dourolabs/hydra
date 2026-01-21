@@ -55,7 +55,6 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
         spawners: Vec::new(),
-        postgres_pool: None,
     }
 }
 

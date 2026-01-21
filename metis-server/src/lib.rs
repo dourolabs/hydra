@@ -174,7 +174,6 @@ pub async fn run() -> anyhow::Result<()> {
         store,
         job_engine: Arc::new(job_engine),
         spawners,
-        postgres_pool,
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;

@@ -2,7 +2,7 @@ use crate::{
     background::Spawner,
     config::AppConfig,
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{Status, Store, StoreError, Task, TaskError, postgres::PgStorePool},
+    store::{Status, Store, StoreError, Task, TaskError},
 };
 use chrono::{Duration, Utc};
 use metis_common::{
@@ -31,7 +31,6 @@ pub struct AppState {
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
     pub spawners: Vec<Arc<dyn Spawner>>,
-    pub postgres_pool: Option<PgStorePool>,
 }
 
 #[derive(Debug, Error)]
