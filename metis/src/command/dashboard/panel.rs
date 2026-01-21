@@ -612,6 +612,24 @@ mod tests {
     }
 
     #[test]
+    fn scrollbar_not_rendered_for_non_scrollable_content() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(7);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        assert!(!has_scrollbar(&buffer, content_area));
+    }
+
+    #[test]
+    fn scrollbar_rendered_for_overflowing_content() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(8);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        assert!(has_scrollbar(&buffer, content_area));
+    }
+
+    #[test]
     fn scrollbar_thumb_shrinks_for_single_line_overflow() {
         let area = Rect::new(0, 0, 20, 10);
         let lines = sample_lines(8);
@@ -685,6 +703,24 @@ mod tests {
             }
         }
         count
+    }
+
+    fn has_scrollbar(buffer: &Buffer, content_area: Rect) -> bool {
+        let scrollbar_x = content_area
+            .x
+            .saturating_add(content_area.width.saturating_sub(1));
+        let symbols = ratatui::symbols::scrollbar::DOUBLE_VERTICAL;
+        for y in content_area.y..content_area.y.saturating_add(content_area.height) {
+            let symbol = buffer[(scrollbar_x, y)].symbol();
+            if symbol == symbols.thumb
+                || symbol == symbols.track
+                || symbol == symbols.begin
+                || symbol == symbols.end
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn sample_lines(count: usize) -> Vec<Line<'static>> {
