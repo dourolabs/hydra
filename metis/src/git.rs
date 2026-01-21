@@ -278,7 +278,46 @@ fn diff_to_string(diff: &Diff) -> Result<String> {
         true
     })
     .context("failed to render diff as patch text")?;
-    Ok(output)
+    Ok(strip_ansi_codes(&output))
+}
+
+fn strip_ansi_codes(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    for code in chars.by_ref() {
+                        if ('@'..='~').contains(&code) {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                Some(']') => {
+                    chars.next();
+                    loop {
+                        match chars.next() {
+                            Some('\u{7}') => break,
+                            Some('\u{1b}') if matches!(chars.peek(), Some('\\')) => {
+                                chars.next();
+                                break;
+                            }
+                            Some(_) => continue,
+                            None => break,
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        result.push(ch);
+    }
+    result
 }
 
 fn remote_callbacks(github_token: Option<&str>) -> RemoteCallbacks<'static> {
@@ -338,4 +377,22 @@ pub fn has_uncommitted_changes(repo_root: &Path) -> Result<bool> {
     Ok(statuses
         .iter()
         .any(|entry| entry.status() != Status::CURRENT))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ansi_codes;
+
+    #[test]
+    fn strip_ansi_removes_escape_sequences() {
+        let colored = "line\n\u{1b}[31mremoved\u{1b}[0m\n\u{1b}[32madded\u{1b}[0m\n";
+        let cleaned = strip_ansi_codes(colored);
+        assert_eq!(cleaned, "line\nremoved\nadded\n");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_plain_text() {
+        let plain = "line\nanother\n";
+        assert_eq!(strip_ansi_codes(plain), plain);
+    }
 }
