@@ -804,11 +804,6 @@ fn render_issue_creator(
 
     let sections = issue_creator_layout(area);
     let draft = &state.issue_draft;
-    let prompt_label = Line::from(Span::styled(
-        "Prompt",
-        Style::default().add_modifier(Modifier::BOLD),
-    ));
-    frame.render_widget(Paragraph::new(prompt_label), sections.prompt_label);
     frame.render_widget(draft.prompt.widget(), sections.prompt_input);
     render_panel_scrollbar(
         frame,
@@ -820,9 +815,8 @@ fn render_issue_creator(
     let assignee_line = Line::from(vec![
         Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
-        Span::styled("  (Alt+A to change)", Style::default().fg(Color::DarkGray)),
     ]);
-    frame.render_widget(Paragraph::new(assignee_line), sections.assignee);
+    let assignee_width = assignee_line.width().min(sections.footer.width as usize) as u16;
 
     let footer = if draft.is_submitting {
         Line::from(Span::styled(
@@ -847,7 +841,15 @@ fn render_issue_creator(
             Style::default().fg(Color::DarkGray),
         ))
     };
-    frame.render_widget(Paragraph::new(footer), sections.footer);
+    let footer_columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(assignee_width)])
+        .split(sections.footer);
+    frame.render_widget(Paragraph::new(footer), footer_columns[0]);
+    frame.render_widget(
+        Paragraph::new(assignee_line).alignment(Alignment::Right),
+        footer_columns[1],
+    );
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
@@ -911,9 +913,7 @@ struct IssuePanelLayout {
 }
 
 struct IssueCreatorLayout {
-    prompt_label: Rect,
     prompt_input: Rect,
-    assignee: Rect,
     footer: Rect,
 }
 
@@ -937,23 +937,12 @@ fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
     let inner = panel_content_area(area);
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
         .split(inner);
 
-    let prompt_sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(sections[0]);
-
     IssueCreatorLayout {
-        prompt_label: prompt_sections[0],
-        prompt_input: prompt_sections[1],
-        assignee: sections[1],
-        footer: sections[2],
+        prompt_input: sections[0],
+        footer: sections[1],
     }
 }
 
