@@ -198,11 +198,7 @@ impl IssueDraft {
     }
 
     fn configure_prompt(&mut self) {
-        let placeholder = if self.editing {
-            "Describe the work to create a new issue."
-        } else {
-            "Describe the work to create a new issue."
-        };
+        let placeholder = "Describe the work to create a new issue.";
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
             .set_placeholder_style(Style::default().fg(Color::DarkGray));
