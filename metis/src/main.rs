@@ -73,6 +73,8 @@ enum Commands {
         #[command(subcommand)]
         command: command::users::UsersCommand,
     },
+    /// Log in via GitHub OAuth and register credentials.
+    Login(command::login::LoginArgs),
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
         /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
@@ -111,6 +113,7 @@ async fn dispatch(
         Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
+        Commands::Login(args) => command::login::run(client, args).await?,
         Commands::Chat {
             prompt,
             model,
