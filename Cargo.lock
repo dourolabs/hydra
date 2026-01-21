@@ -3444,6 +3444,7 @@ dependencies = [
 name = "metis-common"
 version = "0.1.0"
 dependencies = [
+ "axum 0.7.9",
  "chrono",
  "git2",
  "indexmap",

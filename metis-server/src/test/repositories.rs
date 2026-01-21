@@ -54,15 +54,15 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
     let remote_url = repo_url(&remote_dir);
     let name = RepoName::from_str("dourolabs/new-repo")?;
 
-    let payload = CreateRepositoryRequest {
-        name: name.clone(),
-        repository: ServiceRepositoryConfig {
-            remote_url: remote_url.clone(),
-            default_branch: Some("main".to_string()),
-            github_token: Some("token-456".to_string()),
-            default_image: Some("ghcr.io/example/new-repo:main".to_string()),
-        },
-    };
+    let payload = CreateRepositoryRequest::new(
+        name.clone(),
+        ServiceRepositoryConfig::new(
+            remote_url.clone(),
+            Some("main".to_string()),
+            Some("token-456".to_string()),
+            Some("ghcr.io/example/new-repo:main".to_string()),
+        ),
+    );
 
     let response = client
         .post(format!("{}/v1/repositories", server.base_url()))
@@ -103,13 +103,13 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let original_remote = create_remote_repository()?;
     let updated_remote = create_remote_repository()?;
 
-    let repository = ServiceRepository {
-        name: name.clone(),
-        remote_url: repo_url(&original_remote),
-        default_branch: Some("develop".to_string()),
-        github_token: Some("token-123".to_string()),
-        default_image: Some("ghcr.io/example/repo:main".to_string()),
-    };
+    let repository = ServiceRepository::new(
+        name.clone(),
+        repo_url(&original_remote),
+        Some("develop".to_string()),
+        Some("token-123".to_string()),
+        Some("ghcr.io/example/repo:main".to_string()),
+    );
     let mut state = test_state();
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
         name.clone(),
@@ -119,14 +119,12 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = UpdateRepositoryRequest {
-        repository: ServiceRepositoryConfig {
-            remote_url: repo_url(&updated_remote),
-            default_branch: None,
-            github_token: None,
-            default_image: None,
-        },
-    };
+    let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
+        repo_url(&updated_remote),
+        None,
+        None,
+        None,
+    ));
 
     let response = client
         .put(format!(
@@ -175,14 +173,12 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
     let client = test_client();
     let remote_dir = create_remote_repository()?;
 
-    let payload = UpdateRepositoryRequest {
-        repository: ServiceRepositoryConfig {
-            remote_url: repo_url(&remote_dir),
-            default_branch: None,
-            github_token: None,
-            default_image: None,
-        },
-    };
+    let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
+        repo_url(&remote_dir),
+        None,
+        None,
+        None,
+    ));
 
     let response = client
         .put(format!(
@@ -211,15 +207,10 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let bad_payload = CreateRepositoryRequest {
-        name: RepoName::from_str("dourolabs/new-repo")?,
-        repository: ServiceRepositoryConfig {
-            remote_url: "   ".to_string(),
-            default_branch: None,
-            github_token: None,
-            default_image: None,
-        },
-    };
+    let bad_payload = CreateRepositoryRequest::new(
+        RepoName::from_str("dourolabs/new-repo")?,
+        ServiceRepositoryConfig::new("   ".to_string(), None, None, None),
+    );
     let bad_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
         .json(&bad_payload)
@@ -227,15 +218,15 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
         .await?;
     assert_eq!(bad_response.status(), StatusCode::BAD_REQUEST);
 
-    let duplicate_payload = CreateRepositoryRequest {
-        name: name.clone(),
-        repository: ServiceRepositoryConfig {
-            remote_url: "https://example.com/new-repo.git".to_string(),
-            default_branch: None,
-            github_token: None,
-            default_image: None,
-        },
-    };
+    let duplicate_payload = CreateRepositoryRequest::new(
+        name.clone(),
+        ServiceRepositoryConfig::new(
+            "https://example.com/new-repo.git".to_string(),
+            None,
+            None,
+            None,
+        ),
+    );
     let duplicate_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
         .json(&duplicate_payload)

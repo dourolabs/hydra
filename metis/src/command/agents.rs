@@ -54,16 +54,8 @@ mod tests {
     #[tokio::test]
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
-        let list_agents_response = ListAgentsResponse {
-            agents: vec![
-                AgentRecord {
-                    name: "alpha".into(),
-                },
-                AgentRecord {
-                    name: "beta".into(),
-                },
-            ],
-        };
+        let list_agents_response =
+            ListAgentsResponse::new(vec![AgentRecord::new("alpha"), AgentRecord::new("beta")]);
 
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents");

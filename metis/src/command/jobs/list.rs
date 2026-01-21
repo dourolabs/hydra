@@ -47,10 +47,7 @@ pub async fn run(
     json: bool,
 ) -> Result<()> {
     let response = client
-        .list_jobs(&SearchJobsQuery {
-            q: None,
-            spawned_from,
-        })
+        .list_jobs(&SearchJobsQuery::new(None, spawned_from))
         .await?;
     let limit = limit.max(1);
     let total_jobs = response.jobs.len();
@@ -234,6 +231,7 @@ pub(crate) fn color_status(padded_status: &str, status: &Status) -> String {
         Status::Running => padded_status.yellow().to_string(),
         Status::Failed => padded_status.red().to_string(),
         Status::Pending => padded_status.bold().to_string(),
+        _ => padded_status.to_string(),
     }
 }
 
@@ -243,6 +241,7 @@ pub(crate) fn format_status(status: &Status) -> &'static str {
         Status::Running => "running",
         Status::Complete => "complete",
         Status::Failed => "failed",
+        _ => "unknown",
     }
 }
 
@@ -302,18 +301,18 @@ mod tests {
     }
 
     fn sample_job(id: &str) -> JobRecord {
-        JobRecord {
-            id: task_id(id),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                image: None,
-                env_vars: HashMap::new(),
-            },
-            notes: None,
-            status_log: TaskStatusLog::new(Status::Pending, Utc::now()),
-        }
+        JobRecord::new(
+            task_id(id),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::None,
+                None,
+                None,
+                HashMap::new(),
+            ),
+            None,
+            TaskStatusLog::new(Status::Pending, Utc::now()),
+        )
     }
 
     #[test]
@@ -415,9 +414,7 @@ mod tests {
         let server = MockServer::start();
         let client = MetisClient::new(server.base_url()).expect("should construct client");
 
-        let list_response = ListJobsResponse {
-            jobs: vec![sample_job("t-job-1")],
-        };
+        let list_response = ListJobsResponse::new(vec![sample_job("t-job-1")]);
 
         let mock = server.mock(|when, then| {
             when.method(GET)

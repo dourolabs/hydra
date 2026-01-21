@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PatchStatus {
     Open,
     Closed,
@@ -48,6 +49,7 @@ impl FromStr for PatchStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Review {
     pub contents: String,
     pub is_approved: bool,
@@ -57,7 +59,24 @@ pub struct Review {
     pub submitted_at: Option<DateTime<Utc>>,
 }
 
+impl Review {
+    pub fn new(
+        contents: String,
+        is_approved: bool,
+        author: String,
+        submitted_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            contents,
+            is_approved,
+            author,
+            submitted_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GithubPr {
     pub owner: String,
     pub repo: String,
@@ -72,8 +91,38 @@ pub struct GithubPr {
     pub ci: Option<GithubCiStatus>,
 }
 
+impl GithubPr {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        owner: String,
+        repo: String,
+        number: u64,
+        head_ref: Option<String>,
+        base_ref: Option<String>,
+        url: Option<String>,
+        ci: Option<GithubCiStatus>,
+    ) -> Self {
+        Self {
+            owner,
+            repo,
+            number,
+            head_ref,
+            base_ref,
+            url,
+            ci,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct GitOid(pub Oid);
+
+impl GitOid {
+    pub fn new(oid: Oid) -> Self {
+        Self(oid)
+    }
+}
 
 impl Serialize for GitOid {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -122,6 +171,7 @@ impl From<GitOid> for Oid {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Patch {
     #[serde(default)]
     pub title: String,
@@ -142,29 +192,85 @@ pub struct Patch {
     pub github: Option<GithubPr>,
 }
 
+impl Patch {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        title: String,
+        description: String,
+        diff: String,
+        status: PatchStatus,
+        is_automatic_backup: bool,
+        created_by: Option<TaskId>,
+        reviews: Vec<Review>,
+        service_repo_name: RepoName,
+        github: Option<GithubPr>,
+    ) -> Self {
+        Self {
+            title,
+            description,
+            diff,
+            status,
+            is_automatic_backup,
+            created_by,
+            reviews,
+            service_repo_name,
+            github,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PatchRecord {
     pub id: PatchId,
     pub patch: Patch,
 }
 
+impl PatchRecord {
+    pub fn new(id: PatchId, patch: Patch) -> Self {
+        Self { id, patch }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
 }
 
+impl UpsertPatchRequest {
+    pub fn new(patch: Patch) -> Self {
+        Self { patch }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertPatchResponse {
     pub patch_id: PatchId,
 }
 
+impl UpsertPatchResponse {
+    pub fn new(patch_id: PatchId) -> Self {
+        Self { patch_id }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,
 }
 
+impl SearchPatchesQuery {
+    pub fn new(q: Option<String>) -> Self {
+        Self { q }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum GithubCiState {
     Pending,
     Success,
@@ -172,6 +278,7 @@ pub enum GithubCiState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GithubCiFailure {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -180,16 +287,40 @@ pub struct GithubCiFailure {
     pub details_url: Option<String>,
 }
 
+impl GithubCiFailure {
+    pub fn new(name: String, summary: Option<String>, details_url: Option<String>) -> Self {
+        Self {
+            name,
+            summary,
+            details_url,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GithubCiStatus {
     pub state: GithubCiState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<GithubCiFailure>,
 }
 
+impl GithubCiStatus {
+    pub fn new(state: GithubCiState, failure: Option<GithubCiFailure>) -> Self {
+        Self { state, failure }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ListPatchesResponse {
     pub patches: Vec<PatchRecord>,
+}
+
+impl ListPatchesResponse {
+    pub fn new(patches: Vec<PatchRecord>) -> Self {
+        Self { patches }
+    }
 }
 
 #[cfg(test)]

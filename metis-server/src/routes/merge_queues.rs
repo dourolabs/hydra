@@ -1,14 +1,14 @@
-use crate::{
-    app::{AppState, MergeQueueError},
-    routes::jobs::ApiError,
-};
+use crate::app::{AppState, MergeQueueError};
 use axum::{
     Json,
     extract::{Path, State},
 };
 use metis_common::{
     RepoName,
-    merge_queues::{EnqueueMergePatchRequest, MergeQueue},
+    api::v1::{
+        ApiError,
+        merge_queues::{EnqueueMergePatchRequest, MergeQueue},
+    },
 };
 use tracing::{error, info};
 

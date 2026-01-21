@@ -20,13 +20,13 @@ pub(crate) fn patch_diff() -> String {
 
 pub(crate) fn service_repository() -> (RepoName, ServiceRepository) {
     let name = service_repo_name();
-    let repository = ServiceRepository {
-        name: name.clone(),
-        remote_url: format!("https://example.com/{}.git", name.as_str()),
-        default_branch: Some("develop".to_string()),
-        github_token: Some("token-123".to_string()),
-        default_image: Some("ghcr.io/example/repo:main".to_string()),
-    };
+    let repository = ServiceRepository::new(
+        name.clone(),
+        format!("https://example.com/{}.git", name.as_str()),
+        Some("develop".to_string()),
+        Some("token-123".to_string()),
+        Some("ghcr.io/example/repo:main".to_string()),
+    );
 
     (name, repository)
 }

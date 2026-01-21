@@ -76,11 +76,10 @@ async fn create_user(
     client: &dyn MetisClientInterface,
     args: UserCredentialsArgs,
 ) -> Result<UserSummary> {
-    let request = CreateUserRequest {
-        username: normalize_non_empty(&args.username, "username")?.into(),
-        github_user_id: None,
-        github_token: normalize_non_empty(&args.github_token, "github token")?,
-    };
+    let request = CreateUserRequest::new(
+        normalize_non_empty(&args.username, "username")?.into(),
+        normalize_non_empty(&args.github_token, "github token")?,
+    );
     let response = client
         .create_user(&request)
         .await
@@ -102,10 +101,8 @@ async fn set_github_token(
     args: UserCredentialsArgs,
 ) -> Result<UserSummary> {
     let username: Username = normalize_non_empty(&args.username, "username")?.into();
-    let request = UpdateGithubTokenRequest {
-        github_token: normalize_non_empty(&args.github_token, "github token")?,
-        github_user_id: None,
-    };
+    let request =
+        UpdateGithubTokenRequest::new(normalize_non_empty(&args.github_token, "github token")?);
     let response = client
         .set_user_github_token(&username, &request)
         .await
@@ -163,18 +160,10 @@ mod tests {
     #[tokio::test]
     async fn list_users_prints_jsonl_without_tokens() {
         let server = MockServer::start();
-        let payload = ListUsersResponse {
-            users: vec![
-                UserSummary {
-                    username: Username::from("alice"),
-                    github_user_id: None,
-                },
-                UserSummary {
-                    username: Username::from("bob"),
-                    github_user_id: None,
-                },
-            ],
-        };
+        let payload = ListUsersResponse::new(vec![
+            UserSummary::new(Username::from("alice")),
+            UserSummary::new(Username::from("bob")),
+        ]);
 
         let mock = server.mock(|when, then| {
             when.method(GET).path("/v1/users");
@@ -202,12 +191,7 @@ mod tests {
             username: "alice".to_string(),
             github_token: "token-123".to_string(),
         };
-        let response = UpsertUserResponse {
-            user: UserSummary {
-                username: Username::from("alice"),
-                github_user_id: None,
-            },
-        };
+        let response = UpsertUserResponse::new(UserSummary::new(Username::from("alice")));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/users").json_body(json!({
                 "username": "alice",
@@ -231,9 +215,8 @@ mod tests {
         let client = MetisClient::new(server.base_url()).unwrap();
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/users/alice");
-            then.status(200).json_body_obj(&DeleteUserResponse {
-                username: Username::from("alice"),
-            });
+            then.status(200)
+                .json_body_obj(&DeleteUserResponse::new(Username::from("alice")));
         });
 
         let deleted = delete_user(&client, "  alice ").await.unwrap();

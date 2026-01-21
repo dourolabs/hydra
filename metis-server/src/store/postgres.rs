@@ -815,46 +815,43 @@ mod tests {
 
     #[allow(dead_code)]
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
-        Issue {
-            issue_type: IssueType::Task,
-            description: "details".to_string(),
-            creator: String::new(),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            todo_list: vec![TodoItem {
-                description: "todo".to_string(),
-                is_done: false,
-            }],
+        Issue::new(
+            IssueType::Task,
+            "details".to_string(),
+            String::new(),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
-            patches: Vec::new(),
-        }
+            Vec::new(),
+        )
     }
 
     #[allow(dead_code)]
     fn sample_patch() -> Patch {
-        Patch {
-            title: "patch title".to_string(),
-            description: "desc".to_string(),
-            diff: "diff".to_string(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: None,
-            reviews: Vec::new(),
-            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
-            github: None,
-        }
+        Patch::new(
+            "patch title".to_string(),
+            "desc".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+        )
     }
 
     #[allow(dead_code)]
     fn sample_task() -> Task {
-        Task {
-            prompt: "prompt".to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: Some("metis-worker:latest".to_string()),
-            env_vars: Default::default(),
-        }
+        Task::new(
+            "prompt".to_string(),
+            BundleSpec::None,
+            None,
+            Some("metis-worker:latest".to_string()),
+            Default::default(),
+        )
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -864,10 +861,10 @@ mod tests {
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let issue = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent.clone(),
+            )]))
             .await
             .unwrap();
 
@@ -887,10 +884,10 @@ mod tests {
         assert_eq!(children, vec![issue.clone()]);
 
         let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
-        let mut updated_issue = sample_issue(vec![IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: new_parent.clone(),
-        }]);
+        let mut updated_issue = sample_issue(vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            new_parent.clone(),
+        )]);
         updated_issue.patches = Vec::new();
         store.update_issue(&issue, updated_issue).await.unwrap();
 
@@ -908,10 +905,10 @@ mod tests {
         let missing = IssueId::new();
 
         let err = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: missing.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::BlockedOn,
+                missing.clone(),
+            )]))
             .await
             .unwrap_err();
 
@@ -921,10 +918,10 @@ mod tests {
         let err = store
             .update_issue(
                 &issue_id,
-                sample_issue(vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: missing.clone(),
-                }]),
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    missing.clone(),
+                )]),
             )
             .await
             .unwrap_err();
@@ -983,10 +980,10 @@ mod tests {
         let mut store = PostgresStore::new(pool);
         let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
         let blocked = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: blocker.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::BlockedOn,
+                blocker.clone(),
+            )]))
             .await
             .unwrap();
 

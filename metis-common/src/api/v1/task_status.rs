@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Status {
     Pending,
     Running,
@@ -12,12 +13,14 @@ pub enum Status {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaskError {
     JobEngineError { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Event {
     Created {
         at: DateTime<Utc>,
@@ -38,6 +41,7 @@ pub enum Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TaskStatusLog {
     #[serde(default)]
     pub events: Vec<Event>,
@@ -51,6 +55,10 @@ impl TaskStatusLog {
                 status: initial_status,
             }],
         }
+    }
+
+    pub fn from_events(events: Vec<Event>) -> Self {
+        Self { events }
     }
 
     pub fn current_status(&self) -> Status {

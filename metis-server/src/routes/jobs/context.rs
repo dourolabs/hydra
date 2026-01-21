@@ -24,11 +24,7 @@ pub async fn get_job_context(
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);
 
-    let context = WorkerContext {
-        request_context: resolved.bundle,
-        prompt: task.prompt,
-        variables: env_vars,
-    };
+    let context = WorkerContext::new(resolved.bundle, task.prompt, env_vars);
     info!(job_id = %job_id, "get_job_context completed");
     Ok(Json(context))
 }

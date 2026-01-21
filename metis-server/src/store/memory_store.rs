@@ -560,13 +560,13 @@ mod tests {
     use std::{collections::HashSet, str::FromStr};
 
     fn spawn_task() -> Task {
-        Task {
-            prompt: "0".to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: Some("metis-worker:latest".to_string()),
-            env_vars: HashMap::new(),
-        }
+        Task::new(
+            "0".to_string(),
+            BundleSpec::None,
+            None,
+            Some("metis-worker:latest".to_string()),
+            HashMap::new(),
+        )
     }
 
     fn dummy_diff() -> String {
@@ -574,31 +574,31 @@ mod tests {
     }
 
     fn sample_patch() -> Patch {
-        Patch {
-            title: "sample patch".to_string(),
-            description: "sample patch".to_string(),
-            diff: dummy_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: None,
-            reviews: Vec::new(),
-            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
-            github: None,
-        }
+        Patch::new(
+            "sample patch".to_string(),
+            "sample patch".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+        )
     }
 
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
-        Issue {
-            issue_type: IssueType::Task,
-            description: "issue details".to_string(),
-            creator: String::new(),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            todo_list: Vec::new(),
+        Issue::new(
+            IssueType::Task,
+            "issue details".to_string(),
+            String::new(),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            Vec::new(),
             dependencies,
-            patches: Vec::new(),
-        }
+            Vec::new(),
+        )
     }
 
     #[tokio::test]
@@ -607,10 +607,10 @@ mod tests {
         let missing_dependency = IssueId::new();
 
         let err = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: missing_dependency.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::BlockedOn,
+                missing_dependency.clone(),
+            )]))
             .await
             .unwrap_err();
 
@@ -630,10 +630,10 @@ mod tests {
         let err = store
             .update_issue(
                 &issue_id,
-                sample_issue(vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: missing_dependency.clone(),
-                }]),
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    missing_dependency.clone(),
+                )]),
             )
             .await
             .unwrap_err();
@@ -659,17 +659,17 @@ mod tests {
         let mut store = MemoryStore::new();
 
         let id = store.add_patch(sample_patch()).await.unwrap();
-        let updated = Patch {
-            title: "new title".to_string(),
-            description: "updated patch".to_string(),
-            diff: dummy_diff(),
-            status: PatchStatus::Open,
-            is_automatic_backup: false,
-            created_by: None,
-            reviews: Vec::new(),
-            service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
-            github: None,
-        };
+        let updated = Patch::new(
+            "new title".to_string(),
+            "updated patch".to_string(),
+            dummy_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+        );
 
         store.update_patch(&id, updated.clone()).await.unwrap();
 
@@ -684,17 +684,17 @@ mod tests {
         let err = store
             .update_patch(
                 &missing,
-                Patch {
-                    title: "noop patch".to_string(),
-                    description: "noop patch".to_string(),
-                    diff: dummy_diff(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    created_by: None,
-                    reviews: Vec::new(),
-                    service_repo_name: RepoName::from_str("dourolabs/sample").unwrap(),
-                    github: None,
-                },
+                Patch::new(
+                    "noop patch".to_string(),
+                    "noop patch".to_string(),
+                    dummy_diff(),
+                    PatchStatus::Open,
+                    false,
+                    None,
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/sample").unwrap(),
+                    None,
+                ),
             )
             .await
             .unwrap_err();
@@ -711,14 +711,8 @@ mod tests {
 
         let child_id = store
             .add_issue(sample_issue(vec![
-                IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: parent_id.clone(),
-                },
-                IssueDependency {
-                    dependency_type: IssueDependencyType::BlockedOn,
-                    issue_id: blocker_id.clone(),
-                },
+                IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
+                IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
             ]))
             .await
             .unwrap();
@@ -744,14 +738,8 @@ mod tests {
 
         let issue_id = store
             .add_issue(sample_issue(vec![
-                IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: original_parent.clone(),
-                },
-                IssueDependency {
-                    dependency_type: IssueDependencyType::BlockedOn,
-                    issue_id: original_blocker.clone(),
-                },
+                IssueDependency::new(IssueDependencyType::ChildOf, original_parent.clone()),
+                IssueDependency::new(IssueDependencyType::BlockedOn, original_blocker.clone()),
             ]))
             .await
             .unwrap();
@@ -769,14 +757,8 @@ mod tests {
             .update_issue(
                 &issue_id,
                 sample_issue(vec![
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::ChildOf,
-                        issue_id: new_parent.clone(),
-                    },
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: new_blocker.clone(),
-                    },
+                    IssueDependency::new(IssueDependencyType::ChildOf, new_parent.clone()),
+                    IssueDependency::new(IssueDependencyType::BlockedOn, new_blocker.clone()),
                 ]),
             )
             .await
@@ -832,17 +814,17 @@ mod tests {
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent.clone(),
+            )]))
             .await
             .unwrap();
         let _grandchild = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: child.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                child.clone(),
+            )]))
             .await
             .unwrap();
 
@@ -858,17 +840,17 @@ mod tests {
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent.clone(),
+            )]))
             .await
             .unwrap();
         let grandchild = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: child.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                child.clone(),
+            )]))
             .await
             .unwrap();
 
@@ -884,17 +866,17 @@ mod tests {
 
         let root = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: root.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                root.clone(),
+            )]))
             .await
             .unwrap();
         let grandchild = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: child.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                child.clone(),
+            )]))
             .await
             .unwrap();
 
@@ -915,42 +897,30 @@ mod tests {
 
         let matching_issue = store
             .add_issue(sample_issue(vec![
-                IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: parent.clone(),
-                },
-                IssueDependency {
-                    dependency_type: IssueDependencyType::BlockedOn,
-                    issue_id: blocker.clone(),
-                },
+                IssueDependency::new(IssueDependencyType::ChildOf, parent.clone()),
+                IssueDependency::new(IssueDependencyType::BlockedOn, blocker.clone()),
             ]))
             .await
             .unwrap();
 
         let non_matching_child = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent.clone(),
+            )]))
             .await
             .unwrap();
         let non_matching_blocked = store
-            .add_issue(sample_issue(vec![IssueDependency {
-                dependency_type: IssueDependencyType::BlockedOn,
-                issue_id: blocker.clone(),
-            }]))
+            .add_issue(sample_issue(vec![IssueDependency::new(
+                IssueDependencyType::BlockedOn,
+                blocker.clone(),
+            )]))
             .await
             .unwrap();
         let unrelated_issue = store
             .add_issue(sample_issue(vec![
-                IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: other_parent,
-                },
-                IssueDependency {
-                    dependency_type: IssueDependencyType::BlockedOn,
-                    issue_id: other_blocker,
-                },
+                IssueDependency::new(IssueDependencyType::ChildOf, other_parent),
+                IssueDependency::new(IssueDependencyType::BlockedOn, other_blocker),
             ]))
             .await
             .unwrap();

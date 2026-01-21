@@ -194,19 +194,14 @@ async fn store_github_credentials(
     token: &str,
 ) -> Result<Username> {
     let username: Username = profile.login.as_str().into();
-    let create_request = CreateUserRequest {
-        username: username.clone(),
-        github_user_id: Some(profile.id),
-        github_token: token.to_string(),
-    };
+    let create_request = CreateUserRequest::new(username.clone(), token.to_string())
+        .with_github_user_id(Some(profile.id));
 
     match client.create_user(&create_request).await {
         Ok(response) => Ok(response.user.username),
         Err(create_err) => {
-            let update_request = UpdateGithubTokenRequest {
-                github_token: token.to_string(),
-                github_user_id: Some(profile.id),
-            };
+            let update_request = UpdateGithubTokenRequest::new(token.to_string())
+                .with_github_user_id(Some(profile.id));
             match client
                 .set_user_github_token(&username, &update_request)
                 .await

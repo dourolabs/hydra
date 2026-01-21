@@ -1,27 +1,21 @@
 #![allow(clippy::too_many_arguments)]
 
-pub mod ids;
-pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
-
-pub mod agents;
+pub mod api;
 pub mod constants;
 pub mod github;
-pub mod issues;
-pub mod job_status;
-pub mod jobs;
-pub mod logs;
-pub mod merge_queues;
-pub mod patches;
+pub mod ids;
 pub mod repo_name;
-pub mod repositories;
+pub mod util;
+
+pub use api::v1::{
+    agents, issues, job_status, jobs, logs, merge_queues, patches, repositories, task_status, users,
+};
+pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
     CreateRepositoryRequest, ListRepositoriesResponse, ServiceRepository, ServiceRepositoryConfig,
     ServiceRepositoryInfo, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
-pub mod task_status;
-pub mod users;
-pub mod util;
 pub use util::EnvGuard;
 
 #[cfg(test)]

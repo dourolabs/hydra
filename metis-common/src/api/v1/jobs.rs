@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Task {
     pub prompt: String,
     pub context: BundleSpec,
@@ -14,7 +15,26 @@ pub struct Task {
     pub env_vars: HashMap<String, String>,
 }
 
+impl Task {
+    pub fn new(
+        prompt: String,
+        context: BundleSpec,
+        spawned_from: Option<IssueId>,
+        image: Option<String>,
+        env_vars: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            prompt,
+            context,
+            spawned_from,
+            image,
+            env_vars,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CreateJobRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,8 +45,25 @@ pub struct CreateJobRequest {
     pub variables: HashMap<String, String>,
 }
 
+impl CreateJobRequest {
+    pub fn new(
+        prompt: String,
+        image: Option<String>,
+        context: BundleSpec,
+        variables: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            prompt,
+            image,
+            context,
+            variables,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BundleSpec {
     #[serde(rename = "none")]
     None,
@@ -62,6 +99,7 @@ impl From<Bundle> for BundleSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Bundle {
     #[serde(rename = "none")]
     None,
@@ -74,6 +112,7 @@ pub enum Bundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct WorkerContext {
     pub request_context: Bundle,
     pub prompt: String,
@@ -81,17 +120,46 @@ pub struct WorkerContext {
     pub variables: HashMap<String, String>,
 }
 
+impl WorkerContext {
+    pub fn new(
+        request_context: Bundle,
+        prompt: String,
+        variables: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            request_context,
+            prompt,
+            variables,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CreateJobResponse {
     pub job_id: TaskId,
 }
 
+impl CreateJobResponse {
+    pub fn new(job_id: TaskId) -> Self {
+        Self { job_id }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobRecord>,
 }
 
+impl ListJobsResponse {
+    pub fn new(jobs: Vec<JobRecord>) -> Self {
+        Self { jobs }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct JobRecord {
     pub id: TaskId,
     pub task: Task,
@@ -100,7 +168,19 @@ pub struct JobRecord {
     pub status_log: TaskStatusLog,
 }
 
+impl JobRecord {
+    pub fn new(id: TaskId, task: Task, notes: Option<String>, status_log: TaskStatusLog) -> Self {
+        Self {
+            id,
+            task,
+            notes,
+            status_log,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SearchJobsQuery {
     #[serde(default)]
     pub q: Option<String>,
@@ -108,10 +188,23 @@ pub struct SearchJobsQuery {
     pub spawned_from: Option<IssueId>,
 }
 
+impl SearchJobsQuery {
+    pub fn new(q: Option<String>, spawned_from: Option<IssueId>) -> Self {
+        Self { q, spawned_from }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct KillJobResponse {
     pub job_id: TaskId,
     pub status: String,
+}
+
+impl KillJobResponse {
+    pub fn new(job_id: TaskId, status: String) -> Self {
+        Self { job_id, status }
+    }
 }
 
 #[cfg(test)]

@@ -8,13 +8,13 @@ use crate::{
 use axum::{
     Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
-    http::{StatusCode, request::Parts},
-    response::{IntoResponse, Response},
+    http::request::Parts,
 };
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, TaskId};
-use serde_json::json;
 use tracing::{error, info};
+
+pub use metis_common::api::v1::ApiError;
 
 pub mod context;
 pub mod kill;
@@ -30,7 +30,7 @@ pub async fn create_job(
         CreateJobError::TaskResolution(err) => ApiError::from(err),
         CreateJobError::Store { source, job_id } => {
             error!(error = %source, job_id = %job_id, "failed to store task");
-            ApiError::internal(anyhow::anyhow!("Failed to store task: {source}"))
+            ApiError::internal(format!("Failed to store task: {source}"))
         }
     })?;
 
@@ -39,7 +39,7 @@ pub async fn create_job(
         "task stored, will be started by background thread"
     );
 
-    Ok(Json(CreateJobResponse { job_id }))
+    Ok(Json(CreateJobResponse::new(job_id)))
 }
 
 pub async fn list_jobs(
@@ -67,7 +67,7 @@ pub async fn list_jobs(
     // Get all tasks with all statuses
     let task_ids = store.list_tasks().await.map_err(|err| {
         error!(error = %err, "failed to list tasks");
-        ApiError::internal(anyhow::anyhow!("Failed to list tasks: {err}"))
+        ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
     // Collect all summaries with their reference times for sorting
@@ -110,7 +110,7 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
-    Ok(Json(ListJobsResponse { jobs: summaries }))
+    Ok(Json(ListJobsResponse::new(summaries)))
 }
 
 pub async fn get_job(
@@ -131,7 +131,7 @@ pub async fn get_job(
             }
             err => {
                 error!(job_id = %job_id, error = %err, "failed to load job summary");
-                ApiError::internal(anyhow::anyhow!("Failed to load job '{job_id}': {err}"))
+                ApiError::internal(format!("Failed to load job '{job_id}': {err}"))
             }
         })?;
 
@@ -139,47 +139,13 @@ pub async fn get_job(
     Ok(Json(summary))
 }
 
-#[derive(Debug)]
-pub struct ApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl ApiError {
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: message.into(),
-        }
-    }
-
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::CONFLICT,
-            message: message.into(),
-        }
-    }
-
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            message: message.into(),
-        }
-    }
-
-    pub fn internal(error: impl Into<anyhow::Error>) -> Self {
-        let err = error.into();
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: err.to_string(),
-        }
-    }
-}
-
 impl From<BundleResolutionError> for ApiError {
     fn from(error: BundleResolutionError) -> Self {
         match error {
-            BundleResolutionError::UnknownRepository(_) => ApiError::bad_request(error.to_string()),
+            BundleResolutionError::UnknownRepository(_)
+            | BundleResolutionError::UnsupportedBundleSpec => {
+                ApiError::bad_request(error.to_string())
+            }
         }
     }
 }
@@ -189,15 +155,8 @@ impl From<TaskResolutionError> for ApiError {
         match error {
             TaskResolutionError::EmptyImage => ApiError::bad_request(error.to_string()),
             TaskResolutionError::Bundle(err) => ApiError::from(err),
-            TaskResolutionError::MissingDefaultImage => ApiError::internal(error),
+            TaskResolutionError::MissingDefaultImage => ApiError::internal(error.to_string()),
         }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let body = Json(json!({ "error": self.message }));
-        (self.status, body).into_response()
     }
 }
 
@@ -231,12 +190,7 @@ async fn job_record_with_time(
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
     Ok((
-        JobRecord {
-            id: job_id.clone(),
-            task,
-            notes,
-            status_log,
-        },
+        JobRecord::new(job_id.clone(), task, notes, status_log),
         reference_time,
     ))
 }

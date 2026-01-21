@@ -1,11 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LogsQuery {
     #[serde(default)]
     pub watch: Option<bool>,
     #[serde(default)]
     pub tail_lines: Option<i64>,
+}
+
+impl LogsQuery {
+    pub fn new(watch: Option<bool>, tail_lines: Option<i64>) -> Self {
+        Self { watch, tail_lines }
+    }
 }
 
 #[cfg(test)]

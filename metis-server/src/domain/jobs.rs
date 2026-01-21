@@ -15,6 +15,24 @@ pub struct Task {
     pub env_vars: HashMap<String, String>,
 }
 
+impl Task {
+    pub fn new(
+        prompt: String,
+        context: BundleSpec,
+        spawned_from: Option<IssueId>,
+        image: Option<String>,
+        env_vars: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            prompt,
+            context,
+            spawned_from,
+            image,
+            env_vars,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJobRequest {
     pub prompt: String,
@@ -82,14 +100,40 @@ pub struct WorkerContext {
     pub variables: HashMap<String, String>,
 }
 
+impl WorkerContext {
+    pub fn new(
+        request_context: Bundle,
+        prompt: String,
+        variables: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            request_context,
+            prompt,
+            variables,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateJobResponse {
     pub job_id: TaskId,
 }
 
+impl CreateJobResponse {
+    pub fn new(job_id: TaskId) -> Self {
+        Self { job_id }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListJobsResponse {
     pub jobs: Vec<JobRecord>,
+}
+
+impl ListJobsResponse {
+    pub fn new(jobs: Vec<JobRecord>) -> Self {
+        Self { jobs }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +143,17 @@ pub struct JobRecord {
     #[serde(default)]
     pub notes: Option<String>,
     pub status_log: TaskStatusLog,
+}
+
+impl JobRecord {
+    pub fn new(id: TaskId, task: Task, notes: Option<String>, status_log: TaskStatusLog) -> Self {
+        Self {
+            id,
+            task,
+            notes,
+            status_log,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +168,12 @@ pub struct SearchJobsQuery {
 pub struct KillJobResponse {
     pub job_id: TaskId,
     pub status: String,
+}
+
+impl KillJobResponse {
+    pub fn new(job_id: TaskId, status: String) -> Self {
+        Self { job_id, status }
+    }
 }
 
 #[cfg(test)]

@@ -64,6 +64,8 @@ pub struct CachedRepository {
 pub enum BundleResolutionError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(RepoName),
+    #[error("unsupported bundle specification")]
+    UnsupportedBundleSpec,
 }
 
 #[derive(Debug, Error)]
@@ -162,17 +164,16 @@ impl ServiceState {
 
                 (
                     name.clone(),
-                    ServiceRepository {
-                        name: name.clone(),
-                        remote_url: repo.remote_url.clone(),
+                    ServiceRepository::new(
+                        name.clone(),
+                        repo.remote_url.clone(),
                         default_branch,
                         github_token,
-                        default_image: repo
-                            .default_image
+                        repo.default_image
                             .as_deref()
                             .and_then(non_empty)
                             .map(str::to_owned),
-                    },
+                    ),
                 )
             })
             .collect();
@@ -518,13 +519,13 @@ impl ServiceState {
 }
 
 fn merge_queue_response(queue: &MergeQueueImpl) -> MergeQueue {
-    MergeQueue {
-        patches: queue
+    MergeQueue::new(
+        queue
             .patches()
             .iter()
             .map(|entry| entry.patch_id.clone())
             .collect(),
-    }
+    )
 }
 
 fn branch_ref(branch_name: &str) -> String {
@@ -546,17 +547,17 @@ mod tests {
         let remote_repo = Repository::init(remote_dir.path())?;
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
-        let repository = ServiceRepository {
-            name: RepoName::from_str("dourolabs/metis")?,
-            remote_url: remote_dir
+        let repository = ServiceRepository::new(
+            RepoName::from_str("dourolabs/metis")?,
+            remote_dir
                 .path()
                 .to_str()
                 .expect("tempdir path is valid utf-8")
                 .to_string(),
-            default_branch: None,
-            github_token: None,
-            default_image: None,
-        };
+            None,
+            None,
+            None,
+        );
 
         let connected = connect_repository(&repository)?;
         let repo = connected.repository();

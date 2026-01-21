@@ -4,7 +4,6 @@ use crate::domain::patches::{
 };
 use crate::{
     app::{AppState, UpsertPatchError},
-    routes::jobs::ApiError,
     store::StoreError,
 };
 use anyhow::anyhow;
@@ -13,7 +12,7 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::PatchId;
+use metis_common::{PatchId, api::v1::ApiError};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -46,7 +45,7 @@ pub async fn create_patch(
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "create_patch completed");
-    Ok(Json(UpsertPatchResponse { patch_id }))
+    Ok(Json(UpsertPatchResponse::new(patch_id)))
 }
 
 pub async fn update_patch(
@@ -61,7 +60,7 @@ pub async fn update_patch(
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "update_patch completed");
-    Ok(Json(UpsertPatchResponse { patch_id }))
+    Ok(Json(UpsertPatchResponse::new(patch_id)))
 }
 
 pub async fn get_patch(
@@ -76,10 +75,7 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    Ok(Json(PatchRecord {
-        id: patch_id,
-        patch,
-    }))
+    Ok(Json(PatchRecord::new(patch_id, patch)))
 }
 
 pub async fn list_patches(
@@ -103,10 +99,10 @@ pub async fn list_patches(
     let filtered = patches
         .into_iter()
         .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, patch))
-        .map(|(id, patch)| PatchRecord { id, patch })
+        .map(|(id, patch)| PatchRecord::new(id, patch))
         .collect();
 
-    let response = ListPatchesResponse { patches: filtered };
+    let response = ListPatchesResponse::new(filtered);
     info!(
         query = ?query.q,
         returned = response.patches.len(),

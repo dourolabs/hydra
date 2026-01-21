@@ -148,13 +148,13 @@ mod tests {
     }
 
     fn make_task(prompt: &str) -> crate::store::Task {
-        crate::store::Task {
-            prompt: prompt.to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: None,
-            env_vars: HashMap::new(),
-        }
+        crate::store::Task::new(
+            prompt.to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            HashMap::new(),
+        )
     }
 
     #[tokio::test]

@@ -104,6 +104,7 @@ impl From<metis_common::task_status::Status> for Status {
             metis_common::task_status::Status::Running => Status::Running,
             metis_common::task_status::Status::Complete => Status::Complete,
             metis_common::task_status::Status::Failed => Status::Failed,
+            other => panic!("unsupported task status variant: {other:?}"),
         }
     }
 }
@@ -125,6 +126,7 @@ impl From<metis_common::task_status::TaskError> for TaskError {
             metis_common::task_status::TaskError::JobEngineError { reason } => {
                 TaskError::JobEngineError { reason }
             }
+            other => panic!("unsupported task error variant: {other:?}"),
         }
     }
 }
@@ -154,6 +156,7 @@ impl From<metis_common::task_status::Event> for Event {
                 at,
                 error: error.into(),
             },
+            other => panic!("unsupported task event variant: {other:?}"),
         }
     }
 }
@@ -187,9 +190,9 @@ impl From<metis_common::task_status::TaskStatusLog> for TaskStatusLog {
 
 impl From<TaskStatusLog> for metis_common::task_status::TaskStatusLog {
     fn from(value: TaskStatusLog) -> Self {
-        metis_common::task_status::TaskStatusLog {
-            events: value.events.into_iter().map(Into::into).collect(),
-        }
+        metis_common::task_status::TaskStatusLog::from_events(
+            value.events.into_iter().map(Into::into).collect(),
+        )
     }
 }
 

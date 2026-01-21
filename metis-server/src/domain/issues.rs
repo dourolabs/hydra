@@ -131,6 +131,15 @@ pub struct IssueDependency {
     pub issue_id: IssueId,
 }
 
+impl IssueDependency {
+    pub fn new(dependency_type: IssueDependencyType, issue_id: IssueId) -> Self {
+        Self {
+            dependency_type,
+            issue_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoItem {
     pub description: String,
@@ -138,11 +147,29 @@ pub struct TodoItem {
     pub is_done: bool,
 }
 
+impl TodoItem {
+    pub fn new(description: String, is_done: bool) -> Self {
+        Self {
+            description,
+            is_done,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoListResponse {
     pub issue_id: IssueId,
     #[serde(default)]
     pub todo_list: Vec<TodoItem>,
+}
+
+impl TodoListResponse {
+    pub fn new(issue_id: IssueId, todo_list: Vec<TodoItem>) -> Self {
+        Self {
+            issue_id,
+            todo_list,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,10 +365,43 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
 }
 
+impl Issue {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        issue_type: IssueType,
+        description: String,
+        creator: String,
+        progress: String,
+        status: IssueStatus,
+        assignee: Option<String>,
+        todo_list: Vec<TodoItem>,
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+    ) -> Self {
+        Self {
+            issue_type,
+            description,
+            creator,
+            progress,
+            status,
+            assignee,
+            todo_list,
+            dependencies,
+            patches,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRecord {
     pub id: IssueId,
     pub issue: Issue,
+}
+
+impl IssueRecord {
+    pub fn new(id: IssueId, issue: Issue) -> Self {
+        Self { id, issue }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,9 +411,21 @@ pub struct UpsertIssueRequest {
     pub job_id: Option<TaskId>,
 }
 
+impl UpsertIssueRequest {
+    pub fn new(issue: Issue, job_id: Option<TaskId>) -> Self {
+        Self { issue, job_id }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
+}
+
+impl UpsertIssueResponse {
+    pub fn new(issue_id: IssueId) -> Self {
+        Self { issue_id }
+    }
 }
 
 fn serialize_graph_filters<S>(
@@ -406,6 +478,12 @@ pub struct SearchIssuesQuery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueRecord>,
+}
+
+impl ListIssuesResponse {
+    pub fn new(issues: Vec<IssueRecord>) -> Self {
+        Self { issues }
+    }
 }
 
 #[cfg(test)]

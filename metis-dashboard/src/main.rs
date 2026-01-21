@@ -293,6 +293,10 @@ fn map_dashboard(data: &client::DashboardResponse) -> DashboardViewModel {
                 running_jobs += 1;
             }
             Status::Complete | Status::Failed => {}
+            _ => {
+                stats.pending += 1;
+                pending_jobs += 1;
+            }
         }
     }
 
@@ -386,6 +390,7 @@ fn status_label(status: Status) -> &'static str {
         Status::Running => "running",
         Status::Complete => "complete",
         Status::Failed => "failed",
+        _ => "unknown",
     }
 }
 

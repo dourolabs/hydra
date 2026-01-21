@@ -5,7 +5,6 @@ use crate::domain::issues::{
 };
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
-    routes::jobs::ApiError,
     store::StoreError,
 };
 use anyhow::anyhow;
@@ -14,7 +13,7 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::IssueId;
+use metis_common::{IssueId, api::v1::ApiError};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -73,7 +72,7 @@ pub async fn create_issue(
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "create_issue completed");
-    Ok(Json(UpsertIssueResponse { issue_id }))
+    Ok(Json(UpsertIssueResponse::new(issue_id)))
 }
 
 pub async fn update_issue(
@@ -88,7 +87,7 @@ pub async fn update_issue(
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "update_issue completed");
-    Ok(Json(UpsertIssueResponse { issue_id }))
+    Ok(Json(UpsertIssueResponse::new(issue_id)))
 }
 
 pub async fn get_issue(
@@ -103,10 +102,7 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    Ok(Json(IssueRecord {
-        id: issue_id,
-        issue,
-    }))
+    Ok(Json(IssueRecord::new(issue_id, issue)))
 }
 
 pub async fn list_issues(
@@ -141,7 +137,7 @@ pub async fn list_issues(
 
     let issue_records: Vec<IssueRecord> = issues
         .into_iter()
-        .map(|(id, issue)| IssueRecord { id, issue })
+        .map(|(id, issue)| IssueRecord::new(id, issue))
         .collect();
 
     let graph_matches = if query.graph_filters.is_empty() {
@@ -171,7 +167,7 @@ pub async fn list_issues(
         })
         .collect();
 
-    let response = ListIssuesResponse { issues: filtered };
+    let response = ListIssuesResponse::new(filtered);
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -191,10 +187,7 @@ pub async fn add_todo_item(
     let todo_list = state
         .add_todo_item(
             issue_id.clone(),
-            TodoItem {
-                description: request.description,
-                is_done: request.is_done,
-            },
+            TodoItem::new(request.description, request.is_done),
         )
         .await
         .map_err(map_todo_error)?;
@@ -204,10 +197,7 @@ pub async fn add_todo_item(
         count = todo_list.len(),
         "add_todo_item completed"
     );
-    Ok(Json(TodoListResponse {
-        issue_id,
-        todo_list,
-    }))
+    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
 }
 
 pub async fn replace_todo_list(
@@ -226,10 +216,7 @@ pub async fn replace_todo_list(
         count = todo_list.len(),
         "replace_todo_list completed"
     );
-    Ok(Json(TodoListResponse {
-        issue_id,
-        todo_list,
-    }))
+    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
 }
 
 pub async fn set_todo_item_status(
@@ -257,10 +244,7 @@ pub async fn set_todo_item_status(
         desired_status = request.is_done,
         "set_todo_item_status completed"
     );
-    Ok(Json(TodoListResponse {
-        issue_id,
-        todo_list,
-    }))
+    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {

@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum IssueStatus {
     #[default]
     Open,
@@ -47,6 +48,7 @@ impl FromStr for IssueStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum IssueType {
     Bug,
     Feature,
@@ -92,6 +94,7 @@ impl FromStr for IssueType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum IssueDependencyType {
     ChildOf,
     BlockedOn,
@@ -126,51 +129,107 @@ impl FromStr for IssueDependencyType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct IssueDependency {
     #[serde(rename = "type")]
     pub dependency_type: IssueDependencyType,
     pub issue_id: IssueId,
 }
 
+impl IssueDependency {
+    pub fn new(dependency_type: IssueDependencyType, issue_id: IssueId) -> Self {
+        Self {
+            dependency_type,
+            issue_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TodoItem {
     pub description: String,
     #[serde(default)]
     pub is_done: bool,
 }
 
+impl TodoItem {
+    pub fn new(description: String, is_done: bool) -> Self {
+        Self {
+            description,
+            is_done,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TodoListResponse {
     pub issue_id: IssueId,
     #[serde(default)]
     pub todo_list: Vec<TodoItem>,
 }
 
+impl TodoListResponse {
+    pub fn new(issue_id: IssueId, todo_list: Vec<TodoItem>) -> Self {
+        Self {
+            issue_id,
+            todo_list,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AddTodoItemRequest {
     pub description: String,
     #[serde(default)]
     pub is_done: bool,
 }
 
+impl AddTodoItemRequest {
+    pub fn new(description: String, is_done: bool) -> Self {
+        Self {
+            description,
+            is_done,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ReplaceTodoListRequest {
     #[serde(default)]
     pub todo_list: Vec<TodoItem>,
 }
 
+impl ReplaceTodoListRequest {
+    pub fn new(todo_list: Vec<TodoItem>) -> Self {
+        Self { todo_list }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SetTodoItemStatusRequest {
     pub is_done: bool,
 }
 
+impl SetTodoItemStatusRequest {
+    pub fn new(is_done: bool) -> Self {
+        Self { is_done }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IssueGraphFilterSide {
     Left,
     Right,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IssueGraphWildcard {
     Immediate,
     Transitive,
@@ -186,6 +245,7 @@ impl IssueGraphWildcard {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IssueGraphSelector {
     Issue(IssueId),
     Wildcard(IssueGraphWildcard),
@@ -223,6 +283,7 @@ impl fmt::Display for IssueGraphSelector {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct IssueGraphFilter {
     pub lhs: IssueGraphSelector,
     pub dependency_type: IssueDependencyType,
@@ -325,6 +386,7 @@ impl<'de> Deserialize<'de> for IssueGraphFilter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
@@ -345,22 +407,70 @@ pub struct Issue {
     pub patches: Vec<PatchId>,
 }
 
+impl Issue {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        issue_type: IssueType,
+        description: String,
+        creator: String,
+        progress: String,
+        status: IssueStatus,
+        assignee: Option<String>,
+        todo_list: Vec<TodoItem>,
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+    ) -> Self {
+        Self {
+            issue_type,
+            description,
+            creator,
+            progress,
+            status,
+            assignee,
+            todo_list,
+            dependencies,
+            patches,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct IssueRecord {
     pub id: IssueId,
     pub issue: Issue,
 }
 
+impl IssueRecord {
+    pub fn new(id: IssueId, issue: Issue) -> Self {
+        Self { id, issue }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertIssueRequest {
     pub issue: Issue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<TaskId>,
 }
 
+impl UpsertIssueRequest {
+    pub fn new(issue: Issue, job_id: Option<TaskId>) -> Self {
+        Self { issue, job_id }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
+}
+
+impl UpsertIssueResponse {
+    pub fn new(issue_id: IssueId) -> Self {
+        Self { issue_id }
+    }
 }
 
 fn serialize_graph_filters<S>(
@@ -392,6 +502,7 @@ where
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SearchIssuesQuery {
     #[serde(default)]
     pub issue_type: Option<IssueType>,
@@ -410,9 +521,34 @@ pub struct SearchIssuesQuery {
     pub graph_filters: Vec<IssueGraphFilter>,
 }
 
+impl SearchIssuesQuery {
+    pub fn new(
+        issue_type: Option<IssueType>,
+        status: Option<IssueStatus>,
+        assignee: Option<String>,
+        q: Option<String>,
+        graph_filters: Vec<IssueGraphFilter>,
+    ) -> Self {
+        Self {
+            issue_type,
+            status,
+            assignee,
+            q,
+            graph_filters,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ListIssuesResponse {
     pub issues: Vec<IssueRecord>,
+}
+
+impl ListIssuesResponse {
+    pub fn new(issues: Vec<IssueRecord>) -> Self {
+        Self { issues }
+    }
 }
 
 #[cfg(test)]

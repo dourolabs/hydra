@@ -710,20 +710,20 @@ async fn submit_issue(
     };
     let creator = creator.to_string();
 
-    let request = UpsertIssueRequest {
-        issue: Issue {
-            issue_type: IssueType::Task,
-            description: submission.prompt.trim().to_string(),
+    let request = UpsertIssueRequest::new(
+        Issue::new(
+            IssueType::Task,
+            submission.prompt.trim().to_string(),
             creator,
-            progress: String::new(),
-            status: IssueStatus::Open,
+            String::new(),
+            IssueStatus::Open,
             assignee,
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-        },
-        job_id: None,
-    };
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        None,
+    );
 
     let response = client
         .create_issue(&request)
@@ -1743,6 +1743,7 @@ fn task_status_order(status: Status) -> usize {
         Status::Pending => 1,
         Status::Failed => 2,
         Status::Complete => 3,
+        _ => 4,
     }
 }
 
@@ -1752,6 +1753,7 @@ fn issue_status_order(status: IssueStatus) -> usize {
         IssueStatus::Open => 1,
         IssueStatus::Dropped => 2,
         IssueStatus::Closed => 3,
+        _ => 4,
     }
 }
 
@@ -1804,6 +1806,7 @@ fn note_or_error(job: &JobRecord) -> String {
 fn format_task_error(error: &TaskError) -> String {
     match error {
         TaskError::JobEngineError { reason } => format!("error: {reason}"),
+        other => format!("error: {other:?}"),
     }
 }
 
@@ -1813,6 +1816,7 @@ fn status_style(status: Status) -> Style {
         Status::Running => Style::default().fg(Color::Yellow),
         Status::Failed => Style::default().fg(Color::Red),
         Status::Pending => Style::default().fg(Color::Blue),
+        _ => Style::default(),
     }
 }
 
@@ -1822,6 +1826,7 @@ fn issue_status_style(status: IssueStatus) -> Style {
         IssueStatus::InProgress => Style::default().fg(Color::Yellow),
         IssueStatus::Closed => Style::default().fg(Color::Green),
         IssueStatus::Dropped => Style::default().fg(Color::Rgb(139, 0, 0)),
+        _ => Style::default(),
     }
 }
 
@@ -1844,6 +1849,7 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
             issue_status_style(IssueStatus::InProgress),
         ),
         (IssueStatus::Open, _) => ("open".to_string(), issue_status_style(IssueStatus::Open)),
+        _ => ("unknown".to_string(), Style::default()),
     }
 }
 
@@ -1895,20 +1901,15 @@ mod tests {
                 });
             }
             Status::Pending => {}
+            other => unreachable!("unsupported task status variant: {other:?}"),
         }
 
-        JobRecord {
-            id: task_id(id),
-            task: Task {
-                prompt: "0".into(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                image: None,
-                env_vars: HashMap::new(),
-            },
-            notes: None,
-            status_log: log,
-        }
+        JobRecord::new(
+            task_id(id),
+            Task::new("0".into(), BundleSpec::None, None, None, HashMap::new()),
+            None,
+            log,
+        )
     }
 
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
@@ -1931,6 +1932,14 @@ mod tests {
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
         }
+    }
+
+    fn child_of(issue_ref: &str) -> IssueDependency {
+        IssueDependency::new(IssueDependencyType::ChildOf, issue_id(issue_ref))
+    }
+
+    fn blocked_on(issue_ref: &str) -> IssueDependency {
+        IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
     }
 
     fn job_details_with_issue(
@@ -1975,14 +1984,7 @@ mod tests {
     fn issue_lines_sorted_by_status_and_nested() {
         let issues = vec![
             issue("i-1", IssueStatus::Open, vec![]),
-            issue(
-                "i-3",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-1"),
-                }],
-            ),
+            issue("i-3", IssueStatus::Closed, vec![child_of("i-1")]),
             issue("i-2", IssueStatus::InProgress, vec![]),
         ];
 
@@ -2001,16 +2003,7 @@ mod tests {
             issue(
                 "i-1",
                 IssueStatus::Open,
-                vec![
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: issue_id("i-closed"),
-                    },
-                    IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: issue_id("i-open"),
-                    },
-                ],
+                vec![blocked_on("i-closed"), blocked_on("i-open")],
             ),
             issue("i-closed", IssueStatus::Closed, vec![]),
             issue("i-open", IssueStatus::Open, vec![]),
@@ -2098,19 +2091,9 @@ mod tests {
             issue(
                 "i-parent",
                 IssueStatus::InProgress,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
+                vec![child_of("i-root")],
             ),
-            issue(
-                "i-root",
-                IssueStatus::InProgress,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-grand"),
-                }],
-            ),
+            issue("i-root", IssueStatus::InProgress, vec![child_of("i-grand")]),
             issue("i-grand", IssueStatus::Open, vec![]),
         ];
 
@@ -2133,22 +2116,12 @@ mod tests {
     fn completed_issue_lines_include_closed_roots_with_closed_descendants() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue("i-root-open", IssueStatus::Open, vec![]),
             issue(
                 "i-child-open",
                 IssueStatus::Open,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root-closed-with-open-child"),
-                }],
+                vec![child_of("i-root-closed-with-open-child")],
             ),
             issue("i-root-closed-with-open-child", IssueStatus::Closed, vec![]),
         ];
@@ -2175,10 +2148,7 @@ mod tests {
             issue(
                 "i-dropped-child",
                 IssueStatus::Dropped,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-dropped-root"),
-                }],
+                vec![child_of("i-dropped-root")],
             ),
             issue("i-open", IssueStatus::Open, vec![]),
         ];
@@ -2208,21 +2178,11 @@ mod tests {
     fn completed_issue_lines_track_nested_depth() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-child"),
-                }],
+                vec![child_of("i-child")],
             ),
         ];
 
@@ -2241,21 +2201,11 @@ mod tests {
     fn completed_issue_list_title_counts_descendants() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
             issue(
                 "i-grandchild",
                 IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-child"),
-                }],
+                vec![child_of("i-child")],
             ),
         ];
 
@@ -2268,14 +2218,7 @@ mod tests {
     fn completed_issue_rows_include_descendants_after_root() {
         let issues = vec![
             issue("i-root", IssueStatus::Closed, vec![]),
-            issue(
-                "i-child",
-                IssueStatus::Closed,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-root"),
-                }],
-            ),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
         ];
 
         let lines = build_completed_issue_lines(&issues, &[]);
@@ -2359,10 +2302,7 @@ mod tests {
             issue(
                 "i-child-open",
                 IssueStatus::Open,
-                vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: issue_id("i-closed-root"),
-                }],
+                vec![child_of("i-closed-root")],
             ),
             issue("i-open-root", IssueStatus::Open, vec![]),
         ];
@@ -2862,9 +2802,8 @@ mod tests {
                     "patches": []
                 }
             }));
-            then.status(200).json_body_obj(&UpsertIssueResponse {
-                issue_id: issue_id("i-new"),
-            });
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
         });
 
         let client = MetisClient::new(server.base_url()).expect("failed to create client");

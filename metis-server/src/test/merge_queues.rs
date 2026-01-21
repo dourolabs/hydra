@@ -15,13 +15,13 @@ use tempfile::TempDir;
 fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let mut state = test_state();
-    let repository = ServiceRepository {
-        name: repo.clone(),
-        remote_url: format!("https://example.com/{}.git", repo.as_str()),
-        default_branch: None,
-        github_token: None,
-        default_image: None,
-    };
+    let repository = ServiceRepository::new(
+        repo.clone(),
+        format!("https://example.com/{}.git", repo.as_str()),
+        None,
+        None,
+        None,
+    );
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
         repo, repository,
     )])));
@@ -34,17 +34,17 @@ async fn state_with_repo_and_patch(
 ) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
     let (remote_dir, diff) = create_repository_with_patch()?;
-    let repository = ServiceRepository {
-        name: repo.clone(),
-        remote_url: remote_dir
+    let repository = ServiceRepository::new(
+        repo.clone(),
+        remote_dir
             .path()
             .to_str()
             .expect("tempdir path is valid utf-8")
             .to_string(),
-        default_branch: Some("main".to_string()),
-        github_token: None,
-        default_image: None,
-    };
+        Some("main".to_string()),
+        None,
+        None,
+    );
 
     let mut state = test_state();
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
@@ -52,17 +52,17 @@ async fn state_with_repo_and_patch(
         repository,
     )])));
 
-    let patch = Patch {
-        title: "Test patch".to_string(),
-        description: "Patch for merge queue enqueue test".to_string(),
+    let patch = Patch::new(
+        "Test patch".to_string(),
+        "Patch for merge queue enqueue test".to_string(),
         diff,
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: repo.clone(),
-        github: None,
-    };
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        repo.clone(),
+        None,
+    );
 
     let patch_id = {
         let mut store = state.store.write().await;
@@ -188,9 +188,7 @@ async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
             "{}/v1/merge-queues/dourolabs/api/main/patches",
             server.base_url()
         ))
-        .json(&EnqueueMergePatchRequest {
-            patch_id: patch_id.clone(),
-        })
+        .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
         .send()
         .await?;
 
@@ -233,9 +231,7 @@ async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
             "{}/v1/merge-queues/unknown/unknown/main/patches",
             server.base_url()
         ))
-        .json(&EnqueueMergePatchRequest {
-            patch_id: PatchId::new(),
-        })
+        .json(&EnqueueMergePatchRequest::new(PatchId::new()))
         .send()
         .await?;
 

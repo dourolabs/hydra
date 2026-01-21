@@ -36,8 +36,5 @@ pub async fn kill_job(
 
     info!(job_id = %job_id, "kill_job completed successfully");
 
-    Ok(Json(KillJobResponse {
-        job_id,
-        status: "killed".to_string(),
-    }))
+    Ok(Json(KillJobResponse::new(job_id, "killed".to_string())))
 }

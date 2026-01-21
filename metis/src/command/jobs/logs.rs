@@ -32,10 +32,7 @@ async fn stream_logs_for_issue(
     watch: bool,
 ) -> Result<()> {
     let mut jobs = client
-        .list_jobs(&SearchJobsQuery {
-            q: None,
-            spawned_from: Some(issue_id.clone()),
-        })
+        .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone())))
         .await
         .with_context(|| format!("failed to find jobs for issue '{issue_id}'"))?
         .jobs;
@@ -87,23 +84,21 @@ mod tests {
     }
 
     fn job_record(id: &str, created_at_secs: i64) -> JobRecord {
-        JobRecord {
-            id: task_id(id),
-            task: Task {
-                prompt: "demo".to_string(),
-                context: metis_common::jobs::BundleSpec::None,
-                spawned_from: None,
-                image: None,
-                env_vars: HashMap::new(),
-            },
-            notes: None,
-            status_log: TaskStatusLog {
-                events: vec![Event::Created {
-                    at: chrono::Utc::now() + chrono::Duration::seconds(created_at_secs),
-                    status: Status::Pending,
-                }],
-            },
-        }
+        JobRecord::new(
+            task_id(id),
+            Task::new(
+                "demo".to_string(),
+                metis_common::jobs::BundleSpec::None,
+                None,
+                None,
+                HashMap::new(),
+            ),
+            None,
+            TaskStatusLog::from_events(vec![Event::Created {
+                at: chrono::Utc::now() + chrono::Duration::seconds(created_at_secs),
+                status: Status::Pending,
+            }]),
+        )
     }
 
     #[tokio::test]
@@ -134,9 +129,10 @@ mod tests {
             when.method(GET)
                 .path("/v1/jobs/")
                 .query_param("spawned_from", issue_id.as_ref());
-            then.status(200).json_body_obj(&ListJobsResponse {
-                jobs: vec![job_record("t-newest", 5), job_record("t-older", 0)],
-            });
+            then.status(200).json_body_obj(&ListJobsResponse::new(vec![
+                job_record("t-newest", 5),
+                job_record("t-older", 0),
+            ]));
         });
         let log_mock = server.mock(|when, then| {
             when.method(GET)

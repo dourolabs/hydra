@@ -17,9 +17,37 @@ use crate::{
     },
 };
 use chrono::Utc;
-use metis_common::TaskId;
+use metis_common::{PatchId, TaskId};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
+
+fn issue(
+    issue_type: IssueType,
+    description: &str,
+    creator: String,
+    progress: String,
+    status: IssueStatus,
+    assignee: Option<&str>,
+    todo_list: Vec<TodoItem>,
+    dependencies: Vec<IssueDependency>,
+    patches: Vec<PatchId>,
+) -> Issue {
+    Issue::new(
+        issue_type,
+        description.to_string(),
+        creator,
+        progress,
+        status,
+        assignee.map(str::to_string),
+        todo_list,
+        dependencies,
+        patches,
+    )
+}
+
+fn todo(description: &str, is_done: bool) -> TodoItem {
+    TodoItem::new(description.to_string(), is_done)
+}
 
 #[tokio::test]
 async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
@@ -28,20 +56,20 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
 
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "original details".to_string(),
-                creator: String::new(),
-                progress: "Initial progress".to_string(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "original details".to_string(),
+                String::new(),
+                "Initial progress".to_string(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -53,20 +81,20 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "updated details".to_string(),
-                creator: String::new(),
-                progress: "Updated progress".to_string(),
-                status: IssueStatus::InProgress,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "updated details".to_string(),
+                String::new(),
+                "Updated progress".to_string(),
+                IssueStatus::InProgress,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -87,17 +115,17 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
 
     assert_eq!(
         fetched.issue,
-        Issue {
-            issue_type: IssueType::Task,
-            description: "updated details".to_string(),
-            creator: String::new(),
-            progress: "Updated progress".to_string(),
-            status: IssueStatus::InProgress,
-            assignee: None,
-            todo_list: Vec::new(),
-            dependencies: vec![],
-            patches: Vec::new(),
-        }
+        Issue::new(
+            IssueType::Task,
+            "updated details".to_string(),
+            String::new(),
+            "Updated progress".to_string(),
+            IssueStatus::InProgress,
+            None,
+            Vec::new(),
+            vec![],
+            Vec::new(),
+        )
     );
     Ok(())
 }
@@ -110,45 +138,45 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
     let parent_creator = "parent-creator".to_string();
     let parent: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "parent".to_string(),
-                creator: parent_creator.clone(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                parent_creator.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
-    let child_dependencies = vec![IssueDependency {
-        dependency_type: IssueDependencyType::ChildOf,
-        issue_id: parent.issue_id.clone(),
-    }];
+    let child_dependencies = vec![IssueDependency::new(
+        IssueDependencyType::ChildOf,
+        parent.issue_id.clone(),
+    )];
     let child: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "child".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: child_dependencies.clone(),
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "child",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                child_dependencies.clone(),
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -170,20 +198,20 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
     let explicit_creator = "explicit-creator".to_string();
     let explicit_child: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "explicit child".to_string(),
-                creator: explicit_creator.clone(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: child_dependencies.clone(),
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "explicit child",
+                explicit_creator.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                child_dependencies.clone(),
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -212,45 +240,45 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
 
     let blocker: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "blocker".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "blocker",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
-    let blocked_dependencies = vec![IssueDependency {
-        dependency_type: IssueDependencyType::BlockedOn,
-        issue_id: blocker.issue_id.clone(),
-    }];
+    let blocked_dependencies = vec![IssueDependency::new(
+        IssueDependencyType::BlockedOn,
+        blocker.issue_id.clone(),
+    )];
     let blocked: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "blocked".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: blocked_dependencies.clone(),
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "blocked",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                blocked_dependencies.clone(),
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -262,20 +290,20 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             server.base_url(),
             blocked.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "blocked".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: blocked_dependencies.clone(),
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "blocked",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                blocked_dependencies.clone(),
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?;
 
@@ -295,20 +323,20 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             server.base_url(),
             blocker.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "blocker".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "blocker",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .error_for_status()?;
@@ -319,20 +347,20 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             server.base_url(),
             blocked.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "blocked".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: blocked_dependencies,
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "blocked",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                blocked_dependencies,
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?;
 
@@ -347,45 +375,45 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
 
     let parent: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "parent".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
-    let child_dependencies = vec![IssueDependency {
-        dependency_type: IssueDependencyType::ChildOf,
-        issue_id: parent.issue_id.clone(),
-    }];
+    let child_dependencies = vec![IssueDependency::new(
+        IssueDependencyType::ChildOf,
+        parent.issue_id.clone(),
+    )];
     let child: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "child".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: child_dependencies.clone(),
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "child",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                child_dependencies.clone(),
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -397,20 +425,20 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             server.base_url(),
             parent.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "parent".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?;
 
@@ -430,20 +458,20 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             server.base_url(),
             child.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "child".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: child_dependencies,
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "child",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                child_dependencies,
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .error_for_status()?;
@@ -454,20 +482,20 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             server.base_url(),
             parent.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "parent".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Closed,
-                assignee: None,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "parent",
+                String::new(),
+                String::new(),
+                IssueStatus::Closed,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?;
 
@@ -480,34 +508,22 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let todo_list = vec![
-        TodoItem {
-            description: "write tests".to_string(),
-            is_done: false,
-        },
-        TodoItem {
-            description: "review PR".to_string(),
-            is_done: false,
-        },
-    ];
-    let base_issue = Issue {
-        issue_type: IssueType::Task,
-        description: "issue with todos".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Open,
-        assignee: None,
+    let todo_list = vec![todo("write tests", false), todo("review PR", false)];
+    let base_issue = issue(
+        IssueType::Task,
+        "issue with todos",
+        String::new(),
+        String::new(),
+        IssueStatus::Open,
+        None,
         todo_list,
-        dependencies: vec![],
-        patches: Vec::new(),
-    };
+        vec![],
+        Vec::new(),
+    );
 
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: base_issue.clone(),
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(base_issue.clone(), None))
         .send()
         .await?
         .json()
@@ -521,10 +537,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: closed_issue.clone(),
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(closed_issue.clone(), None))
         .send()
         .await?;
 
@@ -550,26 +563,14 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
     }
 
     let mut completed_issue = closed_issue;
-    completed_issue.todo_list = vec![
-        TodoItem {
-            description: "write tests".to_string(),
-            is_done: true,
-        },
-        TodoItem {
-            description: "review PR".to_string(),
-            is_done: true,
-        },
-    ];
+    completed_issue.todo_list = vec![todo("write tests", true), todo("review PR", true)];
     client
         .put(format!(
             "{}/v1/issues/{}",
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: completed_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(completed_issue, None))
         .send()
         .await?
         .error_for_status()?;
@@ -584,24 +585,21 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state.clone()).await?;
     let client = test_client();
 
-    let base_issue = Issue {
-        issue_type: IssueType::Task,
-        description: "dropped issue".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Open,
-        assignee: None,
-        todo_list: Vec::new(),
-        dependencies: vec![],
-        patches: Vec::new(),
-    };
+    let base_issue = issue(
+        IssueType::Task,
+        "dropped issue",
+        String::new(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
 
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: base_issue.clone(),
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(base_issue.clone(), None))
         .send()
         .await?
         .json()
@@ -633,13 +631,14 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                status: IssueStatus::Dropped,
-                ..base_issue
+        .json(&UpsertIssueRequest::new(
+            {
+                let mut dropped_issue = base_issue.clone();
+                dropped_issue.status = IssueStatus::Dropped;
+                dropped_issue
             },
-            job_id: None,
-        })
+            None,
+        ))
         .send()
         .await?
         .error_for_status()?;
@@ -655,47 +654,48 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let issue = Issue {
-        issue_type: IssueType::Bug,
-        description: "login fails for guests".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Open,
-        assignee: None,
-        todo_list: Vec::new(),
-        dependencies: vec![],
-        patches: Vec::new(),
-    };
-    let assigned_issue = Issue {
-        issue_type: IssueType::Task,
-        description: "assigned issue".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Open,
-        assignee: Some("owner-1".to_string()),
-        todo_list: Vec::new(),
-        dependencies: vec![],
-        patches: Vec::new(),
-    };
-    let closed_issue = Issue {
-        issue_type: IssueType::Task,
-        description: "retire old endpoint".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Closed,
-        assignee: None,
-        todo_list: Vec::new(),
-        dependencies: vec![],
-        patches: Vec::new(),
-    };
+    let base_issue = issue(
+        IssueType::Bug,
+        "login fails for guests",
+        String::new(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let assigned_issue = issue(
+        IssueType::Task,
+        "assigned issue",
+        String::new(),
+        String::new(),
+        IssueStatus::Open,
+        Some("owner-1"),
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
+    let closed_issue = issue(
+        IssueType::Task,
+        "retire old endpoint",
+        String::new(),
+        String::new(),
+        IssueStatus::Closed,
+        None,
+        Vec::new(),
+        vec![],
+        Vec::new(),
+    );
 
-    for issue in [issue.clone(), assigned_issue.clone(), closed_issue.clone()] {
+    for issue in [
+        base_issue.clone(),
+        assigned_issue.clone(),
+        closed_issue.clone(),
+    ] {
         let response = client
             .post(format!("{}/v1/issues", server.base_url()))
-            .json(&UpsertIssueRequest {
-                issue,
-                job_id: None,
-            })
+            .json(&UpsertIssueRequest::new(issue, None))
             .send()
             .await?;
         assert!(response.status().is_success());
@@ -716,7 +716,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(filtered_issues.issues.len(), 1);
-    assert_eq!(filtered_issues.issues[0].issue, issue);
+    assert_eq!(filtered_issues.issues[0].issue, base_issue);
 
     let filtered_by_assignee: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
@@ -759,26 +759,23 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let initial_todo = TodoItem {
-        description: "write tests".to_string(),
-        is_done: false,
-    };
+    let initial_todo = todo("write tests", false);
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "issue with todos".to_string(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: vec![initial_todo.clone()],
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "issue with todos",
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                vec![initial_todo.clone()],
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
         .send()
         .await?
         .json()
@@ -800,13 +797,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         added.todo_list,
-        vec![
-            initial_todo.clone(),
-            TodoItem {
-                description: "review PR".to_string(),
-                is_done: false
-            }
-        ]
+        vec![initial_todo.clone(), todo("review PR", false)]
     );
 
     let updated: TodoListResponse = client
@@ -849,16 +840,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
     assert!(!unset.todo_list[1].is_done);
 
     let replacement = ReplaceTodoListRequest {
-        todo_list: vec![
-            TodoItem {
-                description: "rewrite docs".to_string(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "review PR".to_string(),
-                is_done: true,
-            },
-        ],
+        todo_list: vec![todo("rewrite docs", false), todo("review PR", true)],
     };
 
     let replaced: TodoListResponse = client
