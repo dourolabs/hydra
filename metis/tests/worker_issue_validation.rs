@@ -40,7 +40,9 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     let error = worker_result.expect_err("closing a parent with an open child should fail");
     let message = error.to_string();
     assert!(
-        message.contains("failed to update issue") && message.contains("400 Bad Request"),
+        message.contains("failed to update issue")
+            && message.contains("400 Bad Request")
+            && message.contains("cannot close issue with open child issues"),
         "worker output did not include expected child error: {message}"
     );
 
@@ -95,7 +97,9 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let error = worker_result.expect_err("closing an issue with incomplete todos should fail");
     let message = error.to_string();
     assert!(
-        message.contains("failed to update issue") && message.contains("400 Bad Request"),
+        message.contains("failed to update issue")
+            && message.contains("400 Bad Request")
+            && message.contains("cannot close issue with incomplete todo items"),
         "worker output did not include expected todo error: {message}"
     );
 
