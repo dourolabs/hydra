@@ -5,6 +5,7 @@ pub use kube::build_kube_client;
 use crate::domain::jobs::BundleSpec;
 use anyhow::{Context, Result};
 use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
+use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -22,6 +23,8 @@ pub struct AppConfig {
     pub database: DatabaseSection,
     #[serde(default)]
     pub service: ServiceSection,
+    #[serde(default)]
+    pub github_app: GithubAppSection,
     #[serde(default)]
     pub background: BackgroundSection,
 }
@@ -133,6 +136,45 @@ impl Default for KubernetesSection {
 pub struct ServiceSection {
     #[serde(default)]
     pub repositories: HashMap<RepoName, ServiceRepositoryConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GithubAppSection {
+    #[serde(default)]
+    pub app_id: Option<u64>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    #[serde(default)]
+    pub private_key: Option<String>,
+}
+
+impl GithubAppSection {
+    pub fn app_id(&self) -> Option<AppId> {
+        self.app_id.filter(|id| *id > 0).map(AppId)
+    }
+
+    pub fn client_id(&self) -> Option<String> {
+        self.client_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_owned)
+    }
+
+    pub fn client_secret(&self) -> Option<String> {
+        self.client_secret
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_owned)
+    }
+
+    pub fn private_key(&self) -> Option<String> {
+        self.private_key
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_owned)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -371,5 +413,20 @@ mod tests {
         };
 
         assert_eq!(database.database_url(), None);
+    }
+
+    #[test]
+    fn github_app_section_filters_blank_values() {
+        let github_app = GithubAppSection {
+            app_id: Some(42),
+            client_id: Some("  ".to_string()),
+            client_secret: Some("\n".to_string()),
+            private_key: Some("key".to_string()),
+        };
+
+        assert_eq!(github_app.app_id(), Some(AppId(42)));
+        assert_eq!(github_app.client_id(), None);
+        assert_eq!(github_app.client_secret(), None);
+        assert_eq!(github_app.private_key(), Some("key".to_string()));
     }
 }

@@ -5,6 +5,7 @@ pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 
 pub mod agents;
 pub mod constants;
+pub mod github;
 pub mod issues;
 pub mod job_status;
 pub mod jobs;

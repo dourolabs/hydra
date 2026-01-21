@@ -19,6 +19,7 @@ use metis_common::{
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
 };
+use octocrab::Octocrab;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -30,6 +31,7 @@ use super::{MergeQueueError, ServiceState, TaskExt, TaskResolutionError};
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
