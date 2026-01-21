@@ -13,6 +13,7 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
         store
             .add_user(User {
                 username: Username::from("alice"),
+                github_user_id: Some(101),
                 github_token: "token-123".to_string(),
             })
             .await
@@ -35,6 +36,10 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
     let user = users[0].as_object().expect("user should be an object");
     assert_eq!(user.get("username").and_then(Value::as_str), Some("alice"));
     assert!(user.get("github_token").is_none());
+    assert_eq!(
+        user.get("github_user_id").and_then(Value::as_u64),
+        Some(101)
+    );
 
     Ok(())
 }
@@ -48,6 +53,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
 
     let payload = CreateUserRequest {
         username: Username::from("bob"),
+        github_user_id: Some(111),
         github_token: "old-token".to_string(),
     };
     let create_response = client
@@ -59,6 +65,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
 
     let update_payload = UpdateGithubTokenRequest {
         github_token: "new-token".to_string(),
+        github_user_id: Some(222),
     };
     let update_response = client
         .put(format!("{}/v1/users/bob/github-token", server.base_url()))
@@ -71,6 +78,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
     let users = store_read.list_users().await.unwrap();
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].github_token, "new-token");
+    assert_eq!(users[0].github_user_id, Some(222));
 
     Ok(())
 }

@@ -530,12 +530,16 @@ impl Store for MemoryStore {
         &mut self,
         username: &Username,
         github_token: String,
+        github_user_id: Option<u64>,
     ) -> Result<User, StoreError> {
         let user = self
             .users
             .get_mut(username)
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
         user.github_token = github_token;
+        if let Some(github_user_id) = github_user_id {
+            user.github_user_id = Some(github_user_id);
+        }
         Ok(user.clone())
     }
 }
@@ -1210,21 +1214,24 @@ mod tests {
         store
             .add_user(User {
                 username: username.clone(),
+                github_user_id: Some(101),
                 github_token: "old-token".to_string(),
             })
             .await
             .unwrap();
 
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string())
+            .set_user_github_token(&username, "new-token".to_string(), Some(202))
             .await
             .unwrap();
 
         assert_eq!(updated.github_token, "new-token");
+        assert_eq!(updated.github_user_id, Some(202));
 
         let users = store.list_users().await.unwrap();
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].github_token, "new-token");
+        assert_eq!(users[0].github_user_id, Some(202));
     }
 
     #[tokio::test]

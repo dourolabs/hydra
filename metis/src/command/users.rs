@@ -78,6 +78,7 @@ async fn create_user(
 ) -> Result<UserSummary> {
     let request = CreateUserRequest {
         username: normalize_non_empty(&args.username, "username")?.into(),
+        github_user_id: None,
         github_token: normalize_non_empty(&args.github_token, "github token")?,
     };
     let response = client
@@ -103,6 +104,7 @@ async fn set_github_token(
     let username: Username = normalize_non_empty(&args.username, "username")?.into();
     let request = UpdateGithubTokenRequest {
         github_token: normalize_non_empty(&args.github_token, "github token")?,
+        github_user_id: None,
     };
     let response = client
         .set_user_github_token(&username, &request)
@@ -165,9 +167,11 @@ mod tests {
             users: vec![
                 UserSummary {
                     username: Username::from("alice"),
+                    github_user_id: None,
                 },
                 UserSummary {
                     username: Username::from("bob"),
+                    github_user_id: None,
                 },
             ],
         };
@@ -201,6 +205,7 @@ mod tests {
         let response = UpsertUserResponse {
             user: UserSummary {
                 username: Username::from("alice"),
+                github_user_id: None,
             },
         };
         let mock = server.mock(|when, then| {
