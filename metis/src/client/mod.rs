@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     agents::ListAgentsResponse,
+    api::v1::error::ApiErrorBody,
     github::GithubAppClientIdResponse,
     issues::{
         AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
@@ -46,6 +47,52 @@ pub struct MetisClient {
 
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+
+trait ResponseExt {
+    async fn error_for_status_with_body(self, context: &str) -> Result<Response>;
+}
+
+impl ResponseExt for Response {
+    async fn error_for_status_with_body(self, context: &str) -> Result<Response> {
+        let status = self.status();
+        if status.is_success() {
+            return Ok(self);
+        }
+
+        let is_json = self
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.starts_with("application/json"))
+            .unwrap_or(false);
+
+        let body_text = self.text().await.unwrap_or_default();
+
+        let server_message = if is_json {
+            serde_json::from_str::<ApiErrorBody>(&body_text)
+                .ok()
+                .map(|body| body.error)
+        } else {
+            None
+        }
+        .or_else(|| {
+            let trimmed = body_text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        let mut message = format!("{context}: {status}");
+        if let Some(details) = server_message {
+            message.push_str(": ");
+            message.push_str(&details);
+        }
+
+        Err(anyhow!(message))
+    }
+}
 
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
@@ -178,8 +225,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to contact metis-server health endpoint")?
-            .error_for_status()
-            .context("metis-server health endpoint returned an error status")?;
+            .error_for_status_with_body("metis-server health endpoint returned an error status")
+            .await?;
 
         let health = response
             .json::<HealthResponse>()
@@ -199,8 +246,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit create job request")?
-            .error_for_status()
-            .context("metis-server rejected create job request")?;
+            .error_for_status_with_body("metis-server rejected create job request")
+            .await?;
 
         response
             .json::<CreateJobResponse>()
@@ -218,8 +265,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch jobs list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing jobs")?;
+            .error_for_status_with_body("metis-server returned an error while listing jobs")
+            .await?;
 
         response
             .json::<ListJobsResponse>()
@@ -237,8 +284,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch job")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching job")?;
+            .error_for_status_with_body("metis-server returned an error while fetching job")
+            .await?;
 
         response
             .json::<JobRecord>()
@@ -256,8 +303,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit kill job request")?
-            .error_for_status()
-            .context("metis-server returned an error while killing job")?;
+            .error_for_status_with_body("metis-server returned an error while killing job")
+            .await?;
 
         response
             .json::<KillJobResponse>()
@@ -279,8 +326,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to request job logs")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching job logs")?;
+            .error_for_status_with_body("metis-server returned an error while fetching job logs")
+            .await?;
 
         let is_sse = response
             .headers()
@@ -312,8 +359,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit set job status request")?
-            .error_for_status()
-            .context("metis-server returned an error while setting job status")?;
+            .error_for_status_with_body("metis-server returned an error while setting job status")
+            .await?;
 
         response
             .json::<SetJobStatusResponse>()
@@ -331,8 +378,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to request job status")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching job status")?;
+            .error_for_status_with_body("metis-server returned an error while fetching job status")
+            .await?;
 
         response
             .json::<GetJobStatusResponse>()
@@ -350,8 +397,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to request job context")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching job context")?;
+            .error_for_status_with_body("metis-server returned an error while fetching job context")
+            .await?;
         response
             .json::<WorkerContext>()
             .await
@@ -368,8 +415,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit create issue request")?
-            .error_for_status()
-            .context("metis-server rejected create issue request")?;
+            .error_for_status_with_body("metis-server rejected create issue request")
+            .await?;
 
         response
             .json::<UpsertIssueResponse>()
@@ -392,8 +439,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit update issue request")?
-            .error_for_status()
-            .context("metis-server returned an error while updating issue")?;
+            .error_for_status_with_body("metis-server returned an error while updating issue")
+            .await?;
 
         response
             .json::<UpsertIssueResponse>()
@@ -411,8 +458,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch issue")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching issue")?;
+            .error_for_status_with_body("metis-server returned an error while fetching issue")
+            .await?;
 
         response
             .json::<IssueRecord>()
@@ -430,8 +477,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch issues list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing issues")?;
+            .error_for_status_with_body("metis-server returned an error while listing issues")
+            .await?;
 
         response
             .json::<ListIssuesResponse>()
@@ -454,8 +501,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit add todo item request")?
-            .error_for_status()
-            .context("metis-server rejected add todo item request")?;
+            .error_for_status_with_body("metis-server rejected add todo item request")
+            .await?;
 
         response
             .json::<TodoListResponse>()
@@ -478,8 +525,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit replace todo list request")?
-            .error_for_status()
-            .context("metis-server returned an error while replacing todo list")?;
+            .error_for_status_with_body("metis-server returned an error while replacing todo list")
+            .await?;
 
         response
             .json::<TodoListResponse>()
@@ -503,8 +550,10 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit todo status update request")?
-            .error_for_status()
-            .context("metis-server returned an error while updating todo item status")?;
+            .error_for_status_with_body(
+                "metis-server returned an error while updating todo item status",
+            )
+            .await?;
 
         response
             .json::<TodoListResponse>()
@@ -522,8 +571,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit create patch request")?
-            .error_for_status()
-            .context("metis-server rejected create patch request")?;
+            .error_for_status_with_body("metis-server rejected create patch request")
+            .await?;
 
         response
             .json::<UpsertPatchResponse>()
@@ -546,8 +595,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit update patch request")?
-            .error_for_status()
-            .context("metis-server returned an error while updating patch")?;
+            .error_for_status_with_body("metis-server returned an error while updating patch")
+            .await?;
 
         response
             .json::<UpsertPatchResponse>()
@@ -565,8 +614,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch patch")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching patch")?;
+            .error_for_status_with_body("metis-server returned an error while fetching patch")
+            .await?;
 
         response
             .json::<PatchRecord>()
@@ -584,8 +633,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch patches list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing patches")?;
+            .error_for_status_with_body("metis-server returned an error while listing patches")
+            .await?;
 
         response
             .json::<ListPatchesResponse>()
@@ -602,8 +651,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch repositories list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing repositories")?;
+            .error_for_status_with_body("metis-server returned an error while listing repositories")
+            .await?;
 
         response
             .json::<ListRepositoriesResponse>()
@@ -624,8 +673,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit create repository request")?
-            .error_for_status()
-            .context("metis-server rejected create repository request")?;
+            .error_for_status_with_body("metis-server rejected create repository request")
+            .await?;
 
         response
             .json::<UpsertRepositoryResponse>()
@@ -651,8 +700,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit update repository request")?
-            .error_for_status()
-            .context("metis-server returned an error while updating repository")?;
+            .error_for_status_with_body("metis-server returned an error while updating repository")
+            .await?;
 
         response
             .json::<UpsertRepositoryResponse>()
@@ -669,8 +718,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch users list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing users")?;
+            .error_for_status_with_body("metis-server returned an error while listing users")
+            .await?;
 
         response
             .json::<ListUsersResponse>()
@@ -688,8 +737,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit create user request")?
-            .error_for_status()
-            .context("metis-server rejected create user request")?;
+            .error_for_status_with_body("metis-server rejected create user request")
+            .await?;
 
         response
             .json::<UpsertUserResponse>()
@@ -706,8 +755,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit delete user request")?
-            .error_for_status()
-            .context("metis-server rejected delete user request")?;
+            .error_for_status_with_body("metis-server rejected delete user request")
+            .await?;
 
         response
             .json::<DeleteUserResponse>()
@@ -729,8 +778,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit update github token request")?
-            .error_for_status()
-            .context("metis-server rejected update github token request")?;
+            .error_for_status_with_body("metis-server rejected update github token request")
+            .await?;
 
         response
             .json::<UpsertUserResponse>()
@@ -751,8 +800,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch merge queue")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching merge queue")?;
+            .error_for_status_with_body("metis-server returned an error while fetching merge queue")
+            .await?;
 
         response
             .json::<MergeQueue>()
@@ -779,8 +828,10 @@ impl MetisClient {
             .send()
             .await
             .context("failed to submit enqueue merge patch request")?
-            .error_for_status()
-            .context("metis-server returned an error while enqueuing merge patch")?;
+            .error_for_status_with_body(
+                "metis-server returned an error while enqueuing merge patch",
+            )
+            .await?;
 
         response
             .json::<MergeQueue>()
@@ -797,8 +848,8 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch agents list")?
-            .error_for_status()
-            .context("metis-server returned an error while listing agents")?;
+            .error_for_status_with_body("metis-server returned an error while listing agents")
+            .await?;
 
         response
             .json::<ListAgentsResponse>()
@@ -815,8 +866,10 @@ impl MetisClient {
             .send()
             .await
             .context("failed to fetch GitHub app client id")?
-            .error_for_status()
-            .context("metis-server returned an error while fetching GitHub app client id")?;
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching GitHub app client id",
+            )
+            .await?;
 
         response
             .json::<GithubAppClientIdResponse>()
