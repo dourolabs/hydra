@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
     agents::ListAgentsResponse,
+    github::GithubAppClientIdResponse,
     issues::{
         AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
         SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
@@ -123,6 +124,7 @@ pub trait MetisClientInterface: Send + Sync {
         patch_id: &PatchId,
     ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
+    async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse>;
 }
 
 impl MetisClient {
@@ -806,6 +808,24 @@ impl MetisClient {
             .context("failed to decode list agents response")
     }
 
+    /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.
+    pub async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
+        let url = self.endpoint("/v1/github/app/client-id")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch GitHub app client id")?
+            .error_for_status()
+            .context("metis-server returned an error while fetching GitHub app client id")?;
+
+        response
+            .json::<GithubAppClientIdResponse>()
+            .await
+            .context("failed to decode GitHub app client id response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1070,6 +1090,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_agents(&self) -> Result<ListAgentsResponse> {
         MetisClient::list_agents(self).await
+    }
+
+    async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
+        MetisClient::get_github_app_client_id(self).await
     }
 }
 
