@@ -505,7 +505,7 @@ impl Store for MemoryStore {
 
     async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
         if self.users.contains_key(&user.username) {
-            return Err(StoreError::UserAlreadyExists(user.username.to_string()));
+            return Err(StoreError::UserAlreadyExists(user.username.clone()));
         }
 
         self.users.insert(user.username.clone(), user);
@@ -518,9 +518,9 @@ impl Store for MemoryStore {
         Ok(users)
     }
 
-    async fn delete_user(&mut self, username: &str) -> Result<(), StoreError> {
+    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError> {
         if self.users.remove(username).is_none() {
-            return Err(StoreError::UserNotFound(username.to_string()));
+            return Err(StoreError::UserNotFound(username.clone()));
         }
 
         Ok(())
@@ -528,13 +528,13 @@ impl Store for MemoryStore {
 
     async fn set_user_github_token(
         &mut self,
-        username: &str,
+        username: &Username,
         github_token: String,
     ) -> Result<User, StoreError> {
         let user = self
             .users
             .get_mut(username)
-            .ok_or_else(|| StoreError::UserNotFound(username.to_string()))?;
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
         user.github_token = github_token;
         Ok(user.clone())
     }
@@ -1216,7 +1216,7 @@ mod tests {
             .unwrap();
 
         let updated = store
-            .set_user_github_token(username.as_str(), "new-token".to_string())
+            .set_user_github_token(&username, "new-token".to_string())
             .await
             .unwrap();
 
@@ -1231,8 +1231,9 @@ mod tests {
     async fn delete_missing_user_returns_error() {
         let mut store = MemoryStore::new();
 
-        let err = store.delete_user("missing-user").await.unwrap_err();
+        let username = Username::from("missing-user");
+        let err = store.delete_user(&username).await.unwrap_err();
 
-        assert!(matches!(err, StoreError::UserNotFound(name) if name == "missing-user"));
+        assert!(matches!(err, StoreError::UserNotFound(name) if name == username));
     }
 }
