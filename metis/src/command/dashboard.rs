@@ -493,7 +493,11 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
 }
 
 fn is_panel_focus_key(key: KeyEvent) -> bool {
-    key.code == KeyCode::Tab && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+    match key.code {
+        KeyCode::BackTab => true,
+        KeyCode::Tab => key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT,
+        _ => false,
+    }
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
@@ -501,11 +505,12 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
 }
 
 fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
-    state.selected_panel = if key.modifiers.contains(KeyModifiers::SHIFT) {
-        prev_panel_focus(state.selected_panel)
-    } else {
-        next_panel_focus(state.selected_panel)
-    };
+    state.selected_panel =
+        if key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT) {
+            prev_panel_focus(state.selected_panel)
+        } else {
+            next_panel_focus(state.selected_panel)
+        };
     update_panel_focus(state);
 }
 
@@ -2508,6 +2513,24 @@ mod tests {
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::NewIssue);
+    }
+
+    #[test]
+    fn backtab_moves_focus_to_previous_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::UserOwned,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)),
             &mut state,
         );
 
