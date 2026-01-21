@@ -75,7 +75,8 @@ pub async fn run(
         .context("failed to create temporary codex output directory")?;
     let output_path = output_dir.path().join(crate::constants::OUTPUT_TXT_FILE);
 
-    let last_message = commands
+    let mut errors = Vec::new();
+    let last_message = match commands
         .run(
             &prompt,
             openai_api_key.clone(),
@@ -83,19 +84,30 @@ pub async fn run(
             &execution_env,
             &output_path,
         )
-        .await?;
+        .await
+    {
+        Ok(message) => message,
+        Err(err) => {
+            errors.push(err);
+            errors
+                .last()
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "worker command execution failed".to_string())
+        }
+    };
 
     if base_commit.is_some() {
-        finalize_task_run(
+        if let Err(err) = finalize_task_run(
             &dest,
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
-        )
-        .context("failed to finalize task output branches")?;
+        ) {
+            errors.push(err.context("failed to finalize task output branches"));
+        }
     }
 
-    submit_patch_artifact_if_present(
+    if let Err(err) = submit_patch_artifact_if_present(
         client,
         &job,
         &dest,
@@ -103,10 +115,33 @@ pub async fn run(
         &service_repo_name,
         base_commit,
     )
-    .await?;
-    submit_job_status(client, &job, &last_message).await?;
+    .await
+    {
+        errors.push(err.context("failed to submit patch artifact"));
+    }
 
-    Ok(())
+    let status_update = if errors.is_empty() {
+        JobStatusUpdate::Complete {
+            last_message: Some(last_message.clone()),
+        }
+    } else {
+        JobStatusUpdate::Failed {
+            reason: errors
+                .first()
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "worker run failed for unknown reasons".to_string()),
+        }
+    };
+
+    if let Err(err) = submit_job_status(client, &job, status_update).await {
+        errors.push(err);
+    }
+
+    if let Some(err) = errors.into_iter().next() {
+        Err(err)
+    } else {
+        Ok(())
+    }
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
@@ -138,21 +173,17 @@ fn ensure_color_output_env(env: &mut HashMap<String, String>) {
 async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &TaskId,
-    last_message: &str,
+    status: JobStatusUpdate,
 ) -> Result<()> {
     println!("Updating status for job '{job}' via metis-server…");
-    let response = client
-        .set_job_status(
-            job,
-            &JobStatusUpdate::Complete {
-                last_message: Some(last_message.to_string()),
-            },
-        )
-        .await?;
+    let response = client.set_job_status(job, &status).await?;
+    let last_message_length = status
+        .last_message()
+        .map(|message| message.len())
+        .unwrap_or(0);
     println!(
         "Status updated for job '{}'. Stored last message length: {}",
-        response.job_id,
-        last_message.len(),
+        response.job_id, last_message_length,
     );
     Ok(())
 }

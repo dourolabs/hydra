@@ -21,13 +21,15 @@ pub struct CommandOutput {
 pub struct BashCommands {
     pub commands: Vec<String>,
     outputs: Arc<Mutex<Vec<CommandOutput>>>,
+    fail_after_run: bool,
 }
 
 impl BashCommands {
-    pub fn new(commands: Vec<String>) -> Self {
+    pub fn new_with_failure(commands: Vec<String>, fail_after_run: bool) -> Self {
         Self {
             commands,
             outputs: Arc::new(Mutex::new(Vec::new())),
+            fail_after_run,
         }
     }
 
@@ -106,6 +108,11 @@ impl WorkerCommands for BashCommands {
                 .with_context(|| format!("failed to run command '{command_string}'"))?;
             last_output = output.stdout.clone();
         }
+
+        if self.fail_after_run {
+            bail!("BashCommands configured to fail after running commands");
+        }
+
         Ok(last_output)
     }
 }
