@@ -33,6 +33,10 @@ SERVER_DATABASE_URL="${SERVER_DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGR
 
 # Config generation defaults (can be overridden by env vars)
 SERVER_OPENAI_API_KEY="${SERVER_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+SERVER_GITHUB_APP_ID="${SERVER_GITHUB_APP_ID:-0}"
+SERVER_GITHUB_APP_CLIENT_ID="${SERVER_GITHUB_APP_CLIENT_ID:-}"
+SERVER_GITHUB_APP_CLIENT_SECRET="${SERVER_GITHUB_APP_CLIENT_SECRET:-}"
+SERVER_GITHUB_APP_PRIVATE_KEY="${SERVER_GITHUB_APP_PRIVATE_KEY:-}"
 DEFAULT_KUBECONFIG_PATH="${KUBECONFIG:-~/.kube/config}"
 SERVER_KUBECONFIG_PATH="${SERVER_KUBECONFIG_PATH:-${DEFAULT_KUBECONFIG_PATH}}"
 DEFAULT_KUBE_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
@@ -91,6 +95,12 @@ url = "${SERVER_DATABASE_URL}"
 remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
 github_token = "${GH_TOKEN}"
+
+[github_app]
+app_id = ${SERVER_GITHUB_APP_ID}
+client_id = "${SERVER_GITHUB_APP_CLIENT_ID}"
+client_secret = "${SERVER_GITHUB_APP_CLIENT_SECRET}"
+private_key = """${SERVER_GITHUB_APP_PRIVATE_KEY}"""
 
 [background]
 [[background.agent_queues]]
