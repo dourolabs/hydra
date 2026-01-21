@@ -1,1 +1,2 @@
-Every CLI command should be implemented in its own file under the command/ module.
+- Every CLI command should be implemented in its own file under the command/ module.
+- When adding new methods to `MetisClient`, include forward-compatibility coverage in `tests/metis_client_forward_compat.rs` to ensure responses tolerate new enum variants and extra fields.

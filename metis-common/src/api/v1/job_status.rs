@@ -8,8 +8,14 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "status", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobStatusUpdate {
-    Complete { last_message: Option<String> },
-    Failed { reason: String },
+    Complete {
+        last_message: Option<String>,
+    },
+    Failed {
+        reason: String,
+    },
+    #[serde(other)]
+    Unknown,
 }
 
 impl JobStatusUpdate {
@@ -19,6 +25,7 @@ impl JobStatusUpdate {
             JobStatusUpdate::Failed { reason } => Err(TaskError::JobEngineError {
                 reason: reason.clone(),
             }),
+            JobStatusUpdate::Unknown => Err(TaskError::Unknown),
         }
     }
 
@@ -26,6 +33,7 @@ impl JobStatusUpdate {
         match self {
             JobStatusUpdate::Complete { .. } => Status::Complete,
             JobStatusUpdate::Failed { .. } => Status::Failed,
+            JobStatusUpdate::Unknown => Status::Unknown,
         }
     }
 
@@ -33,6 +41,7 @@ impl JobStatusUpdate {
         match self {
             JobStatusUpdate::Complete { last_message } => last_message.clone(),
             JobStatusUpdate::Failed { .. } => None,
+            JobStatusUpdate::Unknown => None,
         }
     }
 }

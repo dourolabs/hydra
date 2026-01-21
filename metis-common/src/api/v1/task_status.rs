@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -9,16 +10,43 @@ pub enum Status {
     Running,
     Complete,
     Failed,
+    #[serde(other)]
+    Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaskError {
+    JobEngineError {
+        reason: String,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TaskErrorHelper {
     JobEngineError { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for TaskError {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<TaskErrorHelper>(value) {
+            Ok(TaskErrorHelper::JobEngineError { reason }) => {
+                Ok(TaskError::JobEngineError { reason })
+            }
+            Err(_) => Ok(TaskError::Unknown),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Event {
@@ -38,6 +66,47 @@ pub enum Event {
         at: DateTime<Utc>,
         error: TaskError,
     },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EventHelper {
+    Created {
+        at: DateTime<Utc>,
+        status: Status,
+    },
+    Started {
+        at: DateTime<Utc>,
+    },
+    Completed {
+        at: DateTime<Utc>,
+        #[serde(default)]
+        last_message: Option<String>,
+    },
+    Failed {
+        at: DateTime<Utc>,
+        error: TaskError,
+    },
+}
+
+impl<'de> Deserialize<'de> for Event {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<EventHelper>(value) {
+            Ok(EventHelper::Created { at, status }) => Ok(Event::Created { at, status }),
+            Ok(EventHelper::Started { at }) => Ok(Event::Started { at }),
+            Ok(EventHelper::Completed { at, last_message }) => {
+                Ok(Event::Completed { at, last_message })
+            }
+            Ok(EventHelper::Failed { at, error }) => Ok(Event::Failed { at, error }),
+            Err(_) => Ok(Event::Unknown),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +139,7 @@ impl TaskStatusLog {
                 Event::Started { .. } => Status::Running,
                 Event::Completed { .. } => Status::Complete,
                 Event::Failed { .. } => Status::Failed,
+                Event::Unknown => Status::Unknown,
             })
             .next()
             .unwrap_or(Status::Pending)
@@ -100,7 +170,7 @@ impl TaskStatusLog {
         self.events.iter().rev().find_map(|event| match event {
             Event::Completed { .. } => Some(Ok(())),
             Event::Failed { error, .. } => Some(Err(error.clone())),
-            _ => None,
+            Event::Unknown | Event::Created { .. } | Event::Started { .. } => None,
         })
     }
 }
