@@ -40,6 +40,8 @@ const MAX_MESSAGE_WIDTH: usize = 90;
 const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
+const ISSUE_CREATOR_PANEL_INNER_HEIGHT: u16 = 10;
+const ISSUE_CREATOR_PANEL_HEIGHT: u16 = ISSUE_CREATOR_PANEL_INNER_HEIGHT + 2;
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 enum PanelFocus {
     #[default]
@@ -884,7 +886,7 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(8),
+            Constraint::Length(ISSUE_CREATOR_PANEL_HEIGHT),
             Constraint::Min(12),
         ])
         .split(area);
@@ -2503,7 +2505,7 @@ mod tests {
             ..DashboardState::default()
         };
         state.selected_panel = PanelFocus::Running;
-        state.last_frame_size = Some(Rect::new(0, 0, 30, 24));
+        state.last_frame_size = Some(Rect::new(0, 0, 30, 30));
         update_views(&mut state);
 
         let outcome = handle_event(
