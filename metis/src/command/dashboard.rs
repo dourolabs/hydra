@@ -2098,6 +2098,74 @@ mod tests {
         assert_eq!(line.progress.as_deref(), Some("drafting tests"));
     }
 
+    fn dashboard_state_with_issues(issue_count: usize) -> DashboardState {
+        let issues: Vec<IssueRecord> = (0..issue_count)
+            .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, Vec::new()))
+            .collect();
+        DashboardState {
+            issue_lines: build_issue_lines(&issues, &[], false),
+            user_unowned_issue_lines: build_issue_lines(&issues, &[], false),
+            ..DashboardState::default()
+        }
+    }
+
+    #[test]
+    fn mouse_scroll_targets_hovered_panel_without_changing_focus() {
+        let mut state = dashboard_state_with_issues(12);
+        let size = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        };
+        state.last_frame_size = Some(size);
+        state.selected_panel = PanelFocus::Completed;
+        update_panel_focus(&mut state);
+
+        let layout = dashboard_layout(size);
+        let panels = issue_panel_layout(layout.issue_sections);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: panels.running.x.saturating_add(1),
+            row: panels.running.y.saturating_add(1),
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let handled = handle_mouse_scroll(mouse, &mut state);
+
+        assert!(handled);
+        assert_eq!(state.selected_panel, PanelFocus::Completed);
+        assert_eq!(state.running_issue_panel.scroll_offset(), 1);
+        assert_eq!(state.completed_issue_panel.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn mouse_scroll_ignored_without_hovered_panel() {
+        let mut state = dashboard_state_with_issues(12);
+        let size = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        };
+        state.last_frame_size = Some(size);
+        state.selected_panel = PanelFocus::Running;
+        update_panel_focus(&mut state);
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: size.width.saturating_add(1),
+            row: size.height.saturating_add(1),
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let handled = handle_mouse_scroll(mouse, &mut state);
+
+        assert!(!handled);
+        assert_eq!(state.running_issue_panel.scroll_offset(), 0);
+        assert_eq!(state.selected_panel, PanelFocus::Running);
+    }
+
     #[test]
     fn in_progress_issues_show_waiting_when_children_open() {
         let issues = vec![
