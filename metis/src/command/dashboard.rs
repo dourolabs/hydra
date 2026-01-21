@@ -199,7 +199,7 @@ impl IssueDraft {
 
     fn configure_prompt(&mut self) {
         let placeholder = if self.editing {
-            "Describe the work to create a new issue.\nType to describe the work for a new issue."
+            "Describe the work to create a new issue."
         } else {
             "Describe the work to create a new issue."
         };
