@@ -5,7 +5,7 @@ use axum::{
 };
 use metis_common::users::{
     CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-    UpsertUserResponse, User, UserSummary,
+    UpsertUserResponse, User, UserSummary, Username,
 };
 use tracing::{error, info};
 
@@ -29,7 +29,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<CreateUserRequest>,
 ) -> Result<Json<UpsertUserResponse>, ApiError> {
-    let username = normalize_non_empty("username", payload.username)?;
+    let username: Username = normalize_non_empty("username", payload.username.into())?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     info!(username = %username, "create_user invoked");
 
@@ -65,12 +65,12 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<Json<DeleteUserResponse>, ApiError> {
-    let username = normalize_non_empty("username", username)?;
+    let username: Username = normalize_non_empty("username", username)?.into();
     info!(username = %username, "delete_user invoked");
 
     let mut store = state.store.write().await;
     store
-        .delete_user(&username)
+        .delete_user(username.as_str())
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
@@ -94,13 +94,13 @@ pub async fn set_github_token(
     Path(username): Path<String>,
     Json(payload): Json<UpdateGithubTokenRequest>,
 ) -> Result<Json<UpsertUserResponse>, ApiError> {
-    let username = normalize_non_empty("username", username)?;
+    let username: Username = normalize_non_empty("username", username)?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     info!(username = %username, "set_github_token invoked");
 
     let mut store = state.store.write().await;
     let updated = store
-        .set_user_github_token(&username, github_token)
+        .set_user_github_token(username.as_str(), github_token)
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {

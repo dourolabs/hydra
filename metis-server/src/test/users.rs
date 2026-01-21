@@ -1,5 +1,5 @@
 use crate::test::{spawn_test_server_with_state, test_client, test_state};
-use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, User};
+use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, User, Username};
 use reqwest::StatusCode;
 use serde_json::Value;
 
@@ -10,7 +10,7 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
         let mut store = state.store.write().await;
         store
             .add_user(User {
-                username: "alice".to_string(),
+                username: Username::from("alice"),
                 github_token: "token-123".to_string(),
             })
             .await
@@ -45,7 +45,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
     let client = test_client();
 
     let payload = CreateUserRequest {
-        username: "bob".to_string(),
+        username: Username::from("bob"),
         github_token: "old-token".to_string(),
     };
     let create_response = client

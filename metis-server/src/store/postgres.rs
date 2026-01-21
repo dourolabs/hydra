@@ -734,7 +734,7 @@ impl Store for PostgresStore {
         .map_err(map_sqlx_error)?;
 
         if exists > 0 {
-            return Err(StoreError::UserAlreadyExists(user.username));
+            return Err(StoreError::UserAlreadyExists(user.username.to_string()));
         }
 
         self.insert_payload(
@@ -800,7 +800,7 @@ mod tests {
         issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
         jobs::BundleSpec,
         patches::{Patch, PatchStatus},
-        users::User,
+        users::{User, Username},
     };
     use std::{collections::HashSet, str::FromStr};
 
@@ -1068,7 +1068,7 @@ mod tests {
     async fn user_management_round_trip(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
         let user = User {
-            username: "alice".to_string(),
+            username: Username::from("alice"),
             github_token: "token".to_string(),
         };
         store.add_user(user.clone()).await.unwrap();

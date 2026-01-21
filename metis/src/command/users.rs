@@ -1,7 +1,7 @@
 use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
-use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, UserSummary};
+use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, UserSummary, Username};
 use std::io::{self, Write};
 
 #[derive(Debug, Subcommand)]
@@ -77,7 +77,7 @@ async fn create_user(
     args: UserCredentialsArgs,
 ) -> Result<UserSummary> {
     let request = CreateUserRequest {
-        username: normalize_non_empty(&args.username, "username")?,
+        username: normalize_non_empty(&args.username, "username")?.into(),
         github_token: normalize_non_empty(&args.github_token, "github token")?,
     };
     let response = client
@@ -87,7 +87,7 @@ async fn create_user(
     Ok(response.user)
 }
 
-async fn delete_user(client: &dyn MetisClientInterface, username: &str) -> Result<String> {
+async fn delete_user(client: &dyn MetisClientInterface, username: &str) -> Result<Username> {
     let username = normalize_non_empty(username, "username")?;
     let response = client
         .delete_user(&username)
@@ -162,10 +162,10 @@ mod tests {
         client.push_list_users_response(ListUsersResponse {
             users: vec![
                 UserSummary {
-                    username: "alice".to_string(),
+                    username: Username::from("alice"),
                 },
                 UserSummary {
-                    username: "bob".to_string(),
+                    username: Username::from("bob"),
                 },
             ],
         });
@@ -190,14 +190,14 @@ mod tests {
         };
         client.push_create_user_response(UpsertUserResponse {
             user: UserSummary {
-                username: "alice".to_string(),
+                username: Username::from("alice"),
             },
         });
 
         let user = create_user(&client, args.clone()).await.unwrap();
         let requests = client.recorded_create_user_requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].username, args.username);
+        assert_eq!(requests[0].username.as_str(), args.username.as_str());
         assert_eq!(requests[0].github_token, args.github_token);
 
         let mut output = Vec::new();
@@ -210,11 +210,11 @@ mod tests {
     async fn delete_user_trims_username() {
         let client = MockMetisClient::default();
         client.push_delete_user_response(DeleteUserResponse {
-            username: "alice".to_string(),
+            username: Username::from("alice"),
         });
 
         let deleted = delete_user(&client, "  alice ").await.unwrap();
-        assert_eq!(deleted, "alice");
+        assert_eq!(deleted.as_str(), "alice");
         let requests = client.recorded_delete_user_requests();
         assert_eq!(requests, vec!["alice".to_string()]);
     }
