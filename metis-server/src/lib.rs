@@ -156,7 +156,8 @@ pub async fn run() -> anyhow::Result<()> {
     let postgres_pool = postgres::init_pool(&app_config.database).await?;
     if let Some(pool) = &postgres_pool {
         postgres::run_migrations(pool).await?;
-        info!("connected to Postgres and applied migrations");
+        postgres::migrate_payloads(pool).await?;
+        info!("connected to Postgres, applied migrations, and migrated payloads");
     } else {
         info!("no Postgres database configured; using in-memory store");
     }
