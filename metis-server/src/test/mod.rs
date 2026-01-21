@@ -1,5 +1,6 @@
 pub(crate) mod agents;
 pub(crate) mod common;
+mod github_app;
 mod health;
 mod issues;
 mod jobs;

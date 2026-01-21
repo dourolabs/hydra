@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod constants;
+pub mod github;
 pub mod ids;
 pub mod repo_name;
 pub mod util;

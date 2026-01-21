@@ -91,7 +91,8 @@ impl StatefulWidget for Panel<'_> {
         };
 
         let view_height = content_area.height as usize;
-        state.sync_scroll(self.content.len(), view_height);
+        let content_len = wrapped_content_len(&self.content, content_area.width);
+        state.sync_scroll(content_len, view_height);
         let scroll_offset = state.scroll_offset.min(u16::MAX as usize) as u16;
 
         let paragraph = Paragraph::new(self.content)
@@ -335,6 +336,23 @@ fn max_scroll_offset(content_len: usize, view_height: usize) -> usize {
     content_len.saturating_sub(view_height)
 }
 
+pub(crate) fn wrapped_content_len(content: &[Line], width: u16) -> usize {
+    let width = width as usize;
+    if width == 0 {
+        return 0;
+    }
+    content
+        .iter()
+        .map(|line| wrapped_line_len(line, width))
+        .sum()
+}
+
+fn wrapped_line_len(line: &Line, width: usize) -> usize {
+    let line_width = line.width();
+    let wrapped = line_width.saturating_add(width.saturating_sub(1)) / width;
+    wrapped.max(1)
+}
+
 fn format_keybinding(binding: &PanelKeybinding) -> String {
     let mut parts = Vec::new();
     let modifiers = binding.modifiers;
@@ -368,7 +386,7 @@ fn format_key_code(code: KeyCode) -> String {
         KeyCode::PageUp => "PageUp".to_string(),
         KeyCode::PageDown => "PageDown".to_string(),
         KeyCode::Tab => "Tab".to_string(),
-        KeyCode::BackTab => "BackTab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
         KeyCode::Delete => "Delete".to_string(),
         KeyCode::Insert => "Insert".to_string(),
         KeyCode::F(value) => format!("F{value}"),
@@ -498,11 +516,110 @@ mod tests {
     }
 
     #[test]
+    fn backtab_keybinding_displays_as_shift_tab() {
+        let binding = PanelKeybinding::new(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+
+        let label = format_keybinding(&binding);
+
+        assert_eq!(label, "Shift+Tab");
+    }
+
+    #[test]
     fn sync_scroll_clamps_offset() {
         let mut state = PanelState::new();
         state.scroll_offset = 10;
         state.sync_scroll(5, 3);
         assert_eq!(state.scroll_offset, 2);
+    }
+
+    #[test]
+    fn short_content_does_not_scroll() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let event = state.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 1, 3);
+
+        assert_eq!(state.scroll_offset(), 0);
+        assert_eq!(event, PanelEvent::None);
+    }
+
+    #[test]
+    fn scroll_reaches_bottom_and_top() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let content_len = 5;
+        let view_height = 2;
+        for _ in 0..10 {
+            state.handle_key_event(
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                content_len,
+                view_height,
+            );
+        }
+        assert_eq!(state.scroll_offset(), 3);
+
+        for _ in 0..10 {
+            state.handle_key_event(
+                KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+                content_len,
+                view_height,
+            );
+        }
+        assert_eq!(state.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn wrapped_content_len_counts_wrapped_lines() {
+        let content = vec![Line::from("12345678")];
+
+        let content_len = wrapped_content_len(&content, 4);
+
+        assert_eq!(content_len, 2);
+    }
+
+    #[test]
+    fn render_keeps_scroll_offset_for_wrapped_content() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+        state.scroll_offset = 1;
+
+        let area = Rect::new(0, 0, 6, 4);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", vec![Line::from("12345678")]);
+        panel.render(area, &mut buffer, &mut state);
+
+        assert_eq!(state.scroll_offset(), 1);
+    }
+
+    #[test]
+    fn scrollbar_thumb_fills_track_for_exact_fit() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(7);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, track_length(content_area));
+    }
+
+    #[test]
+    fn scrollbar_thumb_shrinks_for_single_line_overflow() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(8);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, track_length(content_area).saturating_sub(1));
+    }
+
+    #[test]
+    fn scrollbar_thumb_clamps_for_large_overflow() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(30);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, 1);
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
@@ -511,5 +628,49 @@ mod tests {
             row.push_str(buffer[(x, y)].symbol());
         }
         row.trim_end().to_string()
+    }
+
+    fn render_panel_with_content(area: Rect, lines: Vec<Line<'static>>) -> (Buffer, Rect) {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", lines);
+        panel.render(area, &mut buffer, &mut state);
+
+        (buffer, panel_content_area(area))
+    }
+
+    fn panel_content_area(area: Rect) -> Rect {
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        sections[0]
+    }
+
+    fn track_length(content_area: Rect) -> usize {
+        content_area.height.saturating_sub(2) as usize
+    }
+
+    fn thumb_height(buffer: &Buffer, content_area: Rect) -> usize {
+        let scrollbar_x = content_area
+            .x
+            .saturating_add(content_area.width.saturating_sub(1));
+        let thumb_symbol = ratatui::symbols::scrollbar::DOUBLE_VERTICAL.thumb;
+        let mut count = 0;
+        for y in content_area.y..content_area.y.saturating_add(content_area.height) {
+            if buffer[(scrollbar_x, y)].symbol() == thumb_symbol {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn sample_lines(count: usize) -> Vec<Line<'static>> {
+        (0..count)
+            .map(|idx| Line::from(format!("Line {idx}")))
+            .collect()
     }
 }

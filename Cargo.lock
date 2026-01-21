@@ -3478,6 +3478,7 @@ dependencies = [
  "chrono",
  "futures",
  "git2",
+ "jsonwebtoken 10.2.0",
  "k8s-openapi",
  "kube",
  "metis-common",

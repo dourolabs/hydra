@@ -255,6 +255,7 @@ pub trait Store: Send + Sync {
         &mut self,
         username: &Username,
         github_token: String,
+        github_user_id: Option<u64>,
     ) -> Result<User, StoreError>;
 }
 

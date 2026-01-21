@@ -1,12 +1,9 @@
-use anyhow::{anyhow, bail, Context, Result};
-use metis::client::MetisClient;
-use metis_common::{
-    jobs::SearchJobsQuery, patches::SearchPatchesQuery, task_status::Status, TaskId,
-};
+use anyhow::{anyhow, Context, Result};
+use metis_common::{jobs::SearchJobsQuery, patches::SearchPatchesQuery, task_status::Status};
 
 mod common;
 
-use common::init_test_server_with_remote;
+use common::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {
@@ -27,7 +24,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     wait_for_status(&env.client, &job_id, Status::Running).await?;
 
     let job_id_clone = job_id.clone();
-    env.run_as_worker(
+    let _outputs: Vec<common::bash_commands::CommandOutput> = env.run_as_worker(
         vec![
             "echo \"worker content\" >> README.md".to_string(),
             "git add README.md".to_string(),
@@ -67,30 +64,4 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     assert_eq!(status, Status::Complete);
 
     Ok(())
-}
-
-async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<TaskId> {
-    let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
-    jobs.into_iter()
-        .find(|job| job.task.prompt == prompt)
-        .map(|job| job.id)
-        .ok_or_else(|| anyhow!("job with prompt '{prompt}' not found"))
-}
-
-async fn wait_for_status(client: &MetisClient, job_id: &TaskId, expected: Status) -> Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        if std::time::Instant::now() > deadline {
-            bail!("timed out waiting for job '{job_id}' to reach status {expected:?}");
-        }
-
-        let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
-        if let Some(job) = jobs.iter().find(|job| &job.id == job_id) {
-            if job.status_log.current_status() == expected {
-                return Ok(());
-            }
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
 }

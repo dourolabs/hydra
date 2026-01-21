@@ -3,14 +3,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use git2::{
+    build::{CheckoutBuilder, RepoBuilder},
     ApplyLocation, BranchType, Commit, Cred, CredentialType, Diff, DiffFormat, DiffOptions,
     ErrorCode, FetchOptions, IndexAddOption, PushOptions, RemoteCallbacks, Repository,
     RevparseMode, Status, StatusOptions,
-    build::{CheckoutBuilder, RepoBuilder},
 };
-use metis_common::{EnvGuard, patches::GitOid};
+use metis_common::{patches::GitOid, EnvGuard};
 
 fn repo_for_path(path: &Path) -> Result<Repository> {
     Repository::discover(path).with_context(|| {

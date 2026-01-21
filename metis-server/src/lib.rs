@@ -17,17 +17,20 @@ mod test;
 
 use crate::app::{AppState, ServiceState};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
-use crate::config::{AppConfig, build_kube_client};
+use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
     MemoryStore, Store,
     postgres::{self, PostgresStore},
 };
+use anyhow::Context;
 use axum::{
     Json, Router,
     routing::{delete, get, post, put},
 };
+use jsonwebtoken::EncodingKey;
 use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
+use octocrab::Octocrab;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -85,6 +88,10 @@ pub async fn run_with_state(
             put(routes::users::set_github_token),
         )
         .route(
+            "/v1/github/app/client-id",
+            get(routes::github::get_github_app_client_id),
+        )
+        .route(
             "/v1/repositories/:organization/:repo",
             put(routes::repositories::update_repository),
         )
@@ -131,6 +138,7 @@ pub async fn run() -> anyhow::Result<()> {
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
     let service_state = ServiceState::from_config(&app_config.service);
+    let github_app = build_github_app_client(&app_config.github_app)?;
 
     // Resolve OpenAI API key
     let openai_api_key = env::var(ENV_OPENAI_API_KEY)
@@ -172,6 +180,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let state = AppState {
         config: Arc::new(app_config),
+        github_app,
         service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
@@ -201,4 +210,28 @@ fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
         .iter()
         .map(|queue| Arc::new(AgentQueue::from_config(queue)) as Arc<dyn Spawner>)
         .collect()
+}
+
+fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
+    let app_id = config.app_id();
+    let private_key = config.private_key();
+
+    match (app_id, private_key) {
+        (None, None) => Ok(None),
+        (Some(app_id), Some(private_key)) => {
+            let key = EncodingKey::from_rsa_pem(private_key.as_bytes())
+                .context("invalid GitHub App private key")?;
+            Octocrab::builder()
+                .app(app_id, key)
+                .build()
+                .map(Some)
+                .context("building GitHub App client")
+        }
+        (None, Some(_)) => Err(anyhow::anyhow!(
+            "github_app.app_id must be set when github_app.private_key is configured"
+        )),
+        (Some(_), None) => Err(anyhow::anyhow!(
+            "github_app.private_key must be set when github_app.app_id is configured"
+        )),
+    }
 }

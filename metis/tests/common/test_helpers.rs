@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
-use metis_common::RepoName;
+use metis_common::{jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId};
 use metis_server::{
     app::{AppState, ServiceState},
     config::ServiceSection,
@@ -12,7 +12,7 @@ use std::{path::Path, process::Command, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
-use super::bash_commands::BashCommands;
+use super::bash_commands::{BashCommands, CommandOutput};
 
 pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
@@ -67,15 +67,15 @@ impl TestEnvironment {
     pub async fn run_as_worker(
         &self,
         commands: Vec<String>,
-        job_id: metis_common::TaskId,
-    ) -> Result<()> {
+        job_id: TaskId,
+    ) -> Result<Vec<CommandOutput>> {
         let temp_dir =
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
 
-        let bash_commands = BashCommands { commands };
+        let bash_commands = BashCommands::new(commands);
 
-        metis::command::jobs::worker_run::run(
+        let run_result = metis::command::jobs::worker_run::run(
             &self.client,
             job_id,
             worker_dir,
@@ -83,11 +83,35 @@ impl TestEnvironment {
             None,
             &bash_commands,
         )
-        .await
-        .context("failed to run worker commands")?;
+        .await;
 
-        Ok(())
+        let outputs = bash_commands.outputs();
+
+        if let Err(err) = run_result {
+            let formatted_output = format_command_outputs(&outputs);
+            return Err(anyhow!(
+                "failed to run worker commands: {err}\ncommand output:\n{formatted_output}"
+            ));
+        }
+
+        Ok(outputs)
     }
+}
+
+fn format_command_outputs(outputs: &[CommandOutput]) -> String {
+    outputs
+        .iter()
+        .map(|output| {
+            format!(
+                "command: {command}\nstatus: {status}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                command = output.command,
+                status = output.status,
+                stdout = output.stdout.trim_end(),
+                stderr = output.stderr.trim_end(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
 }
 
 pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnvironment> {
@@ -115,6 +139,36 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         _tempdir: tempdir,
         service_repo_name,
     })
+}
+
+pub async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<TaskId> {
+    let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
+    jobs.into_iter()
+        .find(|job| job.task.prompt == prompt)
+        .map(|job| job.id)
+        .ok_or_else(|| anyhow!("job with prompt '{prompt}' not found"))
+}
+
+pub async fn wait_for_status(
+    client: &MetisClient,
+    job_id: &TaskId,
+    expected: Status,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if std::time::Instant::now() > deadline {
+            bail!("timed out waiting for job '{job_id}' to reach status {expected:?}");
+        }
+
+        let jobs = client.list_jobs(&SearchJobsQuery::default()).await?.jobs;
+        if let Some(job) = jobs.iter().find(|job| &job.id == job_id) {
+            if job.status_log.current_status() == expected {
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 fn init_service_remote(base_dir: &Path) -> Result<String> {
@@ -239,6 +293,7 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
 
     Ok(AppState {
         config: Arc::new(server_config),
+        github_app: None,
         service_state: Arc::new(ServiceState::from_config(&service_section)),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()) as Box<dyn Store>)),
         job_engine: Arc::new(MockJobEngine::new()),

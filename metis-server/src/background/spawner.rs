@@ -45,6 +45,7 @@ pub struct AgentQueue {
     pub image: Option<String>,
     pub env_vars: HashMap<String, String>,
     pub max_tries: u32,
+    pub max_simultaneous: u32,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
@@ -57,6 +58,7 @@ impl AgentQueue {
             image: config.image.clone(),
             env_vars: config.env_vars.clone(),
             max_tries: config.max_tries,
+            max_simultaneous: config.max_simultaneous,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
@@ -107,9 +109,21 @@ impl Spawner for AgentQueue {
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>> {
         let store = state.store.read().await;
 
-        let existing_issue_ids = existing_issue_tasks_for_agent(store.as_ref(), &self.name)
+        let task_state = agent_task_state(store.as_ref(), &self.name)
             .await
             .context("failed to list tasks for agent queue")?;
+
+        let max_simultaneous = self.max_simultaneous as usize;
+        if max_simultaneous == 0 {
+            return Ok(Vec::new());
+        }
+
+        let active_tasks = task_state.running_tasks + task_state.pending_tasks;
+        if active_tasks >= max_simultaneous {
+            return Ok(Vec::new());
+        }
+
+        let mut remaining_capacity = max_simultaneous - active_tasks;
 
         let issues = store
             .list_issues()
@@ -135,7 +149,11 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            if existing_issue_ids.contains(&issue_id) {
+            if remaining_capacity == 0 {
+                break;
+            }
+
+            if task_state.existing_issue_ids.contains(&issue_id) {
                 continue;
             }
 
@@ -149,16 +167,28 @@ impl Spawner for AgentQueue {
 
             let task = self.build_task(store.as_ref(), &issue_id);
             tasks.push(task);
+            remaining_capacity -= 1;
         }
 
         Ok(tasks)
     }
 }
-async fn existing_issue_tasks_for_agent(
+
+struct AgentTaskState {
+    existing_issue_ids: HashSet<IssueId>,
+    running_tasks: usize,
+    pending_tasks: usize,
+}
+
+async fn agent_task_state(
     store: &dyn Store,
     agent_name: &str,
-) -> Result<HashSet<IssueId>, StoreError> {
-    let mut issue_ids = HashSet::new();
+) -> Result<AgentTaskState, StoreError> {
+    let mut state = AgentTaskState {
+        existing_issue_ids: HashSet::new(),
+        running_tasks: 0,
+        pending_tasks: 0,
+    };
     let task_ids = store.list_tasks().await?;
 
     for task_id in task_ids {
@@ -170,22 +200,25 @@ async fn existing_issue_tasks_for_agent(
                 continue;
             }
 
+            let status = store.get_status(&task_id).await?;
+            match status {
+                Status::Pending => state.pending_tasks += 1,
+                Status::Running => state.running_tasks += 1,
+                _ => {}
+            }
+
             if let Some(issue_id) = env_vars
                 .get(ISSUE_ID_ENV_VAR)
                 .and_then(|value| value.parse::<IssueId>().ok())
             {
-                // Only consider tasks that are still actionable (not completed or failed).
-                if matches!(
-                    store.get_status(&task_id).await?,
-                    Status::Pending | Status::Running
-                ) {
-                    issue_ids.insert(issue_id);
+                if matches!(status, Status::Pending | Status::Running) {
+                    state.existing_issue_ids.insert(issue_id);
                 }
             }
         }
     }
 
-    Ok(issue_ids)
+    Ok(state)
 }
 
 async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<bool, StoreError> {
@@ -210,7 +243,7 @@ mod tests {
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
         app::{ServiceRepository, ServiceState},
-        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
+        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::test_state,
     };
     use chrono::Utc;
@@ -224,6 +257,7 @@ mod tests {
             image: None,
             env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
+            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
@@ -479,6 +513,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn does_not_spawn_when_at_max_simultaneous() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_simultaneous = 1;
+
+        let state = test_state();
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Already running".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+
+        {
+            let mut store = state.store.write().await;
+            let task_id = store
+                .add_task(
+                    Task {
+                        prompt: "Existing".to_string(),
+                        context: BundleSpec::None,
+                        spawned_from: Some(issue_id.clone()),
+                        image: None,
+                        env_vars: HashMap::from([
+                            (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
+                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                        ]),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+            store.mark_task_running(&task_id, Utc::now()).await?;
+        }
+
+        let tasks = queue.spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn caps_new_tasks_to_remaining_capacity() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_simultaneous = 2;
+
+        let state = test_state();
+        let first_issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "First issue".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+        let second_issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Second issue".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?
+        };
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_task(
+                    Task {
+                        prompt: "Pending work".to_string(),
+                        context: BundleSpec::None,
+                        spawned_from: Some(first_issue_id.clone()),
+                        image: None,
+                        env_vars: HashMap::from([
+                            (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
+                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                        ]),
+                    },
+                    Utc::now(),
+                )
+                .await?;
+        }
+
+        let tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(second_issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn enforces_max_spawn_attempts_per_state() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
         queue.max_tries = 2;
@@ -553,6 +704,7 @@ mod tests {
             context: BundleSpec::None,
             image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
+            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
         };
 
@@ -599,6 +751,7 @@ mod tests {
             image: None,
             env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
+            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
         };
 

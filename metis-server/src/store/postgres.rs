@@ -30,7 +30,7 @@ pub const ISSUE_SCHEMA_VERSION: i32 = 1;
 pub const PATCH_SCHEMA_VERSION: i32 = 1;
 pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
-pub const USER_SCHEMA_VERSION: i32 = 1;
+pub const USER_SCHEMA_VERSION: i32 = 2;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -776,6 +776,7 @@ impl Store for PostgresStore {
         &mut self,
         username: &Username,
         github_token: String,
+        github_user_id: Option<u64>,
     ) -> Result<User, StoreError> {
         let mut user: User = self
             .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
@@ -783,6 +784,9 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
 
         user.github_token = github_token;
+        if let Some(github_user_id) = github_user_id {
+            user.github_user_id = Some(github_user_id);
+        }
 
         self.update_payload(
             TABLE_USERS,
@@ -1069,7 +1073,11 @@ mod tests {
     #[ignore]
     async fn user_management_round_trip(pool: PgStorePool) {
         let mut store = PostgresStore::new(pool);
-        let user = User::new(Username::from("alice"), "token".to_string());
+        let user = User {
+            username: Username::from("alice"),
+            github_user_id: Some(101),
+            github_token: "token".to_string(),
+        };
         store.add_user(user.clone()).await.unwrap();
 
         let users = store.list_users().await.unwrap();
@@ -1078,10 +1086,11 @@ mod tests {
 
         let username = Username::from("alice");
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string())
+            .set_user_github_token(&username, "new-token".to_string(), Some(202))
             .await
             .unwrap();
         assert_eq!(updated.github_token, "new-token");
+        assert_eq!(updated.github_user_id, Some(202));
 
         store.delete_user(&username).await.unwrap();
         assert!(store.list_users().await.unwrap().is_empty());

@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, ServiceState},
     config::{
-        AppConfig, BackgroundSection, DatabaseSection, KubernetesSection, MetisSection,
-        ServiceSection,
+        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, KubernetesSection,
+        MetisSection, ServiceSection,
     },
     job_engine::JobEngine,
     run_with_state,
@@ -44,6 +44,7 @@ pub fn test_app_config() -> AppConfig {
         kubernetes: KubernetesSection::default(),
         database: DatabaseSection::default(),
         service: ServiceSection::default(),
+        github_app: GithubAppSection::default(),
         background: BackgroundSection::default(),
     }
 }
@@ -51,6 +52,7 @@ pub fn test_app_config() -> AppConfig {
 pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
     AppState {
         config: Arc::new(test_app_config()),
+        github_app: None,
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,

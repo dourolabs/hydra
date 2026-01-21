@@ -32,6 +32,19 @@ default_branch = "main"
 default_image = "metis-worker:latest"
 github_token = ""
 
+[github_app]
+# GitHub App configuration for device flow and API access.
+# Set app_id to 0 to disable app authentication.
+app_id = 0
+# OAuth client_id for device flow (public).
+client_id = ""
+# OAuth client_secret for device flow (private).
+client_secret = ""
+# GitHub App private key (PEM format).
+private_key = ""
+#private_key = """-----BEGIN RSA PRIVATE KEY-----
+#-----END RSA PRIVATE KEY-----"""
+
 [background]
 # Agent queues automatically enqueue work for assigned issues.
 # Add additional [[background.agent_queues]] tables to run multiple queues.
@@ -41,6 +54,8 @@ name = "agent-a"
 prompt = "You are agent-a working on assigned issues."
 # Maximum number of times to spawn a task for the same issue state.
 max_tries = 3
+# Maximum number of simultaneously running jobs for this queue (defaults to unlimited).
+max_simultaneous = 1
 # Optional: override the worker image for this queue (falls back to metis.worker_image)
 image = "metis-worker:latest"
 

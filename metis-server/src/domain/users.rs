@@ -51,6 +51,7 @@ impl Borrow<str> for Username {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     pub username: Username,
+    pub github_user_id: Option<u64>,
     pub github_token: String,
 }
 
@@ -58,6 +59,7 @@ impl User {
     pub fn new(username: Username, github_token: String) -> Self {
         Self {
             username,
+            github_user_id: None,
             github_token,
         }
     }
@@ -66,11 +68,16 @@ impl User {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub username: Username,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
 }
 
 impl UserSummary {
     pub fn new(username: Username) -> Self {
-        Self { username }
+        Self {
+            username,
+            github_user_id: None,
+        }
     }
 }
 
@@ -78,6 +85,7 @@ impl From<User> for UserSummary {
     fn from(user: User) -> Self {
         Self {
             username: user.username,
+            github_user_id: user.github_user_id,
         }
     }
 }
@@ -85,6 +93,8 @@ impl From<User> for UserSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: Username,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
     pub github_token: String,
 }
 
@@ -92,6 +102,7 @@ impl CreateUserRequest {
     pub fn new(username: Username, github_token: String) -> Self {
         Self {
             username,
+            github_user_id: None,
             github_token,
         }
     }
@@ -100,11 +111,16 @@ impl CreateUserRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateGithubTokenRequest {
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<u64>,
 }
 
 impl UpdateGithubTokenRequest {
     pub fn new(github_token: String) -> Self {
-        Self { github_token }
+        Self {
+            github_token,
+            github_user_id: None,
+        }
     }
 }
 
