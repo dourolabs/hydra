@@ -3,16 +3,15 @@ mod resolved_task;
 
 use crate::{
     config::{ServiceSection, non_empty},
+    domain::{
+        jobs::{Bundle, BundleSpec},
+        patches::Patch,
+    },
     merge_queue::MergeQueueImpl,
     store::StoreError,
 };
 use git2::Repository;
-use metis_common::{
-    PatchId, RepoName,
-    jobs::{Bundle, BundleSpec},
-    merge_queues::MergeQueue,
-    patches::Patch,
-};
+use metis_common::{PatchId, RepoName, merge_queues::MergeQueue};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
 use thiserror::Error;

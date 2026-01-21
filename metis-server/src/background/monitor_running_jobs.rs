@@ -80,12 +80,12 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 mod tests {
     use super::*;
     use crate::{
+        domain::jobs::BundleSpec,
         job_engine::JobStatus,
         store::{Status, Task},
         test_utils::{FailingStore, MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::Utc;
-    use metis_common::jobs::BundleSpec;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
 

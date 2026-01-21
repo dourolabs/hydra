@@ -1,5 +1,14 @@
 use super::common::default_image;
 use crate::{
+    domain::{
+        issues::{
+            AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord,
+            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+            SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+            UpsertIssueResponse,
+        },
+        jobs::BundleSpec,
+    },
     job_engine::{JobEngine, JobStatus},
     store::Task,
     test_utils::{
@@ -8,15 +17,7 @@ use crate::{
     },
 };
 use chrono::Utc;
-use metis_common::{
-    TaskId,
-    issues::{
-        AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus,
-        IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-        SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
-        UpsertIssueResponse,
-    },
-};
+use metis_common::TaskId;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -614,7 +615,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 task_id.clone(),
                 Task {
                     prompt: "do work".to_string(),
-                    context: metis_common::jobs::BundleSpec::None,
+                    context: BundleSpec::None,
                     spawned_from: Some(created.issue_id.clone()),
                     image: Some(default_image()),
                     env_vars: HashMap::new(),

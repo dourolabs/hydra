@@ -1,7 +1,7 @@
 use super::{BundleResolutionError, ResolvedBundle, ServiceState};
+use crate::domain::jobs::Task;
 use async_trait::async_trait;
 use metis_common::constants::ENV_GH_TOKEN;
-use metis_common::jobs::Task;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

@@ -1,10 +1,11 @@
+use crate::domain::jobs::BundleSpec;
 use crate::{
     app::{AppState, ServiceState},
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_TRIES},
     store::MemoryStore,
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
 };
-use metis_common::{agents::ListAgentsResponse, jobs::BundleSpec};
+use metis_common::agents::ListAgentsResponse;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 

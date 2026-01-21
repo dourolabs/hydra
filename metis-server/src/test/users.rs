@@ -1,5 +1,7 @@
-use crate::test::{spawn_test_server_with_state, test_client, test_state};
-use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, User, Username};
+use crate::{
+    domain::users::{CreateUserRequest, UpdateGithubTokenRequest, User, Username},
+    test::{spawn_test_server_with_state, test_client, test_state},
+};
 use reqwest::StatusCode;
 use serde_json::Value;
 

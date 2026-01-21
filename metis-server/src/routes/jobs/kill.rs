@@ -1,6 +1,5 @@
-use crate::{app::AppState, job_engine::JobEngineError};
+use crate::{app::AppState, domain::jobs::KillJobResponse, job_engine::JobEngineError};
 use axum::{Json, extract::State};
-use metis_common::jobs::KillJobResponse;
 use tracing::{error, info};
 
 use super::{ApiError, JobIdPath};

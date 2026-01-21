@@ -76,11 +76,11 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
 mod tests {
     use super::*;
     use crate::{
+        domain::jobs::BundleSpec,
         store::{Status, Task},
         test_utils::{FailingStore, test_state},
     };
     use chrono::Utc;
-    use metis_common::jobs::BundleSpec;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
 

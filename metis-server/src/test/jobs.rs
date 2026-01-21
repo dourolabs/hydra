@@ -1,4 +1,9 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
+use crate::domain::{
+    jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
+    patches::{Patch, PatchStatus},
+    task_status::Event,
+};
 use crate::{
     app::{ServiceState, TaskExt},
     job_engine::JobStatus,
@@ -9,14 +14,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{
-    TaskId,
-    constants::ENV_GH_TOKEN,
-    job_status::GetJobStatusResponse,
-    jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
-    patches::{Patch, PatchStatus},
-    task_status::Event,
-};
+use metis_common::{TaskId, constants::ENV_GH_TOKEN, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -878,9 +876,10 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let body: GetJobStatusResponse = response.json().await?;
     assert_eq!(body.job_id, job_id);
-    assert_eq!(body.status_log.current_status(), Status::Complete);
+    let status_log: crate::domain::task_status::TaskStatusLog = body.status_log.into();
+    assert_eq!(status_log.current_status(), Status::Complete);
     assert!(matches!(
-        body.status_log.events.last(),
+        status_log.events.last(),
         Some(Event::Completed { .. })
     ));
     Ok(())

@@ -1,12 +1,12 @@
 use crate::{
     app::{ServiceRepository, ServiceState},
+    domain::patches::{Patch, PatchStatus},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
-    patches::{Patch, PatchStatus},
 };
 use reqwest::StatusCode;
 use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
