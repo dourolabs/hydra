@@ -3,14 +3,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use git2::{
-    build::{CheckoutBuilder, RepoBuilder},
     ApplyLocation, BranchType, Commit, Cred, CredentialType, Diff, DiffFormat, DiffOptions,
     ErrorCode, FetchOptions, IndexAddOption, PushOptions, RemoteCallbacks, Repository,
     RevparseMode, Status, StatusOptions,
+    build::{CheckoutBuilder, RepoBuilder},
 };
-use metis_common::{patches::GitOid, EnvGuard};
+use metis_common::{EnvGuard, patches::GitOid};
 
 fn repo_for_path(path: &Path) -> Result<Repository> {
     Repository::discover(path).with_context(|| {
@@ -159,7 +159,7 @@ pub fn current_branch(repo_root: &Path) -> Result<String> {
     let head = match repo.head() {
         Ok(head) => head,
         Err(err) if err.code() == ErrorCode::UnbornBranch || err.code() == ErrorCode::NotFound => {
-            return Ok("HEAD".to_string())
+            return Ok("HEAD".to_string());
         }
         Err(err) => return Err(err).context("failed to resolve current branch"),
     };
@@ -410,9 +410,22 @@ mod tests {
         let workdir = repo
             .workdir()
             .context("repository does not have a working directory")?;
-        let relative = path
-            .strip_prefix(workdir)
-            .context("path not within repository")?;
+        let relative_buf;
+        let relative = if path.is_absolute() {
+            let workdir_real = workdir
+                .canonicalize()
+                .context("failed to canonicalize repository root")?;
+            let path_real = path
+                .canonicalize()
+                .context("failed to canonicalize path for staging")?;
+            relative_buf = path_real
+                .strip_prefix(&workdir_real)
+                .context("path not within repository")?
+                .to_path_buf();
+            relative_buf.as_path()
+        } else {
+            path
+        };
         let mut index = repo.index().context("failed to open index")?;
         index
             .add_path(relative)
