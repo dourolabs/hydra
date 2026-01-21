@@ -2761,6 +2761,61 @@ mod tests {
     }
 
     #[test]
+    fn mouse_click_focuses_user_owned_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections);
+        let user_owned = panels.user_owned.expect("user-owned panel missing");
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: user_owned.x + 1,
+            row: user_owned.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::UserOwned);
+        assert!(state.user_unowned_issue_panel.focused());
+        assert!(!state.running_issue_panel.focused());
+    }
+
+    #[test]
+    fn mouse_click_focuses_completed_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::UserOwned,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: panels.completed.x + 1,
+            row: panels.completed.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Completed);
+        assert!(state.completed_issue_panel.focused());
+        assert!(!state.user_unowned_issue_panel.focused());
+    }
+
+    #[test]
     fn mouse_click_outside_panels_does_not_change_focus() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::Running,
