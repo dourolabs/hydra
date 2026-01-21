@@ -263,7 +263,7 @@ impl Default for DashboardState {
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
         issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-        issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut running_issue_panel);
@@ -297,7 +297,7 @@ impl Default for DashboardState {
 
 fn configure_status_panel_keybindings(panel: &mut PanelState) {
     panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-    panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+    panel.register_keybinding(KeyCode::Tab, KeyModifiers::SHIFT, "Prev panel");
 }
 
 struct IssueSubmission {
@@ -504,7 +504,7 @@ fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
 }
 
 fn is_panel_focus_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty() && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+    key.code == KeyCode::Tab && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
@@ -512,9 +512,10 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
 }
 
 fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
-    state.selected_panel = match key.code {
-        KeyCode::BackTab => prev_panel_focus(state.selected_panel),
-        _ => next_panel_focus(state.selected_panel),
+    state.selected_panel = if key.modifiers.contains(KeyModifiers::SHIFT) {
+        prev_panel_focus(state.selected_panel)
+    } else {
+        next_panel_focus(state.selected_panel)
     };
     state
         .issue_draft
@@ -2524,7 +2525,7 @@ mod tests {
     }
 
     #[test]
-    fn backtab_moves_focus_to_previous_panel() {
+    fn shift_tab_moves_focus_to_previous_panel() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::UserOwned,
             ..DashboardState::default()
@@ -2532,7 +2533,7 @@ mod tests {
         update_panel_focus(&mut state);
 
         let outcome = handle_event(
-            CrosstermEvent::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE)),
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)),
             &mut state,
         );
 
