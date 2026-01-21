@@ -776,7 +776,6 @@ impl Store for PostgresStore {
         &mut self,
         username: &Username,
         github_token: String,
-        github_username: Option<String>,
         github_user_id: Option<u64>,
     ) -> Result<User, StoreError> {
         let mut user: User = self
@@ -785,9 +784,6 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
 
         user.github_token = github_token;
-        if let Some(github_username) = github_username {
-            user.github_username = Some(github_username);
-        }
         if let Some(github_user_id) = github_user_id {
             user.github_user_id = Some(github_user_id);
         }
@@ -1083,7 +1079,6 @@ mod tests {
         let user = User {
             username: Username::from("alice"),
             github_user_id: Some(101),
-            github_username: Some("alice-gh".to_string()),
             github_token: "token".to_string(),
         };
         store.add_user(user.clone()).await.unwrap();
@@ -1094,16 +1089,10 @@ mod tests {
 
         let username = Username::from("alice");
         let updated = store
-            .set_user_github_token(
-                &username,
-                "new-token".to_string(),
-                Some("alice-updated".to_string()),
-                Some(202),
-            )
+            .set_user_github_token(&username, "new-token".to_string(), Some(202))
             .await
             .unwrap();
         assert_eq!(updated.github_token, "new-token");
-        assert_eq!(updated.github_username.as_deref(), Some("alice-updated"));
         assert_eq!(updated.github_user_id, Some(202));
 
         store.delete_user(&username).await.unwrap();
