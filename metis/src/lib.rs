@@ -5,7 +5,6 @@ pub mod command;
 pub mod config;
 pub mod constants;
 pub mod git;
-pub mod github_oauth;
 pub mod util;
 pub mod worker_commands;
 
