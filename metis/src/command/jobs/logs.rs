@@ -68,12 +68,14 @@ async fn stream_logs_for_issue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MockMetisClient;
+    use crate::client::MetisClient;
     use crate::test_utils::ids;
+    use httpmock::prelude::*;
     use metis_common::{
         jobs::{JobRecord, ListJobsResponse, Task},
         task_status::{Event, Status, TaskStatusLog},
     };
+    use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 
     fn task_id(value: &str) -> TaskId {
@@ -105,44 +107,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logs_streams_job_logs() {
-        let client = MockMetisClient::default();
-        client.push_log_lines(["job logs\n"]);
-
-        let job_id = TaskId::from_str("t-jobxyz").unwrap();
-        run(&client, job_id.clone().into(), false).await.unwrap();
-
-        assert_eq!(client.recorded_log_requests(), vec![job_id]);
-    }
-
-    #[tokio::test]
-    async fn logs_prefers_most_recent_job_for_issue() {
-        let client = MockMetisClient::default();
-        client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![job_record("t-newest", 5), job_record("t-older", 0)],
+    async fn logs_streams_job_logs() -> Result<()> {
+        let server = MockServer::start();
+        let job_id = TaskId::from_str("t-jobxyz")?;
+        let log_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/jobs/{job_id}/logs"))
+                .query_param("watch", "false");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: job logs\n\n");
         });
-        client.push_log_lines(["issue job logs\n"]);
 
-        let issue_id = issue_id("i-issueabc");
-        run(&client, issue_id.clone().into(), false).await.unwrap();
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        run(&client, job_id.clone().into(), false).await?;
 
-        assert_eq!(
-            client.list_job_queries.lock().unwrap().clone(),
-            vec![SearchJobsQuery {
-                q: None,
-                spawned_from: Some(issue_id),
-            }]
-        );
-        assert_eq!(client.recorded_log_requests(), vec![task_id("t-newest")]);
+        log_mock.assert();
+        Ok(())
     }
 
     #[tokio::test]
-    async fn logs_rejects_unexpected_id_type() {
-        let client = MockMetisClient::default();
-        let result = run(&client, MetisId::from_str("p-patchzz").unwrap(), false).await;
+    async fn logs_prefers_most_recent_job_for_issue() -> Result<()> {
+        let server = MockServer::start();
+        let issue_id = issue_id("i-issueabc");
+        let list_jobs_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/jobs/")
+                .query_param("spawned_from", issue_id.as_ref());
+            then.status(200).json_body_obj(&ListJobsResponse {
+                jobs: vec![job_record("t-newest", 5), job_record("t-older", 0)],
+            });
+        });
+        let log_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/jobs/t-newest/logs")
+                .query_param("watch", "false");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: issue job logs\n\n");
+        });
+
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        run(&client, issue_id.clone().into(), false).await?;
+
+        list_jobs_mock.assert();
+        log_mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn logs_rejects_unexpected_id_type() -> Result<()> {
+        let server = MockServer::start();
+        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let unexpected_requests = server.mock(|when, then| {
+            when.any_request();
+            then.status(500);
+        });
+
+        let result = run(&client, MetisId::from_str("p-patchzz")?, false).await;
 
         assert!(result.is_err());
-        assert!(client.recorded_log_requests().is_empty());
-        assert!(client.list_job_queries.lock().unwrap().is_empty());
+        unexpected_requests.assert_hits(0);
+        Ok(())
     }
 }
