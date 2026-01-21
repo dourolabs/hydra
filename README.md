@@ -47,13 +47,16 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/metis cargo test --work
 
 ### CLI (`metis`)
 
-1. Copy the sample: `cp metis/config.toml.sample metis/config.toml`.
-2. Edit `[server].url` to point at your `metis-server` instance, or export
-   `METIS_SERVER_URL`. The default points to `http://localhost:8080`.
+1. Optional: copy the sample if you want file-based overrides:
+   `cp metis/config.toml.sample metis/config.toml`.
+2. Point the CLI at your `metis-server` instance by setting `[server].url`,
+   exporting `METIS_SERVER_URL`, or passing `--server-url`. The default points
+   to `http://localhost:8080`.
 3. Optional: run `metis --help` to see every subcommand or inspect
    `metis/src/main.rs`.
 
-The CLI reads `--config <file>` if passed, otherwise `~/metis/config.toml`.
+The CLI reads `--config <file>` if passed, otherwise `~/metis/config.toml`. No
+config file is required when you pass `--server-url` or `METIS_SERVER_URL`.
 
 #### Natural language chat
 
@@ -162,7 +165,7 @@ For local development with a kind (Kubernetes in Docker) cluster:
    This prints the server endpoint URL that you can use with the CLI (e.g., `http://127.0.0.1:3XXXX`).
 
 5. **Configure the CLI to use the server**:
-   Update `metis/config.toml` or set `METIS_SERVER_URL` to the URL from `./scripts/service.sh status`.
+   Update `metis/config.toml`, set `METIS_SERVER_URL`, or pass `--server-url` to the CLI with the URL from `./scripts/service.sh status`.
 
 #### Common workflows
 
