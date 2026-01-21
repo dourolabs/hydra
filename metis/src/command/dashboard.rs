@@ -472,6 +472,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
         }
         Event::Mouse(mouse) => {
             handle_mouse_scroll(mouse, state);
+            handle_mouse_click(mouse, state);
             EventOutcome {
                 should_quit: false,
                 submission: None,
@@ -996,6 +997,58 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
                 .handle_mouse_event(mouse, content_len, view_height),
             PanelEvent::Scrolled
         );
+    }
+
+    false
+}
+
+fn handle_mouse_click(mouse: MouseEvent, state: &mut DashboardState) -> bool {
+    if !matches!(mouse.kind, MouseEventKind::Down(_)) {
+        return false;
+    }
+
+    let size = match state.last_frame_size {
+        Some(size) => size,
+        None => return false,
+    };
+
+    let layout = dashboard_layout(size);
+    let panels = issue_panel_layout(layout.issue_sections);
+    let row = mouse.row;
+    let column = mouse.column;
+
+    if rect_contains(layout.issue_creator, column, row) {
+        if state.selected_panel != PanelFocus::NewIssue {
+            state.selected_panel = PanelFocus::NewIssue;
+            update_panel_focus(state);
+        }
+        return true;
+    }
+
+    if let Some(rect) = panels.user_owned {
+        if rect_contains(rect, column, row) {
+            if state.selected_panel != PanelFocus::UserOwned {
+                state.selected_panel = PanelFocus::UserOwned;
+                update_panel_focus(state);
+            }
+            return true;
+        }
+    }
+
+    if rect_contains(panels.running, column, row) {
+        if state.selected_panel != PanelFocus::Running {
+            state.selected_panel = PanelFocus::Running;
+            update_panel_focus(state);
+        }
+        return true;
+    }
+
+    if rect_contains(panels.completed, column, row) {
+        if state.selected_panel != PanelFocus::Completed {
+            state.selected_panel = PanelFocus::Completed;
+            update_panel_focus(state);
+        }
+        return true;
     }
 
     false
@@ -1834,7 +1887,9 @@ mod tests {
     use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
-    use crossterm::event::{Event as CrosstermEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use crossterm::event::{
+        Event as CrosstermEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use httpmock::prelude::*;
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
@@ -2650,6 +2705,85 @@ mod tests {
         assert_eq!(state.running_issue_panel.scroll_offset(), 0);
         assert_eq!(state.selected_panel, PanelFocus::Running);
         assert!(state.running_issue_panel.focused());
+    }
+
+    #[test]
+    fn mouse_click_focuses_running_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::NewIssue,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let panels = issue_panel_layout(layout.issue_sections);
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: panels.running.x + 1,
+            row: panels.running.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
+        assert!(!state.issue_creator_panel.focused());
+    }
+
+    #[test]
+    fn mouse_click_focuses_issue_creator_panel() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: layout.issue_creator.x + 1,
+            row: layout.issue_creator.y + 1,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::NewIssue);
+        assert!(state.issue_creator_panel.focused());
+        assert!(!state.running_issue_panel.focused());
+    }
+
+    #[test]
+    fn mouse_click_outside_panels_does_not_change_focus() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        state.last_frame_size = Some(Rect::new(0, 0, 80, 30));
+
+        let layout = dashboard_layout(state.last_frame_size.expect("size missing"));
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: layout.header.x,
+            row: layout.header.y,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let outcome = handle_event(CrosstermEvent::Mouse(mouse), &mut state);
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.selected_panel, PanelFocus::Running);
+        assert!(state.running_issue_panel.focused());
+        assert!(!state.issue_creator_panel.focused());
     }
 
     #[test]
