@@ -1517,14 +1517,12 @@ mod tests {
         };
 
         let root_issue_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/issues/{root_id}").as_str());
             then.status(200).json_body_obj(&root_issue);
         });
         let parent_issue_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/issues/{parent_id}").as_str());
             then.status(200).json_body_obj(&parent_issue);
         });
@@ -1586,20 +1584,17 @@ mod tests {
             },
         };
         let root_patch_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/patches/{root_patch_id}").as_str());
             then.status(200).json_body_obj(&root_patch_record);
         });
         let parent_patch_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/patches/{parent_patch_id}").as_str());
             then.status(200).json_body_obj(&parent_patch_record);
         });
         let child_patch_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/patches/{child_patch_id}").as_str());
             then.status(200).json_body_obj(&child_patch_record);
         });
@@ -1796,8 +1791,7 @@ mod tests {
             job_id: None,
         };
         let get_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/issues/{target_issue_id}").as_str());
             then.status(200).json_body_obj(&current_issue);
         });
@@ -1875,8 +1869,7 @@ mod tests {
             job_id: None,
         };
         let get_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/issues/{target_issue_id}").as_str());
             then.status(200).json_body_obj(&current_issue);
         });
@@ -1985,8 +1978,7 @@ mod tests {
             },
         ];
         let get_mock = server.mock(|when, then| {
-            when
-                .method(GET)
+            when.method(GET)
                 .path(format!("/v1/issues/{issue_id}").as_str());
             then.status(200).json_body_obj(&IssueRecord {
                 id: issue_id.clone(),
