@@ -285,13 +285,21 @@ fn job_note(job: &JobRecord) -> Option<String> {
 mod tests {
     use super::*;
     use crate::{
-        client::MockMetisClient,
+        client::MetisClient,
         test_utils::ids::{issue_id, task_id},
     };
     use chrono::TimeZone;
+    use httpmock::prelude::*;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
     use metis_common::task_status::Event;
     use std::collections::HashMap;
+
+    fn only_spawned_from_query(request: &HttpMockRequest) -> bool {
+        match &request.query_params {
+            Some(params) => params.len() == 1 && params[0].0 == "spawned_from",
+            None => false,
+        }
+    }
 
     fn sample_job(id: &str) -> JobRecord {
         JobRecord {
@@ -403,21 +411,27 @@ mod tests {
 
     #[tokio::test]
     async fn run_passes_spawned_from_query() {
-        let client = MockMetisClient::default();
         let spawned_from = issue_id("from-filter");
+        let server = MockServer::start();
+        let client = MetisClient::new(server.base_url()).expect("should construct client");
 
-        client.push_list_jobs_response(ListJobsResponse {
+        let list_response = ListJobsResponse {
             jobs: vec![sample_job("t-job-1")],
+        };
+
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/jobs/")
+                .query_param("spawned_from", spawned_from.as_ref())
+                .matches(only_spawned_from_query);
+            then.status(200).json_body_obj(&list_response);
         });
 
         run(&client, 5, Some(spawned_from.clone()), false)
             .await
             .expect("list jobs should succeed");
 
-        let queries = client.list_job_queries.lock().unwrap().clone();
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].spawned_from, Some(spawned_from));
-        assert!(queries[0].q.is_none());
+        mock.assert();
     }
 
     #[test]
