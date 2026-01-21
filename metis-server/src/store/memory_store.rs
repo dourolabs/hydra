@@ -9,7 +9,7 @@ use metis_common::{IssueId, PatchId, TaskId};
 use metis_common::{
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
-    users::User,
+    users::{User, Username},
 };
 
 /// An in-memory implementation of the Store trait.
@@ -34,7 +34,7 @@ pub struct MemoryStore {
     /// Maps task IDs to their TaskStatusLog
     status_logs: HashMap<TaskId, TaskStatusLog>,
     /// Maps usernames to their User data
-    users: HashMap<String, User>,
+    users: HashMap<Username, User>,
 }
 
 impl MemoryStore {
@@ -505,7 +505,7 @@ impl Store for MemoryStore {
 
     async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
         if self.users.contains_key(&user.username) {
-            return Err(StoreError::UserAlreadyExists(user.username));
+            return Err(StoreError::UserAlreadyExists(user.username.to_string()));
         }
 
         self.users.insert(user.username.clone(), user);
@@ -551,7 +551,7 @@ mod tests {
         },
         jobs::BundleSpec,
         patches::{Patch, PatchStatus},
-        users::User,
+        users::{User, Username},
     };
     use std::{collections::HashSet, str::FromStr};
 
@@ -1205,7 +1205,7 @@ mod tests {
     #[tokio::test]
     async fn set_user_github_token_overwrites_existing_value() {
         let mut store = MemoryStore::new();
-        let username = "alice".to_string();
+        let username = Username::from("alice");
 
         store
             .add_user(User {
@@ -1216,7 +1216,7 @@ mod tests {
             .unwrap();
 
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string())
+            .set_user_github_token(username.as_str(), "new-token".to_string())
             .await
             .unwrap();
 
