@@ -131,7 +131,6 @@ struct IssueDraft {
     assignee_index: usize,
     validation_error: Option<String>,
     info_message: Option<String>,
-    editing: bool,
     is_submitting: bool,
 }
 
@@ -143,10 +142,9 @@ impl Default for IssueDraft {
             assignee_index: 0,
             validation_error: None,
             info_message: None,
-            editing: false,
             is_submitting: false,
         };
-        draft.configure_prompt();
+        draft.configure_prompt(false);
         draft
     }
 }
@@ -157,19 +155,14 @@ impl IssueDraft {
     }
 
     #[cfg(test)]
-    fn set_prompt(&mut self, prompt: &str) {
+    fn set_prompt(&mut self, prompt: &str, focused: bool) {
         self.prompt = TextArea::from(prompt.lines());
-        self.configure_prompt();
+        self.configure_prompt(focused);
     }
 
-    fn clear_prompt(&mut self) {
+    fn clear_prompt(&mut self, focused: bool) {
         self.prompt = TextArea::default();
-        self.configure_prompt();
-    }
-
-    fn set_editing(&mut self, editing: bool) {
-        self.editing = editing;
-        self.configure_prompt();
+        self.configure_prompt(focused);
     }
 
     fn selected_assignee(&self) -> Option<&str> {
@@ -197,13 +190,13 @@ impl IssueDraft {
         self.info_message = None;
     }
 
-    fn configure_prompt(&mut self) {
+    fn configure_prompt(&mut self, focused: bool) {
         let placeholder = "Describe the work to create a new issue.";
         self.prompt.set_placeholder_text(placeholder);
         self.prompt
             .set_placeholder_style(Style::default().fg(Color::DarkGray));
         self.prompt.set_style(Style::default());
-        if self.editing {
+        if focused {
             self.prompt
                 .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
             self.prompt
@@ -222,7 +215,6 @@ impl PartialEq for IssueDraft {
             && self.assignee_index == other.assignee_index
             && self.validation_error == other.validation_error
             && self.info_message == other.info_message
-            && self.editing == other.editing
             && self.is_submitting == other.is_submitting
     }
 }
@@ -322,7 +314,6 @@ async fn run_dashboard_loop(
         username: username.unwrap_or_else(whoami::username),
         ..DashboardState::default()
     };
-    state.issue_draft.set_editing(true);
     update_panel_focus(&mut state);
     let mut needs_draw = true;
 
@@ -456,7 +447,9 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if state.issue_draft.editing && state.issue_draft.prompt.insert_str(text) {
+            if state.selected_panel == PanelFocus::NewIssue
+                && state.issue_draft.prompt.insert_str(text)
+            {
                 state.issue_draft.note_edit();
                 state.selected_panel = PanelFocus::NewIssue;
             }
@@ -513,9 +506,6 @@ fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
     } else {
         next_panel_focus(state.selected_panel)
     };
-    state
-        .issue_draft
-        .set_editing(state.selected_panel == PanelFocus::NewIssue);
     update_panel_focus(state);
 }
 
@@ -538,6 +528,9 @@ fn prev_panel_focus(current: PanelFocus) -> PanelFocus {
 }
 
 fn update_panel_focus(state: &mut DashboardState) {
+    state
+        .issue_draft
+        .configure_prompt(state.selected_panel == PanelFocus::NewIssue);
     state
         .issue_creator_panel
         .set_focused(state.selected_panel == PanelFocus::NewIssue);
@@ -570,10 +563,6 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     if is_issue_submit_key(key) {
         state.selected_panel = PanelFocus::NewIssue;
         return attempt_issue_submit(state);
-    }
-
-    if !state.issue_draft.editing {
-        return None;
     }
 
     if state.issue_draft.prompt.input(key) {
@@ -664,7 +653,6 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     if prompt.is_empty() {
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = None;
-        state.issue_draft.set_editing(true);
         return None;
     }
 
@@ -686,8 +674,8 @@ fn handle_issue_submission_result(
     state.issue_draft.is_submitting = false;
     match result {
         Ok(issue_id) => {
-            state.issue_draft.clear_prompt();
-            state.issue_draft.set_editing(false);
+            let focused = state.selected_panel == PanelFocus::NewIssue;
+            state.issue_draft.clear_prompt(focused);
             state.issue_draft.validation_error = None;
             state.issue_draft.info_message =
                 Some(format!("Created issue {issue_id} for @{assignee}."));
@@ -805,13 +793,8 @@ fn render_issue_creator(
     area: ratatui::layout::Rect,
     state: &mut DashboardState,
 ) {
-    let title = if state.issue_draft.editing {
-        "New issue (editing)"
-    } else {
-        "New issue"
-    };
     frame.render_stateful_widget(
-        Panel::new(title, Vec::new()),
+        Panel::new("New issue", Vec::new()),
         area,
         &mut state.issue_creator_panel,
     );
@@ -850,7 +833,7 @@ fn render_issue_creator(
             info.clone(),
             Style::default().fg(Color::Green),
         ))
-    } else if draft.editing {
+    } else if state.selected_panel == PanelFocus::NewIssue {
         Line::from(Span::styled(
             "Alt+A to cycle assignee. Alt+Enter to validate. Tab/Shift+Tab switches panels.",
             Style::default().fg(Color::DarkGray),
@@ -2395,7 +2378,7 @@ mod tests {
     #[test]
     fn attempt_issue_submit_requires_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("   ");
+        state.issue_draft.set_prompt("   ", true);
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -2404,14 +2387,13 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
-        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
     #[test]
     fn attempt_issue_submit_rejects_whitespace_only_with_newlines() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("\n  \n");
+        state.issue_draft.set_prompt("\n  \n", true);
 
         let submission = attempt_issue_submit(&mut state);
 
@@ -2420,14 +2402,13 @@ mod tests {
             state.issue_draft.validation_error.as_deref(),
             Some("Prompt cannot be empty.")
         );
-        assert!(state.issue_draft.editing);
         assert!(!state.issue_draft.is_submitting);
     }
 
     #[test]
     fn attempt_issue_submit_sets_loading_state() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission = attempt_issue_submit(&mut state).expect("submission missing");
@@ -2443,8 +2424,7 @@ mod tests {
             selected_panel: PanelFocus::NewIssue,
             ..Default::default()
         };
-        state.issue_draft.set_prompt("Ship dashboard");
-        state.issue_draft.set_editing(true);
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.is_submitting = true;
 
         handle_issue_submission_result(&mut state, "pm", Ok(issue_id("i-new")));
@@ -2489,7 +2469,7 @@ mod tests {
     #[test]
     fn tab_switches_focus_away_from_new_issue_panel() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
@@ -2499,7 +2479,6 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::UserOwned);
-        assert!(!state.issue_draft.editing);
     }
 
     #[test]
@@ -2517,7 +2496,6 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::NewIssue);
-        assert!(state.issue_draft.editing);
     }
 
     #[test]
@@ -2536,7 +2514,6 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.selected_panel, PanelFocus::NewIssue);
-        assert!(state.issue_draft.editing);
     }
 
     #[test]
@@ -2702,7 +2679,7 @@ mod tests {
     #[test]
     fn alt_enter_submits_issue_prompt() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_prompt("Ship dashboard");
+        state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.assignees = vec!["pm".to_string()];
 
         let submission =
@@ -2715,9 +2692,9 @@ mod tests {
     }
 
     #[test]
-    fn q_does_not_quit_when_editing_issue_prompt() {
+    fn q_inserts_into_issue_prompt_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
@@ -2730,9 +2707,9 @@ mod tests {
     }
 
     #[test]
-    fn shift_q_does_not_quit_when_editing_issue_prompt() {
+    fn shift_q_inserts_into_issue_prompt_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT)),
@@ -2745,8 +2722,12 @@ mod tests {
     }
 
     #[test]
-    fn q_does_not_quit_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
+    fn q_does_not_edit_issue_prompt_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
@@ -2759,8 +2740,12 @@ mod tests {
     }
 
     #[test]
-    fn escape_does_not_quit_when_not_editing_issue_prompt() {
-        let mut state = DashboardState::default();
+    fn escape_does_not_quit_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -2773,9 +2758,9 @@ mod tests {
     }
 
     #[test]
-    fn escape_does_not_quit_when_editing_issue_prompt() {
+    fn escape_does_not_quit_when_focused() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
 
         let outcome = handle_event(
             CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
@@ -2789,7 +2774,7 @@ mod tests {
     #[test]
     fn paste_event_inserts_prompt_text() {
         let mut state = DashboardState::default();
-        state.issue_draft.set_editing(true);
+        update_panel_focus(&mut state);
         state.issue_draft.validation_error = Some("Prompt cannot be empty.".to_string());
         state.issue_draft.info_message = Some("old message".to_string());
 
