@@ -25,6 +25,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
 
     AppState {
         config: Arc::new(config),
+        github_app: None,
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
