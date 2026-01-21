@@ -380,10 +380,13 @@ async fn fetch_child_issues(
     .map_err(|err| anyhow!(err))?;
 
     let response = client
-        .list_issues(&SearchIssuesQuery {
-            graph_filters: vec![filter],
-            ..SearchIssuesQuery::default()
-        })
+        .list_issues(&SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            None,
+            vec![filter],
+        ))
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
 
@@ -493,13 +496,13 @@ async fn fetch_issues(
     });
 
     let issues = client
-        .list_issues(&SearchIssuesQuery {
+        .list_issues(&SearchIssuesQuery::new(
             issue_type,
             status,
-            assignee: trimmed_assignee.clone(),
-            q: trimmed_query,
+            trimmed_assignee.clone(),
+            trimmed_query,
             graph_filters,
-        })
+        ))
         .await
         .context("failed to list issues")?
         .issues;
@@ -563,20 +566,20 @@ async fn create_issue(
         None => None,
     };
 
-    let request = UpsertIssueRequest {
-        issue: Issue {
+    let request = UpsertIssueRequest::new(
+        Issue::new(
             issue_type,
-            description: description.to_string(),
+            description.to_string(),
             creator,
             progress,
             status,
             assignee,
-            todo_list: Vec::new(),
+            Vec::new(),
             dependencies,
             patches,
-        },
-        job_id: None,
-    };
+        ),
+        None,
+    );
 
     let response = client
         .create_issue(&request)
@@ -677,26 +680,20 @@ async fn update_issue(
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-    let updated_issue = Issue {
-        issue_type: issue_type.unwrap_or(current.issue.issue_type),
-        description: description.unwrap_or(current.issue.description),
-        creator: creator.unwrap_or(current.issue.creator),
-        progress: progress_update.unwrap_or(current.issue.progress),
-        status: status.unwrap_or(current.issue.status),
-        assignee: assignee.unwrap_or(current.issue.assignee),
-        todo_list: current.issue.todo_list,
-        dependencies: dependencies_update.unwrap_or(current.issue.dependencies),
-        patches: patches_update.unwrap_or(current.issue.patches),
-    };
+    let updated_issue = Issue::new(
+        issue_type.unwrap_or(current.issue.issue_type),
+        description.unwrap_or(current.issue.description),
+        creator.unwrap_or(current.issue.creator),
+        progress_update.unwrap_or(current.issue.progress),
+        status.unwrap_or(current.issue.status),
+        assignee.unwrap_or(current.issue.assignee),
+        current.issue.todo_list,
+        dependencies_update.unwrap_or(current.issue.dependencies),
+        patches_update.unwrap_or(current.issue.patches),
+    );
 
     let response = client
-        .update_issue(
-            &issue_id,
-            &UpsertIssueRequest {
-                issue: updated_issue,
-                job_id: None,
-            },
-        )
+        .update_issue(&issue_id, &UpsertIssueRequest::new(updated_issue, None))
         .await
         .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
@@ -728,7 +725,7 @@ async fn resolve_todo_list(
     if let Some(items) = replace {
         let todo_list = parse_todo_items(items)?;
         let response = client
-            .replace_todo_list(issue_id, &ReplaceTodoListRequest { todo_list })
+            .replace_todo_list(issue_id, &ReplaceTodoListRequest::new(todo_list))
             .await
             .with_context(|| format!("failed to replace todo list for issue '{issue_id}'"))?;
         return Ok(response.todo_list);
@@ -739,10 +736,7 @@ async fn resolve_todo_list(
         let response = client
             .add_todo_item(
                 issue_id,
-                &AddTodoItemRequest {
-                    description: item.description,
-                    is_done: item.is_done,
-                },
+                &AddTodoItemRequest::new(item.description, item.is_done),
             )
             .await
             .with_context(|| format!("failed to add todo item for issue '{issue_id}'"))?;
@@ -752,11 +746,7 @@ async fn resolve_todo_list(
     if let Some(item_number) = done {
         let item_number = validate_item_number(item_number)?;
         let response = client
-            .set_todo_item_status(
-                issue_id,
-                item_number,
-                &SetTodoItemStatusRequest { is_done: true },
-            )
+            .set_todo_item_status(issue_id, item_number, &SetTodoItemStatusRequest::new(true))
             .await
             .with_context(|| {
                 format!("failed to mark todo item {item_number} done for issue '{issue_id}'")
@@ -767,11 +757,7 @@ async fn resolve_todo_list(
     if let Some(item_number) = undone {
         let item_number = validate_item_number(item_number)?;
         let response = client
-            .set_todo_item_status(
-                issue_id,
-                item_number,
-                &SetTodoItemStatusRequest { is_done: false },
-            )
+            .set_todo_item_status(issue_id, item_number, &SetTodoItemStatusRequest::new(false))
             .await
             .with_context(|| {
                 format!("failed to mark todo item {item_number} undone for issue '{issue_id}'")
@@ -821,10 +807,7 @@ fn parse_todo_item_input(raw: &str) -> Result<TodoItem> {
         bail!("Todo item description must not be empty.");
     }
 
-    Ok(TodoItem {
-        description,
-        is_done,
-    })
+    Ok(TodoItem::new(description, is_done))
 }
 
 fn print_todo_list(issue_id: &IssueId, todo_list: &[TodoItem]) -> Result<()> {
@@ -883,10 +866,7 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
         .trim()
         .parse::<IssueId>()
         .map_err(|err| err.to_string())?;
-    Ok(IssueDependency {
-        dependency_type,
-        issue_id,
-    })
+    Ok(IssueDependency::new(dependency_type, issue_id))
 }
 
 fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
@@ -1907,29 +1887,23 @@ mod tests {
         let client = MockMetisClient::default();
         let issue_id = issue_id("i-todo");
         let todo_list = vec![
-            TodoItem {
-                description: "write docs".into(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "add tests".into(),
-                is_done: true,
-            },
+            TodoItem::new("write docs".into(), false),
+            TodoItem::new("add tests".into(), true),
         ];
-        client.push_get_issue_response(IssueRecord {
-            id: issue_id.clone(),
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "has todos".into(),
-                creator: String::new(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                todo_list: todo_list.clone(),
-                dependencies: vec![],
-                patches: Vec::new(),
-            },
-        });
+        client.push_get_issue_response(IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "has todos".into(),
+                String::new(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                todo_list.clone(),
+                vec![],
+                Vec::new(),
+            ),
+        ));
 
         let resolved = resolve_todo_list(&client, &issue_id, None, None, None, None)
             .await
@@ -1976,13 +1950,10 @@ mod tests {
     async fn todo_command_marks_item_done_and_undone() {
         let client = MockMetisClient::default();
         let issue_id = issue_id("i-done");
-        client.push_set_todo_status_response(TodoListResponse {
-            issue_id: issue_id.clone(),
-            todo_list: vec![TodoItem {
-                description: "first".into(),
-                is_done: true,
-            }],
-        });
+        client.push_set_todo_status_response(TodoListResponse::new(
+            issue_id.clone(),
+            vec![TodoItem::new("first".into(), true)],
+        ));
 
         let done_list = resolve_todo_list(&client, &issue_id, None, Some(1), None, None)
             .await
@@ -1997,13 +1968,10 @@ mod tests {
         );
         assert!(done_list[0].is_done);
 
-        client.push_set_todo_status_response(TodoListResponse {
-            issue_id: issue_id.clone(),
-            todo_list: vec![TodoItem {
-                description: "first".into(),
-                is_done: false,
-            }],
-        });
+        client.push_set_todo_status_response(TodoListResponse::new(
+            issue_id.clone(),
+            vec![TodoItem::new("first".into(), false)],
+        ));
 
         let undone_list = resolve_todo_list(&client, &issue_id, None, None, Some(1), None)
             .await
@@ -2031,19 +1999,10 @@ mod tests {
         let client = MockMetisClient::default();
         let issue_id = issue_id("i-replace");
         let parsed = vec![
-            TodoItem {
-                description: "first item".into(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "second".into(),
-                is_done: true,
-            },
+            TodoItem::new("first item".into(), false),
+            TodoItem::new("second".into(), true),
         ];
-        client.push_replace_todo_response(TodoListResponse {
-            issue_id: issue_id.clone(),
-            todo_list: parsed.clone(),
-        });
+        client.push_replace_todo_response(TodoListResponse::new(issue_id.clone(), parsed.clone()));
 
         let resolved = resolve_todo_list(
             &client,
@@ -2071,14 +2030,8 @@ mod tests {
     #[test]
     fn render_todo_list_formats_output() {
         let todo_list = vec![
-            TodoItem {
-                description: "write docs".into(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "add tests\nwith details".into(),
-                is_done: true,
-            },
+            TodoItem::new("write docs".into(), false),
+            TodoItem::new("add tests\nwith details".into(), true),
         ];
         let mut output = Vec::new();
         render_todo_list(&issue_id("i-render"), &todo_list, &mut output).unwrap();
@@ -2228,71 +2181,59 @@ mod tests {
     #[test]
     fn describe_issue_pretty_printer_shows_todos_for_root_issue_only() {
         let root_todos = vec![
-            TodoItem {
-                description: "root todo".into(),
-                is_done: false,
-            },
-            TodoItem {
-                description: "root done".into(),
-                is_done: true,
-            },
+            TodoItem::new("root todo".into(), false),
+            TodoItem::new("root done".into(), true),
         ];
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord {
-                    id: issue_id("i-main"),
-                    issue: Issue {
-                        issue_type: IssueType::Task,
-                        description: "Main issue".into(),
-                        creator: String::new(),
-                        progress: String::new(),
-                        status: IssueStatus::Open,
-                        assignee: Some("owner".into()),
-                        todo_list: root_todos.clone(),
-                        dependencies: vec![],
-                        patches: Vec::new(),
-                    },
-                },
+                issue: IssueRecord::new(
+                    issue_id("i-main"),
+                    Issue::new(
+                        IssueType::Task,
+                        "Main issue".into(),
+                        String::new(),
+                        String::new(),
+                        IssueStatus::Open,
+                        Some("owner".into()),
+                        root_todos.clone(),
+                        vec![],
+                        Vec::new(),
+                    ),
+                ),
                 patches: Vec::new(),
             },
             parents: vec![IssueWithPatches {
-                issue: IssueRecord {
-                    id: issue_id("i-parent"),
-                    issue: Issue {
-                        issue_type: IssueType::Task,
-                        description: "Parent description".into(),
-                        creator: String::new(),
-                        progress: String::new(),
-                        status: IssueStatus::Open,
-                        assignee: None,
-                        todo_list: vec![TodoItem {
-                            description: "parent todo".into(),
-                            is_done: false,
-                        }],
-                        dependencies: vec![],
-                        patches: Vec::new(),
-                    },
-                },
+                issue: IssueRecord::new(
+                    issue_id("i-parent"),
+                    Issue::new(
+                        IssueType::Task,
+                        "Parent description".into(),
+                        String::new(),
+                        String::new(),
+                        IssueStatus::Open,
+                        None,
+                        vec![TodoItem::new("parent todo".into(), false)],
+                        vec![],
+                        Vec::new(),
+                    ),
+                ),
                 patches: Vec::new(),
             }],
             children: vec![IssueWithPatches {
-                issue: IssueRecord {
-                    id: issue_id("i-child"),
-                    issue: Issue {
-                        issue_type: IssueType::Bug,
-                        description: "Child description".into(),
-                        creator: String::new(),
-                        progress: String::new(),
-                        status: IssueStatus::Open,
-                        assignee: None,
-                        todo_list: vec![TodoItem {
-                            description: "child todo".into(),
-                            is_done: true,
-                        }],
-                        dependencies: vec![],
-                        patches: Vec::new(),
-                    },
-                },
+                issue: IssueRecord::new(
+                    issue_id("i-child"),
+                    Issue::new(
+                        IssueType::Bug,
+                        "Child description".into(),
+                        String::new(),
+                        String::new(),
+                        IssueStatus::Open,
+                        None,
+                        vec![TodoItem::new("child todo".into(), true)],
+                        vec![],
+                        Vec::new(),
+                    ),
+                ),
                 patches: Vec::new(),
             }],
         };
@@ -2312,55 +2253,55 @@ mod tests {
         let earliest_review = Utc.with_ymd_and_hms(2024, 5, 1, 11, 50, 0).unwrap();
         let latest_review = earliest_review + Duration::minutes(10);
         let patch_reviews = vec![
-            Review {
-                contents: "needs work".to_string(),
-                is_approved: false,
-                author: "alex".to_string(),
-                submitted_at: Some(earliest_review),
-            },
-            Review {
-                contents: "fixed now".to_string(),
-                is_approved: false,
-                author: "sam".to_string(),
-                submitted_at: Some(earliest_review + Duration::minutes(5)),
-            },
-            Review {
-                contents: "ship it".to_string(),
-                is_approved: true,
-                author: "sam".to_string(),
-                submitted_at: Some(latest_review),
-            },
+            Review::new(
+                "needs work".to_string(),
+                false,
+                "alex".to_string(),
+                Some(earliest_review),
+            ),
+            Review::new(
+                "fixed now".to_string(),
+                false,
+                "sam".to_string(),
+                Some(earliest_review + Duration::minutes(5)),
+            ),
+            Review::new(
+                "ship it".to_string(),
+                true,
+                "sam".to_string(),
+                Some(latest_review),
+            ),
         ];
         let description = IssueDescription {
             issue: IssueWithPatches {
-                issue: IssueRecord {
-                    id: issue_id("i-main"),
-                    issue: Issue {
-                        issue_type: IssueType::Task,
-                        description: "Main issue".into(),
-                        creator: String::new(),
-                        progress: String::new(),
-                        status: IssueStatus::Open,
-                        assignee: Some("owner".into()),
-                        todo_list: Vec::new(),
-                        dependencies: vec![],
-                        patches: vec![main_patch_id.clone()],
-                    },
-                },
-                patches: vec![PatchRecord {
-                    id: main_patch_id,
-                    patch: Patch {
-                        title: "main patch".into(),
-                        description: "desc".into(),
-                        diff: sample_diff(),
-                        status: Default::default(),
-                        is_automatic_backup: false,
-                        created_by: None,
-                        reviews: patch_reviews,
-                        service_repo_name: sample_repo_name(),
-                        github: None,
-                    },
-                }],
+                issue: IssueRecord::new(
+                    issue_id("i-main"),
+                    Issue::new(
+                        IssueType::Task,
+                        "Main issue".into(),
+                        String::new(),
+                        String::new(),
+                        IssueStatus::Open,
+                        Some("owner".into()),
+                        Vec::new(),
+                        vec![],
+                        vec![main_patch_id.clone()],
+                    ),
+                ),
+                patches: vec![PatchRecord::new(
+                    main_patch_id,
+                    Patch::new(
+                        "main patch".into(),
+                        "desc".into(),
+                        sample_diff(),
+                        Default::default(),
+                        false,
+                        None,
+                        patch_reviews,
+                        sample_repo_name(),
+                        None,
+                    ),
+                )],
             },
             parents: vec![],
             children: vec![],

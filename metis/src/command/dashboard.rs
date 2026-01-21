@@ -716,20 +716,20 @@ async fn submit_issue(
     };
     let creator = creator.to_string();
 
-    let request = UpsertIssueRequest {
-        issue: Issue {
-            issue_type: IssueType::Task,
-            description: submission.prompt.trim().to_string(),
+    let request = UpsertIssueRequest::new(
+        Issue::new(
+            IssueType::Task,
+            submission.prompt.trim().to_string(),
             creator,
-            progress: String::new(),
-            status: IssueStatus::Open,
+            String::new(),
+            IssueStatus::Open,
             assignee,
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-        },
-        job_id: None,
-    };
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        None,
+    );
 
     let response = client
         .create_issue(&request)
@@ -1749,6 +1749,7 @@ fn task_status_order(status: Status) -> usize {
         Status::Pending => 1,
         Status::Failed => 2,
         Status::Complete => 3,
+        _ => 4,
     }
 }
 
@@ -1758,6 +1759,7 @@ fn issue_status_order(status: IssueStatus) -> usize {
         IssueStatus::Open => 1,
         IssueStatus::Dropped => 2,
         IssueStatus::Closed => 3,
+        _ => 4,
     }
 }
 
@@ -1810,6 +1812,7 @@ fn note_or_error(job: &JobRecord) -> String {
 fn format_task_error(error: &TaskError) -> String {
     match error {
         TaskError::JobEngineError { reason } => format!("error: {reason}"),
+        other => format!("error: {other:?}"),
     }
 }
 
@@ -1819,6 +1822,7 @@ fn status_style(status: Status) -> Style {
         Status::Running => Style::default().fg(Color::Yellow),
         Status::Failed => Style::default().fg(Color::Red),
         Status::Pending => Style::default().fg(Color::Blue),
+        _ => Style::default(),
     }
 }
 
@@ -1828,6 +1832,7 @@ fn issue_status_style(status: IssueStatus) -> Style {
         IssueStatus::InProgress => Style::default().fg(Color::Yellow),
         IssueStatus::Closed => Style::default().fg(Color::Green),
         IssueStatus::Dropped => Style::default().fg(Color::Rgb(139, 0, 0)),
+        _ => Style::default(),
     }
 }
 
@@ -1850,6 +1855,7 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
             issue_status_style(IssueStatus::InProgress),
         ),
         (IssueStatus::Open, _) => ("open".to_string(), issue_status_style(IssueStatus::Open)),
+        _ => ("unknown".to_string(), Style::default()),
     }
 }
 

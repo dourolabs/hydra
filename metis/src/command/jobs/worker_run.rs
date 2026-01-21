@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
     constants::{ENV_GH_TOKEN, ENV_METIS_ISSUE_ID},
@@ -57,6 +57,7 @@ pub async fn run(
                 .context("failed to configure git repository")?;
             resolve_head_oid(&dest).context("failed to resolve HEAD commit")?
         }
+        _ => bail!("unsupported bundle type for worker context"),
     };
 
     if base_commit.is_some() {
@@ -581,9 +582,7 @@ mod tests {
         std::fs::write(repo_path.join("untracked.txt"), "untracked content\n")?;
 
         let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-123"),
-        });
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-123")));
         let job_id = task_id("t-job-123");
         let repo_name = RepoName::from_str("dourolabs/example")?;
 

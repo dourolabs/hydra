@@ -98,13 +98,13 @@ mod tests {
     async fn starts_pending_tasks_and_reports_progress() {
         let state = test_state();
         let mut store = state.store.write().await;
-        let task = Task {
-            prompt: "do work".to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: None,
-            env_vars: HashMap::new(),
-        };
+        let task = Task::new(
+            "do work".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            HashMap::new(),
+        );
         let first_id = store
             .add_task(task.clone(), Utc::now())
             .await

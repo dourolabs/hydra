@@ -44,12 +44,7 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest {
-        prompt,
-        image,
-        context,
-        variables,
-    };
+    let request = CreateJobRequest::new(prompt, image, context, variables);
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
@@ -69,10 +64,7 @@ pub(crate) async fn stream_job_logs_via_server(
     job_id: &TaskId,
     watch: bool,
 ) -> Result<()> {
-    let query = LogsQuery {
-        watch: Some(watch),
-        tail_lines: None,
-    };
+    let query = LogsQuery::new(Some(watch), None);
 
     let mut log_stream = client
         .get_job_logs(job_id, &query)
@@ -227,61 +219,51 @@ mod tests {
     }
 
     fn job_record(id: &str, status_log: TaskStatusLog) -> JobRecord {
-        JobRecord {
-            id: task_id(id),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::None,
-                spawned_from: None,
-                image: None,
-                env_vars: HashMap::new(),
-            },
-            notes: None,
+        JobRecord::new(
+            task_id(id),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::None,
+                None,
+                None,
+                HashMap::new(),
+            ),
+            None,
             status_log,
-        }
+        )
     }
 
     #[tokio::test]
     async fn spawn_uses_injected_client_and_waits_for_completion() {
         let client = MockMetisClient::default();
 
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-123"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-123")));
         client.push_log_lines(["first log line\n", "second log line\n"]);
         let start_time = Utc::now();
-        client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![job_record(
-                "t-job-123",
-                TaskStatusLog {
-                    events: vec![
-                        Event::Created {
-                            at: start_time,
-                            status: Status::Pending,
-                        },
-                        Event::Started { at: start_time },
-                    ],
+        client.push_list_jobs_response(ListJobsResponse::new(vec![job_record(
+            "t-job-123",
+            TaskStatusLog::from_events(vec![
+                Event::Created {
+                    at: start_time,
+                    status: Status::Pending,
                 },
-            )],
-        });
-        client.push_list_jobs_response(ListJobsResponse {
-            jobs: vec![job_record(
-                "t-job-123",
-                TaskStatusLog {
-                    events: vec![
-                        Event::Created {
-                            at: start_time,
-                            status: Status::Pending,
-                        },
-                        Event::Started { at: start_time },
-                        Event::Completed {
-                            at: start_time + ChronoDuration::seconds(1),
-                            last_message: None,
-                        },
-                    ],
+                Event::Started { at: start_time },
+            ]),
+        )]));
+        client.push_list_jobs_response(ListJobsResponse::new(vec![job_record(
+            "t-job-123",
+            TaskStatusLog::from_events(vec![
+                Event::Created {
+                    at: start_time,
+                    status: Status::Pending,
                 },
-            )],
-        });
+                Event::Started { at: start_time },
+                Event::Completed {
+                    at: start_time + ChronoDuration::seconds(1),
+                    last_message: None,
+                },
+            ]),
+        )]));
 
         run(
             &client,
@@ -312,9 +294,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_accepts_service_repository_context() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-service"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-service")));
 
         run(
             &client,
@@ -343,9 +323,8 @@ mod tests {
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_service_repositories() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-service-default-rev"),
-        });
+        client
+            .push_create_job_response(CreateJobResponse::new(task_id("t-job-service-default-rev")));
 
         run(
             &client,
@@ -373,9 +352,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-git"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-git")));
 
         run(
             &client,
@@ -403,9 +380,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_defaults_rev_to_main_for_git_urls() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-git-default-rev"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-git-default-rev")));
 
         run(
             &client,
@@ -433,9 +408,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_allows_overriding_image() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-image"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-image")));
 
         run(
             &client,
@@ -461,9 +434,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_forwards_cli_variables_into_job_request() {
         let client = MockMetisClient::default();
-        client.push_create_job_response(CreateJobResponse {
-            job_id: task_id("t-job-with-vars"),
-        });
+        client.push_create_job_response(CreateJobResponse::new(task_id("t-job-with-vars")));
 
         run(
             &client,

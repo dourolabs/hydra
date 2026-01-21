@@ -286,9 +286,7 @@ async fn sync_patch_from_github(
         state
             .upsert_patch(
                 Some(patch_id.clone()),
-                UpsertPatchRequest {
-                    patch: latest_patch,
-                },
+                UpsertPatchRequest::new(latest_patch),
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
@@ -336,19 +334,19 @@ async fn maybe_post_ci_failure_review_and_close(
         )
         .await
         .with_context(|| format!("posting CI failure review for patch '{patch_id}'"))?;
-    reviews.push(Review {
-        contents: body,
-        is_approved: matches!(
+    reviews.push(Review::new(
+        body,
+        matches!(
             review.state,
             Some(octocrab::models::pulls::ReviewState::Approved)
         ),
-        author: review
+        review
             .user
             .as_ref()
             .map(|user| user.login.clone())
             .unwrap_or_else(|| "metis".to_string()),
-        submitted_at: review.submitted_at,
-    });
+        review.submitted_at,
+    ));
 
     client
         .pulls(&github.owner, &github.repo)
@@ -427,16 +425,16 @@ fn build_review_entries(
             continue;
         };
 
-        entries.push(Review {
-            contents: body,
-            is_approved: review
+        entries.push(Review::new(
+            body,
+            review
                 .state
                 .as_ref()
                 .map(|state| state == &octocrab::models::pulls::ReviewState::Approved)
                 .unwrap_or(false),
             author,
-            submitted_at: review.submitted_at,
-        });
+            review.submitted_at,
+        ));
     }
 
     for comment in review_comments {
@@ -449,12 +447,12 @@ fn build_review_entries(
             continue;
         };
 
-        entries.push(Review {
-            contents: body.to_string(),
-            is_approved: false,
+        entries.push(Review::new(
+            body.to_string(),
+            false,
             author,
-            submitted_at: Some(comment.created_at),
-        });
+            Some(comment.created_at),
+        ));
     }
 
     for comment in issue_comments {
@@ -465,12 +463,12 @@ fn build_review_entries(
             continue;
         }
 
-        entries.push(Review {
-            contents: body.to_string(),
-            is_approved: false,
-            author: comment.user.login.clone(),
-            submitted_at: Some(comment.created_at),
-        });
+        entries.push(Review::new(
+            body.to_string(),
+            false,
+            comment.user.login.clone(),
+            Some(comment.created_at),
+        ));
     }
 
     dedupe_reviews(entries)
@@ -582,24 +580,15 @@ fn ci_status_from_responses(
     combined_status: CombinedStatus,
 ) -> GithubCiStatus {
     if let Some(failure) = first_failed_check_run(&check_runs.check_runs) {
-        return GithubCiStatus {
-            state: GithubCiState::Failed,
-            failure: Some(failure),
-        };
+        return GithubCiStatus::new(GithubCiState::Failed, Some(failure));
     }
 
     if check_runs.check_runs.iter().any(is_pending_check_run) {
-        return GithubCiStatus {
-            state: GithubCiState::Pending,
-            failure: None,
-        };
+        return GithubCiStatus::new(GithubCiState::Pending, None);
     }
 
     if let Some(failure) = first_failed_status(&combined_status.statuses) {
-        return GithubCiStatus {
-            state: GithubCiState::Failed,
-            failure: Some(failure),
-        };
+        return GithubCiStatus::new(GithubCiState::Failed, Some(failure));
     }
 
     if combined_status
@@ -607,27 +596,21 @@ fn ci_status_from_responses(
         .iter()
         .any(|status| matches!(status.state, octocrab::models::StatusState::Pending))
     {
-        return GithubCiStatus {
-            state: GithubCiState::Pending,
-            failure: None,
-        };
+        return GithubCiStatus::new(GithubCiState::Pending, None);
     }
 
-    GithubCiStatus {
-        state: state_from_combined_status(&combined_status),
-        failure: None,
-    }
+    GithubCiStatus::new(state_from_combined_status(&combined_status), None)
 }
 
 fn first_failed_check_run(check_runs: &[CheckRun]) -> Option<GithubCiFailure> {
     check_runs.iter().find_map(|run| {
         let conclusion = run.conclusion.as_deref()?;
         if is_failed_conclusion(conclusion) {
-            return Some(GithubCiFailure {
-                name: run.name.clone(),
-                summary: run.output.summary.clone(),
-                details_url: run.details_url.clone().or_else(|| run.html_url.clone()),
-            });
+            return Some(GithubCiFailure::new(
+                run.name.clone(),
+                run.output.summary.clone(),
+                run.details_url.clone().or_else(|| run.html_url.clone()),
+            ));
         }
 
         None
@@ -648,14 +631,14 @@ fn is_failed_conclusion(conclusion: &str) -> bool {
 fn first_failed_status(statuses: &[Status]) -> Option<GithubCiFailure> {
     statuses.iter().find_map(|status| match status.state {
         octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
-            Some(GithubCiFailure {
-                name: status
+            Some(GithubCiFailure::new(
+                status
                     .context
                     .clone()
                     .unwrap_or_else(|| "status".to_string()),
-                summary: status.description.clone(),
-                details_url: status.target_url.clone(),
-            })
+                status.description.clone(),
+                status.target_url.clone(),
+            ))
         }
         _ => None,
     })
@@ -704,25 +687,25 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_patch(Patch {
-                    title: "test".to_string(),
-                    description: "desc".to_string(),
-                    diff: sample_diff(),
-                    status: PatchStatus::Open,
-                    is_automatic_backup: false,
-                    created_by: None,
-                    reviews: Vec::new(),
-                    service_repo_name: RepoName::from_str("dourolabs/api")?,
-                    github: Some(GithubPr {
-                        owner: "octo".to_string(),
-                        repo: "repo".to_string(),
-                        number: 1,
-                        head_ref: None,
-                        base_ref: None,
-                        url: None,
-                        ci: None,
-                    }),
-                })
+                .add_patch(Patch::new(
+                    "test".to_string(),
+                    "desc".to_string(),
+                    sample_diff(),
+                    PatchStatus::Open,
+                    false,
+                    None,
+                    Vec::new(),
+                    RepoName::from_str("dourolabs/api")?,
+                    Some(GithubPr::new(
+                        "octo".to_string(),
+                        "repo".to_string(),
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )),
+                ))
                 .await?;
         }
         let worker = GithubPollerWorker::new(state, 60);
@@ -753,18 +736,18 @@ mod tests {
 
     #[test]
     fn merge_reviews_preserves_existing() {
-        let existing = vec![Review {
-            contents: "local".to_string(),
-            is_approved: false,
-            author: "alice".to_string(),
-            submitted_at: None,
-        }];
-        let github_reviews = vec![Review {
-            contents: "approved".to_string(),
-            is_approved: true,
-            author: "bob".to_string(),
-            submitted_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
-        }];
+        let existing = vec![Review::new(
+            "local".to_string(),
+            false,
+            "alice".to_string(),
+            None,
+        )];
+        let github_reviews = vec![Review::new(
+            "approved".to_string(),
+            true,
+            "bob".to_string(),
+            Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+        )];
 
         let merged = merge_reviews(&existing, github_reviews.clone());
 
@@ -775,12 +758,12 @@ mod tests {
 
     #[test]
     fn dedupe_reviews_removes_duplicates() {
-        let review = Review {
-            contents: "same".to_string(),
-            is_approved: false,
-            author: "alice".to_string(),
-            submitted_at: Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
-        };
+        let review = Review::new(
+            "same".to_string(),
+            false,
+            "alice".to_string(),
+            Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+        );
         let result = dedupe_reviews(vec![review.clone(), review.clone()]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], review);
@@ -896,11 +879,11 @@ mod tests {
 
     #[test]
     fn ci_failure_review_body_includes_details() {
-        let failure = GithubCiFailure {
-            name: "build".to_string(),
-            summary: Some("compile error".to_string()),
-            details_url: Some("https://ci.example.com/run/42".to_string()),
-        };
+        let failure = GithubCiFailure::new(
+            "build".to_string(),
+            Some("compile error".to_string()),
+            Some("https://ci.example.com/run/42".to_string()),
+        );
 
         let body = ci_failure_review_body(&failure);
 
@@ -913,41 +896,35 @@ mod tests {
 
     #[test]
     fn has_ci_failure_review_detects_existing_body() {
-        let failure = GithubCiFailure {
-            name: "lint".to_string(),
-            summary: Some("lint failed".to_string()),
-            details_url: Some("https://ci.example.com/lint".to_string()),
-        };
+        let failure = GithubCiFailure::new(
+            "lint".to_string(),
+            Some("lint failed".to_string()),
+            Some("https://ci.example.com/lint".to_string()),
+        );
         let existing_body = ci_failure_review_body(&failure);
-        let reviews = vec![Review {
-            contents: existing_body.clone(),
-            is_approved: false,
-            author: "metis".to_string(),
-            submitted_at: None,
-        }];
+        let reviews = vec![Review::new(
+            existing_body.clone(),
+            false,
+            "metis".to_string(),
+            None,
+        )];
 
         assert!(has_ci_failure_review(&reviews, &failure));
 
-        let other_failure = GithubCiFailure {
-            name: "tests".to_string(),
-            summary: Some("tests failed".to_string()),
-            details_url: Some("https://ci.example.com/tests".to_string()),
-        };
+        let other_failure = GithubCiFailure::new(
+            "tests".to_string(),
+            Some("tests failed".to_string()),
+            Some("https://ci.example.com/tests".to_string()),
+        );
         assert!(!has_ci_failure_review(&reviews, &other_failure));
     }
 
     #[test]
     fn failure_from_status_requires_failure_details() {
-        let missing_details = GithubCiStatus {
-            state: GithubCiState::Failed,
-            failure: None,
-        };
+        let missing_details = GithubCiStatus::new(GithubCiState::Failed, None);
         assert!(failure_from_status(&missing_details).is_err());
 
-        let success_status = GithubCiStatus {
-            state: GithubCiState::Success,
-            failure: None,
-        };
+        let success_status = GithubCiStatus::new(GithubCiState::Success, None);
         assert!(
             failure_from_status(&success_status)
                 .expect("success state should be ok")
@@ -1039,13 +1016,13 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
             repo_name.clone(),
-            ServiceRepository {
-                name: repo_name.clone(),
-                remote_url: "https://github.com/dourolabs/api.git".to_string(),
-                default_branch: None,
-                github_token: Some("svc-token".to_string()),
-                default_image: None,
-            },
+            ServiceRepository::new(
+                repo_name.clone(),
+                "https://github.com/dourolabs/api.git".to_string(),
+                None,
+                Some("svc-token".to_string()),
+                None,
+            ),
         )])));
 
         let token = select_github_token(&state, &repo_name).await;

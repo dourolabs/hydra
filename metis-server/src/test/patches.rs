@@ -17,23 +17,21 @@ use std::collections::HashMap;
 async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let patch = Patch {
-        title: "Initial patch".to_string(),
-        description: "initial patch".to_string(),
-        diff: patch_diff(),
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: service_repo_name(),
-        github: None,
-    };
+    let patch = Patch::new(
+        "Initial patch".to_string(),
+        "initial patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
 
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest {
-            patch: patch.clone(),
-        })
+        .json(&UpsertPatchRequest::new(patch.clone()))
         .send()
         .await?;
 
@@ -85,19 +83,17 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let client = test_client();
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest {
-            patch: Patch {
-                title: "artifact with creator".to_string(),
-                description: "artifact with creator".to_string(),
-                diff: patch_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: Some(job_id.clone()),
-                reviews: Vec::new(),
-                service_repo_name: service_repo_name(),
-                github: None,
-            },
-        })
+        .json(&UpsertPatchRequest::new(Patch::new(
+            "artifact with creator".to_string(),
+            "artifact with creator".to_string(),
+            patch_diff(),
+            PatchStatus::Open,
+            false,
+            Some(job_id.clone()),
+            Vec::new(),
+            service_repo_name(),
+            None,
+        )))
         .send()
         .await?;
 
@@ -117,39 +113,37 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let base_patch = Patch {
-        title: "link patch to issue".to_string(),
-        description: "issue-linked patch".to_string(),
-        diff: patch_diff(),
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: service_repo_name(),
-        github: None,
-    };
+    let base_patch = Patch::new(
+        "link patch to issue".to_string(),
+        "issue-linked patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest {
-            patch: base_patch.clone(),
-        })
+        .json(&UpsertPatchRequest::new(base_patch.clone()))
         .send()
         .await?
         .json()
         .await?;
 
-    let merge_request_issue = Issue {
-        issue_type: IssueType::MergeRequest,
-        description: "linked merge request".to_string(),
-        creator: String::new(),
-        progress: String::new(),
-        status: IssueStatus::Open,
-        assignee: None,
-        todo_list: Vec::new(),
-        dependencies: vec![],
-        patches: vec![created_patch.patch_id.clone()],
-    };
+    let merge_request_issue = Issue::new(
+        IssueType::MergeRequest,
+        "linked merge request".to_string(),
+        String::new(),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        Vec::new(),
+        vec![],
+        vec![created_patch.patch_id.clone()],
+    );
 
     let created_issue: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
@@ -170,9 +164,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest {
-            patch: merged_patch,
-        })
+        .json(&UpsertPatchRequest::new(merged_patch))
         .send()
         .await?
         .error_for_status()?;
@@ -197,33 +189,33 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let patch = Patch {
-        title: "refactor logging".to_string(),
-        description: "refactor logging".to_string(),
-        diff: patch_diff(),
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: service_repo_name(),
-        github: None,
-    };
-    let filtered_patch = Patch {
-        title: "login retry patch".to_string(),
-        description: "login retry patch".to_string(),
-        diff: patch_diff(),
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: service_repo_name(),
-        github: None,
-    };
+    let patch = Patch::new(
+        "refactor logging".to_string(),
+        "refactor logging".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+    let filtered_patch = Patch::new(
+        "login retry patch".to_string(),
+        "login retry patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
 
     for patch in [patch.clone(), filtered_patch.clone()] {
         let response = client
             .post(format!("{}/v1/patches", server.base_url()))
-            .json(&UpsertPatchRequest { patch })
+            .json(&UpsertPatchRequest::new(patch))
             .send()
             .await?;
         assert!(response.status().is_success());
@@ -231,9 +223,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
 
     let patch_results: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
-        .query(&SearchPatchesQuery {
-            q: Some("login".to_string()),
-        })
+        .query(&SearchPatchesQuery::new(Some("login".to_string())))
         .send()
         .await?
         .json()

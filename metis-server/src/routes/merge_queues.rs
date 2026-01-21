@@ -1,6 +1,4 @@
-use crate::{
-    app::{AppState, MergeQueueError},
-};
+use crate::app::{AppState, MergeQueueError};
 use axum::{
     Json,
     extract::{Path, State},
@@ -8,8 +6,8 @@ use axum::{
 use metis_common::{
     RepoName,
     api::v1::{
-        merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         ApiError,
+        merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     },
 };
 use tracing::{error, info};

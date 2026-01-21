@@ -122,10 +122,10 @@ async fn update_repository(
 }
 
 fn build_create_request(args: &UpsertRepositoryArgs) -> Result<CreateRepositoryRequest> {
-    Ok(CreateRepositoryRequest {
-        name: args.name.clone(),
-        repository: build_repository_config(args)?,
-    })
+    Ok(CreateRepositoryRequest::new(
+        args.name.clone(),
+        build_repository_config(args)?,
+    ))
 }
 
 fn build_update_request(
@@ -133,34 +133,32 @@ fn build_update_request(
 ) -> Result<(RepoName, UpdateRepositoryRequest)> {
     Ok((
         args.name.clone(),
-        UpdateRepositoryRequest {
-            repository: build_repository_config(args)?,
-        },
+        UpdateRepositoryRequest::new(build_repository_config(args)?),
     ))
 }
 
 fn build_repository_config(args: &UpsertRepositoryArgs) -> Result<ServiceRepositoryConfig> {
-    Ok(ServiceRepositoryConfig {
-        remote_url: parse_required(&args.remote_url, "remote URL")?,
-        default_branch: parse_optional(
+    Ok(ServiceRepositoryConfig::new(
+        parse_required(&args.remote_url, "remote URL")?,
+        parse_optional(
             &args.default_branch,
             args.clear_default_branch,
             "default branch",
             "--clear-default-branch",
         )?,
-        default_image: parse_optional(
-            &args.default_image,
-            args.clear_default_image,
-            "default image",
-            "--clear-default-image",
-        )?,
-        github_token: parse_optional(
+        parse_optional(
             &args.github_token,
             args.clear_github_token,
             "github token",
             "--clear-github-token",
         )?,
-    })
+        parse_optional(
+            &args.default_image,
+            args.clear_default_image,
+            "default image",
+            "--clear-default-image",
+        )?,
+    ))
 }
 
 fn parse_required(value: &str, field: &str) -> Result<String> {
@@ -273,31 +271,29 @@ mod tests {
     }
 
     fn sample_repository_info(name: &RepoName) -> ServiceRepositoryInfo {
-        ServiceRepositoryInfo {
-            name: name.clone(),
-            remote_url: "https://example.com/metis.git".to_string(),
-            default_branch: Some("main".to_string()),
-            default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
-            github_token_present: true,
-        }
+        ServiceRepositoryInfo::new(
+            name.clone(),
+            "https://example.com/metis.git".to_string(),
+            Some("main".to_string()),
+            Some("ghcr.io/dourolabs/metis:latest".to_string()),
+            true,
+        )
     }
 
     #[tokio::test]
     async fn list_repositories_prints_all_fields() {
         let client = MockMetisClient::default();
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        client.push_list_repositories_response(ListRepositoriesResponse {
-            repositories: vec![
-                sample_repository_info(&repo_name),
-                ServiceRepositoryInfo {
-                    name: RepoName::from_str("dourolabs/api").unwrap(),
-                    remote_url: "git@github.com:dourolabs/api.git".to_string(),
-                    default_branch: None,
-                    default_image: None,
-                    github_token_present: false,
-                },
-            ],
-        });
+        client.push_list_repositories_response(ListRepositoriesResponse::new(vec![
+            sample_repository_info(&repo_name),
+            ServiceRepositoryInfo::new(
+                RepoName::from_str("dourolabs/api").unwrap(),
+                "git@github.com:dourolabs/api.git".to_string(),
+                None,
+                None,
+                false,
+            ),
+        ]));
 
         let repositories = fetch_repositories(&client).await.unwrap();
         let mut output = Vec::new();
@@ -329,9 +325,9 @@ mod tests {
     async fn create_repository_sends_request_and_prints_result() {
         let client = MockMetisClient::default();
         let args = sample_upsert_args();
-        client.push_create_repository_response(UpsertRepositoryResponse {
-            repository: sample_repository_info(&args.name),
-        });
+        client.push_create_repository_response(UpsertRepositoryResponse::new(
+            sample_repository_info(&args.name),
+        ));
 
         let repository = create_repository(&client, args.clone()).await.unwrap();
 
@@ -383,15 +379,15 @@ mod tests {
         args.clear_github_token = true;
         args.github_token = None;
         args.default_image = Some("ghcr.io/dourolabs/metis:stable".to_string());
-        client.push_update_repository_response(UpsertRepositoryResponse {
-            repository: ServiceRepositoryInfo {
-                name: args.name.clone(),
-                remote_url: args.remote_url.clone(),
-                default_branch: None,
-                default_image: args.default_image.clone(),
-                github_token_present: false,
-            },
-        });
+        client.push_update_repository_response(UpsertRepositoryResponse::new(
+            ServiceRepositoryInfo::new(
+                args.name.clone(),
+                args.remote_url.clone(),
+                None,
+                args.default_image.clone(),
+                false,
+            ),
+        ));
 
         let repository = update_repository(&client, args.clone()).await.unwrap();
         let requests = client.recorded_update_repository_requests();

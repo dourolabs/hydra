@@ -121,7 +121,11 @@ pub struct WorkerContext {
 }
 
 impl WorkerContext {
-    pub fn new(request_context: Bundle, prompt: String, variables: HashMap<String, String>) -> Self {
+    pub fn new(
+        request_context: Bundle,
+        prompt: String,
+        variables: HashMap<String, String>,
+    ) -> Self {
         Self {
             request_context,
             prompt,

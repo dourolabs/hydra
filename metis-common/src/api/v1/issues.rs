@@ -172,7 +172,10 @@ pub struct TodoListResponse {
 
 impl TodoListResponse {
     pub fn new(issue_id: IssueId, todo_list: Vec<TodoItem>) -> Self {
-        Self { issue_id, todo_list }
+        Self {
+            issue_id,
+            todo_list,
+        }
     }
 }
 

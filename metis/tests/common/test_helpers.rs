@@ -226,12 +226,12 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
     let mut service_section = ServiceSection::default();
     service_section.repositories.insert(
         repo_name.clone(),
-        metis_common::repositories::ServiceRepositoryConfig {
-            remote_url: remote_url.to_string(),
-            default_branch: Some("main".to_string()),
-            github_token: None,
-            default_image: None,
-        },
+        metis_common::repositories::ServiceRepositoryConfig::new(
+            remote_url.to_string(),
+            Some("main".to_string()),
+            None,
+            None,
+        ),
     );
 
     let mut server_config = test_app_config();

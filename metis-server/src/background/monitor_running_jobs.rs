@@ -104,13 +104,13 @@ mod tests {
         let engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(engine.clone());
         let mut store = state.store.write().await;
-        let task = Task {
-            prompt: "observe".to_string(),
-            context: BundleSpec::None,
-            spawned_from: None,
-            image: None,
-            env_vars: HashMap::new(),
-        };
+        let task = Task::new(
+            "observe".to_string(),
+            BundleSpec::None,
+            None,
+            None,
+            HashMap::new(),
+        );
         let task_id = store
             .add_task(task, Utc::now())
             .await

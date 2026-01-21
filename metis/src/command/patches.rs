@@ -263,7 +263,7 @@ async fn fetch_patches(
     query: Option<String>,
 ) -> Result<Vec<PatchRecord>> {
     let response = client
-        .list_patches(&SearchPatchesQuery { q: query })
+        .list_patches(&SearchPatchesQuery::new(query))
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)
@@ -433,12 +433,7 @@ async fn update_patch(
     }
 
     let response = client
-        .update_patch(
-            &patch_id,
-            &UpsertPatchRequest {
-                patch: updated_patch,
-            },
-        )
+        .update_patch(&patch_id, &UpsertPatchRequest::new(updated_patch))
         .await
         .with_context(|| format!("failed to update patch '{patch_id}'"))?;
 
@@ -526,10 +521,7 @@ async fn create_merge_request_issue(
 
     let mut dependencies = Vec::new();
     if let Some(issue_id) = parent_issue_id {
-        dependencies.push(IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id,
-        });
+        dependencies.push(IssueDependency::new(IssueDependencyType::ChildOf, issue_id));
     }
 
     let summary = patch_title.trim();
@@ -553,20 +545,20 @@ async fn create_merge_request_issue(
         .unwrap_or_else(|| "unknown".to_string());
 
     let response = client
-        .create_issue(&UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::MergeRequest,
+        .create_issue(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::MergeRequest,
                 description,
                 creator,
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some(assignee),
-                todo_list: Vec::new(),
+                String::new(),
+                IssueStatus::Open,
+                Some(assignee),
+                Vec::new(),
                 dependencies,
-                patches: vec![patch_id],
-            },
-            job_id: None,
-        })
+                vec![patch_id],
+            ),
+            None,
+        ))
         .await
         .context("failed to create merge-request issue")?;
 
@@ -616,21 +608,19 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch diff must not be empty.");
     }
 
-    let mut patch_payload = Patch {
-        title: title.clone(),
-        description: description.clone(),
+    let mut patch_payload = Patch::new(
+        title.clone(),
+        description.clone(),
         diff,
-        status: PatchStatus::Open,
+        PatchStatus::Open,
         is_automatic_backup,
-        created_by: job_id.clone(),
-        reviews: Vec::new(),
-        service_repo_name: service_repo_name.clone(),
-        github: None,
-    };
+        job_id.clone(),
+        Vec::new(),
+        service_repo_name.clone(),
+        None,
+    );
     let response = client
-        .create_patch(&UpsertPatchRequest {
-            patch: patch_payload.clone(),
-        })
+        .create_patch(&UpsertPatchRequest::new(patch_payload.clone()))
         .await
         .context("failed to create patch")?;
 
@@ -645,12 +635,7 @@ pub async fn create_patch_artifact_from_repo(
         .await?;
         patch_payload.github = Some(github_pr);
         client
-            .update_patch(
-                &response.patch_id,
-                &UpsertPatchRequest {
-                    patch: patch_payload,
-                },
-            )
+            .update_patch(&response.patch_id, &UpsertPatchRequest::new(patch_payload))
             .await
             .context("failed to update patch with GitHub metadata")?;
     }
@@ -679,6 +664,7 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
         PatchStatus::Open => "open",
         PatchStatus::Closed => "closed",
         PatchStatus::Merged => "merged",
+        _ => "unknown",
     }
 }
 
@@ -786,20 +772,13 @@ async fn review_patch(
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
 
-    record.patch.reviews.push(Review {
-        contents,
-        is_approved: approve,
-        author,
-        submitted_at: Some(Utc::now()),
-    });
+    record
+        .patch
+        .reviews
+        .push(Review::new(contents, approve, author, Some(Utc::now())));
 
     let response = client
-        .update_patch(
-            &id,
-            &UpsertPatchRequest {
-                patch: record.patch,
-            },
-        )
+        .update_patch(&id, &UpsertPatchRequest::new(record.patch))
         .await
         .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
@@ -822,15 +801,15 @@ async fn create_github_pull_request(
         open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
     let (owner, repo) = parse_pr_repository(&pr_metadata.url)
         .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
-    Ok(GithubPr {
+    Ok(GithubPr::new(
         owner,
         repo,
-        number: pr_metadata.number,
-        head_ref: pr_metadata.head_ref_name,
-        base_ref: pr_metadata.base_ref_name,
-        url: Some(pr_metadata.url),
-        ci: None,
-    })
+        pr_metadata.number,
+        pr_metadata.head_ref_name,
+        pr_metadata.base_ref_name,
+        Some(pr_metadata.url),
+        None,
+    ))
 }
 
 fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
@@ -1059,7 +1038,7 @@ mod tests {
     #[tokio::test]
     async fn list_patches_sets_patch_filter_and_query() -> Result<()> {
         let client = MockMetisClient::default();
-        client.push_list_patches_response(ListPatchesResponse { patches: vec![] });
+        client.push_list_patches_response(ListPatchesResponse::new(vec![]));
 
         list_patches(&client, None, Some("login".to_string()), false).await?;
 
@@ -1072,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn list_patches_emits_no_output_for_empty_results() -> Result<()> {
         let client = MockMetisClient::default();
-        client.push_list_patches_response(ListPatchesResponse { patches: vec![] });
+        client.push_list_patches_response(ListPatchesResponse::new(vec![]));
 
         let mut output = Vec::new();
         list_patches_with_writer(&client, None, None, false, &mut output).await?;
@@ -1080,7 +1059,7 @@ mod tests {
         assert!(output.is_empty());
         assert_eq!(
             client.recorded_list_patch_queries(),
-            vec![SearchPatchesQuery { q: None }]
+            vec![SearchPatchesQuery::new(None)]
         );
         Ok(())
     }
@@ -1093,24 +1072,22 @@ mod tests {
         let base_branch = format!("metis/{}/base", issue_id.as_ref());
         create_branch_at(&repo_path, &base_branch, base_commit)?;
         let client = MockMetisClient::default();
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
+        client.push_get_job_response(JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-1"),
-        });
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        ));
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-1")));
         let patch_title = "custom patch title".to_string();
         let patch_description = "custom patch description".to_string();
         let job_id_clone = job_id.clone();
@@ -1160,25 +1137,23 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
 
         let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-2"),
-        });
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-2")));
         let job_id = task_id("t-job-1234");
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
+        client.push_get_job_response(JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        ));
 
         let title = "patch with job title".to_string();
         let job_id_opt = Some(job_id.clone());
@@ -1279,28 +1254,24 @@ mod tests {
         let base_branch = format!("metis/{}/base", parent_issue.as_ref());
         create_branch_at(&repo_path, &base_branch, base_commit)?;
         let client = MockMetisClient::default();
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
+        client.push_get_job_response(JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
                     name: sample_repo_name(),
                     rev: None,
                 },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        ));
         let created_patch_id = patch_id("p-merge");
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: created_patch_id.clone(),
-        });
-        client.push_upsert_issue_response(UpsertIssueResponse {
-            issue_id: issue_id("i-merge"),
-        });
+        client.push_upsert_patch_response(UpsertPatchResponse::new(created_patch_id.clone()));
+        client.push_upsert_issue_response(UpsertIssueResponse::new(issue_id("i-merge")));
 
         let title = "custom patch title".to_string();
         let description = "custom patch description".to_string();
@@ -1331,10 +1302,10 @@ mod tests {
         assert_eq!(request.issue.assignee.as_deref(), Some("owner-a"));
         assert_eq!(
             request.issue.dependencies,
-            vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent_issue.clone()
-            }]
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_issue.clone()
+            )]
         );
         assert_eq!(request.issue.patches, vec![created_patch_id.clone()]);
         assert!(
@@ -1352,9 +1323,7 @@ mod tests {
     async fn create_patch_artifact_marks_automatic_backup_when_requested() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-automatic"),
-        });
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-automatic")));
         let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
 
         let job_id = task_id("t-job-automatic");
@@ -1385,24 +1354,22 @@ mod tests {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-service");
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::ServiceRepository {
+        client.push_get_job_response(JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
                     name: RepoName::from_str("dourolabs/api")?,
                     rev: None,
                 },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-service"),
-        });
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        ));
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-service")));
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
 
         create_patch(
@@ -1451,21 +1418,21 @@ mod tests {
     async fn resolve_service_repo_name_errors_for_non_service_job() -> Result<()> {
         let client = MockMetisClient::default();
         let job_id = task_id("t-job-non-service");
-        client.push_get_job_response(JobRecord {
-            id: job_id.clone(),
-            task: Task {
-                prompt: "0".to_string(),
-                context: BundleSpec::GitRepository {
+        client.push_get_job_response(JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::GitRepository {
                     url: "https://github.com/dourolabs/example".to_string(),
                     rev: "main".to_string(),
                 },
-                spawned_from: None,
-                image: None,
-                env_vars: Default::default(),
-            },
-            notes: None,
-            status_log: TaskStatusLog { events: Vec::new() },
-        });
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        ));
 
         let error = resolve_service_repo_name(&client, Some(&job_id))
             .await
@@ -1484,29 +1451,27 @@ mod tests {
     async fn review_patch_appends_review() -> Result<()> {
         let client = MockMetisClient::default();
         let existing_submitted_at = Utc::now();
-        let existing_review = Review {
-            contents: "needs work".to_string(),
-            is_approved: false,
-            author: "bob".to_string(),
-            submitted_at: Some(existing_submitted_at),
-        };
-        client.push_get_patch_response(PatchRecord {
-            id: patch_id("p-123"),
-            patch: Patch {
-                title: "reviewed patch".to_string(),
-                description: "description".to_string(),
-                diff: sample_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: None,
-                reviews: vec![existing_review.clone()],
-                service_repo_name: sample_repo_name(),
-                github: None,
-            },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-123"),
-        });
+        let existing_review = Review::new(
+            "needs work".to_string(),
+            false,
+            "bob".to_string(),
+            Some(existing_submitted_at),
+        );
+        client.push_get_patch_response(PatchRecord::new(
+            patch_id("p-123"),
+            Patch::new(
+                "reviewed patch".to_string(),
+                "description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                vec![existing_review.clone()],
+                sample_repo_name(),
+                None,
+            ),
+        ));
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-123")));
 
         review_patch(
             &client,
@@ -1544,28 +1509,26 @@ mod tests {
     #[tokio::test]
     async fn update_patch_modifies_requested_fields() -> Result<()> {
         let client = MockMetisClient::default();
-        client.push_get_patch_response(PatchRecord {
-            id: patch_id("p-update"),
-            patch: Patch {
-                title: "Initial title".to_string(),
-                description: "Initial description".to_string(),
-                diff: sample_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: None,
-                reviews: vec![Review {
-                    contents: "looks ok".to_string(),
-                    is_approved: false,
-                    author: "sam".to_string(),
-                    submitted_at: None,
-                }],
-                service_repo_name: sample_repo_name(),
-                github: None,
-            },
-        });
-        client.push_upsert_patch_response(UpsertPatchResponse {
-            patch_id: patch_id("p-update"),
-        });
+        client.push_get_patch_response(PatchRecord::new(
+            patch_id("p-update"),
+            Patch::new(
+                "Initial title".to_string(),
+                "Initial description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                vec![Review::new(
+                    "looks ok".to_string(),
+                    false,
+                    "sam".to_string(),
+                    None,
+                )],
+                sample_repo_name(),
+                None,
+            ),
+        ));
+        client.push_upsert_patch_response(UpsertPatchResponse::new(patch_id("p-update")));
 
         update_patch(
             &client,
@@ -1584,24 +1547,22 @@ mod tests {
             client.recorded_patch_upserts(),
             vec![(
                 Some(patch_id("p-update")),
-                UpsertPatchRequest {
-                    patch: Patch {
-                        title: "Updated title".to_string(),
-                        description: "Updated description".to_string(),
-                        diff: sample_diff(),
-                        status: PatchStatus::Closed,
-                        is_automatic_backup: false,
-                        created_by: None,
-                        reviews: vec![Review {
-                            contents: "looks ok".to_string(),
-                            is_approved: false,
-                            author: "sam".to_string(),
-                            submitted_at: None,
-                        }],
-                        service_repo_name: sample_repo_name(),
-                        github: None,
-                    },
-                }
+                UpsertPatchRequest::new(Patch::new(
+                    "Updated title".to_string(),
+                    "Updated description".to_string(),
+                    sample_diff(),
+                    PatchStatus::Closed,
+                    false,
+                    None,
+                    vec![Review::new(
+                        "looks ok".to_string(),
+                        false,
+                        "sam".to_string(),
+                        None,
+                    )],
+                    sample_repo_name(),
+                    None,
+                ))
             )]
         );
 
@@ -1626,9 +1587,7 @@ mod tests {
         let repo = sample_repo_name();
         let branch = "main".to_string();
         let queued_patch = patch_id("p-queue-001");
-        client.push_merge_queue_response(MergeQueue {
-            patches: vec![queued_patch.clone()],
-        });
+        client.push_merge_queue_response(MergeQueue::new(vec![queued_patch.clone()]));
 
         let mut output = Vec::new();
         merge_queue_with_writer(
@@ -1649,9 +1608,7 @@ mod tests {
             String::from_utf8(output)?,
             format!(
                 "{}\n",
-                serde_json::to_string(&MergeQueue {
-                    patches: vec![queued_patch]
-                })?
+                serde_json::to_string(&MergeQueue::new(vec![queued_patch]))?
             )
         );
 
@@ -1664,9 +1621,7 @@ mod tests {
         let repo = sample_repo_name();
         let branch = "feature".to_string();
         let patch = patch_id("p-queue-002");
-        client.push_enqueue_merge_queue_response(MergeQueue {
-            patches: vec![patch.clone()],
-        });
+        client.push_enqueue_merge_queue_response(MergeQueue::new(vec![patch.clone()]));
 
         let mut output = Vec::new();
         merge_queue_with_writer(

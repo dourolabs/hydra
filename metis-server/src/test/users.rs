@@ -9,10 +9,7 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
     {
         let mut store = state.store.write().await;
         store
-            .add_user(User {
-                username: Username::from("alice"),
-                github_token: "token-123".to_string(),
-            })
+            .add_user(User::new(Username::from("alice"), "token-123".to_string()))
             .await
             .unwrap();
     }
@@ -44,10 +41,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = CreateUserRequest {
-        username: Username::from("bob"),
-        github_token: "old-token".to_string(),
-    };
+    let payload = CreateUserRequest::new(Username::from("bob"), "old-token".to_string());
     let create_response = client
         .post(format!("{}/v1/users", server.base_url()))
         .json(&payload)
@@ -55,9 +49,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
         .await?;
     assert_eq!(create_response.status(), StatusCode::OK);
 
-    let update_payload = UpdateGithubTokenRequest {
-        github_token: "new-token".to_string(),
-    };
+    let update_payload = UpdateGithubTokenRequest::new("new-token".to_string());
     let update_response = client
         .put(format!("{}/v1/users/bob/github-token", server.base_url()))
         .json(&update_payload)

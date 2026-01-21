@@ -34,17 +34,17 @@ async fn state_with_repo_and_patch(
 ) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
     let (remote_dir, diff) = create_repository_with_patch()?;
-    let repository = ServiceRepository {
-        name: repo.clone(),
-        remote_url: remote_dir
+    let repository = ServiceRepository::new(
+        repo.clone(),
+        remote_dir
             .path()
             .to_str()
             .expect("tempdir path is valid utf-8")
             .to_string(),
-        default_branch: Some("main".to_string()),
-        github_token: None,
-        default_image: None,
-    };
+        Some("main".to_string()),
+        None,
+        None,
+    );
 
     let mut state = test_state();
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
@@ -52,17 +52,17 @@ async fn state_with_repo_and_patch(
         repository,
     )])));
 
-    let patch = Patch {
-        title: "Test patch".to_string(),
-        description: "Patch for merge queue enqueue test".to_string(),
+    let patch = Patch::new(
+        "Test patch".to_string(),
+        "Patch for merge queue enqueue test".to_string(),
         diff,
-        status: PatchStatus::Open,
-        is_automatic_backup: false,
-        created_by: None,
-        reviews: Vec::new(),
-        service_repo_name: repo.clone(),
-        github: None,
-    };
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        repo.clone(),
+        None,
+    );
 
     let patch_id = {
         let mut store = state.store.write().await;

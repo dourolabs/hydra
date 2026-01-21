@@ -773,9 +773,7 @@ impl MetisClient {
         let response = self
             .http
             .post(url)
-            .json(&EnqueueMergePatchRequest {
-                patch_id: patch_id.clone(),
-            })
+            .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
             .send()
             .await
             .context("failed to submit enqueue merge patch request")?

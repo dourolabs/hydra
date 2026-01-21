@@ -189,7 +189,13 @@ impl AppState {
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
-        let task = Task::new(request.prompt, request.context, None, request.image, env_vars);
+        let task = Task::new(
+            request.prompt,
+            request.context,
+            None,
+            request.image,
+            env_vars,
+        );
 
         task.resolve(self.service_state.as_ref(), &fallback_image)
             .await?;
@@ -236,10 +242,7 @@ impl AppState {
                 })?;
         }
 
-        Ok(SetJobStatusResponse {
-            job_id,
-            status: status.as_status(),
-        })
+        Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
@@ -609,7 +612,9 @@ impl AppState {
         issue_id: Option<IssueId>,
         request: UpsertIssueRequest,
     ) -> Result<IssueId, UpsertIssueError> {
-        let UpsertIssueRequest { mut issue, job_id, .. } = request;
+        let UpsertIssueRequest {
+            mut issue, job_id, ..
+        } = request;
         let mut tasks_to_kill = Vec::new();
 
         let mut store = self.store.write().await;
@@ -972,6 +977,14 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
 
             Ok(true)
         }
+        status => {
+            warn!(
+                issue_id = %issue_id,
+                ?status,
+                "unsupported issue status encountered; treating as not ready"
+            );
+            Ok(false)
+        }
     }
 }
 
@@ -1209,10 +1222,10 @@ mod tests {
                 .add_issue(issue_with_status(
                     "blocked",
                     IssueStatus::Open,
-                    vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: blocker_id.clone(),
-                    }],
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id.clone(),
+                    )],
                 ))
                 .await
                 .unwrap();
@@ -1246,10 +1259,10 @@ mod tests {
                 .add_issue(issue_with_status("parent", IssueStatus::InProgress, vec![]))
                 .await
                 .unwrap();
-            let child_dependencies = vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: parent_id.clone(),
-            }];
+            let child_dependencies = vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )];
             let child_id = store
                 .add_issue(issue_with_status(
                     "child",
@@ -1307,10 +1320,10 @@ mod tests {
                 .add_issue(issue_with_status(
                     "blocked",
                     IssueStatus::Open,
-                    vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: blocker_id,
-                    }],
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id,
+                    )],
                 ))
                 .await
                 .unwrap()
@@ -1461,37 +1474,21 @@ mod tests {
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: parent_issue.clone(),
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(parent_issue.clone(), None))
             .await
             .unwrap();
 
-        let child_dependency = IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: parent_id.clone(),
-        };
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
         let child_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: child_issue.clone(),
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(child_issue.clone(), None))
             .await
             .unwrap();
 
-        let grandchild_dependency = IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: child_id.clone(),
-        };
+        let grandchild_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
         let grandchild_issue = issue_with_status(
             "grandchild",
             IssueStatus::Open,
@@ -1500,10 +1497,7 @@ mod tests {
         let grandchild_id = state
             .upsert_issue(
                 None,
-                UpsertIssueRequest {
-                    issue: grandchild_issue.clone(),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(grandchild_issue.clone(), None),
             )
             .await
             .unwrap();
@@ -1540,10 +1534,7 @@ mod tests {
         state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest {
-                    issue: dropped_parent,
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(dropped_parent, None),
             )
             .await
             .unwrap();
@@ -1576,44 +1567,28 @@ mod tests {
 
         let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
         let blocker_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: blocker_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(blocker_issue, None))
             .await
             .unwrap();
 
-        let blocked_dependencies = vec![IssueDependency {
-            dependency_type: IssueDependencyType::BlockedOn,
-            issue_id: blocker_id.clone(),
-        }];
+        let blocked_dependencies = vec![IssueDependency::new(
+            IssueDependencyType::BlockedOn,
+            blocker_id.clone(),
+        )];
         let blocked_issue =
             issue_with_status("blocked", IssueStatus::Open, blocked_dependencies.clone());
         let blocked_issue_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: blocked_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(blocked_issue, None))
             .await
             .unwrap();
 
         let err = state
             .upsert_issue(
                 Some(blocked_issue_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status(
-                        "blocked",
-                        IssueStatus::Closed,
-                        blocked_dependencies.clone(),
-                    ),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies.clone()),
+                    None,
+                ),
             )
             .await
             .unwrap_err();
@@ -1629,10 +1604,10 @@ mod tests {
         state
             .upsert_issue(
                 Some(blocker_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status("blocker", IssueStatus::Closed, vec![]),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                    None,
+                ),
             )
             .await
             .unwrap();
@@ -1640,10 +1615,10 @@ mod tests {
         state
             .upsert_issue(
                 Some(blocked_issue_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies),
+                    None,
+                ),
             )
             .await
             .unwrap();
@@ -1656,40 +1631,26 @@ mod tests {
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: parent_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
             .unwrap();
 
-        let child_dependency = IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: parent_id.clone(),
-        };
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
         let child_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: child_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
             .unwrap();
 
         let err = state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status("parent", IssueStatus::Closed, vec![]),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("parent", IssueStatus::Closed, vec![]),
+                    None,
+                ),
             )
             .await
             .unwrap_err();
@@ -1705,14 +1666,10 @@ mod tests {
         state
             .upsert_issue(
                 Some(child_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status(
-                        "child",
-                        IssueStatus::Closed,
-                        vec![child_dependency.clone()],
-                    ),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("child", IssueStatus::Closed, vec![child_dependency.clone()]),
+                    None,
+                ),
             )
             .await
             .unwrap();
@@ -1720,10 +1677,10 @@ mod tests {
         state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest {
-                    issue: issue_with_status("parent", IssueStatus::Closed, vec![]),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(
+                    issue_with_status("parent", IssueStatus::Closed, vec![]),
+                    None,
+                ),
             )
             .await
             .unwrap();
@@ -1735,18 +1692,11 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut issue = issue_with_status("todo", IssueStatus::Open, vec![]);
-        issue.todo_list.push(TodoItem {
-            description: "finish task".to_string(),
-            is_done: false,
-        });
+        issue
+            .todo_list
+            .push(TodoItem::new("finish task".to_string(), false));
         let issue_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: issue.clone(),
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(issue.clone(), None))
             .await
             .unwrap();
 
@@ -1756,10 +1706,7 @@ mod tests {
         let err = state
             .upsert_issue(
                 Some(issue_id.clone()),
-                UpsertIssueRequest {
-                    issue: closed_issue.clone(),
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(closed_issue.clone(), None),
             )
             .await
             .unwrap_err();
@@ -1785,10 +1732,7 @@ mod tests {
         state
             .upsert_issue(
                 Some(issue_id.clone()),
-                UpsertIssueRequest {
-                    issue: closed_issue,
-                    job_id: None,
-                },
+                UpsertIssueRequest::new(closed_issue, None),
             )
             .await
             .unwrap();
@@ -1802,29 +1746,15 @@ mod tests {
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = "parent-creator".to_string();
         let parent_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: parent_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
             .unwrap();
 
-        let child_dependency = IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: parent_id.clone(),
-        };
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         let child_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: child_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
             .unwrap();
 
@@ -1841,30 +1771,16 @@ mod tests {
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = "parent-creator".to_string();
         let parent_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: parent_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
             .unwrap();
 
-        let child_dependency = IssueDependency {
-            dependency_type: IssueDependencyType::ChildOf,
-            issue_id: parent_id.clone(),
-        };
+        let child_dependency =
+            IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = "explicit-creator".to_string();
         let child_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue: child_issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
             .unwrap();
 
@@ -1880,13 +1796,7 @@ mod tests {
 
         let issue = issue_with_status("solo", IssueStatus::Open, vec![]);
         let issue_id = state
-            .upsert_issue(
-                None,
-                UpsertIssueRequest {
-                    issue,
-                    job_id: None,
-                },
-            )
+            .upsert_issue(None, UpsertIssueRequest::new(issue, None))
             .await
             .unwrap();
 

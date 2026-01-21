@@ -65,13 +65,13 @@ impl AgentQueue {
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
-        Task {
-            prompt: self.prompt.clone(),
-            context: self.context_spec.clone(),
-            spawned_from: Some(issue_id.clone()),
-            image: self.image.clone(),
+        Task::new(
+            self.prompt.clone(),
+            self.context_spec.clone(),
+            Some(issue_id.clone()),
+            self.image.clone(),
             env_vars,
-        }
+        )
     }
 
     async fn register_spawn_attempt(&self, issue_id: &IssueId, status: IssueStatus) -> bool {
@@ -237,57 +237,77 @@ mod tests {
         Ok(())
     }
 
+    fn issue(
+        description: &str,
+        status: IssueStatus,
+        assignee: Option<&str>,
+        dependencies: Vec<IssueDependency>,
+    ) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            description.to_string(),
+            String::new(),
+            String::new(),
+            status,
+            assignee.map(str::to_string),
+            Vec::new(),
+            dependencies,
+            Vec::new(),
+        )
+    }
+
+    fn task(
+        prompt: &str,
+        context: BundleSpec,
+        spawned_from: Option<IssueId>,
+        image: Option<&str>,
+        env_vars: HashMap<String, String>,
+    ) -> Task {
+        Task::new(
+            prompt.to_string(),
+            context,
+            spawned_from,
+            image.map(str::to_string),
+            env_vars,
+        )
+    }
+
     #[tokio::test]
     async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
         let state = test_state();
         let assigned_issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Fix login page".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Fix login page",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
 
         let in_progress_issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "In-progress but ready".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::InProgress,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "In-progress but ready",
+                    IssueStatus::InProgress,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
 
         {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Ignore closed".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Closed,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Ignore closed",
+                    IssueStatus::Closed,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?;
         }
 
@@ -335,17 +355,12 @@ mod tests {
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Already queued".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Already queued",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
 
@@ -353,16 +368,16 @@ mod tests {
             let mut store = state.store.write().await;
             store
                 .add_task(
-                    Task {
-                        prompt: "Fix the issue".to_string(),
-                        context: BundleSpec::None,
-                        spawned_from: Some(issue_id.clone()),
-                        image: Some("metis-worker:latest".to_string()),
-                        env_vars: HashMap::from([
+                    task(
+                        "Fix the issue",
+                        BundleSpec::None,
+                        Some(issue_id.clone()),
+                        Some("metis-worker:latest"),
+                        HashMap::from([
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                    },
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -380,37 +395,22 @@ mod tests {
         let blocker_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Blocker".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: None,
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue("Blocker", IssueStatus::Open, None, vec![]))
                 .await?
         };
 
         {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Blocked issue".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![IssueDependency {
-                        dependency_type: IssueDependencyType::BlockedOn,
-                        issue_id: blocker_id.clone(),
-                    }],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Blocked issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::BlockedOn,
+                        blocker_id.clone(),
+                    )],
+                ))
                 .await?;
         }
 
@@ -426,17 +426,12 @@ mod tests {
         let parent_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Parent issue".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Parent issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
 
@@ -444,16 +439,16 @@ mod tests {
             let mut store = state.store.write().await;
             let task_id = store
                 .add_task(
-                    Task {
-                        prompt: "Parent task".to_string(),
-                        context: BundleSpec::None,
-                        spawned_from: Some(parent_id.clone()),
-                        image: Some("metis-worker:latest".to_string()),
-                        env_vars: HashMap::from([
+                    task(
+                        "Parent task",
+                        BundleSpec::None,
+                        Some(parent_id.clone()),
+                        Some("metis-worker:latest"),
+                        HashMap::from([
                             (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                    },
+                    ),
                     Utc::now(),
                 )
                 .await?;
@@ -463,20 +458,15 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Child issue".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![IssueDependency {
-                        dependency_type: IssueDependencyType::ChildOf,
-                        issue_id: parent_id.clone(),
-                    }],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Child issue",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                ))
                 .await?;
         }
 
@@ -496,17 +486,12 @@ mod tests {
         {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Retry limited".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Retry limited",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?;
         }
 
@@ -533,17 +518,12 @@ mod tests {
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "State change reset".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "State change reset",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
 
@@ -589,28 +569,23 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/metis")?;
         state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
             repo_name.clone(),
-            ServiceRepository {
-                name: repo_name.clone(),
-                remote_url: "https://github.com/dourolabs/metis.git".to_string(),
-                default_branch: Some("main".to_string()),
-                github_token: Some("token".to_string()),
-                default_image: Some("repo-image".to_string()),
-            },
+            ServiceRepository::new(
+                repo_name.clone(),
+                "https://github.com/dourolabs/metis.git".to_string(),
+                Some("main".to_string()),
+                Some("token".to_string()),
+                Some("repo-image".to_string()),
+            ),
         )])));
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Assigned".to_string(),
-                    creator: String::new(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
+                .add_issue(issue(
+                    "Assigned",
+                    IssueStatus::Open,
+                    Some("agent-a"),
+                    vec![],
+                ))
                 .await?
         };
         let queue = AgentQueue {

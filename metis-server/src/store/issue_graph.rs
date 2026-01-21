@@ -7,6 +7,7 @@ use metis_common::{
         Issue, IssueDependencyType, IssueGraphFilter, IssueGraphFilterSide, IssueGraphWildcard,
     },
 };
+use tracing::warn;
 
 pub(crate) struct IssueGraphContext {
     known_issues: HashSet<IssueId>,
@@ -96,6 +97,10 @@ impl IssueGraphContext {
         match side {
             IssueGraphFilterSide::Left => self.forward.get(&dependency_type),
             IssueGraphFilterSide::Right => self.reverse.get(&dependency_type),
+            other => {
+                warn!(?other, "unsupported issue graph filter side");
+                None
+            }
         }
     }
 }
@@ -136,6 +141,10 @@ fn collect_matches(
             }
 
             matches
+        }
+        other => {
+            warn!(?other, "unsupported issue graph wildcard");
+            HashSet::new()
         }
     }
 }

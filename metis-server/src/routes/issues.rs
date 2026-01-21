@@ -9,12 +9,12 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
+    api::v1::ApiError,
     api::v1::issues::{
         AddTodoItemRequest, Issue, IssueId, IssueRecord, IssueStatus, IssueType,
         ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
         TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     },
-    api::v1::ApiError,
 };
 use tracing::{error, info};
 
@@ -187,7 +187,10 @@ pub async fn add_todo_item(
 ) -> Result<Json<TodoListResponse>, ApiError> {
     info!(issue_id = %issue_id, "add_todo_item invoked");
     let todo_list = state
-        .add_todo_item(issue_id.clone(), TodoItem::new(request.description, request.is_done))
+        .add_todo_item(
+            issue_id.clone(),
+            TodoItem::new(request.description, request.is_done),
+        )
         .await
         .map_err(map_todo_error)?;
 

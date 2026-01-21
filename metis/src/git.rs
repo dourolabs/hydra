@@ -144,7 +144,7 @@ pub fn resolve_head_oid(repo_root: &Path) -> Result<Option<GitOid>> {
             let oid = reference
                 .target()
                 .ok_or_else(|| anyhow!("HEAD does not point to a commit"))?;
-            Ok(Some(GitOid(oid)))
+            Ok(Some(GitOid::new(oid)))
         }
         Err(err) if err.code() == ErrorCode::UnbornBranch || err.code() == ErrorCode::NotFound => {
             Ok(None)

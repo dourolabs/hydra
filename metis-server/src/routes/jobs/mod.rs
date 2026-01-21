@@ -10,7 +10,9 @@ use axum::{
 use chrono::{DateTime, Utc};
 use metis_common::{
     IssueId, TaskId,
-    api::v1::jobs::{CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery},
+    api::v1::jobs::{
+        CreateJobRequest, CreateJobResponse, JobRecord, ListJobsResponse, SearchJobsQuery,
+    },
 };
 use tracing::{error, info};
 
@@ -142,7 +144,10 @@ pub async fn get_job(
 impl From<BundleResolutionError> for ApiError {
     fn from(error: BundleResolutionError) -> Self {
         match error {
-            BundleResolutionError::UnknownRepository(_) => ApiError::bad_request(error.to_string()),
+            BundleResolutionError::UnknownRepository(_)
+            | BundleResolutionError::UnsupportedBundleSpec => {
+                ApiError::bad_request(error.to_string())
+            }
         }
     }
 }
@@ -186,7 +191,10 @@ async fn job_record_with_time(
 
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
-    Ok((JobRecord::new(job_id.clone(), task, notes, status_log), reference_time))
+    Ok((
+        JobRecord::new(job_id.clone(), task, notes, status_log),
+        reference_time,
+    ))
 }
 
 fn spawned_from_matches(expected: Option<&IssueId>, job: &JobRecord) -> bool {
@@ -239,5 +247,6 @@ fn format_error_note(error: TaskError) -> Option<String> {
         TaskError::JobEngineError { reason } => {
             sanitize_note(&reason).map(|msg| format!("error: {msg}"))
         }
+        other => sanitize_note(&format!("error: {other:?}")),
     }
 }
