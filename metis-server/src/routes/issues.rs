@@ -1,7 +1,7 @@
 use crate::domain::issues::{
     AddTodoItemRequest, Issue, IssueRecord, IssueStatus, IssueType, ListIssuesResponse,
     ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
-    TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+    TodoListResponse, UpsertIssueRequest,
 };
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
@@ -13,7 +13,10 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{IssueId, api::v1::ApiError};
+use metis_common::{
+    IssueId,
+    api::v1::{self, ApiError},
+};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -63,37 +66,39 @@ where
 
 pub async fn create_issue(
     State(state): State<AppState>,
-    Json(payload): Json<UpsertIssueRequest>,
-) -> Result<Json<UpsertIssueResponse>, ApiError> {
+    Json(payload): Json<v1::issues::UpsertIssueRequest>,
+) -> Result<Json<v1::issues::UpsertIssueResponse>, ApiError> {
     info!("create_issue invoked");
+    let request: UpsertIssueRequest = payload.into();
     let issue_id = state
-        .upsert_issue(None, payload)
+        .upsert_issue(None, request)
         .await
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "create_issue completed");
-    Ok(Json(UpsertIssueResponse::new(issue_id)))
+    Ok(Json(v1::issues::UpsertIssueResponse::new(issue_id)))
 }
 
 pub async fn update_issue(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-    Json(payload): Json<UpsertIssueRequest>,
-) -> Result<Json<UpsertIssueResponse>, ApiError> {
+    Json(payload): Json<v1::issues::UpsertIssueRequest>,
+) -> Result<Json<v1::issues::UpsertIssueResponse>, ApiError> {
     info!(issue_id = %issue_id, "update_issue invoked");
+    let request: UpsertIssueRequest = payload.into();
     let issue_id = state
-        .upsert_issue(Some(issue_id), payload)
+        .upsert_issue(Some(issue_id), request)
         .await
         .map_err(map_upsert_issue_error)?;
 
     info!(issue_id = %issue_id, "update_issue completed");
-    Ok(Json(UpsertIssueResponse::new(issue_id)))
+    Ok(Json(v1::issues::UpsertIssueResponse::new(issue_id)))
 }
 
 pub async fn get_issue(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-) -> Result<Json<IssueRecord>, ApiError> {
+) -> Result<Json<v1::issues::IssueRecord>, ApiError> {
     info!(issue_id = %issue_id, "get_issue invoked");
     let store_read = state.store.read().await;
     let issue = store_read
@@ -102,13 +107,15 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    Ok(Json(IssueRecord::new(issue_id, issue)))
+    let response: v1::issues::IssueRecord = IssueRecord::new(issue_id, issue).into();
+    Ok(Json(response))
 }
 
 pub async fn list_issues(
     State(state): State<AppState>,
-    Query(query): Query<SearchIssuesQuery>,
-) -> Result<Json<ListIssuesResponse>, ApiError> {
+    Query(query): Query<v1::issues::SearchIssuesQuery>,
+) -> Result<Json<v1::issues::ListIssuesResponse>, ApiError> {
+    let query: SearchIssuesQuery = query.into();
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -167,7 +174,7 @@ pub async fn list_issues(
         })
         .collect();
 
-    let response = ListIssuesResponse::new(filtered);
+    let response: v1::issues::ListIssuesResponse = ListIssuesResponse::new(filtered).into();
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
@@ -181,9 +188,10 @@ pub async fn list_issues(
 pub async fn add_todo_item(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-    Json(request): Json<AddTodoItemRequest>,
-) -> Result<Json<TodoListResponse>, ApiError> {
+    Json(request): Json<v1::issues::AddTodoItemRequest>,
+) -> Result<Json<v1::issues::TodoListResponse>, ApiError> {
     info!(issue_id = %issue_id, "add_todo_item invoked");
+    let request: AddTodoItemRequest = request.into();
     let todo_list = state
         .add_todo_item(
             issue_id.clone(),
@@ -197,15 +205,17 @@ pub async fn add_todo_item(
         count = todo_list.len(),
         "add_todo_item completed"
     );
-    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
+    let response: v1::issues::TodoListResponse = TodoListResponse::new(issue_id, todo_list).into();
+    Ok(Json(response))
 }
 
 pub async fn replace_todo_list(
     State(state): State<AppState>,
     IssueIdPath(issue_id): IssueIdPath,
-    Json(request): Json<ReplaceTodoListRequest>,
-) -> Result<Json<TodoListResponse>, ApiError> {
+    Json(request): Json<v1::issues::ReplaceTodoListRequest>,
+) -> Result<Json<v1::issues::TodoListResponse>, ApiError> {
     info!(issue_id = %issue_id, "replace_todo_list invoked");
+    let request: ReplaceTodoListRequest = request.into();
     let todo_list = state
         .replace_todo_list(issue_id.clone(), request.todo_list)
         .await
@@ -216,7 +226,8 @@ pub async fn replace_todo_list(
         count = todo_list.len(),
         "replace_todo_list completed"
     );
-    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
+    let response: v1::issues::TodoListResponse = TodoListResponse::new(issue_id, todo_list).into();
+    Ok(Json(response))
 }
 
 pub async fn set_todo_item_status(
@@ -225,14 +236,15 @@ pub async fn set_todo_item_status(
         issue_id,
         item_number,
     }: TodoItemPath,
-    Json(request): Json<SetTodoItemStatusRequest>,
-) -> Result<Json<TodoListResponse>, ApiError> {
+    Json(request): Json<v1::issues::SetTodoItemStatusRequest>,
+) -> Result<Json<v1::issues::TodoListResponse>, ApiError> {
     info!(
         issue_id = %issue_id,
         item_number,
         desired_status = request.is_done,
         "set_todo_item_status invoked"
     );
+    let request: SetTodoItemStatusRequest = request.into();
     let todo_list = state
         .set_todo_item_status(issue_id.clone(), item_number, request.is_done)
         .await
@@ -244,7 +256,8 @@ pub async fn set_todo_item_status(
         desired_status = request.is_done,
         "set_todo_item_status completed"
     );
-    Ok(Json(TodoListResponse::new(issue_id, todo_list)))
+    let response: v1::issues::TodoListResponse = TodoListResponse::new(issue_id, todo_list).into();
+    Ok(Json(response))
 }
 
 fn map_graph_filter_error(err: StoreError) -> ApiError {

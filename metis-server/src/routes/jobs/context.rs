@@ -1,15 +1,16 @@
-use crate::domain::jobs::WorkerContext;
 use crate::{
     app::{AppState, TaskExt},
+    domain::jobs::WorkerContext,
     routes::jobs::{ApiError, JobIdPath},
 };
 use axum::{Json, extract::State};
+use metis_common::api::v1;
 use tracing::{error, info};
 
 pub async fn get_job_context(
     State(state): State<AppState>,
     JobIdPath(job_id): JobIdPath,
-) -> Result<Json<WorkerContext>, ApiError> {
+) -> Result<Json<v1::jobs::WorkerContext>, ApiError> {
     info!(job_id = %job_id, "get_job_context invoked");
 
     let store = state.store.read().await;
@@ -24,7 +25,8 @@ pub async fn get_job_context(
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);
 
-    let context = WorkerContext::new(resolved.bundle, task.prompt, env_vars);
+    let context: v1::jobs::WorkerContext =
+        WorkerContext::new(resolved.bundle, task.prompt, env_vars).into();
     info!(job_id = %job_id, "get_job_context completed");
     Ok(Json(context))
 }

@@ -1,6 +1,5 @@
 use crate::domain::patches::{
     ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-    UpsertPatchResponse,
 };
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -12,7 +11,10 @@ use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
-use metis_common::{PatchId, api::v1::ApiError};
+use metis_common::{
+    PatchId,
+    api::v1::{self, ApiError},
+};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -36,37 +38,39 @@ where
 
 pub async fn create_patch(
     State(state): State<AppState>,
-    Json(payload): Json<UpsertPatchRequest>,
-) -> Result<Json<UpsertPatchResponse>, ApiError> {
+    Json(payload): Json<v1::patches::UpsertPatchRequest>,
+) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
+    let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(None, payload)
+        .upsert_patch(None, request)
         .await
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "create_patch completed");
-    Ok(Json(UpsertPatchResponse::new(patch_id)))
+    Ok(Json(v1::patches::UpsertPatchResponse::new(patch_id)))
 }
 
 pub async fn update_patch(
     State(state): State<AppState>,
     PatchIdPath(patch_id): PatchIdPath,
-    Json(payload): Json<UpsertPatchRequest>,
-) -> Result<Json<UpsertPatchResponse>, ApiError> {
+    Json(payload): Json<v1::patches::UpsertPatchRequest>,
+) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
+    let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(Some(patch_id), payload)
+        .upsert_patch(Some(patch_id), request)
         .await
         .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "update_patch completed");
-    Ok(Json(UpsertPatchResponse::new(patch_id)))
+    Ok(Json(v1::patches::UpsertPatchResponse::new(patch_id)))
 }
 
 pub async fn get_patch(
     State(state): State<AppState>,
     PatchIdPath(patch_id): PatchIdPath,
-) -> Result<Json<PatchRecord>, ApiError> {
+) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
     info!(patch_id = %patch_id, "get_patch invoked");
     let store_read = state.store.read().await;
     let patch = store_read
@@ -75,14 +79,16 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    Ok(Json(PatchRecord::new(patch_id, patch)))
+    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch).into();
+    Ok(Json(response))
 }
 
 pub async fn list_patches(
     State(state): State<AppState>,
-    Query(query): Query<SearchPatchesQuery>,
-) -> Result<Json<ListPatchesResponse>, ApiError> {
+    Query(query): Query<v1::patches::SearchPatchesQuery>,
+) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
     info!(query = ?query.q, "list_patches invoked");
+    let query: SearchPatchesQuery = query.into();
 
     let search_term = query
         .q
@@ -102,7 +108,7 @@ pub async fn list_patches(
         .map(|(id, patch)| PatchRecord::new(id, patch))
         .collect();
 
-    let response = ListPatchesResponse::new(filtered);
+    let response: v1::patches::ListPatchesResponse = ListPatchesResponse::new(filtered).into();
     info!(
         query = ?query.q,
         returned = response.patches.len(),
