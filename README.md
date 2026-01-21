@@ -35,6 +35,14 @@ cargo build --workspace --all-targets
 cargo test --workspace
 ```
 
+**Note** Postgres-backed store tests are ignored by default to avoid introducing a required database dependency.
+To exercise them, run a Postgres instance locally (`./scripts/dev-postgres.sh`) and set `DATABASE_URL`, then include
+ignored tests:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/metis cargo test --workspace --all-targets -- --include-ignored
+```
+
 ## Configuration
 
 ### CLI (`metis`)
