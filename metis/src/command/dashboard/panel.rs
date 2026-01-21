@@ -251,7 +251,8 @@ impl PanelState {
         if self.scroll_offset > max_offset {
             self.scroll_offset = max_offset;
         }
-        self.scrollbar_state = ScrollbarState::new(content_len)
+        let scrollbar_content_len = scrollbar_content_length(content_len, view_height);
+        self.scrollbar_state = ScrollbarState::new(scrollbar_content_len)
             .position(self.scroll_offset)
             .viewport_content_length(view_height);
     }
@@ -273,7 +274,8 @@ impl PanelState {
         let clamped = next_offset.min(max_offset);
         if clamped != self.scroll_offset {
             self.scroll_offset = clamped;
-            self.scrollbar_state = ScrollbarState::new(content_len)
+            let scrollbar_content_len = scrollbar_content_length(content_len, view_height);
+            self.scrollbar_state = ScrollbarState::new(scrollbar_content_len)
                 .position(self.scroll_offset)
                 .viewport_content_length(view_height);
             return true;
@@ -334,6 +336,13 @@ fn max_scroll_offset(content_len: usize, view_height: usize) -> usize {
         return 0;
     }
     content_len.saturating_sub(view_height)
+}
+
+fn scrollbar_content_length(content_len: usize, view_height: usize) -> usize {
+    if content_len == 0 || view_height == 0 {
+        return 0;
+    }
+    max_scroll_offset(content_len, view_height).saturating_add(1)
 }
 
 pub(crate) fn wrapped_content_len(content: &[Line], width: u16) -> usize {
@@ -620,6 +629,16 @@ mod tests {
 
         let thumb_height = thumb_height(&buffer, content_area);
         assert_eq!(thumb_height, 1);
+    }
+
+    #[test]
+    fn scrollbar_hides_when_no_content() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = Vec::new();
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, 0);
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
