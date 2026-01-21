@@ -592,11 +592,85 @@ mod tests {
         assert_eq!(state.scroll_offset(), 1);
     }
 
+    #[test]
+    fn scrollbar_thumb_fills_track_for_exact_fit() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(7);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, track_length(content_area));
+    }
+
+    #[test]
+    fn scrollbar_thumb_shrinks_for_single_line_overflow() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(8);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, track_length(content_area).saturating_sub(1));
+    }
+
+    #[test]
+    fn scrollbar_thumb_clamps_for_large_overflow() {
+        let area = Rect::new(0, 0, 20, 10);
+        let lines = sample_lines(30);
+        let (buffer, content_area) = render_panel_with_content(area, lines);
+
+        let thumb_height = thumb_height(&buffer, content_area);
+        assert_eq!(thumb_height, 1);
+    }
+
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
         let mut row = String::new();
         for x in 0..width {
             row.push_str(buffer[(x, y)].symbol());
         }
         row.trim_end().to_string()
+    }
+
+    fn render_panel_with_content(area: Rect, lines: Vec<Line<'static>>) -> (Buffer, Rect) {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", lines);
+        panel.render(area, &mut buffer, &mut state);
+
+        (buffer, panel_content_area(area))
+    }
+
+    fn panel_content_area(area: Rect) -> Rect {
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        sections[0]
+    }
+
+    fn track_length(content_area: Rect) -> usize {
+        content_area.height.saturating_sub(2) as usize
+    }
+
+    fn thumb_height(buffer: &Buffer, content_area: Rect) -> usize {
+        let scrollbar_x = content_area
+            .x
+            .saturating_add(content_area.width.saturating_sub(1));
+        let thumb_symbol = ratatui::symbols::scrollbar::DOUBLE_VERTICAL.thumb;
+        let mut count = 0;
+        for y in content_area.y..content_area.y.saturating_add(content_area.height) {
+            if buffer[(scrollbar_x, y)].symbol() == thumb_symbol {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn sample_lines(count: usize) -> Vec<Line<'static>> {
+        (0..count)
+            .map(|idx| Line::from(format!("Line {idx}")))
+            .collect()
     }
 }
