@@ -106,7 +106,7 @@ impl StatefulWidget for Panel<'_> {
             footer.render(area, buf);
         }
 
-        if content_area.height > 0 && content_area.width > 0 {
+        if content_area.height > 0 && content_area.width > 0 && content_len > view_height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(Style::default().fg(Color::White))
                 .track_style(Style::default().fg(Color::DarkGray));
@@ -602,13 +602,13 @@ mod tests {
     }
 
     #[test]
-    fn scrollbar_thumb_fills_track_for_exact_fit() {
+    fn scrollbar_hides_for_exact_fit() {
         let area = Rect::new(0, 0, 20, 10);
         let lines = sample_lines(7);
         let (buffer, content_area) = render_panel_with_content(area, lines);
 
         let thumb_height = thumb_height(&buffer, content_area);
-        assert_eq!(thumb_height, track_length(content_area));
+        assert_eq!(thumb_height, 0);
     }
 
     #[test]
