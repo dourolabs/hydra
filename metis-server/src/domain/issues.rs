@@ -1,9 +1,9 @@
+use super::users::User;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
-use super::users::User;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

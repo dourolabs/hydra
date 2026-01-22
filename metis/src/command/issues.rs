@@ -1344,7 +1344,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "First issue".into(),
-                String::new(),
+                empty_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -1397,7 +1397,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                empty_user(),
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -1440,7 +1440,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                empty_user(),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".into()),
@@ -1898,7 +1898,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "Updated issue description".into(),
-                String::new(),
+                empty_user(),
                 "New progress".into(),
                 IssueStatus::Closed,
                 Some("owner-b".into()),
@@ -1963,7 +1963,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress,
                 Some("owner-a".into()),
@@ -1980,7 +1980,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                empty_user(),
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -2037,7 +2037,7 @@ mod tests {
                 Issue::new(
                     IssueType::Bug,
                     "First issue\nwith context".into(),
-                    String::new(),
+                    empty_user(),
                     "Working on repro".into(),
                     IssueStatus::Open,
                     Some("owner-a".into()),
@@ -2055,7 +2055,7 @@ mod tests {
                 Issue::new(
                     IssueType::Feature,
                     "Follow-up work".into(),
-                    String::new(),
+                    empty_user(),
                     String::new(),
                     IssueStatus::InProgress,
                     None,
@@ -2103,7 +2103,7 @@ mod tests {
                 Issue::new(
                     IssueType::Task,
                     "has todos".into(),
-                    String::new(),
+                    empty_user(),
                     String::new(),
                     IssueStatus::Open,
                     None,
@@ -2272,7 +2272,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2290,7 +2290,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2326,7 +2326,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        empty_user(),
                         "Main progress".into(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2344,7 +2344,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2362,7 +2362,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child".into(),
-                        String::new(),
+                        empty_user(),
                         "Child update".into(),
                         IssueStatus::InProgress,
                         None,
@@ -2398,7 +2398,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2416,7 +2416,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Parent description".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2434,7 +2434,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child description".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2489,7 +2489,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        empty_user(),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),

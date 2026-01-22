@@ -15,6 +15,7 @@ use metis_common::{
         GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    users::User,
     PatchId, RepoName, TaskId,
 };
 use octocrab::Octocrab;
@@ -542,14 +543,14 @@ async fn create_merge_request_issue(
         let parent_issue = client.get_issue(issue_id).await.with_context(|| {
             format!("failed to fetch parent issue '{issue_id}' to determine merge-request creator")
         })?;
-        let creator = parent_issue.issue.creator.trim();
-        if creator.is_empty() {
-            "unknown".to_string()
+        let creator = parent_issue.issue.creator;
+        if creator.username.as_str().trim().is_empty() {
+            User::new("unknown".into(), String::new())
         } else {
-            creator.to_string()
+            creator
         }
     } else {
-        "unknown".to_string()
+        User::new("unknown".into(), String::new())
     };
 
     let response = client
@@ -1362,7 +1363,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "parent issue".to_string(),
-                "creator-a".to_string(),
+                User::new("creator-a".into(), String::new()),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1379,7 +1380,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                "creator-a".to_string(),
+                User::new("creator-a".into(), String::new()),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),

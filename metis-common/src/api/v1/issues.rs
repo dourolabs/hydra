@@ -1,5 +1,5 @@
-pub use crate::IssueId;
 use super::users::User;
+pub use crate::IssueId;
 use crate::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
