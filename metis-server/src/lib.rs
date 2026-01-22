@@ -214,25 +214,11 @@ fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
 }
 
 fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
-    let app_id = config.app_id();
-    let private_key = config.private_key();
-
-    match (app_id, private_key) {
-        (None, None) => Ok(None),
-        (Some(app_id), Some(private_key)) => {
-            let key = EncodingKey::from_rsa_pem(private_key.as_bytes())
-                .context("invalid GitHub App private key")?;
-            Octocrab::builder()
-                .app(app_id, key)
-                .build()
-                .map(Some)
-                .context("building GitHub App client")
-        }
-        (None, Some(_)) => Err(anyhow::anyhow!(
-            "github_app.app_id must be set when github_app.private_key is configured"
-        )),
-        (Some(_), None) => Err(anyhow::anyhow!(
-            "github_app.private_key must be set when github_app.app_id is configured"
-        )),
-    }
+    let key = EncodingKey::from_rsa_pem(config.private_key().as_bytes())
+        .context("invalid GitHub App private key")?;
+    Octocrab::builder()
+        .app(config.app_id(), key)
+        .build()
+        .map(Some)
+        .context("building GitHub App client")
 }

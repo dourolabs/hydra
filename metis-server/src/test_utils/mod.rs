@@ -44,7 +44,12 @@ pub fn test_app_config() -> AppConfig {
         kubernetes: KubernetesSection::default(),
         database: DatabaseSection::default(),
         service: ServiceSection::default(),
-        github_app: GithubAppSection::default(),
+        github_app: GithubAppSection {
+            app_id: 1,
+            client_id: "client-id".to_string(),
+            client_secret: "client-secret".to_string(),
+            private_key: "private-key".to_string(),
+        },
         background: BackgroundSection::default(),
     }
 }
