@@ -4,6 +4,7 @@ use crate::domain::{
     jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
     patches::{Patch, PatchStatus},
     task_status::Event,
+    users::{User, Username},
 };
 use crate::{
     app::{ServiceState, TaskExt},
@@ -18,6 +19,10 @@ use chrono::{Duration, Utc};
 use metis_common::{TaskId, constants::ENV_GH_TOKEN, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
+
+fn empty_user() -> User {
+    User::new(Username::from(""), String::new())
+}
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
@@ -206,7 +211,7 @@ async fn create_job_applies_issue_job_settings_overrides() -> anyhow::Result<()>
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Job settings overrides".to_string(),
-                creator: String::new(),
+                creator: empty_user(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
@@ -1054,7 +1059,7 @@ async fn get_job_context_applies_issue_job_settings() -> anyhow::Result<()> {
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Context overrides".to_string(),
-                creator: String::new(),
+                creator: empty_user(),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
