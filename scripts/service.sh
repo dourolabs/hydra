@@ -326,6 +326,9 @@ spec:
             - name: POSTGRES_PASSWORD
               value: "${POSTGRES_PASSWORD}"
           resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
             limits:
               cpu: 400m
               memory: 1Gi
@@ -375,6 +378,9 @@ spec:
             - name: SERVER_SERVICE_HOSTNAME
               value: "server.${NAMESPACE}.svc.cluster.local"
           resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
             limits:
               cpu: 400m
               memory: 1Gi
