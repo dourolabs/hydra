@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
-    auth,
     client::{MetisClient, MetisClientInterface},
     command,
     config::{self, AppConfig},
@@ -102,12 +101,7 @@ async fn dispatch(
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
 ) -> Result<()> {
-    let command = resolve_command(cli.command);
-    if !matches!(command, Commands::Login) {
-        auth::read_auth_token()?;
-    }
-
-    match command {
+    match resolve_command(cli.command) {
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
