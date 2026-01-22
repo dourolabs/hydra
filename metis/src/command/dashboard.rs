@@ -17,6 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
+    users::{UserSummary, Username},
     IssueId, TaskId,
 };
 use ratatui::{
@@ -241,7 +242,7 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    username: String,
+    user: UserSummary,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
@@ -276,7 +277,7 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             jobs_error: None,
             records_error: None,
-            username: String::new(),
+            user: UserSummary::new(Username::from("")),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
@@ -302,9 +303,9 @@ struct EventOutcome {
 }
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
-    let username = auth::resolve_auth_user(client).await?.to_string();
+    let user = auth::resolve_auth_user(client).await?;
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username).await;
+    let result = run_dashboard_loop(client, &mut terminal, user).await;
     ratatui::restore();
     result
 }
@@ -312,10 +313,10 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: String,
+    user: UserSummary,
 ) -> Result<()> {
     let mut state = DashboardState {
-        username,
+        user,
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);
@@ -379,8 +380,8 @@ async fn run_dashboard_loop(
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &mut state))?;
                             let submission_result =
-                                submit_issue(client, &submission, &state.username)
-                            .await;
+                                submit_issue(client, &submission, state.user.username.as_ref())
+                                    .await;
                             handle_issue_submission_result(
                                 &mut state,
                                 &assignee,
@@ -735,7 +736,7 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header, &state.username);
+    render_dashboard_header(frame, layout.header, state.user.username.as_ref());
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
@@ -1387,7 +1388,7 @@ fn update_views(state: &mut DashboardState) -> bool {
 
     let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
     let user_unowned_issue_lines =
-        build_user_unowned_issue_lines(&state.username, &state.issues, &state.jobs);
+        build_user_unowned_issue_lines(state.user.username.as_ref(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
     update_assignee_options(state);
 
@@ -1987,6 +1988,10 @@ mod tests {
         IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
     }
 
+    fn test_user(username: &str) -> UserSummary {
+        UserSummary::new(Username::from(username))
+    }
+
     #[test]
     fn dashboard_title_includes_username_when_present() {
         assert_eq!(dashboard_title("cprussin"), "Metis Dashboard — cprussin");
@@ -2425,7 +2430,7 @@ mod tests {
             issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
         ];
         let mut state = DashboardState {
-            username: "alice".to_string(),
+            user: test_user("alice"),
             issues,
             ..Default::default()
         };
@@ -2730,7 +2735,7 @@ mod tests {
             .collect();
         let mut state = DashboardState {
             issues,
-            username: "alice".to_string(),
+            user: test_user("alice"),
             ..DashboardState::default()
         };
         update_views(&mut state);

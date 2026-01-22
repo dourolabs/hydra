@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use metis_common::users::{ResolveUserRequest, Username};
+use metis_common::users::{ResolveUserRequest, UserSummary};
 use std::{
     env, fs,
     io::ErrorKind,
@@ -48,11 +48,11 @@ pub(crate) fn read_auth_token() -> Result<String> {
 }
 
 #[allow(dead_code)]
-pub(crate) async fn resolve_auth_user(client: &dyn MetisClientInterface) -> Result<Username> {
+pub(crate) async fn resolve_auth_user(client: &dyn MetisClientInterface) -> Result<UserSummary> {
     let token = read_auth_token()?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token))
         .await
         .context("failed to resolve user from auth token")?;
-    Ok(response.user.username)
+    Ok(response.user)
 }

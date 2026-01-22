@@ -569,7 +569,7 @@ async fn create_issue(
                     .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
                 parent.issue.creator
             } else {
-                auth::resolve_auth_user(client).await?.to_string()
+                auth::resolve_auth_user(client).await?.username.to_string()
             }
         }
     };
