@@ -1,3 +1,4 @@
+use crate::auth;
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -15,7 +16,6 @@ use metis_common::{
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    env,
     io::{self, Write},
     str::FromStr,
 };
@@ -79,8 +79,8 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
 
-        /// Creator for the issue (defaults to METIS_USER when set).
-        #[arg(long, value_name = "CREATOR", env = "METIS_USER")]
+        /// Creator for the issue (defaults to the authenticated user).
+        #[arg(long, value_name = "CREATOR")]
         creator: Option<String>,
 
         /// Description for the issue.
@@ -549,11 +549,16 @@ async fn create_issue(
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
 
-    let creator = creator
-        .or_else(|| env::var("METIS_USER").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    let creator = match creator {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Creator must not be empty.");
+            }
+            trimmed.to_string()
+        }
+        None => auth::resolve_auth_user(client).await?.to_string(),
+    };
 
     let assignee = match assignee {
         Some(value) => {
@@ -1252,10 +1257,22 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
+        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
+    use std::env;
+    use std::fs;
     use std::str::FromStr;
+    use std::sync::OnceLock;
+    use tempfile::tempdir;
+    use tokio::sync::Mutex;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1633,15 +1650,31 @@ mod tests {
 
     #[tokio::test]
     async fn create_issue_submits_issue_record() {
+        let _guard = env_lock().lock().await;
         let server = MockServer::start();
         let client = metis_client(&server);
-        std::env::set_var("METIS_USER", "creator-a");
+        let original_home = env::var_os("HOME");
+        let temp = tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+            .expect("create auth token dir");
+        fs::write(&auth_token_path, "token-123").expect("write auth token");
 
         let dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             issue_id("i-1"),
         )];
         let patch_ids = vec![patch_id("p-123")];
+        let resolve_request = ResolveUserRequest::new("token-123".into());
+        let resolve_response =
+            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
+        let resolve_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/users/resolve")
+                .json_body_obj(&resolve_request);
+            then.status(200).json_body_obj(&resolve_response);
+        });
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
@@ -1679,9 +1712,14 @@ mod tests {
         .await
         .unwrap();
 
+        resolve_mock.assert();
         create_mock.assert();
+        assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
-        std::env::remove_var("METIS_USER");
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
     }
 
     #[tokio::test]
