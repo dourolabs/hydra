@@ -28,7 +28,7 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
-use crate::{client::MetisClientInterface, command::jobs};
+use crate::{auth, client::MetisClientInterface, command::jobs};
 
 pub mod panel;
 
@@ -303,7 +303,11 @@ struct EventOutcome {
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal).await;
+    let username = auth::resolve_auth_user(client)
+        .await
+        .context("failed to resolve dashboard user from auth token")?
+        .to_string();
+    let result = run_dashboard_loop(client, &mut terminal, username).await;
     ratatui::restore();
     result
 }
@@ -311,9 +315,10 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
+    username: String,
 ) -> Result<()> {
     let mut state = DashboardState {
-        username: whoami::username(),
+        username,
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);
