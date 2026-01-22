@@ -27,8 +27,8 @@ use metis_common::{
         UpsertRepositoryResponse,
     },
     users::{
-        CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-        UpsertUserResponse, Username,
+        CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
+        ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, Username,
     },
     IssueId, PatchId, RepoName, TaskId,
 };
@@ -156,6 +156,7 @@ pub trait MetisClientInterface: Send + Sync {
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
     async fn list_users(&self) -> Result<ListUsersResponse>;
+    async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse>;
     async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse>;
     async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse>;
     async fn set_user_github_token(
@@ -727,6 +728,25 @@ impl MetisClient {
             .context("failed to decode list users response")
     }
 
+    /// Call `POST /v1/users/resolve` to resolve a user by GitHub token.
+    pub async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
+        let url = self.endpoint("/v1/users/resolve")?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit resolve user request")?
+            .error_for_status_with_body("metis-server rejected resolve user request")
+            .await?;
+
+        response
+            .json::<ResolveUserResponse>()
+            .await
+            .context("failed to decode resolve user response")
+    }
+
     /// Call `POST /v1/users` to create a new user.
     pub async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {
         let url = self.endpoint("/v1/users")?;
@@ -1108,6 +1128,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_users(&self) -> Result<ListUsersResponse> {
         MetisClient::list_users(self).await
+    }
+
+    async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
+        MetisClient::resolve_user(self, request).await
     }
 
     async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {

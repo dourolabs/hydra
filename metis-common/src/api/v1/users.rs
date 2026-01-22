@@ -141,6 +141,30 @@ impl UpdateGithubTokenRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct ResolveUserRequest {
+    pub github_token: String,
+}
+
+impl ResolveUserRequest {
+    pub fn new(github_token: String) -> Self {
+        Self { github_token }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ResolveUserResponse {
+    pub user: UserSummary,
+}
+
+impl ResolveUserResponse {
+    pub fn new(user: UserSummary) -> Self {
+        Self { user }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertUserResponse {
     pub user: UserSummary,
 }

@@ -37,6 +37,8 @@ pub enum StoreError {
     UserNotFound(Username),
     #[error("User already exists: {0}")]
     UserAlreadyExists(Username),
+    #[error("User not found for token")]
+    UserNotFoundForToken,
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -257,6 +259,9 @@ pub trait Store: Send + Sync {
         github_token: String,
         github_user_id: Option<u64>,
     ) -> Result<User, StoreError>;
+
+    /// Resolves a user by their GitHub token.
+    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError>;
 }
 
 pub use memory_store::MemoryStore;

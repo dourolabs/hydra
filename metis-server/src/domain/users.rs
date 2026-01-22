@@ -126,6 +126,28 @@ impl UpdateGithubTokenRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolveUserRequest {
+    pub github_token: String,
+}
+
+impl ResolveUserRequest {
+    pub fn new(github_token: String) -> Self {
+        Self { github_token }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolveUserResponse {
+    pub user: UserSummary,
+}
+
+impl ResolveUserResponse {
+    pub fn new(user: UserSummary) -> Self {
+        Self { user }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertUserResponse {
     pub user: UserSummary,
 }
@@ -235,6 +257,34 @@ impl From<UpdateGithubTokenRequest> for api::users::UpdateGithubTokenRequest {
     fn from(value: UpdateGithubTokenRequest) -> Self {
         api::users::UpdateGithubTokenRequest::new(value.github_token)
             .with_github_user_id(value.github_user_id)
+    }
+}
+
+impl From<api::users::ResolveUserRequest> for ResolveUserRequest {
+    fn from(value: api::users::ResolveUserRequest) -> Self {
+        ResolveUserRequest {
+            github_token: value.github_token,
+        }
+    }
+}
+
+impl From<ResolveUserRequest> for api::users::ResolveUserRequest {
+    fn from(value: ResolveUserRequest) -> Self {
+        api::users::ResolveUserRequest::new(value.github_token)
+    }
+}
+
+impl From<api::users::ResolveUserResponse> for ResolveUserResponse {
+    fn from(value: api::users::ResolveUserResponse) -> Self {
+        ResolveUserResponse {
+            user: value.user.into(),
+        }
+    }
+}
+
+impl From<ResolveUserResponse> for api::users::ResolveUserResponse {
+    fn from(value: ResolveUserResponse) -> Self {
+        api::users::ResolveUserResponse::new(value.user.into())
     }
 }
 

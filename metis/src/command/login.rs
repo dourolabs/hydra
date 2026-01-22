@@ -3,7 +3,6 @@ use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, Username}
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::{
-    env,
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
@@ -11,9 +10,8 @@ use std::{
 };
 use tokio::time::{sleep, Instant};
 
-use crate::{client::MetisClientInterface, config};
+use crate::{auth, client::MetisClientInterface};
 
-const AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const USER_PROFILE_URL: &str = "https://api.github.com/user";
@@ -215,19 +213,8 @@ async fn store_github_credentials(
     }
 }
 
-fn resolve_auth_token_path() -> Result<PathBuf> {
-    let home = env::var_os("HOME")
-        .ok_or_else(|| anyhow!("HOME is not set; cannot resolve auth token path"))?;
-    let raw_path = PathBuf::from(AUTH_TOKEN_PATH);
-    let expanded = config::expand_path(&raw_path);
-    if expanded.to_string_lossy().starts_with('~') {
-        return Ok(PathBuf::from(home).join(".local/share/metis/auth-token"));
-    }
-    Ok(expanded)
-}
-
 fn write_auth_token_file(token: &str) -> Result<PathBuf> {
-    let path = resolve_auth_token_path()?;
+    let path = auth::resolve_auth_token_path()?;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("auth token path missing parent directory"))?;
@@ -256,6 +243,7 @@ fn write_auth_token_file(token: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::sync::Mutex;
     use tempfile::tempdir;
 
@@ -287,7 +275,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         env::set_var("HOME", temp.path());
 
-        let path = resolve_auth_token_path().expect("auth path");
+        let path = auth::resolve_auth_token_path().expect("auth path");
         let expected = temp.path().join(".local/share/metis/auth-token");
         assert_eq!(path, expected);
 

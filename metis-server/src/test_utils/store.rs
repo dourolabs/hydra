@@ -155,4 +155,8 @@ impl Store for FailingStore {
     ) -> Result<User, StoreError> {
         fail()
     }
+
+    async fn get_user_by_github_token(&self, _github_token: &str) -> Result<User, StoreError> {
+        fail()
+    }
 }
