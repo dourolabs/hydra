@@ -31,6 +31,7 @@ octocrab = "0.38"
 tui-textarea = "0.4"
 git2 = "0.19"
 whoami = "1.5"
+unicode-width = "0.2"
 
 [dev-dependencies]
 httpmock = "0.7"

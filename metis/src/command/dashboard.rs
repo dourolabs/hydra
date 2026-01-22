@@ -27,6 +27,7 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use tui_textarea::TextArea;
+use unicode_width::UnicodeWidthChar;
 
 use crate::{client::MetisClientInterface, command::jobs};
 
@@ -808,7 +809,14 @@ fn render_issue_creator(
 
     let sections = issue_creator_layout(area);
     let draft = &state.issue_draft;
-    frame.render_widget(draft.prompt.widget(), sections.prompt_input);
+    let prompt = wrap_prompt_lines(draft, sections.prompt_input.width);
+    let scroll_offset = state.issue_draft_scroll.offset.min(u16::MAX as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(prompt.lines)
+            .style(draft.prompt.style())
+            .scroll((scroll_offset, 0)),
+        sections.prompt_input,
+    );
     render_panel_scrollbar(
         frame,
         sections.prompt_input,
@@ -913,6 +921,17 @@ struct IssueCreatorLayout {
     footer: Rect,
 }
 
+struct WrappedPrompt {
+    lines: Vec<Line<'static>>,
+    cursor_row: usize,
+}
+
+struct WrappedSegment {
+    text: String,
+    start_char: usize,
+    char_len: usize,
+}
+
 fn issue_panel_layout(area: Rect) -> IssuePanelLayout {
     let panels = Layout::default()
         .direction(Direction::Vertical)
@@ -940,6 +959,175 @@ fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
         prompt_input: sections[0],
         footer: sections[1],
     }
+}
+
+fn wrap_prompt_lines(draft: &IssueDraft, width: u16) -> WrappedPrompt {
+    let width = width.max(1) as usize;
+    if draft.prompt.is_empty() {
+        let placeholder = draft.prompt.placeholder_text();
+        if !placeholder.is_empty() {
+            let style = draft.prompt.placeholder_style().unwrap_or_default();
+            let lines = wrap_line_segments(placeholder, width)
+                .into_iter()
+                .map(|segment| Line::from(Span::styled(segment.text, style)))
+                .collect();
+            return WrappedPrompt {
+                lines,
+                cursor_row: 0,
+            };
+        }
+    }
+
+    let cursor = draft.prompt.cursor();
+    let cursor_line_style = draft.prompt.cursor_line_style();
+    let cursor_style = draft.prompt.cursor_style();
+    let mut lines = Vec::new();
+    let mut cursor_row = 0;
+
+    for (line_index, line) in draft.prompt.lines().iter().enumerate() {
+        let segments = wrap_line_segments(line, width);
+        let cursor_segment = if line_index == cursor.0 {
+            let cursor_col = cursor.1.min(line.chars().count());
+            Some(cursor_segment_position(&segments, cursor_col))
+        } else {
+            None
+        };
+
+        for (segment_index, segment) in segments.iter().enumerate() {
+            let line_style = if line_index == cursor.0 {
+                cursor_line_style
+            } else {
+                Style::default()
+            };
+            if let Some((cursor_seg_idx, cursor_col_in_seg)) = cursor_segment {
+                if segment_index == cursor_seg_idx {
+                    let mut spans = Vec::new();
+                    let (before, cursor_char, after) =
+                        split_at_char(&segment.text, cursor_col_in_seg);
+                    if !before.is_empty() {
+                        spans.push(Span::styled(before, line_style));
+                    }
+                    if let Some(cursor_char) = cursor_char {
+                        spans.push(Span::styled(cursor_char.to_string(), cursor_style));
+                    }
+                    if !after.is_empty() {
+                        spans.push(Span::styled(after, line_style));
+                    }
+                    if cursor_char.is_none() && segment_display_width(&segment.text) < width {
+                        spans.push(Span::styled(" ".to_string(), cursor_style));
+                    }
+                    lines.push(Line::from(spans));
+                    cursor_row = lines.len().saturating_sub(1);
+                    continue;
+                }
+            }
+
+            if line_index == cursor.0 {
+                lines.push(Line::from(Span::styled(segment.text.clone(), line_style)));
+            } else {
+                lines.push(Line::from(Span::raw(segment.text.clone())));
+            }
+        }
+    }
+
+    WrappedPrompt { lines, cursor_row }
+}
+
+fn wrap_line_segments(line: &str, width: usize) -> Vec<WrappedSegment> {
+    if line.is_empty() {
+        return vec![WrappedSegment {
+            text: String::new(),
+            start_char: 0,
+            char_len: 0,
+        }];
+    }
+
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    let mut current_start = 0;
+    let mut current_len = 0;
+
+    for (index, ch) in line.chars().enumerate() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > width && !current.is_empty() {
+            segments.push(WrappedSegment {
+                text: current,
+                start_char: current_start,
+                char_len: current_len,
+            });
+            current = String::new();
+            current_width = 0;
+            current_len = 0;
+            current_start = index;
+        }
+
+        current.push(ch);
+        current_width += ch_width;
+        current_len += 1;
+
+        if current_width >= width {
+            segments.push(WrappedSegment {
+                text: current,
+                start_char: current_start,
+                char_len: current_len,
+            });
+            current = String::new();
+            current_width = 0;
+            current_len = 0;
+            current_start = index + 1;
+        }
+    }
+
+    if !current.is_empty() {
+        segments.push(WrappedSegment {
+            text: current,
+            start_char: current_start,
+            char_len: current_len,
+        });
+    }
+
+    segments
+}
+
+fn cursor_segment_position(segments: &[WrappedSegment], cursor_col: usize) -> (usize, usize) {
+    if segments.is_empty() {
+        return (0, 0);
+    }
+
+    for (index, segment) in segments.iter().enumerate() {
+        let end = segment.start_char + segment.char_len;
+        if cursor_col < end {
+            return (index, cursor_col.saturating_sub(segment.start_char));
+        }
+        if cursor_col == end {
+            if index + 1 < segments.len() {
+                return (index + 1, 0);
+            }
+            return (index, segment.char_len);
+        }
+    }
+
+    let last_index = segments.len().saturating_sub(1);
+    let last_len = segments
+        .get(last_index)
+        .map(|segment| segment.char_len)
+        .unwrap_or(0);
+    (last_index, last_len)
+}
+
+fn split_at_char(text: &str, index: usize) -> (String, Option<char>, String) {
+    let mut chars = text.chars();
+    let before: String = chars.by_ref().take(index).collect();
+    let cursor_char = chars.next();
+    let after: String = chars.collect();
+    (before, cursor_char, after)
+}
+
+fn segment_display_width(text: &str) -> usize {
+    text.chars()
+        .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+        .sum()
 }
 
 fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
@@ -1095,8 +1283,9 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
 
     let creator_layout = issue_creator_layout(layout.issue_creator);
     let prompt_view_height = creator_layout.prompt_input.height as usize;
-    let prompt_lines = state.issue_draft.prompt.lines().len();
-    let cursor_row = state.issue_draft.prompt.cursor().0;
+    let prompt = wrap_prompt_lines(&state.issue_draft, creator_layout.prompt_input.width);
+    let prompt_lines = prompt.lines.len();
+    let cursor_row = prompt.cursor_row;
     let max_offset = max_scroll_offset(prompt_lines, prompt_view_height);
     state.issue_draft_scroll.offset = next_scroll_top(
         state.issue_draft_scroll.offset,
@@ -2601,6 +2790,16 @@ mod tests {
         let footer = row_text(&buffer, footer_y, area.width);
         assert!(!footer.contains("j/k or Up/Down"));
         assert!(footer.contains("Alt+a"));
+    }
+
+    #[test]
+    fn wrap_prompt_lines_wraps_long_input() {
+        let mut draft = IssueDraft::default();
+        draft.set_prompt("abcdefghij", true);
+
+        let wrapped = wrap_prompt_lines(&draft, 4);
+
+        assert_eq!(wrapped.lines.len(), 3);
     }
 
     #[test]
