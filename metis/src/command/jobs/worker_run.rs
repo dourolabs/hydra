@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ISSUE_ID},
+    constants::ENV_METIS_ISSUE_ID,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
@@ -39,12 +39,14 @@ pub async fn run(
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     ensure_clean_destination(&dest)?;
-    let github_token = variables.get(ENV_METIS_GITHUB_TOKEN).cloned();
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
     let issue_branch_id = issue_id
+        .as_ref()
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
+    let issue_id_for_token = issue_id.clone();
+    let github_token = resolve_creator_github_token(client, issue_id_for_token, &job).await?;
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -143,6 +145,35 @@ pub async fn run(
     } else {
         Ok(())
     }
+}
+
+async fn resolve_creator_github_token(
+    client: &dyn MetisClientInterface,
+    issue_id: Option<IssueId>,
+    job_id: &TaskId,
+) -> Result<Option<String>> {
+    let issue_id = match issue_id {
+        Some(issue_id) => Some(issue_id),
+        None => {
+            let job = client.get_job(job_id).await.with_context(|| {
+                format!("failed to fetch job '{job_id}' to resolve creator GitHub token")
+            })?;
+            job.task.spawned_from
+        }
+    };
+
+    let Some(issue_id) = issue_id else {
+        return Ok(None);
+    };
+
+    let issue = client.get_issue(&issue_id).await.with_context(|| {
+        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
+    })?;
+    let token = issue.issue.creator.github_token.trim();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(token.to_string()))
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
