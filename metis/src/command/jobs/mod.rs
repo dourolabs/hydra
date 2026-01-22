@@ -40,6 +40,10 @@ pub enum JobsCommand {
         #[arg(long = "var", value_name = "KEY=VALUE")]
         var: Vec<String>,
 
+        /// Issue to associate with the job (defaults to METIS_ISSUE_ID).
+        #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
+        issue_id: Option<IssueId>,
+
         /// Prompt to execute, captured as trailing varargs.
         #[arg(
             value_name = "PROMPT",
@@ -107,7 +111,8 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             image,
             var,
             prompt,
-        } => create::run(client, wait, repo, rev, image, var, prompt).await?,
+            issue_id,
+        } => create::run(client, wait, repo, rev, image, var, prompt, issue_id).await?,
         JobsCommand::List {
             limit,
             json,

@@ -5,7 +5,7 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     task_status::Status,
-    RepoName, TaskId,
+    IssueId, RepoName, TaskId,
 };
 use std::{
     io::{self, Write},
@@ -22,6 +22,7 @@ pub async fn run(
     image: Option<String>,
     cli_vars: Vec<String>,
     prompt_parts: Vec<String>,
+    issue_id: Option<IssueId>,
 ) -> Result<()> {
     let context = build_context(repo_arg, rev_arg)?;
 
@@ -44,7 +45,7 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest::new(prompt, image, context, variables);
+    let request = CreateJobRequest::new(prompt, image, context, variables).with_issue_id(issue_id);
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
@@ -294,6 +295,7 @@ mod tests {
             None,
             vec![],
             vec!["test prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -333,6 +335,7 @@ mod tests {
             None,
             vec![],
             vec!["test prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -372,6 +375,7 @@ mod tests {
             None,
             vec![],
             vec!["test prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -409,6 +413,7 @@ mod tests {
             None,
             vec![],
             vec!["test prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -446,6 +451,7 @@ mod tests {
             None,
             vec![],
             vec!["test prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -480,6 +486,7 @@ mod tests {
             Some("ghcr.io/example/metis:dev".into()),
             vec![],
             vec!["custom image".into()],
+            None,
         )
         .await
         .unwrap();
@@ -515,6 +522,7 @@ mod tests {
             None,
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
             vec!["variable prompt".into()],
+            None,
         )
         .await
         .unwrap();
@@ -533,7 +541,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("unused")));
         });
 
-        let result = run(&client, false, None, None, None, vec![], vec![]).await;
+        let result = run(&client, false, None, None, None, vec![], vec![], None).await;
 
         assert!(result.is_err());
         create_mock.assert_hits(0);

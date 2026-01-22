@@ -44,6 +44,8 @@ pub struct CreateJobRequest {
     pub context: BundleSpec,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<IssueId>,
 }
 
 impl CreateJobRequest {
@@ -58,7 +60,13 @@ impl CreateJobRequest {
             image,
             context,
             variables,
+            issue_id: None,
         }
+    }
+
+    pub fn with_issue_id(mut self, issue_id: Option<IssueId>) -> Self {
+        self.issue_id = issue_id;
+        self
     }
 }
 
