@@ -21,7 +21,11 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
 
     let description = "integration flow issue";
 
-    run_metis_command(&["issues", "create", description], &app_config).await?;
+    run_metis_command(
+        &["issues", "create", "--creator", "test-user", description],
+        &app_config,
+    )
+    .await?;
 
     let issues = client
         .list_issues(&SearchIssuesQuery::default())
