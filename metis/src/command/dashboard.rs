@@ -17,6 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
+    users::{User, Username},
     IssueId, TaskId,
 };
 use ratatui::{
@@ -708,7 +709,8 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = creator.to_string();
+    let token = auth::read_auth_token()?;
+    let creator = User::new(Username::from(creator), token);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -1923,6 +1925,8 @@ mod tests {
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::{env, fs};
+    use tempfile::tempdir;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -3127,12 +3131,23 @@ mod tests {
     #[tokio::test]
     async fn submit_issue_sends_task_request() {
         let server = MockServer::start();
+        let original_home = env::var_os("HOME");
+        let temp = tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+            .expect("create auth token dir");
+        fs::write(&auth_token_path, "token-123").expect("write auth token");
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/issues").json_body(json!({
                 "issue": {
                     "type": "task",
                     "description": "Draft release notes",
-                    "creator": " metis-user ",
+                    "creator": {
+                        "username": " metis-user ",
+                        "github_user_id": null,
+                        "github_token": "token-123"
+                    },
                     "progress": "",
                     "status": "open",
                     "assignee": "alice",
@@ -3157,6 +3172,10 @@ mod tests {
 
         assert_eq!(created, issue_id("i-new"));
         mock.assert();
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {
