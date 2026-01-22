@@ -1,5 +1,6 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
 use crate::domain::{
+    issues::{Issue, IssueStatus, IssueType, JobSettings},
     jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
     patches::{Patch, PatchStatus},
     task_status::Event,
@@ -14,7 +15,11 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{TaskId, constants::ENV_GH_TOKEN, job_status::GetJobStatusResponse};
+use metis_common::{
+    TaskId,
+    constants::{ENV_GH_TOKEN, ENV_METIS_ISSUE_ID},
+    job_status::GetJobStatusResponse,
+};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -175,6 +180,87 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         Some(&"token-123".to_string())
     );
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_job_applies_issue_job_settings_overrides() -> anyhow::Result<()> {
+    let mut state = test_state();
+    let (repo_name, repo) = service_repository();
+    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        repo_name.clone(),
+        repo.clone(),
+    )])));
+    let override_url = "https://example.com/settings.git".to_string();
+    let override_branch = "settings-branch".to_string();
+    let override_image = "ghcr.io/example/settings:latest".to_string();
+    let job_settings = JobSettings {
+        repo_name: Some(repo_name.clone()),
+        remote_url: Some(override_url.clone()),
+        image: Some(override_image.clone()),
+        branch: Some(override_branch.clone()),
+        max_retries: None,
+    };
+    let issue_id = {
+        let mut store = state.store.write().await;
+        store
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Job settings overrides".to_string(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                job_settings: Some(job_settings.clone()),
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            })
+            .await?
+    };
+    let fallback_image = state.config.metis.worker_image.clone();
+    let store = state.store.clone();
+    let service_state = state.service_state.clone();
+    let server = spawn_test_server_with_state(state).await?;
+
+    let client = test_client();
+    let response = client
+        .post(format!("{}/v1/jobs", server.base_url()))
+        .json(&json!({
+            "prompt": "0",
+            "image": "ghcr.io/example/request:dev",
+            "context": { "type": "service_repository", "name": repo_name.to_string(), "rev": "ignored" },
+            "variables": { ENV_METIS_ISSUE_ID: issue_id.to_string() }
+        }))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: CreateJobResponse = response.json().await?;
+    let store_read = store.read().await;
+    let task = store_read.get_task(&body.job_id).await?;
+    assert_eq!(task.spawned_from, Some(issue_id.clone()));
+    assert_eq!(task.image, Some(override_image.clone()));
+    match &task.context {
+        BundleSpec::GitRepository { url, rev } => {
+            assert_eq!(url, &override_url);
+            assert_eq!(rev, &override_branch);
+        }
+        _ => panic!("expected git repository override"),
+    }
+
+    let resolved = task
+        .resolve(service_state.as_ref(), &fallback_image)
+        .await?;
+    assert_eq!(
+        resolved.context.bundle,
+        Bundle::GitRepository {
+            url: override_url,
+            rev: override_branch
+        }
+    );
+    assert_eq!(resolved.image, override_image);
 
     Ok(())
 }
@@ -954,6 +1040,78 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
     assert_eq!(description, "all good");
     assert_eq!(diff, patch_diff());
     assert_eq!(patch_record.patch.created_by, Some(job_id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_job_context_applies_issue_job_settings() -> anyhow::Result<()> {
+    let mut state = test_state();
+    let (repo_name, repo) = service_repository();
+    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        repo_name.clone(),
+        repo.clone(),
+    )])));
+    let job_settings = JobSettings {
+        repo_name: Some(repo_name.clone()),
+        remote_url: None,
+        image: None,
+        branch: Some("issue-branch".to_string()),
+        max_retries: None,
+    };
+    let issue_id = {
+        let mut store = state.store.write().await;
+        store
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Context overrides".to_string(),
+                creator: String::new(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                job_settings: Some(job_settings),
+                todo_list: Vec::new(),
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            })
+            .await?
+    };
+    let job_id = task_id("t-ctxovr");
+    {
+        let mut store = state.store.write().await;
+        store
+            .add_task_with_id(
+                job_id.clone(),
+                Task {
+                    prompt: "0".to_string(),
+                    context: BundleSpec::GitRepository {
+                        url: "https://example.com/original.git".to_string(),
+                        rev: "original-branch".to_string(),
+                    },
+                    spawned_from: Some(issue_id.clone()),
+                    image: None,
+                    env_vars: HashMap::new(),
+                },
+                Utc::now(),
+            )
+            .await?;
+    }
+    let server = spawn_test_server_with_state(state).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: WorkerContext = response.json().await?;
+    assert_eq!(
+        body.request_context,
+        Bundle::GitRepository {
+            url: repo.remote_url.clone(),
+            rev: "issue-branch".to_string(),
+        }
+    );
     Ok(())
 }
 
