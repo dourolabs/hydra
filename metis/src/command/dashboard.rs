@@ -301,9 +301,9 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username).await;
+    let result = run_dashboard_loop(client, &mut terminal).await;
     ratatui::restore();
     result
 }
@@ -311,10 +311,9 @@ pub async fn run(client: &dyn MetisClientInterface, username: Option<String>) ->
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: Option<String>,
 ) -> Result<()> {
     let mut state = DashboardState {
-        username: username.unwrap_or_else(whoami::username),
+        username: whoami::username(),
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);

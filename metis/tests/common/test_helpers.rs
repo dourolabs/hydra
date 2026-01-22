@@ -1,14 +1,19 @@
 use anyhow::{anyhow, bail, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
-use metis_common::{jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId};
+use metis_common::{
+    jobs::SearchJobsQuery,
+    task_status::Status,
+    users::{CreateUserRequest, Username},
+    RepoName, TaskId,
+};
 use metis_server::{
     app::{AppState, ServiceState},
     config::ServiceSection,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
 };
-use std::{path::Path, process::Command, str::FromStr, sync::Arc};
+use std::{env, fs, path::Path, process::Command, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
@@ -142,6 +147,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         },
     };
     let client = MetisClient::from_config(&app_config)?;
+    ensure_auth_token(&client).await?;
 
     Ok(TestEnvironment {
         server,
@@ -150,6 +156,24 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         _tempdir: tempdir,
         service_repo_name,
     })
+}
+
+async fn ensure_auth_token(client: &MetisClient) -> Result<()> {
+    let home = env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
+    let auth_token_path = Path::new(&home).join(".local/share/metis/auth-token");
+    if let Some(parent) = auth_token_path.parent() {
+        fs::create_dir_all(parent).context("create auth token dir")?;
+    }
+    let token = "integration-token";
+    fs::write(&auth_token_path, token).context("write auth token")?;
+
+    let request = CreateUserRequest::new(Username::from("integration-user"), token.to_string());
+    client
+        .create_user(&request)
+        .await
+        .context("create auth user")?;
+
+    Ok(())
 }
 
 pub async fn job_id_for_prompt(client: &MetisClient, prompt: &str) -> Result<TaskId> {
