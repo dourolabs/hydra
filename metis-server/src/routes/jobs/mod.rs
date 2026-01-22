@@ -27,6 +27,19 @@ pub async fn create_job(
     let request: CreateJobRequest = payload.into();
     let job_id = state.create_job(request).await.map_err(|err| match err {
         CreateJobError::TaskResolution(err) => ApiError::from(err),
+        CreateJobError::IssueLookup { source, issue_id } => match source {
+            StoreError::IssueNotFound(_) => {
+                ApiError::not_found(format!("issue '{issue_id}' not found"))
+            }
+            other => {
+                error!(
+                    error = %other,
+                    issue_id = %issue_id,
+                    "failed to load issue for job creation"
+                );
+                ApiError::internal(format!("Failed to load issue '{issue_id}': {other}"))
+            }
+        },
         CreateJobError::Store { source, job_id } => {
             error!(error = %source, job_id = %job_id, "failed to store task");
             ApiError::internal(format!("Failed to store task: {source}"))

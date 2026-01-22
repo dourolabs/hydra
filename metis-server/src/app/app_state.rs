@@ -3,7 +3,8 @@ use crate::{
     config::AppConfig,
     domain::{
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
+            UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
@@ -42,6 +43,12 @@ pub struct AppState {
 pub enum CreateJobError {
     #[error(transparent)]
     TaskResolution(#[from] TaskResolutionError),
+    #[error("failed to load issue '{issue_id}' for job creation")]
+    IssueLookup {
+        #[source]
+        source: StoreError,
+        issue_id: IssueId,
+    },
     #[error("failed to store job {job_id}")]
     Store {
         #[source]
@@ -189,6 +196,17 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
+    async fn job_settings_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Option<JobSettings>, StoreError> {
+        let store = self.store.read().await;
+        store
+            .get_issue(issue_id)
+            .await
+            .map(|issue| issue.job_settings)
+    }
+
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
         let fallback_image = self.config.metis.worker_image.clone();
@@ -196,16 +214,31 @@ impl AppState {
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
+        let job_settings = match request.issue_id.as_ref() {
+            Some(issue_id) => self
+                .job_settings_for_issue(issue_id)
+                .await
+                .map_err(|source| CreateJobError::IssueLookup {
+                    source,
+                    issue_id: issue_id.clone(),
+                })?,
+            None => None,
+        };
+
         let task = Task::new(
             request.prompt,
             request.context,
-            None,
+            request.issue_id.clone(),
             request.image,
             env_vars,
         );
 
-        task.resolve(self.service_state.as_ref(), &fallback_image)
-            .await?;
+        task.resolve(
+            self.service_state.as_ref(),
+            &fallback_image,
+            job_settings.as_ref(),
+        )
+        .await?;
 
         let mut store = self.store.write().await;
         store
@@ -258,8 +291,28 @@ impl AppState {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(task) => {
+                    let job_settings = match task.spawned_from.as_ref() {
+                        Some(issue_id) => match store.get_issue(issue_id).await {
+                            Ok(issue) => issue.job_settings,
+                            Err(err) => {
+                                warn!(
+                                    metis_id = %task_id,
+                                    issue_id = %issue_id,
+                                    error = %err,
+                                    "failed to load job settings for spawning"
+                                );
+                                return;
+                            }
+                        },
+                        None => None,
+                    };
+
                     match task
-                        .resolve(self.service_state.as_ref(), &fallback_image)
+                        .resolve(
+                            self.service_state.as_ref(),
+                            &fallback_image,
+                            job_settings.as_ref(),
+                        )
                         .await
                     {
                         Ok(resolved) => resolved,

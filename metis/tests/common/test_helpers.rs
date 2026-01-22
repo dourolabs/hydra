@@ -47,6 +47,7 @@ impl TestEnvironment {
                 .arg("-c")
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
+                .env_remove("METIS_ISSUE_ID")
                 .output()
                 .await
                 .context("failed to spawn metis command")?;
