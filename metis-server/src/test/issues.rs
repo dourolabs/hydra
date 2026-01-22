@@ -8,6 +8,7 @@ use crate::{
             UpsertIssueResponse,
         },
         jobs::BundleSpec,
+        users::User,
     },
     job_engine::{JobEngine, JobStatus},
     store::Task,
@@ -24,7 +25,7 @@ use std::{collections::HashMap, sync::Arc};
 fn issue(
     issue_type: IssueType,
     description: &str,
-    creator: String,
+    creator: User,
     progress: String,
     status: IssueStatus,
     assignee: Option<&str>,
@@ -46,6 +47,14 @@ fn issue(
     )
 }
 
+fn creator(username: &str) -> User {
+    User {
+        username: username.into(),
+        github_user_id: None,
+        github_token: "token".to_string(),
+    }
+}
+
 fn todo(description: &str, is_done: bool) -> TodoItem {
     TodoItem::new(description.to_string(), is_done)
 }
@@ -61,7 +70,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Issue::new(
                 IssueType::Task,
                 "original details".to_string(),
-                String::new(),
+                creator(""),
                 "Initial progress".to_string(),
                 IssueStatus::Open,
                 None,
@@ -87,7 +96,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Issue::new(
                 IssueType::Task,
                 "updated details".to_string(),
-                String::new(),
+                creator(""),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress,
                 None,
@@ -121,7 +130,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         Issue::new(
             IssueType::Task,
             "updated details".to_string(),
-            String::new(),
+            creator(""),
             "Updated progress".to_string(),
             IssueStatus::InProgress,
             None,
@@ -139,7 +148,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    let parent_creator = "parent-creator".to_string();
+    let parent_creator = creator("parent-creator");
     let parent: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest::new(
@@ -171,7 +180,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
             issue(
                 IssueType::Task,
                 "child",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -199,7 +208,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
 
     assert_eq!(fetched.issue.creator, parent_creator);
 
-    let explicit_creator = "explicit-creator".to_string();
+    let explicit_creator = creator("explicit-creator");
     let explicit_child: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest::new(
@@ -248,7 +257,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocker",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -273,7 +282,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -298,7 +307,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -331,7 +340,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocker",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -355,7 +364,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -383,7 +392,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -408,7 +417,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "child",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -433,7 +442,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -466,7 +475,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "child",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -490,7 +499,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -516,7 +525,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Task,
         "issue with todos",
-        String::new(),
+        creator(""),
         String::new(),
         IssueStatus::Open,
         None,
@@ -592,7 +601,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Task,
         "dropped issue",
-        String::new(),
+        creator(""),
         String::new(),
         IssueStatus::Open,
         None,
@@ -661,7 +670,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Bug,
         "login fails for guests",
-        String::new(),
+        creator(""),
         String::new(),
         IssueStatus::Open,
         None,
@@ -672,7 +681,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let assigned_issue = issue(
         IssueType::Task,
         "assigned issue",
-        String::new(),
+        creator(""),
         String::new(),
         IssueStatus::Open,
         Some("owner-1"),
@@ -683,7 +692,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let closed_issue = issue(
         IssueType::Task,
         "retire old endpoint",
-        String::new(),
+        creator(""),
         String::new(),
         IssueStatus::Closed,
         None,
@@ -770,7 +779,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "issue with todos",
-                String::new(),
+                creator(""),
                 String::new(),
                 IssueStatus::Open,
                 None,

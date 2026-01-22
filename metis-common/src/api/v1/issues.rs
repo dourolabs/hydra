@@ -1,4 +1,5 @@
 pub use crate::IssueId;
+use super::users::User;
 use crate::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -400,8 +401,7 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(default)]
-    pub creator: String,
+    pub creator: User,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -423,7 +423,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: String,
+        creator: User,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn issue_todo_list_defaults_when_missing() {
-        let raw = r#"{"type":"task","description":"write docs"}"#;
+        let raw = r#"{"type":"task","description":"write docs","creator":{"username":"metis-user","github_token":"github-token"}}"#;
 
         let issue: Issue = serde_json::from_str(raw).expect("issue should deserialize");
 
@@ -716,7 +716,11 @@ mod tests {
         let issue = Issue {
             issue_type: IssueType::Task,
             description: "with todos".to_string(),
-            creator: String::new(),
+            creator: User {
+                username: "metis-user".into(),
+                github_user_id: None,
+                github_token: "github-token".to_string(),
+            },
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,

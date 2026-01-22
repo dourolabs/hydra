@@ -3,6 +3,7 @@ use metis_common::{IssueId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
+use super::users::User;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -351,8 +352,7 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(default)]
-    pub creator: String,
+    pub creator: User,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -374,7 +374,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: String,
+        creator: User,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -791,7 +791,7 @@ impl From<api::issues::Issue> for Issue {
         Self {
             issue_type: value.issue_type.into(),
             description: value.description,
-            creator: value.creator,
+            creator: value.creator.into(),
             progress: value.progress,
             status: value.status.into(),
             assignee: value.assignee,
@@ -808,7 +808,7 @@ impl From<Issue> for api::issues::Issue {
         api::issues::Issue::new(
             value.issue_type.into(),
             value.description,
-            value.creator,
+            value.creator.into(),
             value.progress,
             value.status.into(),
             value.assignee,
@@ -1034,7 +1034,11 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "cool feature".to_string(),
-                creator: "alice".to_string(),
+                creator: User {
+                    username: "alice".into(),
+                    github_user_id: None,
+                    github_token: "token".to_string(),
+                },
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),

@@ -11,6 +11,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
+    users::User,
     PatchId,
 };
 use serde::Serialize;
@@ -529,6 +530,14 @@ async fn fetch_issues(
     Ok(issues)
 }
 
+fn user_from_creator_input(value: &str, github_token: String) -> Result<User> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        bail!("Creator must not be empty.");
+    }
+    Ok(User::new(trimmed.into(), github_token))
+}
+
 async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
@@ -550,13 +559,7 @@ async fn create_issue(
         .unwrap_or_default();
 
     let creator = match creator {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                bail!("Creator must not be empty.");
-            }
-            trimmed.to_string()
-        }
+        Some(value) => user_from_creator_input(&value, String::new())?,
         None => {
             if let Some(parent_id) = dependencies
                 .iter()
@@ -569,7 +572,9 @@ async fn create_issue(
                     .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
                 parent.issue.creator
             } else {
-                auth::resolve_auth_user(client).await?.to_string()
+                let username = auth::resolve_auth_user(client).await?;
+                let github_token = auth::read_auth_token()?;
+                User::new(username, github_token)
             }
         }
     };
@@ -652,11 +657,7 @@ async fn update_issue(
     };
 
     let creator = if let Some(value) = creator {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("Creator must not be empty.");
-        }
-        Some(trimmed.to_string())
+        Some(user_from_creator_input(&value, String::new())?)
     } else {
         None
     };
@@ -913,7 +914,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {creator}")?;
+        writeln!(writer, "Creator: {}", creator.username)?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -1013,7 +1014,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {creator}")?;
+    writeln!(writer, "{indent}Creator: {}", creator.username)?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1271,7 +1272,7 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
+        users::{ResolveUserRequest, ResolveUserResponse, User, UserSummary, Username},
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -1300,6 +1301,14 @@ mod tests {
         MetisClient::with_http_client(server.base_url(), HttpClient::new()).unwrap()
     }
 
+    fn user(username: &str, token: &str) -> User {
+        User::new(username.into(), token.to_string())
+    }
+
+    fn empty_user() -> User {
+        user("", "")
+    }
+
     fn api_issue_record(
         id: &str,
         issue_type: IssueType,
@@ -1314,7 +1323,7 @@ mod tests {
             Issue::new(
                 issue_type,
                 description.into(),
-                String::new(),
+                empty_user(),
                 String::new(),
                 status,
                 assignee.map(str::to_string),
@@ -1689,7 +1698,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                "creator-a".into(),
+                user("creator-a", "token-123"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -1748,7 +1757,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Parent issue".into(),
-                "parent-owner".into(),
+                user("parent-owner", "parent-token"),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -1769,7 +1778,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                "parent-owner".into(),
+                user("parent-owner", "parent-token"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),

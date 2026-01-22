@@ -713,7 +713,7 @@ impl AppState {
                     }
                 }
 
-                if issue.creator.trim().is_empty() {
+                if issue.creator.username.as_str().trim().is_empty() {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
                     }) {
@@ -1143,6 +1143,7 @@ mod tests {
                 UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
+            users::User,
         },
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
@@ -1180,7 +1181,11 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            String::new(),
+            User {
+                username: "".into(),
+                github_user_id: None,
+                github_token: String::new(),
+            },
             String::new(),
             status,
             None,
@@ -1742,7 +1747,12 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        let parent_creator = User {
+            username: "parent-creator".into(),
+            github_user_id: None,
+            github_token: "token".to_string(),
+        };
+        parent_issue.creator = parent_creator.clone();
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1758,7 +1768,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "parent-creator");
+        assert_eq!(stored_child.creator, parent_creator);
     }
 
     #[tokio::test]
@@ -1767,7 +1777,11 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        parent_issue.creator = User {
+            username: "parent-creator".into(),
+            github_user_id: None,
+            github_token: "token".to_string(),
+        };
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1776,7 +1790,12 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = "explicit-creator".to_string();
+        let explicit_creator = User {
+            username: "explicit-creator".into(),
+            github_user_id: None,
+            github_token: "token".to_string(),
+        };
+        child_issue.creator = explicit_creator.clone();
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1784,7 +1803,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "explicit-creator");
+        assert_eq!(stored_child.creator, explicit_creator);
     }
 
     #[tokio::test]
@@ -1800,6 +1819,6 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_issue = store.get_issue(&issue_id).await.unwrap();
-        assert!(stored_issue.creator.is_empty());
+        assert!(stored_issue.creator.username.as_str().is_empty());
     }
 }

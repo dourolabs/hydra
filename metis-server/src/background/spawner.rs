@@ -244,6 +244,7 @@ mod tests {
     use crate::{
         app::{ServiceRepository, ServiceState},
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        domain::users::User,
         test::test_state,
     };
     use chrono::Utc;
@@ -281,7 +282,11 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            String::new(),
+            User {
+                username: "".into(),
+                github_user_id: None,
+                github_token: String::new(),
+            },
             String::new(),
             status,
             assignee.map(str::to_string),
@@ -525,7 +530,11 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Already running".to_string(),
-                    creator: String::new(),
+                    creator: User {
+                        username: "".into(),
+                        github_user_id: None,
+                        github_token: String::new(),
+                    },
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -575,7 +584,11 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "First issue".to_string(),
-                    creator: String::new(),
+                    creator: User {
+                        username: "".into(),
+                        github_user_id: None,
+                        github_token: String::new(),
+                    },
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -592,7 +605,11 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Second issue".to_string(),
-                    creator: String::new(),
+                    creator: User {
+                        username: "".into(),
+                        github_user_id: None,
+                        github_token: String::new(),
+                    },
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
