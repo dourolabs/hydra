@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{auth, client::MetisClientInterface};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
@@ -15,7 +15,6 @@ use metis_common::{
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    env,
     io::{self, Write},
     str::FromStr,
 };
@@ -78,10 +77,6 @@ pub enum IssueCommands {
         /// Assignee for the issue.
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
-
-        /// Creator for the issue (defaults to METIS_USER when set).
-        #[arg(long, value_name = "CREATOR", env = "METIS_USER")]
-        creator: Option<String>,
 
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
@@ -229,7 +224,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             dependencies,
             patches,
             assignee,
-            creator,
             description,
             progress,
         } => {
@@ -240,7 +234,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 dependencies,
                 patches,
                 assignee,
-                creator,
                 description,
                 progress,
             )
@@ -536,7 +529,6 @@ async fn create_issue(
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<String>,
-    creator: Option<String>,
     description: String,
     progress: Option<String>,
 ) -> Result<()> {
@@ -549,11 +541,10 @@ async fn create_issue(
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
 
-    let creator = creator
-        .or_else(|| env::var("METIS_USER").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    let creator = auth::resolve_auth_user(client)
+        .await
+        .context("failed to resolve issue creator from auth token")?
+        .to_string();
 
     let assignee = match assignee {
         Some(value) => {
@@ -1250,10 +1241,14 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
+        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::str::FromStr;
+    use std::{env, fs, str::FromStr, sync::Mutex};
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1265,6 +1260,13 @@ mod tests {
 
     fn metis_client(server: &MockServer) -> MetisClient {
         MetisClient::with_http_client(server.base_url(), HttpClient::new()).unwrap()
+    }
+
+    fn write_auth_token(temp: &TempDir, token: &str) {
+        let path = temp.path().join(".local/share/metis/auth-token");
+        let parent = path.parent().expect("token parent");
+        fs::create_dir_all(parent).expect("create token dir");
+        fs::write(&path, token).expect("write auth token");
     }
 
     fn api_issue_record(
@@ -1625,11 +1627,25 @@ mod tests {
         );
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn create_issue_submits_issue_record() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        std::env::set_var("METIS_USER", "creator-a");
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_home = env::var_os("HOME");
+        let temp = tempfile::tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        write_auth_token(&temp, "token-123");
+        let resolve_request = ResolveUserRequest::new("token-123".to_string());
+        let resolve_response =
+            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
+        let resolve_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/users/resolve")
+                .json_body_obj(&resolve_request);
+            then.status(200).json_body_obj(&resolve_response);
+        });
 
         let dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
@@ -1665,16 +1681,19 @@ mod tests {
             dependencies.clone(),
             patch_ids.clone(),
             Some("team-a".into()),
-            None,
             "New issue description".into(),
             Some("Initial notes".into()),
         )
         .await
         .unwrap();
 
+        resolve_mock.assert();
         create_mock.assert();
         assert_eq!(create_mock.hits(), 1);
-        std::env::remove_var("METIS_USER");
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
     }
 
     #[tokio::test]
@@ -1687,7 +1706,6 @@ mod tests {
             IssueStatus::Open,
             vec![],
             Vec::new(),
-            None,
             None,
             "   ".into(),
             None,
@@ -1707,7 +1725,6 @@ mod tests {
             vec![],
             Vec::new(),
             Some("   ".into()),
-            None,
             "Valid description".into(),
             None,
         )

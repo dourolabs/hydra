@@ -22,8 +22,7 @@ pub(crate) fn resolve_auth_token_path() -> Result<PathBuf> {
     Ok(expanded)
 }
 
-#[allow(dead_code)]
-pub(crate) fn read_auth_token() -> Result<String> {
+pub fn read_auth_token() -> Result<String> {
     let path = resolve_auth_token_path()?;
     let token = fs::read_to_string(&path).map_err(|err| {
         if err.kind() == ErrorKind::NotFound {

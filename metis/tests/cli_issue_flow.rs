@@ -6,8 +6,11 @@ use metis::{
 use metis_common::{
     constants::ENV_METIS_SERVER_URL,
     issues::{IssueStatus, SearchIssuesQuery},
+    users::{CreateUserRequest, Username},
 };
 use metis_server::test_utils;
+use std::fs;
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
@@ -18,10 +21,25 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         },
     };
     let client = MetisClient::from_config(&app_config)?;
+    let temp_home = tempfile::tempdir().context("temp home")?;
+    let token = "integration-token";
+    write_auth_token(&temp_home, token)?;
+    client
+        .create_user(&CreateUserRequest::new(
+            Username::from("integration-user"),
+            token.to_string(),
+        ))
+        .await
+        .context("create integration user")?;
 
     let description = "integration flow issue";
 
-    run_metis_command(&["issues", "create", description], &app_config).await?;
+    run_metis_command(
+        &["issues", "create", description],
+        &app_config,
+        temp_home.path(),
+    )
+    .await?;
 
     let issues = client
         .list_issues(&SearchIssuesQuery::default())
@@ -32,17 +50,31 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         .find(|issue| issue.issue.description == description)
         .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
-    run_metis_command(&["issues", "list"], &app_config).await?;
+    run_metis_command(&["issues", "list"], &app_config, temp_home.path()).await?;
 
     assert_eq!(created.issue.status, IssueStatus::Open);
 
     Ok(())
 }
 
-async fn run_metis_command(args: &[&str], app_config: &AppConfig) -> Result<()> {
+fn write_auth_token(temp_home: &TempDir, token: &str) -> Result<()> {
+    let path = temp_home.path().join(".local/share/metis/auth-token");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("create auth token dir")?;
+    }
+    fs::write(&path, token).context("write auth token")?;
+    Ok(())
+}
+
+async fn run_metis_command(
+    args: &[&str],
+    app_config: &AppConfig,
+    home_dir: &std::path::Path,
+) -> Result<()> {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
+        .env("HOME", home_dir)
         .output()
         .await
         .context("failed to spawn metis CLI command")?;
