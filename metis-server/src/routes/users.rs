@@ -1,6 +1,6 @@
 use crate::domain::users::{
-    CreateUserRequest, DeleteUserResponse, ListUsersResponse, UpdateGithubTokenRequest,
-    UpsertUserResponse, User, UserSummary, Username,
+    CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
+    ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, User, UserSummary, Username,
 };
 use crate::{app::AppState, routes::jobs::ApiError, store::StoreError};
 use axum::{
@@ -126,6 +126,34 @@ pub async fn set_github_token(
     info!(username = %username, "set_github_token completed");
     let response: v1::users::UpsertUserResponse =
         UpsertUserResponse::new(UserSummary::from(updated)).into();
+    Ok(Json(response))
+}
+
+pub async fn resolve_user(
+    State(state): State<AppState>,
+    Json(payload): Json<v1::users::ResolveUserRequest>,
+) -> Result<Json<v1::users::ResolveUserResponse>, ApiError> {
+    let payload: ResolveUserRequest = payload.into();
+    let github_token = normalize_non_empty("github_token", payload.github_token)?;
+    info!("resolve_user invoked");
+
+    let store = state.store.read().await;
+    let user = store
+        .get_user_by_github_token(&github_token)
+        .await
+        .map_err(|err| match err {
+            StoreError::UserNotFoundForToken => {
+                ApiError::not_found("user not found for provided token".to_string())
+            }
+            other => {
+                error!(error = %other, "failed to resolve user by token");
+                ApiError::internal(anyhow::anyhow!("failed to resolve user by token: {other}"))
+            }
+        })?;
+
+    info!(username = %user.username, "resolve_user completed");
+    let response: v1::users::ResolveUserResponse =
+        ResolveUserResponse::new(UserSummary::from(user)).into();
     Ok(Json(response))
 }
 

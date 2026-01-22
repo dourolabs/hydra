@@ -1,5 +1,7 @@
 use crate::{
-    domain::users::{CreateUserRequest, UpdateGithubTokenRequest, User, Username},
+    domain::users::{
+        CreateUserRequest, ResolveUserRequest, UpdateGithubTokenRequest, User, Username,
+    },
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use reqwest::StatusCode;
@@ -91,6 +93,59 @@ async fn delete_missing_user_returns_not_found() -> anyhow::Result<()> {
 
     let response = client
         .delete(format!("{}/v1/users/missing", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_user_returns_summary() -> anyhow::Result<()> {
+    let state = test_state();
+    {
+        let mut store = state.store.write().await;
+        store
+            .add_user(User {
+                username: Username::from("alice"),
+                github_user_id: Some(101),
+                github_token: "token-123".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let server = spawn_test_server_with_state(state).await?;
+    let client = test_client();
+
+    let payload = ResolveUserRequest::new("token-123".to_string());
+    let response = client
+        .post(format!("{}/v1/users/resolve", server.base_url()))
+        .json(&payload)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: Value = response.json().await?;
+    let user = body["user"].as_object().expect("user should be an object");
+    assert_eq!(user.get("username").and_then(Value::as_str), Some("alice"));
+    assert!(user.get("github_token").is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_user_returns_not_found_for_missing_token() -> anyhow::Result<()> {
+    let state = test_state();
+    let server = spawn_test_server_with_state(state).await?;
+    let client = test_client();
+
+    let payload = ResolveUserRequest::new("missing-token".to_string());
+    let response = client
+        .post(format!("{}/v1/users/resolve", server.base_url()))
+        .json(&payload)
         .send()
         .await?;
 

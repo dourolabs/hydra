@@ -82,6 +82,7 @@ pub async fn run_with_state(
             "/v1/users",
             get(routes::users::list_users).post(routes::users::create_user),
         )
+        .route("/v1/users/resolve", post(routes::users::resolve_user))
         .route("/v1/users/:username", delete(routes::users::delete_user))
         .route(
             "/v1/users/:username/github-token",
