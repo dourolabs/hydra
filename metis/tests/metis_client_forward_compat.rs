@@ -330,6 +330,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         "test prompt".to_string(),
         None,
         BundleSpec::None,
+        None,
         HashMap::new(),
     );
     let created_job = client.create_job(&create_job_request).await?;

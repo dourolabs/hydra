@@ -824,7 +824,7 @@ mod tests {
 
         let fallback_image = state.config.metis.worker_image.clone();
         let resolved = tasks[0]
-            .resolve(state.service_state.as_ref(), &fallback_image)
+            .resolve(state.service_state.as_ref(), &fallback_image, None)
             .await?;
         assert_eq!(
             tasks[0].context,

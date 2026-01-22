@@ -20,16 +20,13 @@ pub async fn get_job_context(
             ApiError::not_found(format!("Job '{job_id}' not found"))
         })?
     };
-    let task = state
-        .apply_job_settings_to_task(task)
-        .await
-        .map_err(|err| {
-            error!(error = %err, job_id = %job_id, "failed to apply job settings");
-            ApiError::internal("failed to load job context".to_string())
-        })?;
+    let job_settings = state.job_settings_for_task(&task).await.map_err(|err| {
+        error!(error = %err, job_id = %job_id, "failed to load job settings");
+        ApiError::internal("failed to load job context".to_string())
+    })?;
 
     let resolved = task
-        .resolve_context(state.service_state.as_ref())
+        .resolve_context(state.service_state.as_ref(), job_settings.as_ref())
         .await
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);

@@ -42,6 +42,8 @@ pub struct CreateJobRequest {
     pub image: Option<String>,
     #[serde(default)]
     pub context: BundleSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<IssueId>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
 }
@@ -51,12 +53,14 @@ impl CreateJobRequest {
         prompt: String,
         image: Option<String>,
         context: BundleSpec,
+        issue_id: Option<IssueId>,
         variables: HashMap<String, String>,
     ) -> Self {
         Self {
             prompt,
             image,
             context,
+            issue_id,
             variables,
         }
     }

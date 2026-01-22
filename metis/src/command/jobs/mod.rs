@@ -24,6 +24,10 @@ pub enum JobsCommand {
         #[arg(long = "wait")]
         wait: bool,
 
+        /// Issue to associate with the job (defaults to METIS_ISSUE_ID when set).
+        #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
+        issue_id: Option<IssueId>,
+
         /// Service repo name (preferred) or git URL to use as the job context.
         #[arg(long = "repo", value_name = "REPO")]
         repo: Option<String>,
@@ -102,12 +106,13 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
     match command {
         JobsCommand::Create {
             wait,
+            issue_id,
             repo,
             rev,
             image,
             var,
             prompt,
-        } => create::run(client, wait, repo, rev, image, var, prompt).await?,
+        } => create::run(client, wait, issue_id, repo, rev, image, var, prompt).await?,
         JobsCommand::List {
             limit,
             json,
