@@ -17,6 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
+    users::{UserSummary, Username},
     IssueId, TaskId,
 };
 use ratatui::{
@@ -706,7 +707,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = creator.to_string();
+    let creator = UserSummary::new(Username::from(creator.trim()));
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -3070,7 +3071,7 @@ mod tests {
                 "issue": {
                     "type": "task",
                     "description": "Draft release notes",
-                    "creator": " metis-user ",
+                    "creator": { "username": "metis-user" },
                     "progress": "",
                     "status": "open",
                     "assignee": "alice",

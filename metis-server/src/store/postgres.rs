@@ -811,6 +811,7 @@ mod tests {
         users::{User, Username},
     };
     use metis_common::RepoName;
+    use metis_common::api::v1::users::{UserSummary as ApiUserSummary, Username as ApiUsername};
     use std::{collections::HashSet, str::FromStr};
 
     #[allow(dead_code)]
@@ -818,7 +819,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             "details".to_string(),
-            String::new(),
+            ApiUserSummary::new(ApiUsername::from("")),
             String::new(),
             IssueStatus::Open,
             None,

@@ -10,12 +10,12 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
+    users::{UserSummary, Username},
     PatchId,
 };
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
-    env,
     io::{self, Write},
     str::FromStr,
 };
@@ -550,7 +550,6 @@ async fn create_issue(
         .unwrap_or_default();
 
     let creator = creator
-        .or_else(|| env::var("METIS_USER").ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
@@ -570,7 +569,7 @@ async fn create_issue(
         Issue::new(
             issue_type,
             description.to_string(),
-            creator,
+            creator_summary(&creator),
             progress,
             status,
             assignee,
@@ -636,7 +635,7 @@ async fn update_issue(
         if trimmed.is_empty() {
             bail!("Creator must not be empty.");
         }
-        Some(trimmed.to_string())
+        Some(creator_summary(trimmed))
     } else {
         None
     };
@@ -869,6 +868,10 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     Ok(IssueDependency::new(dependency_type, issue_id))
 }
 
+fn creator_summary(value: &str) -> UserSummary {
+    UserSummary::new(Username::from(value))
+}
+
 fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
     for issue in issues {
         serde_json::to_writer(&mut *writer, issue)?;
@@ -892,7 +895,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {creator}")?;
+        writeln!(writer, "Creator: {}", creator.username)?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -992,7 +995,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {creator}")?;
+    writeln!(writer, "{indent}Creator: {}", creator.username)?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1281,7 +1284,7 @@ mod tests {
             Issue::new(
                 issue_type,
                 description.into(),
-                String::new(),
+                creator_summary(""),
                 String::new(),
                 status,
                 assignee.map(str::to_string),
@@ -1301,7 +1304,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "First issue".into(),
-                String::new(),
+                creator_summary(""),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -1353,7 +1356,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                creator_summary(""),
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -1395,7 +1398,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                creator_summary(""),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".into()),
@@ -1629,7 +1632,6 @@ mod tests {
     async fn create_issue_submits_issue_record() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        std::env::set_var("METIS_USER", "creator-a");
 
         let dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
@@ -1640,7 +1642,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                "creator-a".into(),
+                creator_summary("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -1665,7 +1667,7 @@ mod tests {
             dependencies.clone(),
             patch_ids.clone(),
             Some("team-a".into()),
-            None,
+            Some("creator-a".into()),
             "New issue description".into(),
             Some("Initial notes".into()),
         )
@@ -1674,7 +1676,6 @@ mod tests {
 
         create_mock.assert();
         assert_eq!(create_mock.hits(), 1);
-        std::env::remove_var("METIS_USER");
     }
 
     #[tokio::test]
@@ -1758,7 +1759,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "Updated issue description".into(),
-                String::new(),
+                creator_summary(""),
                 "New progress".into(),
                 IssueStatus::Closed,
                 Some("owner-b".into()),
@@ -1822,7 +1823,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                creator_summary(""),
                 "Started work".into(),
                 IssueStatus::InProgress,
                 Some("owner-a".into()),
@@ -1838,7 +1839,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                creator_summary(""),
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -1894,7 +1895,7 @@ mod tests {
                 Issue::new(
                     IssueType::Bug,
                     "First issue\nwith context".into(),
-                    String::new(),
+                    creator_summary(""),
                     "Working on repro".into(),
                     IssueStatus::Open,
                     Some("owner-a".into()),
@@ -1911,7 +1912,7 @@ mod tests {
                 Issue::new(
                     IssueType::Feature,
                     "Follow-up work".into(),
-                    String::new(),
+                    creator_summary(""),
                     String::new(),
                     IssueStatus::InProgress,
                     None,
@@ -1958,7 +1959,7 @@ mod tests {
                 Issue::new(
                     IssueType::Task,
                     "has todos".into(),
-                    String::new(),
+                    creator_summary(""),
                     String::new(),
                     IssueStatus::Open,
                     None,
@@ -2126,7 +2127,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2143,7 +2144,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2178,7 +2179,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        creator_summary(""),
                         "Main progress".into(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2195,7 +2196,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2212,7 +2213,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child".into(),
-                        String::new(),
+                        creator_summary(""),
                         "Child update".into(),
                         IssueStatus::InProgress,
                         None,
@@ -2247,7 +2248,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2264,7 +2265,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Parent description".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2281,7 +2282,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child description".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2335,7 +2336,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        creator_summary(""),
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),

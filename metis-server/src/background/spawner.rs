@@ -17,6 +17,8 @@ use metis_common::IssueId;
 #[cfg(test)]
 use metis_common::RepoName;
 #[cfg(test)]
+use metis_common::api::v1::users::{UserSummary, Username};
+#[cfg(test)]
 use metis_common::constants::ENV_GH_TOKEN;
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -281,7 +283,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            String::new(),
+            UserSummary::new(Username::from("")),
             String::new(),
             status,
             assignee.map(str::to_string),
@@ -524,7 +526,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Already running".to_string(),
-                    creator: String::new(),
+                    creator: UserSummary::new(Username::from("")),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -573,7 +575,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "First issue".to_string(),
-                    creator: String::new(),
+                    creator: UserSummary::new(Username::from("")),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -589,7 +591,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Second issue".to_string(),
-                    creator: String::new(),
+                    creator: UserSummary::new(Username::from("")),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),

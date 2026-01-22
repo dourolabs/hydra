@@ -713,7 +713,7 @@ impl AppState {
                     }
                 }
 
-                if issue.creator.trim().is_empty() {
+                if issue.creator.username.as_str().trim().is_empty() {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
                     }) {
@@ -1149,6 +1149,7 @@ mod tests {
         test_utils::{MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
+    use metis_common::api::v1::users::{UserSummary, Username};
     use metis_common::{IssueId, TaskId};
     use std::{collections::HashMap, sync::Arc};
 
@@ -1180,7 +1181,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            String::new(),
+            UserSummary::new(Username::from("")),
             String::new(),
             status,
             None,
@@ -1741,7 +1742,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        parent_issue.creator = UserSummary::new(Username::from("parent-creator"));
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1757,7 +1758,10 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "parent-creator");
+        assert_eq!(
+            stored_child.creator,
+            UserSummary::new(Username::from("parent-creator"))
+        );
     }
 
     #[tokio::test]
@@ -1766,7 +1770,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = "parent-creator".to_string();
+        parent_issue.creator = UserSummary::new(Username::from("parent-creator"));
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1775,7 +1779,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = "explicit-creator".to_string();
+        child_issue.creator = UserSummary::new(Username::from("explicit-creator"));
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1783,7 +1787,10 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, "explicit-creator");
+        assert_eq!(
+            stored_child.creator,
+            UserSummary::new(Username::from("explicit-creator"))
+        );
     }
 
     #[tokio::test]
@@ -1799,6 +1806,6 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_issue = store.get_issue(&issue_id).await.unwrap();
-        assert!(stored_issue.creator.is_empty());
+        assert!(stored_issue.creator.username.as_str().is_empty());
     }
 }

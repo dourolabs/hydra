@@ -1,4 +1,4 @@
-use std::{env, io::Write, path::Path, path::PathBuf, process::Command};
+use std::{io::Write, path::Path, path::PathBuf, process::Command};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -15,6 +15,7 @@ use metis_common::{
         GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
+    users::{UserSummary, Username},
     PatchId, RepoName, TaskId,
 };
 use octocrab::Octocrab;
@@ -76,6 +77,10 @@ pub enum PatchesCommand {
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
         assignee: Option<String>,
+
+        /// Creator for the merge-request issue (defaults to METIS_USER when set).
+        #[arg(long = "creator", value_name = "CREATOR", env = "METIS_USER")]
+        creator: Option<String>,
 
         /// Associate the merge-request issue with an existing issue id.
         #[arg(
@@ -169,6 +174,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             github,
             github_token,
             assignee,
+            creator,
             issue_id,
             commit_range,
             allow_uncommitted,
@@ -181,6 +187,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
                 github,
                 github_token,
                 assignee,
+                creator,
                 issue_id,
                 commit_range,
                 allow_uncommitted,
@@ -277,6 +284,7 @@ async fn create_patch(
     create_github_pr: bool,
     github_token: Option<String>,
     assignee: Option<String>,
+    creator: Option<String>,
     issue_id: Option<IssueId>,
     commit_range: Option<String>,
     allow_uncommitted: bool,
@@ -334,6 +342,7 @@ async fn create_patch(
             client,
             response.patch_id.clone(),
             assignee,
+            creator,
             issue_id,
             title,
             description,
@@ -510,6 +519,7 @@ async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
     assignee: String,
+    creator: Option<String>,
     parent_issue_id: Option<IssueId>,
     patch_title: String,
     patch_description: String,
@@ -538,8 +548,7 @@ async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let creator = env::var("METIS_USER")
-        .ok()
+    let creator = creator
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
@@ -549,7 +558,7 @@ async fn create_merge_request_issue(
             Issue::new(
                 IssueType::MergeRequest,
                 description,
-                creator,
+                creator_summary(&creator),
                 String::new(),
                 IssueStatus::Open,
                 Some(assignee),
@@ -563,6 +572,10 @@ async fn create_merge_request_issue(
         .context("failed to create merge-request issue")?;
 
     Ok(response.issue_id)
+}
+
+fn creator_summary(value: &str) -> UserSummary {
+    UserSummary::new(Username::from(value))
 }
 
 pub async fn resolve_service_repo_name(
@@ -985,7 +998,7 @@ mod tests {
         RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::{env, fs, path::Path, str::FromStr};
+    use std::{fs, path::Path, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1167,6 +1180,7 @@ mod tests {
             false,
             None,
             None,
+            None,
             Some(issue_id.clone()),
             None,
             false,
@@ -1232,6 +1246,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             commit_range,
             false,
             Some(&repo_path),
@@ -1256,6 +1271,7 @@ mod tests {
             "patch without job id".to_string(),
             None,
             false,
+            None,
             None,
             None,
             None,
@@ -1287,6 +1303,7 @@ mod tests {
             "pr description".to_string(),
             Some(task_id("t-job-gh-token")),
             true,
+            None,
             None,
             None,
             None,
@@ -1347,7 +1364,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                "unknown".to_string(),
+                creator_summary("unknown"),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1365,8 +1382,6 @@ mod tests {
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
-        let original_user = env::var("METIS_USER");
-        env::remove_var("METIS_USER");
         let issue_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
@@ -1383,6 +1398,7 @@ mod tests {
             false,
             None,
             Some("owner-a".to_string()),
+            None,
             Some(parent_issue.clone()),
             None,
             false,
@@ -1393,12 +1409,6 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         issue_mock.assert();
-        if let Ok(value) = original_user {
-            env::set_var("METIS_USER", value);
-        } else {
-            env::remove_var("METIS_USER");
-        }
-
         Ok(())
     }
 
@@ -1485,6 +1495,7 @@ mod tests {
             "backup description".to_string(),
             Some(job_id.clone()),
             false,
+            None,
             None,
             None,
             None,

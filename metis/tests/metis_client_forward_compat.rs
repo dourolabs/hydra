@@ -17,7 +17,7 @@ use metis_common::{
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{CreateRepositoryRequest, ServiceRepositoryConfig, UpdateRepositoryRequest},
     task_status::{Event, Status},
-    users::{CreateUserRequest, UpdateGithubTokenRequest, Username},
+    users::{CreateUserRequest, UpdateGithubTokenRequest, UserSummary, Username},
     IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::Client as HttpClient;
@@ -391,7 +391,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue = Issue::new(
         IssueType::Bug,
         "desc".to_string(),
-        "creator".to_string(),
+        UserSummary::new(Username::from("creator")),
         "progress".to_string(),
         IssueStatus::Open,
         Some("assignee".to_string()),
