@@ -14,7 +14,7 @@ use crate::{
     test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
 };
 use chrono::Utc;
-use metis_common::api::v1::users::{UserSummary, Username};
+use metis_common::api::v1::users::{User, Username};
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -140,7 +140,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
     let merge_request_issue = Issue::new(
         IssueType::MergeRequest,
         "linked merge request".to_string(),
-        UserSummary::new(Username::from("")),
+        User::new(Username::from(""), String::new()),
         String::new(),
         IssueStatus::Open,
         None,

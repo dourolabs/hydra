@@ -557,7 +557,7 @@ mod tests {
     };
     use chrono::Utc;
     use metis_common::RepoName;
-    use metis_common::api::v1::users::{UserSummary as ApiUserSummary, Username as ApiUsername};
+    use metis_common::api::v1::users::{User as ApiUser, Username as ApiUsername};
     use std::{collections::HashSet, str::FromStr};
 
     fn spawn_task() -> Task {
@@ -592,7 +592,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             "issue details".to_string(),
-            ApiUserSummary::new(ApiUsername::from("")),
+            ApiUser::new(ApiUsername::from(""), String::new()),
             String::new(),
             IssueStatus::Open,
             None,

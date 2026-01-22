@@ -1,4 +1,4 @@
-use api::users::{UserSummary, Username};
+use api::users::User;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -352,11 +352,7 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(
-        default = "default_issue_creator",
-        deserialize_with = "deserialize_issue_creator"
-    )]
-    pub creator: UserSummary,
+    pub creator: User,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -376,7 +372,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: UserSummary,
+        creator: User,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -396,29 +392,6 @@ impl Issue {
             patches,
         }
     }
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum IssueCreator {
-    String(String),
-    Summary(UserSummary),
-}
-
-fn default_issue_creator() -> UserSummary {
-    UserSummary::new(Username::from(""))
-}
-
-fn deserialize_issue_creator<'de, D>(deserializer: D) -> Result<UserSummary, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = Option::<IssueCreator>::deserialize(deserializer)?;
-    Ok(match raw {
-        None => default_issue_creator(),
-        Some(IssueCreator::String(value)) => UserSummary::new(Username::from(value)),
-        Some(IssueCreator::Summary(value)) => value,
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -902,6 +875,7 @@ impl From<ListIssuesResponse> for api::issues::ListIssuesResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::users::Username;
     use metis_common::api::v1 as api;
     use metis_common::{IssueId, PatchId, TaskId};
     use serde::Serialize;
@@ -1010,7 +984,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "cool feature".to_string(),
-                creator: UserSummary::new(Username::from("alice")),
+                creator: User::new(Username::from("alice"), String::new()),
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),

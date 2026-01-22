@@ -1149,7 +1149,7 @@ mod tests {
         test_utils::{MockJobEngine, test_state, test_state_with_engine},
     };
     use chrono::{Duration, Utc};
-    use metis_common::api::v1::users::{UserSummary, Username};
+    use metis_common::api::v1::users::{User, Username};
     use metis_common::{IssueId, TaskId};
     use std::{collections::HashMap, sync::Arc};
 
@@ -1181,7 +1181,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            UserSummary::new(Username::from("")),
+            User::new(Username::from(""), String::new()),
             String::new(),
             status,
             None,
@@ -1742,7 +1742,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = UserSummary::new(Username::from("parent-creator"));
+        parent_issue.creator = User::new(Username::from("parent-creator"), String::new());
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1760,7 +1760,7 @@ mod tests {
         let stored_child = store.get_issue(&child_id).await.unwrap();
         assert_eq!(
             stored_child.creator,
-            UserSummary::new(Username::from("parent-creator"))
+            User::new(Username::from("parent-creator"), String::new())
         );
     }
 
@@ -1770,7 +1770,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = UserSummary::new(Username::from("parent-creator"));
+        parent_issue.creator = User::new(Username::from("parent-creator"), String::new());
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1779,7 +1779,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = UserSummary::new(Username::from("explicit-creator"));
+        child_issue.creator = User::new(Username::from("explicit-creator"), String::new());
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1789,7 +1789,7 @@ mod tests {
         let stored_child = store.get_issue(&child_id).await.unwrap();
         assert_eq!(
             stored_child.creator,
-            UserSummary::new(Username::from("explicit-creator"))
+            User::new(Username::from("explicit-creator"), String::new())
         );
     }
 

@@ -15,7 +15,7 @@ use metis_common::{
         GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    users::{UserSummary, Username},
+    users::{User, Username},
     PatchId, RepoName, TaskId,
 };
 use octocrab::Octocrab;
@@ -558,7 +558,7 @@ async fn create_merge_request_issue(
             Issue::new(
                 IssueType::MergeRequest,
                 description,
-                creator_summary(&creator),
+                creator_user(&creator),
                 String::new(),
                 IssueStatus::Open,
                 Some(assignee),
@@ -574,8 +574,8 @@ async fn create_merge_request_issue(
     Ok(response.issue_id)
 }
 
-fn creator_summary(value: &str) -> UserSummary {
-    UserSummary::new(Username::from(value))
+fn creator_user(value: &str) -> User {
+    User::new(Username::from(value), String::new())
 }
 
 pub async fn resolve_service_repo_name(
@@ -1364,7 +1364,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                creator_summary("unknown"),
+                creator_user("unknown"),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
