@@ -53,11 +53,7 @@ enum Commands {
         command: command::patches::PatchesCommand,
     },
     /// Launch a live dashboard for jobs, issues, and patches.
-    Dashboard {
-        /// Only show a dedicated panel for open issues assigned to this user.
-        #[arg(long = "username", value_name = "USERNAME", env = "METIS_USER")]
-        username: Option<String>,
-    },
+    Dashboard,
     /// List or create issues.
     Issues {
         #[command(subcommand)]
@@ -109,7 +105,7 @@ async fn dispatch(
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
-        Commands::Dashboard { username } => command::dashboard::run(client, username).await?,
+        Commands::Dashboard => command::dashboard::run(client).await?,
         Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
@@ -125,7 +121,7 @@ async fn dispatch(
 }
 
 fn resolve_command(command: Option<Commands>) -> Commands {
-    command.unwrap_or(Commands::Dashboard { username: None })
+    command.unwrap_or(Commands::Dashboard)
 }
 
 fn load_app_config(cli: &Cli) -> Result<AppConfig> {
@@ -221,7 +217,7 @@ mod tests {
         let command = resolve_command(cli.command);
 
         match command {
-            Commands::Dashboard { username } => assert!(username.is_none()),
+            Commands::Dashboard => {}
             _ => panic!("expected dashboard default"),
         }
     }
