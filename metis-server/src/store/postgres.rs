@@ -846,6 +846,7 @@ mod tests {
             String::new(),
             IssueStatus::Open,
             None,
+            None,
             vec![TodoItem::new("todo".to_string(), false)],
             dependencies,
             Vec::new(),

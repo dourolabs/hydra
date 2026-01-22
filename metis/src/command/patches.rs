@@ -552,6 +552,7 @@ async fn create_merge_request_issue(
                 String::new(),
                 IssueStatus::Open,
                 Some(assignee),
+                None,
                 Vec::new(),
                 dependencies,
                 vec![patch_id],
@@ -1362,6 +1363,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
+                None,
                 Vec::new(),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,

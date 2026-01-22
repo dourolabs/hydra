@@ -720,6 +720,7 @@ async fn submit_issue(
             String::new(),
             IssueStatus::Open,
             assignee,
+            None,
             Vec::new(),
             Vec::new(),
             Vec::new(),

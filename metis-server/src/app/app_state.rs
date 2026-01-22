@@ -1184,6 +1184,7 @@ mod tests {
             String::new(),
             status,
             None,
+            None,
             Vec::new(),
             dependencies,
             Vec::new(),
