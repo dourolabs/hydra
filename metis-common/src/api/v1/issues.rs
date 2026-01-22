@@ -1,5 +1,5 @@
 pub use crate::IssueId;
-use crate::{PatchId, TaskId};
+use crate::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -408,6 +408,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub job_settings: Option<JobSettings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -425,6 +427,7 @@ impl Issue {
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
+        job_settings: Option<JobSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
@@ -436,11 +439,27 @@ impl Issue {
             progress,
             status,
             assignee,
+            job_settings,
             todo_list,
             dependencies,
             patches,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
+pub struct JobSettings {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repo_name: Option<RepoName>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,7 +584,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, str::FromStr};
 
     fn issue_id(value: &str) -> IssueId {
         value.parse().unwrap()
@@ -672,10 +691,18 @@ mod tests {
 
         assert!(issue.todo_list.is_empty());
         assert_eq!(issue.status, IssueStatus::Open);
+        assert!(issue.job_settings.is_none());
     }
 
     #[test]
     fn issue_todo_list_round_trips_in_order() {
+        let job_settings = JobSettings {
+            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            remote_url: Some("https://github.com/dourolabs/metis".to_string()),
+            image: Some("worker:latest".to_string()),
+            branch: Some("main".to_string()),
+            max_retries: Some(3),
+        };
         let todos = vec![
             TodoItem {
                 description: "first".to_string(),
@@ -693,6 +720,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
+            job_settings: Some(job_settings.clone()),
             todo_list: todos.clone(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -703,5 +731,6 @@ mod tests {
 
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.todo_list, todos);
+        assert_eq!(round_trip.job_settings, Some(job_settings));
     }
 }

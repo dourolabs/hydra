@@ -1,5 +1,5 @@
 use metis_common::api::v1 as api;
-use metis_common::{IssueId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
@@ -359,6 +359,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub job_settings: Option<JobSettings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -376,6 +378,7 @@ impl Issue {
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
+        job_settings: Option<JobSettings>,
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
@@ -387,11 +390,26 @@ impl Issue {
             progress,
             status,
             assignee,
+            job_settings,
             todo_list,
             dependencies,
             patches,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobSettings {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repo_name: Option<RepoName>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -744,6 +762,30 @@ impl TryFrom<IssueGraphFilter> for api::issues::IssueGraphFilter {
     }
 }
 
+impl From<api::issues::JobSettings> for JobSettings {
+    fn from(value: api::issues::JobSettings) -> Self {
+        Self {
+            repo_name: value.repo_name,
+            remote_url: value.remote_url,
+            image: value.image,
+            branch: value.branch,
+            max_retries: value.max_retries,
+        }
+    }
+}
+
+impl From<JobSettings> for api::issues::JobSettings {
+    fn from(value: JobSettings) -> Self {
+        let mut job_settings = api::issues::JobSettings::default();
+        job_settings.repo_name = value.repo_name;
+        job_settings.remote_url = value.remote_url;
+        job_settings.image = value.image;
+        job_settings.branch = value.branch;
+        job_settings.max_retries = value.max_retries;
+        job_settings
+    }
+}
+
 impl From<api::issues::Issue> for Issue {
     fn from(value: api::issues::Issue) -> Self {
         Self {
@@ -753,6 +795,7 @@ impl From<api::issues::Issue> for Issue {
             progress: value.progress,
             status: value.status.into(),
             assignee: value.assignee,
+            job_settings: value.job_settings.map(Into::into),
             todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
@@ -769,6 +812,7 @@ impl From<Issue> for api::issues::Issue {
             value.progress,
             value.status.into(),
             value.assignee,
+            value.job_settings.map(Into::into),
             value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
@@ -876,10 +920,10 @@ impl From<ListIssuesResponse> for api::issues::ListIssuesResponse {
 mod tests {
     use super::*;
     use metis_common::api::v1 as api;
-    use metis_common::{IssueId, PatchId, TaskId};
+    use metis_common::{IssueId, PatchId, RepoName, TaskId};
     use serde::Serialize;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, str::FromStr};
 
     fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
         let encoded = serde_urlencoded::to_string(value).unwrap();
@@ -979,6 +1023,13 @@ mod tests {
     fn upsert_issue_request_roundtrip_json() {
         let dependency_id = IssueId::new();
         let patch_id = PatchId::new();
+        let job_settings = JobSettings {
+            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
+            remote_url: Some("https://github.com/dourolabs/metis".to_string()),
+            image: Some("worker:latest".to_string()),
+            branch: Some("main".to_string()),
+            max_retries: Some(2),
+        };
         let payload = UpsertIssueRequest {
             issue: Issue {
                 issue_type: IssueType::Task,
@@ -987,6 +1038,7 @@ mod tests {
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),
+                job_settings: Some(job_settings.clone()),
                 todo_list: vec![TodoItem {
                     description: "todo".to_string(),
                     is_done: false,
@@ -1017,6 +1069,7 @@ mod tests {
         assert_eq!(decoded.issue.issue_type, payload.issue.issue_type);
         assert_eq!(decoded.issue.description, payload.issue.description);
         assert_eq!(decoded.issue.todo_list.len(), 1);
+        assert_eq!(decoded.issue.job_settings, Some(job_settings));
     }
 
     #[test]

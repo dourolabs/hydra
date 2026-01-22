@@ -395,6 +395,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         "progress".to_string(),
         IssueStatus::Open,
         Some("assignee".to_string()),
+        None,
         vec![TodoItem::new("existing".to_string(), false)],
         vec![],
         vec![],

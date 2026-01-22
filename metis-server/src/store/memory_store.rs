@@ -603,6 +603,7 @@ mod tests {
             String::new(),
             IssueStatus::Open,
             None,
+            None,
             Vec::new(),
             dependencies,
             Vec::new(),
