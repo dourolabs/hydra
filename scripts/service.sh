@@ -325,6 +325,10 @@ spec:
               value: "${POSTGRES_USER}"
             - name: POSTGRES_PASSWORD
               value: "${POSTGRES_PASSWORD}"
+          resources:
+            limits:
+              cpu: 400m
+              memory: 1Gi
           volumeMounts:
             - name: postgres-data
               mountPath: ${POSTGRES_DATA_PATH}
@@ -370,6 +374,10 @@ spec:
             # How clients can reach the server via Cluster DNS
             - name: SERVER_SERVICE_HOSTNAME
               value: "server.${NAMESPACE}.svc.cluster.local"
+          resources:
+            limits:
+              cpu: 400m
+              memory: 1Gi
           volumeMounts:
             - name: server-config
               mountPath: ${SERVER_CONFIG_MOUNT_PATH}
