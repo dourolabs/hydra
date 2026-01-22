@@ -1,4 +1,4 @@
-use std::{env, io::Write, path::Path, path::PathBuf, process::Command};
+use std::{io::Write, path::Path, path::PathBuf, process::Command};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -20,13 +20,13 @@ use metis_common::{
 use octocrab::Octocrab;
 use serde::Deserialize;
 
-use crate::client::MetisClientInterface;
 use crate::git;
 use crate::git::{
     apply_patch, branch_exists, checkout_new_branch, current_branch,
     diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
+use crate::{auth, client::MetisClientInterface};
 use tempfile::NamedTempFile;
 
 /// ANSI color codes
@@ -538,11 +538,10 @@ async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let creator = env::var("METIS_USER")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    let creator = auth::resolve_auth_user(client)
+        .await
+        .context("failed to resolve merge-request creator from auth token")?
+        .to_string();
 
     let response = client
         .create_issue(&UpsertIssueRequest::new(
@@ -982,10 +981,14 @@ mod tests {
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
+        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
         RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::{env, fs, path::Path, str::FromStr};
+    use std::{env, fs, path::Path, str::FromStr, sync::Mutex};
+    use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -998,6 +1001,13 @@ mod tests {
     fn metis_client(server: &MockServer) -> MetisClient {
         MetisClient::with_http_client(server.base_url(), HttpClient::new())
             .expect("failed to create metis client")
+    }
+
+    fn write_auth_token(temp: &TempDir, token: &str) {
+        let path = temp.path().join(".local/share/metis/auth-token");
+        let parent = path.parent().expect("token parent");
+        fs::create_dir_all(parent).expect("create token dir");
+        fs::write(&path, token).expect("write auth token");
     }
 
     fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
@@ -1305,6 +1315,7 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn create_patch_creates_merge_request_issue_when_assignee_provided() -> Result<()> {
         let (_tempdir, repo_path, base_commit, _) = initialize_repo_with_changes()?;
@@ -1347,7 +1358,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                "unknown".to_string(),
+                "creator-a".to_string(),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1365,8 +1376,20 @@ mod tests {
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
-        let original_user = env::var("METIS_USER");
-        env::remove_var("METIS_USER");
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_home = env::var_os("HOME");
+        let temp = tempfile::tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        write_auth_token(&temp, "token-123");
+        let resolve_request = ResolveUserRequest::new("token-123".to_string());
+        let resolve_response =
+            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
+        let resolve_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/users/resolve")
+                .json_body_obj(&resolve_request);
+            then.status(200).json_body_obj(&resolve_response);
+        });
         let issue_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
@@ -1392,11 +1415,11 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        resolve_mock.assert();
         issue_mock.assert();
-        if let Ok(value) = original_user {
-            env::set_var("METIS_USER", value);
-        } else {
-            env::remove_var("METIS_USER");
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
         }
 
         Ok(())

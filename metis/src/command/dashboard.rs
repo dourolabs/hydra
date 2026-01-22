@@ -302,8 +302,11 @@ struct EventOutcome {
 }
 
 pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
-    let username = auth::resolve_auth_user(client).await?.to_string();
     let mut terminal = ratatui::init();
+    let username = auth::resolve_auth_user(client)
+        .await
+        .context("failed to resolve dashboard user from auth token")?
+        .to_string();
     let result = run_dashboard_loop(client, &mut terminal, username).await;
     ratatui::restore();
     result
