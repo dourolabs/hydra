@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use crate::domain::jobs::BundleSpec;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
 use octocrab::models::AppId;
 use serde::Deserialize;
@@ -23,7 +23,6 @@ pub struct AppConfig {
     pub database: DatabaseSection,
     #[serde(default)]
     pub service: ServiceSection,
-    #[serde(default)]
     pub github_app: GithubAppSection,
     #[serde(default)]
     pub background: BackgroundSection,
@@ -38,8 +37,16 @@ impl AppConfig {
                 resolved_path.display()
             )
         })?;
-        toml::from_str(&contents)
-            .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))
+        let config: Self = toml::from_str(&contents)
+            .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))?;
+        config
+            .validate()
+            .with_context(|| format!("Invalid configuration in '{}'", resolved_path.display()))?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        self.github_app.validate()
     }
 }
 
@@ -138,42 +145,49 @@ pub struct ServiceSection {
     pub repositories: HashMap<RepoName, ServiceRepositoryConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct GithubAppSection {
-    #[serde(default)]
-    pub app_id: Option<u64>,
-    #[serde(default)]
-    pub client_id: Option<String>,
-    #[serde(default)]
-    pub client_secret: Option<String>,
-    #[serde(default)]
-    pub private_key: Option<String>,
+    pub app_id: u64,
+    pub client_id: String,
+    pub client_secret: String,
+    pub private_key: String,
 }
 
 impl GithubAppSection {
-    pub fn app_id(&self) -> Option<AppId> {
-        self.app_id.filter(|id| *id > 0).map(AppId)
+    pub fn app_id(&self) -> AppId {
+        AppId(self.app_id)
     }
 
-    pub fn client_id(&self) -> Option<String> {
-        self.client_id
-            .as_deref()
-            .and_then(non_empty)
-            .map(str::to_owned)
+    pub fn client_id(&self) -> &str {
+        &self.client_id
     }
 
-    pub fn client_secret(&self) -> Option<String> {
-        self.client_secret
-            .as_deref()
-            .and_then(non_empty)
-            .map(str::to_owned)
+    pub fn client_secret(&self) -> &str {
+        &self.client_secret
     }
 
-    pub fn private_key(&self) -> Option<String> {
-        self.private_key
-            .as_deref()
-            .and_then(non_empty)
-            .map(str::to_owned)
+    pub fn private_key(&self) -> &str {
+        &self.private_key
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.app_id > 0,
+            "github_app.app_id must be a positive integer"
+        );
+        ensure!(
+            non_empty(&self.client_id).is_some(),
+            "github_app.client_id must be set"
+        );
+        ensure!(
+            non_empty(&self.client_secret).is_some(),
+            "github_app.client_secret must be set"
+        );
+        ensure!(
+            non_empty(&self.private_key).is_some(),
+            "github_app.private_key must be set"
+        );
+        Ok(())
     }
 }
 
@@ -365,6 +379,13 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    fn error_chain_contains(error: &anyhow::Error, needle: &str) -> bool {
+        error
+            .chain()
+            .any(|cause| cause.to_string().contains(needle))
+    }
 
     #[test]
     fn scheduler_defaults_match_worker_intervals() {
@@ -423,17 +444,53 @@ mod tests {
     }
 
     #[test]
-    fn github_app_section_filters_blank_values() {
+    fn github_app_section_rejects_blank_client_id() {
         let github_app = GithubAppSection {
-            app_id: Some(42),
-            client_id: Some("  ".to_string()),
-            client_secret: Some("\n".to_string()),
-            private_key: Some("key".to_string()),
+            app_id: 42,
+            client_id: "  ".to_string(),
+            client_secret: "\n".to_string(),
+            private_key: "key".to_string(),
         };
 
-        assert_eq!(github_app.app_id(), Some(AppId(42)));
-        assert_eq!(github_app.client_id(), None);
-        assert_eq!(github_app.client_secret(), None);
-        assert_eq!(github_app.private_key(), Some("key".to_string()));
+        let error = github_app
+            .validate()
+            .expect_err("expected blank client_id to fail validation");
+        assert!(
+            error
+                .to_string()
+                .contains("github_app.client_id must be set")
+        );
+    }
+
+    #[test]
+    fn config_requires_github_app_section() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "")?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing github_app");
+        assert!(error_chain_contains(&error, "missing field `github_app`"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_requires_github_app_private_key() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing private_key");
+        assert!(error_chain_contains(&error, "missing field `private_key`"));
+
+        Ok(())
     }
 }
