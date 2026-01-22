@@ -1,4 +1,4 @@
-use std::{env, io::Write, path::Path, path::PathBuf, process::Command};
+use std::{io::Write, path::Path, path::PathBuf, process::Command};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -520,7 +520,7 @@ async fn create_merge_request_issue(
     }
 
     let mut dependencies = Vec::new();
-    if let Some(issue_id) = parent_issue_id {
+    if let Some(issue_id) = parent_issue_id.clone() {
         dependencies.push(IssueDependency::new(IssueDependencyType::ChildOf, issue_id));
     }
 
@@ -538,11 +538,19 @@ async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let creator = env::var("METIS_USER")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
+    let creator = if let Some(issue_id) = parent_issue_id.as_ref() {
+        let parent_issue = client.get_issue(issue_id).await.with_context(|| {
+            format!("failed to fetch parent issue '{issue_id}' to determine merge-request creator")
+        })?;
+        let creator = parent_issue.issue.creator.trim();
+        if creator.is_empty() {
+            "unknown".to_string()
+        } else {
+            creator.to_string()
+        }
+    } else {
+        "unknown".to_string()
+    };
 
     let response = client
         .create_issue(&UpsertIssueRequest::new(
@@ -976,7 +984,7 @@ mod tests {
     use httpmock::{prelude::*, Mock};
     use metis_common::{
         issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
+            Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
             UpsertIssueRequest, UpsertIssueResponse,
         },
         jobs::{BundleSpec, JobRecord, Task},
@@ -986,7 +994,7 @@ mod tests {
         RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::{env, fs, path::Path, str::FromStr};
+    use std::{fs, path::Path, str::FromStr};
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1019,6 +1027,14 @@ mod tests {
                 .path("/v1/patches")
                 .json_body_obj(&expected_request);
             then.status(200).json_body_obj(&response);
+        })
+    }
+
+    fn mock_get_issue(server: &MockServer, issue_record: IssueRecord) -> Mock {
+        server.mock(move |when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{}", issue_record.id.as_ref()));
+            then.status(200).json_body_obj(&issue_record);
         })
     }
 
@@ -1341,6 +1357,21 @@ mod tests {
             sample_repo_name(),
             None,
         ));
+        let parent_issue_record = IssueRecord::new(
+            parent_issue.clone(),
+            Issue::new(
+                IssueType::Task,
+                "parent issue".to_string(),
+                "creator-a".to_string(),
+                String::new(),
+                IssueStatus::Open,
+                Some("owner-a".to_string()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
         let issue_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
@@ -1348,7 +1379,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                "unknown".to_string(),
+                "creator-a".to_string(),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1367,8 +1398,7 @@ mod tests {
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
-        let original_user = env::var("METIS_USER");
-        env::remove_var("METIS_USER");
+        let parent_issue_mock = mock_get_issue(&server, parent_issue_record);
         let issue_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/issues")
@@ -1394,12 +1424,8 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        parent_issue_mock.assert();
         issue_mock.assert();
-        if let Ok(value) = original_user {
-            env::set_var("METIS_USER", value);
-        } else {
-            env::remove_var("METIS_USER");
-        }
 
         Ok(())
     }
