@@ -15,11 +15,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{
-    TaskId,
-    constants::{ENV_GH_TOKEN, ENV_METIS_ISSUE_ID},
-    job_status::GetJobStatusResponse,
-};
+use metis_common::{TaskId, constants::ENV_GH_TOKEN, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -44,7 +40,9 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &default_image).await?;
+    let resolved = task
+        .resolve(service_state.as_ref(), &default_image, None)
+        .await?;
     let Task {
         context, prompt, ..
     } = task;
@@ -87,7 +85,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(service_state.as_ref(), &fallback_image, None)
         .await?;
     let Task { context, .. } = task;
     assert_eq!(
@@ -136,7 +134,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(service_state.as_ref(), &fallback_image, None)
         .await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
@@ -173,7 +171,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(service_state.as_ref(), &fallback_image, None)
         .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),
@@ -231,7 +229,7 @@ async fn create_job_applies_issue_job_settings_overrides() -> anyhow::Result<()>
             "prompt": "0",
             "image": "ghcr.io/example/request:dev",
             "context": { "type": "service_repository", "name": repo_name.to_string(), "rev": "ignored" },
-            "variables": { ENV_METIS_ISSUE_ID: issue_id.to_string() }
+            "issue_id": issue_id.to_string()
         }))
         .send()
         .await?;
@@ -241,17 +239,9 @@ async fn create_job_applies_issue_job_settings_overrides() -> anyhow::Result<()>
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     assert_eq!(task.spawned_from, Some(issue_id.clone()));
-    assert_eq!(task.image, Some(override_image.clone()));
-    match &task.context {
-        BundleSpec::GitRepository { url, rev } => {
-            assert_eq!(url, &override_url);
-            assert_eq!(rev, &override_branch);
-        }
-        _ => panic!("expected git repository override"),
-    }
 
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(service_state.as_ref(), &fallback_image, Some(&job_settings))
         .await?;
     assert_eq!(
         resolved.context.bundle,
@@ -321,7 +311,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(service_state.as_ref(), &fallback_image, None)
         .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),

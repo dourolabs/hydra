@@ -192,12 +192,17 @@ impl AppState {
         let job_id = TaskId::new();
         let fallback_image = self.config.metis.worker_image.clone();
 
+        let spawned_from = request.issue_id.clone().or_else(|| {
+            request
+                .variables
+                .get(ENV_METIS_ISSUE_ID)
+                .and_then(|value| value.parse::<IssueId>().ok())
+        });
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
-
-        let spawned_from = env_vars
-            .get(ENV_METIS_ISSUE_ID)
-            .and_then(|value| value.parse::<IssueId>().ok());
+        if let Some(issue_id) = spawned_from.as_ref() {
+            env_vars.insert(ENV_METIS_ISSUE_ID.to_string(), issue_id.to_string());
+        }
         let task = Task::new(
             request.prompt,
             request.context,
@@ -206,16 +211,20 @@ impl AppState {
             env_vars,
         );
 
-        let task = self
-            .apply_job_settings_to_task(task)
+        let job_settings = self
+            .job_settings_for_issue_opt(task.spawned_from.as_ref())
             .await
             .map_err(|source| CreateJobError::Store {
                 source,
                 job_id: job_id.clone(),
             })?;
 
-        task.resolve(self.service_state.as_ref(), &fallback_image)
-            .await?;
+        task.resolve(
+            self.service_state.as_ref(),
+            &fallback_image,
+            job_settings.as_ref(),
+        )
+        .await?;
 
         let mut store = self.store.write().await;
         store
@@ -264,25 +273,10 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let fallback_image = self.config.metis.worker_image.clone();
-        let resolved = {
+        let task = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(task) => {
-                    match task
-                        .resolve(self.service_state.as_ref(), &fallback_image)
-                        .await
-                    {
-                        Ok(resolved) => resolved,
-                        Err(err) => {
-                            warn!(
-                                metis_id = %task_id,
-                                error = %err,
-                                "failed to resolve task for spawning"
-                            );
-                            return;
-                        }
-                    }
-                }
+                Ok(task) => task,
                 Err(err) => {
                     warn!(
                         metis_id = %task_id,
@@ -291,6 +285,37 @@ impl AppState {
                     );
                     return;
                 }
+            }
+        };
+
+        let job_settings = match self.job_settings_for_task(&task).await {
+            Ok(settings) => settings,
+            Err(err) => {
+                warn!(
+                    metis_id = %task_id,
+                    error = %err,
+                    "failed to load job settings for spawning"
+                );
+                return;
+            }
+        };
+
+        let resolved = match task
+            .resolve(
+                self.service_state.as_ref(),
+                &fallback_image,
+                job_settings.as_ref(),
+            )
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                warn!(
+                    metis_id = %task_id,
+                    error = %err,
+                    "failed to resolve task for spawning"
+                );
+                return;
             }
         };
 
@@ -943,16 +968,23 @@ impl AppState {
             .await
     }
 
-    pub async fn apply_job_settings_to_task(&self, task: Task) -> Result<Task, StoreError> {
-        let Some(issue_id) = issue_id_from_task(&task) else {
-            return Ok(task);
+    pub async fn job_settings_for_task(
+        &self,
+        task: &Task,
+    ) -> Result<Option<JobSettings>, StoreError> {
+        self.job_settings_for_issue_opt(task.spawned_from.as_ref())
+            .await
+    }
+
+    async fn job_settings_for_issue_opt(
+        &self,
+        issue_id: Option<&IssueId>,
+    ) -> Result<Option<JobSettings>, StoreError> {
+        let Some(issue_id) = issue_id else {
+            return Ok(None);
         };
 
-        let Some(job_settings) = self.job_settings_for_issue(&issue_id).await? else {
-            return Ok(task);
-        };
-
-        Ok(apply_job_settings(task, &job_settings))
+        self.job_settings_for_issue(issue_id).await
     }
 
     async fn job_settings_for_issue(
@@ -971,72 +1003,6 @@ impl AppState {
         let store = self.store.read().await;
         issue_ready(store.as_ref(), issue_id).await
     }
-}
-
-fn apply_job_settings(mut task: Task, job_settings: &JobSettings) -> Task {
-    if let Some(image) = &job_settings.image {
-        task.image = Some(image.clone());
-    }
-
-    task.context = apply_job_settings_to_bundle_spec(task.context, job_settings);
-    task
-}
-
-fn apply_job_settings_to_bundle_spec(
-    context: crate::domain::jobs::BundleSpec,
-    job_settings: &JobSettings,
-) -> crate::domain::jobs::BundleSpec {
-    use crate::domain::jobs::BundleSpec;
-
-    let existing_rev = match &context {
-        BundleSpec::GitRepository { rev, .. } => Some(rev.clone()),
-        BundleSpec::ServiceRepository { rev, .. } => rev.clone(),
-        BundleSpec::None => None,
-    };
-
-    if let Some(remote_url) = job_settings.remote_url.as_ref() {
-        let rev = job_settings
-            .branch
-            .clone()
-            .or_else(|| existing_rev.clone())
-            .unwrap_or_else(|| "main".to_string());
-        return BundleSpec::GitRepository {
-            url: remote_url.clone(),
-            rev,
-        };
-    }
-
-    if let Some(repo_name) = job_settings.repo_name.as_ref() {
-        let rev = job_settings.branch.clone().or(existing_rev);
-        return BundleSpec::ServiceRepository {
-            name: repo_name.clone(),
-            rev,
-        };
-    }
-
-    if let Some(branch) = job_settings.branch.as_ref() {
-        return match context {
-            BundleSpec::GitRepository { url, .. } => BundleSpec::GitRepository {
-                url,
-                rev: branch.clone(),
-            },
-            BundleSpec::ServiceRepository { name, .. } => BundleSpec::ServiceRepository {
-                name,
-                rev: Some(branch.clone()),
-            },
-            other => other,
-        };
-    }
-
-    context
-}
-
-fn issue_id_from_task(task: &Task) -> Option<IssueId> {
-    task.spawned_from.clone().or_else(|| {
-        task.env_vars
-            .get(ENV_METIS_ISSUE_ID)
-            .and_then(|value| value.parse::<IssueId>().ok())
-    })
 }
 
 fn join_issue_ids(ids: &[IssueId]) -> String {

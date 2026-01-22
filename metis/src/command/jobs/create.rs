@@ -5,7 +5,7 @@ use metis_common::{
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     task_status::Status,
-    RepoName, TaskId,
+    IssueId, RepoName, TaskId,
 };
 use std::{
     io::{self, Write},
@@ -17,6 +17,7 @@ use tokio::time::sleep;
 pub async fn run(
     client: &dyn MetisClientInterface,
     wait: bool,
+    issue_id: Option<IssueId>,
     repo_arg: Option<String>,
     rev_arg: Option<String>,
     image: Option<String>,
@@ -44,7 +45,7 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest::new(prompt, image, context, variables);
+    let request = CreateJobRequest::new(prompt, image, context, issue_id, variables);
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
@@ -248,6 +249,7 @@ mod tests {
             "test prompt".to_string(),
             None,
             BundleSpec::None,
+            None,
             variables.clone(),
         );
         let create_mock = server.mock(|when, then| {
@@ -292,6 +294,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             vec![],
             vec!["test prompt".into()],
         )
@@ -317,6 +320,7 @@ mod tests {
                 name: RepoName::from_str("dourolabs/service-repo").unwrap(),
                 rev: Some("feature".into()),
             },
+            None,
             variables,
         );
         let create_mock = server.mock(|when, then| {
@@ -328,6 +332,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             Some("dourolabs/service-repo".into()),
             Some("feature".into()),
             None,
@@ -354,6 +359,7 @@ mod tests {
                 name: RepoName::from_str("dourolabs/service-repo").unwrap(),
                 rev: Some("main".into()),
             },
+            None,
             variables,
         );
         let create_mock = server.mock(|when, then| {
@@ -367,6 +373,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             Some("dourolabs/service-repo".into()),
             None,
             None,
@@ -393,6 +400,7 @@ mod tests {
                 url: "https://example.com/repo.git".into(),
                 rev: "main".into(),
             },
+            None,
             variables,
         );
         let create_mock = server.mock(|when, then| {
@@ -404,6 +412,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             Some("https://example.com/repo.git".into()),
             Some("main".into()),
             None,
@@ -430,6 +439,7 @@ mod tests {
                 url: "https://example.com/repo.git".into(),
                 rev: "main".into(),
             },
+            None,
             variables,
         );
         let create_mock = server.mock(|when, then| {
@@ -441,6 +451,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             Some("https://example.com/repo.git".into()),
             None,
             None,
@@ -464,6 +475,7 @@ mod tests {
             "custom image".to_string(),
             Some("ghcr.io/example/metis:dev".to_string()),
             BundleSpec::None,
+            None,
             variables,
         );
         let create_mock = server.mock(|when, then| {
@@ -475,6 +487,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             None,
             None,
             Some("ghcr.io/example/metis:dev".into()),
@@ -496,6 +509,7 @@ mod tests {
             "variable prompt".to_string(),
             None,
             BundleSpec::None,
+            None,
             HashMap::from([
                 ("PROMPT".to_string(), "variable prompt".to_string()),
                 ("FOO".to_string(), "bar".to_string()),
@@ -510,6 +524,7 @@ mod tests {
         run(
             &client,
             false,
+            None,
             None,
             None,
             None,
@@ -533,7 +548,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("unused")));
         });
 
-        let result = run(&client, false, None, None, None, vec![], vec![]).await;
+        let result = run(&client, false, None, None, None, None, vec![], vec![]).await;
 
         assert!(result.is_err());
         create_mock.assert_hits(0);

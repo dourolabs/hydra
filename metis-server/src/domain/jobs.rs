@@ -41,6 +41,8 @@ pub struct CreateJobRequest {
     pub image: Option<String>,
     #[serde(default)]
     pub context: BundleSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<IssueId>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
 }
@@ -255,6 +257,7 @@ impl From<api::jobs::CreateJobRequest> for CreateJobRequest {
             prompt: value.prompt,
             image: value.image,
             context: value.context.into(),
+            issue_id: value.issue_id,
             variables: value.variables,
         }
     }
@@ -266,6 +269,7 @@ impl From<CreateJobRequest> for api::jobs::CreateJobRequest {
             value.prompt,
             value.image,
             value.context.into(),
+            value.issue_id,
             value.variables,
         )
     }
