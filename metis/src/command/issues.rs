@@ -87,24 +87,24 @@ pub enum IssueCommands {
         progress: Option<String>,
 
         /// Repository name used when spawning jobs for this issue (owner/repo).
-        #[arg(long = "job-repo-name", value_name = "OWNER/REPO")]
-        job_repo_name: Option<String>,
+        #[arg(long = "repo-name", value_name = "OWNER/REPO")]
+        repo_name: Option<String>,
 
         /// Remote URL to clone when running jobs for this issue.
-        #[arg(long = "job-remote-url", value_name = "URL")]
-        job_remote_url: Option<String>,
+        #[arg(long = "remote-url", value_name = "URL")]
+        remote_url: Option<String>,
 
         /// Container image to use for jobs created from this issue.
-        #[arg(long = "job-image", value_name = "IMAGE")]
-        job_image: Option<String>,
+        #[arg(long = "image", value_name = "IMAGE")]
+        image: Option<String>,
 
         /// Branch to checkout when running jobs for this issue.
-        #[arg(long = "job-branch", value_name = "BRANCH")]
-        job_branch: Option<String>,
+        #[arg(long = "branch", value_name = "BRANCH")]
+        branch: Option<String>,
 
         /// Maximum number of retries for jobs created from this issue.
-        #[arg(long = "job-max-retries", value_name = "MAX_RETRIES", value_parser = clap::value_parser!(u32))]
-        job_max_retries: Option<u32>,
+        #[arg(long = "max-retries", value_name = "MAX_RETRIES", value_parser = clap::value_parser!(u32))]
+        max_retries: Option<u32>,
     },
     /// Update an existing issue.
     Update {
@@ -167,44 +167,44 @@ pub enum IssueCommands {
 
         /// Repository name used when spawning jobs for this issue (owner/repo).
         #[arg(
-            long = "job-repo-name",
+            long = "repo-name",
             value_name = "OWNER/REPO",
             conflicts_with = "clear_job_settings"
         )]
-        job_repo_name: Option<String>,
+        repo_name: Option<String>,
 
         /// Remote URL to clone when running jobs for this issue.
         #[arg(
-            long = "job-remote-url",
+            long = "remote-url",
             value_name = "URL",
             conflicts_with = "clear_job_settings"
         )]
-        job_remote_url: Option<String>,
+        remote_url: Option<String>,
 
         /// Container image to use for jobs created from this issue.
         #[arg(
-            long = "job-image",
+            long = "image",
             value_name = "IMAGE",
             conflicts_with = "clear_job_settings"
         )]
-        job_image: Option<String>,
+        image: Option<String>,
 
         /// Branch to checkout when running jobs for this issue.
         #[arg(
-            long = "job-branch",
+            long = "branch",
             value_name = "BRANCH",
             conflicts_with = "clear_job_settings"
         )]
-        job_branch: Option<String>,
+        branch: Option<String>,
 
         /// Maximum number of retries for jobs created from this issue.
         #[arg(
-            long = "job-max-retries",
+            long = "max-retries",
             value_name = "MAX_RETRIES",
             value_parser = clap::value_parser!(u32),
             conflicts_with = "clear_job_settings"
         )]
-        job_max_retries: Option<u32>,
+        max_retries: Option<u32>,
 
         /// Remove all job settings from the issue.
         #[arg(long)]
@@ -291,11 +291,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             assignee,
             description,
             progress,
-            job_repo_name,
-            job_remote_url,
-            job_image,
-            job_branch,
-            job_max_retries,
+            repo_name,
+            remote_url,
+            image,
+            branch,
+            max_retries,
         } => {
             create_issue(
                 client,
@@ -306,11 +306,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 assignee,
                 description,
                 progress,
-                job_repo_name,
-                job_remote_url,
-                job_image,
-                job_branch,
-                job_max_retries,
+                repo_name,
+                remote_url,
+                image,
+                branch,
+                max_retries,
             )
             .await
         }
@@ -328,11 +328,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             clear_patches,
             progress,
             clear_progress,
-            job_repo_name,
-            job_remote_url,
-            job_image,
-            job_branch,
-            job_max_retries,
+            repo_name,
+            remote_url,
+            image,
+            branch,
+            max_retries,
             clear_job_settings,
         } => {
             update_issue(
@@ -350,11 +350,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 clear_patches,
                 progress,
                 clear_progress,
-                job_repo_name,
-                job_remote_url,
-                job_image,
-                job_branch,
-                job_max_retries,
+                repo_name,
+                remote_url,
+                image,
+                branch,
+                max_retries,
                 clear_job_settings,
             )
             .await
@@ -618,11 +618,11 @@ async fn create_issue(
     assignee: Option<String>,
     description: String,
     progress: Option<String>,
-    job_repo_name: Option<String>,
-    job_remote_url: Option<String>,
-    job_image: Option<String>,
-    job_branch: Option<String>,
-    job_max_retries: Option<u32>,
+    repo_name: Option<String>,
+    remote_url: Option<String>,
+    image: Option<String>,
+    branch: Option<String>,
+    max_retries: Option<u32>,
 ) -> Result<()> {
     let description = description.trim();
     if description.is_empty() {
@@ -649,13 +649,7 @@ async fn create_issue(
         None => None,
     };
 
-    let job_settings = parse_job_settings(
-        job_repo_name,
-        job_remote_url,
-        job_image,
-        job_branch,
-        job_max_retries,
-    )?;
+    let job_settings = parse_job_settings(repo_name, remote_url, image, branch, max_retries)?;
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -693,15 +687,15 @@ fn parse_job_settings(
         Some(value) => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
-                bail!("Job repo name must not be empty.");
+                bail!("Repo name must not be empty.");
             }
-            Some(RepoName::from_str(trimmed).context("invalid job repo name")?)
+            Some(RepoName::from_str(trimmed).context("invalid repo name")?)
         }
         None => None,
     };
-    let remote_url = normalize_job_setting(remote_url, "Job remote URL")?;
-    let image = normalize_job_setting(image, "Job image")?;
-    let branch = normalize_job_setting(branch, "Job branch")?;
+    let remote_url = normalize_job_setting(remote_url, "Remote URL")?;
+    let image = normalize_job_setting(image, "Image")?;
+    let branch = normalize_job_setting(branch, "Branch")?;
 
     if repo_name.is_none()
         && remote_url.is_none()
@@ -779,11 +773,11 @@ async fn update_issue(
     clear_patches: bool,
     progress: Option<String>,
     clear_progress: bool,
-    job_repo_name: Option<String>,
-    job_remote_url: Option<String>,
-    job_image: Option<String>,
-    job_branch: Option<String>,
-    job_max_retries: Option<u32>,
+    repo_name: Option<String>,
+    remote_url: Option<String>,
+    image: Option<String>,
+    branch: Option<String>,
+    max_retries: Option<u32>,
     clear_job_settings: bool,
 ) -> Result<()> {
     let issue_id = id;
@@ -843,13 +837,8 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
-    let job_settings_update = parse_job_settings(
-        job_repo_name,
-        job_remote_url,
-        job_image,
-        job_branch,
-        job_max_retries,
-    )?;
+    let job_settings_update =
+        parse_job_settings(repo_name, remote_url, image, branch, max_retries)?;
     let job_settings_change_requested = clear_job_settings || job_settings_update.is_some();
 
     let no_changes = issue_type.is_none()
