@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -68,14 +68,6 @@ pub enum PatchesCommand {
         /// Create a GitHub pull request with the patch contents.
         #[arg(long = "github")]
         github: bool,
-
-        /// GitHub token to use when creating pull requests.
-        #[arg(
-            long = "github-token",
-            value_name = "TOKEN",
-            env = ENV_METIS_GITHUB_TOKEN
-        )]
-        github_token: Option<String>,
 
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
@@ -171,7 +163,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             description,
             job,
             github,
-            github_token,
             assignee,
             issue_id,
             commit_range,
@@ -183,7 +174,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
                 description,
                 job,
                 github,
-                github_token,
                 assignee,
                 issue_id,
                 commit_range,
@@ -279,7 +269,6 @@ async fn create_patch(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
-    github_token: Option<String>,
     assignee: Option<String>,
     issue_id: IssueId,
     commit_range: Option<String>,
@@ -302,15 +291,7 @@ async fn create_patch(
     }
 
     let github_token = if create_github_pr {
-        Some(
-            github_token
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "{ENV_METIS_GITHUB_TOKEN} must be provided via --github-token or environment when using --github"
-                    )
-                })?,
-        )
+        Some(resolve_creator_github_token(client, &issue_id).await?)
     } else {
         None
     };
@@ -326,7 +307,7 @@ async fn create_patch(
         patch_description,
         job_id.clone(),
         create_github_pr,
-        github_token,
+        github_token.as_deref(),
         is_automatic_backup,
         service_repo_name,
     )
@@ -363,6 +344,20 @@ async fn create_patch(
     println!("{}", serde_json::to_string(&output)?);
 
     Ok(())
+}
+
+async fn resolve_creator_github_token(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+) -> Result<String> {
+    let issue = client.get_issue(issue_id).await.with_context(|| {
+        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
+    })?;
+    let token = issue.issue.creator.github_token.trim();
+    if token.is_empty() {
+        bail!("GitHub token is missing for creator of issue '{issue_id}'");
+    }
+    Ok(token.to_string())
 }
 
 fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
@@ -622,6 +617,9 @@ pub async fn create_patch_artifact_from_repo(
         .context("failed to create patch")?;
 
     if create_github_pr {
+        let github_token = github_token.ok_or_else(|| {
+            anyhow!("Creator GitHub token is required to create a GitHub pull request")
+        })?;
         let github_pr = create_github_pull_request(
             repo_root,
             &title,
@@ -787,12 +785,9 @@ async fn create_github_pull_request(
     repo_root: &Path,
     title: &str,
     description: &str,
-    github_token: Option<&str>,
+    github_token: &str,
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
-    let github_token = github_token.ok_or_else(|| {
-        anyhow!("{ENV_METIS_GITHUB_TOKEN} is required when creating a GitHub pull request")
-    })?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
     push_branch(repo_root, &branch_name, Some(github_token))?;
     let pr_metadata =
@@ -1173,7 +1168,6 @@ mod tests {
             Some(job_id),
             false,
             None,
-            None,
             issue_id.clone(),
             None,
             false,
@@ -1238,7 +1232,6 @@ mod tests {
             job_id_opt.clone(),
             false,
             None,
-            None,
             issue_id.clone(),
             commit_range,
             false,
@@ -1266,7 +1259,6 @@ mod tests {
             None,
             false,
             None,
-            None,
             issue_id,
             commit_range,
             false,
@@ -1284,12 +1276,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_requires_github_token_when_creating_pr() -> Result<()> {
+    async fn create_patch_requires_creator_github_token_when_creating_pr() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-gh-token");
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "missing github token".to_string(),
+                User::new(Username::from("creator-a"), String::new()),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let issue_mock = mock_get_issue(&server, issue_record);
 
         let result = create_patch(
             &client,
@@ -1297,7 +1305,6 @@ mod tests {
             "pr description".to_string(),
             Some(task_id("t-job-gh-token")),
             true,
-            None,
             None,
             issue_id,
             commit_range,
@@ -1308,9 +1315,10 @@ mod tests {
 
         let error = result.unwrap_err().to_string();
         assert!(
-            error.contains(ENV_METIS_GITHUB_TOKEN),
-            "error should reference missing GitHub token: {error}"
+            error.contains("GitHub token is missing for creator of issue"),
+            "error should reference missing creator GitHub token: {error}"
         );
+        issue_mock.assert();
 
         Ok(())
     }
@@ -1406,7 +1414,6 @@ mod tests {
             "custom patch description".to_string(),
             Some(job_id),
             false,
-            None,
             Some("owner-a".to_string()),
             parent_issue.clone(),
             None,
@@ -1507,7 +1514,6 @@ mod tests {
             "backup description".to_string(),
             Some(job_id.clone()),
             false,
-            None,
             None,
             issue_id.clone(),
             commit_range,
