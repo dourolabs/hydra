@@ -879,6 +879,38 @@ mod tests {
         )
     }
 
+    #[test]
+    fn init_migration_drops_triggers_before_create() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let migration = std::fs::read_to_string(format!(
+            "{manifest_dir}/migrations/20241115000000_init_store.sql"
+        ))
+        .unwrap();
+        let triggers = [
+            "set_timestamp_payload_schema_versions",
+            "set_timestamp_issues",
+            "set_timestamp_patches",
+            "set_timestamp_tasks",
+            "set_timestamp_task_status_logs",
+            "set_timestamp_users",
+        ];
+
+        for trigger in triggers {
+            let drop_stmt = format!("DROP TRIGGER IF EXISTS {trigger} ON metis.");
+            let create_stmt = format!("CREATE TRIGGER {trigger}");
+            let drop_pos = migration
+                .find(&drop_stmt)
+                .unwrap_or_else(|| panic!("missing drop for {trigger}"));
+            let create_pos = migration
+                .find(&create_stmt)
+                .unwrap_or_else(|| panic!("missing create for {trigger}"));
+            assert!(
+                drop_pos < create_pos,
+                "drop should precede create for {trigger}"
+            );
+        }
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn issue_round_trip(pool: PgStorePool) {

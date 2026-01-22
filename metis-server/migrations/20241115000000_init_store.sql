@@ -30,6 +30,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
+DROP TRIGGER IF EXISTS set_timestamp_payload_schema_versions ON metis.payload_schema_versions;
 CREATE TRIGGER set_timestamp_payload_schema_versions
 BEFORE UPDATE ON metis.payload_schema_versions
 FOR EACH ROW
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS metis.issues (
     CHECK (schema_version > 0)
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_issues ON metis.issues;
 CREATE TRIGGER set_timestamp_issues
 BEFORE UPDATE ON metis.issues
 FOR EACH ROW
@@ -81,6 +83,7 @@ CREATE TABLE IF NOT EXISTS metis.patches (
     CHECK (schema_version > 0)
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_patches ON metis.patches;
 CREATE TRIGGER set_timestamp_patches
 BEFORE UPDATE ON metis.patches
 FOR EACH ROW
@@ -95,6 +98,7 @@ CREATE TABLE IF NOT EXISTS metis.tasks (
     CHECK (schema_version > 0)
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_tasks ON metis.tasks;
 CREATE TRIGGER set_timestamp_tasks
 BEFORE UPDATE ON metis.tasks
 FOR EACH ROW
@@ -109,6 +113,7 @@ CREATE TABLE IF NOT EXISTS metis.task_status_logs (
     CHECK (schema_version > 0)
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_task_status_logs ON metis.task_status_logs;
 CREATE TRIGGER set_timestamp_task_status_logs
 BEFORE UPDATE ON metis.task_status_logs
 FOR EACH ROW
@@ -123,6 +128,7 @@ CREATE TABLE IF NOT EXISTS metis.users (
     CHECK (schema_version > 0)
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_users ON metis.users;
 CREATE TRIGGER set_timestamp_users
 BEFORE UPDATE ON metis.users
 FOR EACH ROW
