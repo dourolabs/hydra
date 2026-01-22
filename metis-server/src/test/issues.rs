@@ -51,7 +51,11 @@ fn user(username: &str) -> User {
     User::new(Username::from(username), "token".to_string())
 }
 
-fn empty_user() -> User {
+fn default_user() -> User {
+    user("creator")
+}
+
+fn missing_user() -> User {
     User::new(Username::from(""), String::new())
 }
 
@@ -70,7 +74,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Issue::new(
                 IssueType::Task,
                 "original details".to_string(),
-                empty_user(),
+                default_user(),
                 "Initial progress".to_string(),
                 IssueStatus::Open,
                 None,
@@ -96,7 +100,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Issue::new(
                 IssueType::Task,
                 "updated details".to_string(),
-                empty_user(),
+                default_user(),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress,
                 None,
@@ -130,7 +134,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
         Issue::new(
             IssueType::Task,
             "updated details".to_string(),
-            empty_user(),
+            default_user(),
             "Updated progress".to_string(),
             IssueStatus::InProgress,
             None,
@@ -180,7 +184,7 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
             issue(
                 IssueType::Task,
                 "child",
-                empty_user(),
+                missing_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -247,6 +251,35 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
 }
 
 #[tokio::test]
+async fn create_issue_rejects_missing_creator_without_parent() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let response = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "missing creator",
+                missing_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
@@ -257,7 +290,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocker",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -282,7 +315,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -307,7 +340,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -340,7 +373,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocker",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -364,7 +397,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "blocked",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -392,7 +425,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -417,7 +450,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "child",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -442,7 +475,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -475,7 +508,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "child",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -499,7 +532,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
             issue(
                 IssueType::Task,
                 "parent",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Closed,
                 None,
@@ -525,7 +558,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Task,
         "issue with todos",
-        empty_user(),
+        default_user(),
         String::new(),
         IssueStatus::Open,
         None,
@@ -601,7 +634,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Task,
         "dropped issue",
-        empty_user(),
+        default_user(),
         String::new(),
         IssueStatus::Open,
         None,
@@ -670,7 +703,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let base_issue = issue(
         IssueType::Bug,
         "login fails for guests",
-        empty_user(),
+        default_user(),
         String::new(),
         IssueStatus::Open,
         None,
@@ -681,7 +714,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let assigned_issue = issue(
         IssueType::Task,
         "assigned issue",
-        empty_user(),
+        default_user(),
         String::new(),
         IssueStatus::Open,
         Some("owner-1"),
@@ -692,7 +725,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     let closed_issue = issue(
         IssueType::Task,
         "retire old endpoint",
-        empty_user(),
+        default_user(),
         String::new(),
         IssueStatus::Closed,
         None,
@@ -779,7 +812,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             issue(
                 IssueType::Task,
                 "issue with todos",
-                empty_user(),
+                default_user(),
                 String::new(),
                 IssueStatus::Open,
                 None,
