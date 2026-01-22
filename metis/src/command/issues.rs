@@ -7,12 +7,12 @@ use metis_common::{
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
         IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
-        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
+        JobSettings, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
     users::{ResolveUserRequest, User},
-    PatchId,
+    PatchId, RepoName,
 };
 use serde::Serialize;
 use std::{
@@ -91,6 +91,26 @@ pub enum IssueCommands {
         /// Progress notes for the issue.
         #[arg(long, value_name = "PROGRESS")]
         progress: Option<String>,
+
+        /// Repository name to use for job settings.
+        #[arg(long = "repo-name", value_name = "REPO_NAME")]
+        repo_name: Option<String>,
+
+        /// Git remote URL to use for job settings.
+        #[arg(long = "remote-url", value_name = "REMOTE_URL")]
+        remote_url: Option<String>,
+
+        /// Container image to use for job settings.
+        #[arg(long, value_name = "IMAGE")]
+        image: Option<String>,
+
+        /// Branch to use for job settings.
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+
+        /// Maximum retries to use for job settings.
+        #[arg(long = "max-retries", value_name = "MAX_RETRIES")]
+        max_retries: Option<u32>,
     },
     /// Update an existing issue.
     Update {
@@ -150,6 +170,42 @@ pub enum IssueCommands {
         /// Remove all progress notes from the issue.
         #[arg(long)]
         clear_progress: bool,
+
+        /// Repository name to use for job settings.
+        #[arg(
+            long = "repo-name",
+            value_name = "REPO_NAME",
+            conflicts_with = "clear_job_settings"
+        )]
+        repo_name: Option<String>,
+
+        /// Git remote URL to use for job settings.
+        #[arg(
+            long = "remote-url",
+            value_name = "REMOTE_URL",
+            conflicts_with = "clear_job_settings"
+        )]
+        remote_url: Option<String>,
+
+        /// Container image to use for job settings.
+        #[arg(long, value_name = "IMAGE", conflicts_with = "clear_job_settings")]
+        image: Option<String>,
+
+        /// Branch to use for job settings.
+        #[arg(long, value_name = "BRANCH", conflicts_with = "clear_job_settings")]
+        branch: Option<String>,
+
+        /// Maximum retries to use for job settings.
+        #[arg(
+            long = "max-retries",
+            value_name = "MAX_RETRIES",
+            conflicts_with = "clear_job_settings"
+        )]
+        max_retries: Option<u32>,
+
+        /// Remove all job settings from the issue.
+        #[arg(long)]
+        clear_job_settings: bool,
     },
     /// Inspect or update an issue's todo list.
     Todo {
@@ -233,6 +289,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             creator,
             description,
             progress,
+            repo_name,
+            remote_url,
+            image,
+            branch,
+            max_retries,
         } => {
             create_issue(
                 client,
@@ -244,6 +305,11 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 creator,
                 description,
                 progress,
+                repo_name,
+                remote_url,
+                image,
+                branch,
+                max_retries,
             )
             .await
         }
@@ -261,6 +327,12 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             clear_patches,
             progress,
             clear_progress,
+            repo_name,
+            remote_url,
+            image,
+            branch,
+            max_retries,
+            clear_job_settings,
         } => {
             update_issue(
                 client,
@@ -277,6 +349,12 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 clear_patches,
                 progress,
                 clear_progress,
+                repo_name,
+                remote_url,
+                image,
+                branch,
+                max_retries,
+                clear_job_settings,
             )
             .await
         }
@@ -530,6 +608,72 @@ async fn fetch_issues(
     Ok(issues)
 }
 
+fn resolve_job_settings(
+    current: Option<JobSettings>,
+    repo_name: Option<String>,
+    remote_url: Option<String>,
+    image: Option<String>,
+    branch: Option<String>,
+    max_retries: Option<u32>,
+    clear_job_settings: bool,
+) -> Result<(Option<JobSettings>, bool)> {
+    if clear_job_settings {
+        return Ok((None, true));
+    }
+
+    let mut changed = false;
+    let mut job_settings = current.clone().unwrap_or_default();
+
+    if let Some(value) = repo_name {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("--repo-name must not be empty when provided.");
+        }
+        let parsed = RepoName::from_str(trimmed)
+            .map_err(|err| anyhow!("invalid repo name '{trimmed}': {err}"))?;
+        job_settings.repo_name = Some(parsed);
+        changed = true;
+    }
+
+    if let Some(value) = remote_url {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("--remote-url must not be empty when provided.");
+        }
+        job_settings.remote_url = Some(trimmed.to_string());
+        changed = true;
+    }
+
+    if let Some(value) = image {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("--image must not be empty when provided.");
+        }
+        job_settings.image = Some(trimmed.to_string());
+        changed = true;
+    }
+
+    if let Some(value) = branch {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("--branch must not be empty when provided.");
+        }
+        job_settings.branch = Some(trimmed.to_string());
+        changed = true;
+    }
+
+    if let Some(value) = max_retries {
+        job_settings.max_retries = Some(value);
+        changed = true;
+    }
+
+    if changed {
+        Ok((Some(job_settings), true))
+    } else {
+        Ok((current, false))
+    }
+}
+
 async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
@@ -540,6 +684,11 @@ async fn create_issue(
     creator: Option<String>,
     description: String,
     progress: Option<String>,
+    repo_name: Option<String>,
+    remote_url: Option<String>,
+    image: Option<String>,
+    branch: Option<String>,
+    max_retries: Option<u32>,
 ) -> Result<()> {
     let description = description.trim();
     if description.is_empty() {
@@ -593,6 +742,16 @@ async fn create_issue(
         None => None,
     };
 
+    let (job_settings, _) = resolve_job_settings(
+        None,
+        repo_name,
+        remote_url,
+        image,
+        branch,
+        max_retries,
+        false,
+    )?;
+
     let request = UpsertIssueRequest::new(
         Issue::new(
             issue_type,
@@ -601,7 +760,7 @@ async fn create_issue(
             progress,
             status,
             assignee,
-            None,
+            job_settings,
             Vec::new(),
             dependencies,
             patches,
@@ -633,6 +792,12 @@ async fn update_issue(
     clear_patches: bool,
     progress: Option<String>,
     clear_progress: bool,
+    repo_name: Option<String>,
+    remote_url: Option<String>,
+    image: Option<String>,
+    branch: Option<String>,
+    max_retries: Option<u32>,
+    clear_job_settings: bool,
 ) -> Result<()> {
     let issue_id = id;
 
@@ -698,6 +863,13 @@ async fn update_issue(
         progress.map(|value| value.trim().to_string())
     };
 
+    let job_settings_requested = clear_job_settings
+        || repo_name.is_some()
+        || remote_url.is_some()
+        || image.is_some()
+        || branch.is_some()
+        || max_retries.is_some();
+
     let no_changes = issue_type.is_none()
         && status.is_none()
         && assignee.is_none()
@@ -705,7 +877,8 @@ async fn update_issue(
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
-        && progress_update.is_none();
+        && progress_update.is_none()
+        && !job_settings_requested;
     if no_changes {
         bail!("At least one field must be provided to update.");
     }
@@ -715,6 +888,16 @@ async fn update_issue(
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
+    let (job_settings, _) = resolve_job_settings(
+        current.issue.job_settings.clone(),
+        repo_name,
+        remote_url,
+        image,
+        branch,
+        max_retries,
+        clear_job_settings,
+    )?;
+
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
@@ -722,7 +905,7 @@ async fn update_issue(
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
-        current.issue.job_settings,
+        job_settings,
         current.issue.todo_list,
         dependencies_update.unwrap_or(current.issue.dependencies),
         patches_update.unwrap_or(current.issue.patches),
@@ -1296,8 +1479,8 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        ListIssuesResponse, ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem,
-        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        JobSettings, ListIssuesResponse, ReplaceTodoListRequest, SetTodoItemStatusRequest,
+        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
@@ -1324,6 +1507,16 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    fn sample_job_settings() -> JobSettings {
+        let mut job_settings = JobSettings::default();
+        job_settings.repo_name = Some(sample_repo_name());
+        job_settings.remote_url = Some("https://example.com/service.git".into());
+        job_settings.image = Some("worker:123".into());
+        job_settings.branch = Some("main".into());
+        job_settings.max_retries = Some(5);
+        job_settings
     }
 
     fn user(username: &str) -> User {
@@ -1760,6 +1953,93 @@ mod tests {
             None,
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        resolve_mock.assert();
+        create_mock.assert();
+        assert_eq!(resolve_mock.hits(), 1);
+        assert_eq!(create_mock.hits(), 1);
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_issue_sets_job_settings() {
+        let _guard = env_lock().lock().await;
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let original_home = env::var_os("HOME");
+        let temp = tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+            .expect("create auth token dir");
+        fs::write(&auth_token_path, "token-123").expect("write auth token");
+
+        let mut job_settings = sample_job_settings();
+        job_settings.image = Some("worker:latest".into());
+        job_settings.branch = Some("feature/job-settings".into());
+        job_settings.max_retries = Some(4);
+        let resolve_request = ResolveUserRequest::new("token-123".into());
+        let resolve_response =
+            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
+        let resolve_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/users/resolve")
+                .json_body_obj(&resolve_request);
+            then.status(200).json_body_obj(&resolve_response);
+        });
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::MergeRequest,
+                "New issue description".into(),
+                {
+                    let mut creator = User::new(Username::from("creator-a"), "token-123".into());
+                    creator.github_user_id = resolve_response.user.github_user_id;
+                    creator
+                },
+                "Initial notes".into(),
+                IssueStatus::Closed,
+                Some("team-a".into()),
+                Some(job_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                vec![],
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
+        });
+
+        create_issue(
+            &client,
+            IssueType::MergeRequest,
+            IssueStatus::Closed,
+            Vec::new(),
+            vec![],
+            Some("team-a".into()),
+            None,
+            "New issue description".into(),
+            Some("Initial notes".into()),
+            Some("dourolabs/example".into()),
+            Some("https://example.com/service.git".into()),
+            Some("worker:latest".into()),
+            Some("feature/job-settings".into()),
+            Some(4),
         )
         .await
         .unwrap();
@@ -1806,6 +2086,11 @@ mod tests {
             None,
             Some("creator-b".into()),
             "Description".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
         )
         .await;
@@ -1887,6 +2172,11 @@ mod tests {
             None,
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -1911,6 +2201,11 @@ mod tests {
             None,
             "   ".into(),
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
         .is_err());
@@ -1929,6 +2224,11 @@ mod tests {
             Some("   ".into()),
             None,
             "Valid description".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
         )
         .await
@@ -1962,6 +2262,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-9");
+        let job_settings = sample_job_settings();
         let current_issue = api_issue_record(
             "i-9",
             IssueType::Task,
@@ -1982,7 +2283,7 @@ mod tests {
                 "New progress".into(),
                 IssueStatus::Closed,
                 Some("owner-b".into()),
-                None,
+                Some(job_settings.clone()),
                 Vec::new(),
                 vec![IssueDependency::new(
                     IssueDependencyType::BlockedOn,
@@ -2022,6 +2323,12 @@ mod tests {
             vec![patch_id("p-3")],
             false,
             Some("New progress".into()),
+            false,
+            Some("dourolabs/example".into()),
+            Some("https://example.com/service.git".into()),
+            Some("worker:123".into()),
+            Some("main".into()),
+            Some(5),
             false,
         )
         .await
@@ -2097,6 +2404,98 @@ mod tests {
             true,
             vec![],
             true,
+            None,
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        get_mock.assert();
+        update_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+        assert_eq!(update_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_issue_allows_clearing_job_settings() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let target_issue_id = issue_id("i-11");
+        let job_settings = sample_job_settings();
+        let current_issue = IssueRecord::new(
+            target_issue_id.clone(),
+            Issue::new(
+                IssueType::Feature,
+                "Existing issue".into(),
+                empty_user(),
+                "Started work".into(),
+                IssueStatus::InProgress,
+                Some("owner-a".into()),
+                Some(job_settings),
+                Vec::new(),
+                vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    issue_id("i-5"),
+                )],
+                Vec::new(),
+            ),
+        );
+        let update_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Feature,
+                "Existing issue".into(),
+                empty_user(),
+                "Started work".into(),
+                IssueStatus::InProgress,
+                Some("owner-a".into()),
+                None,
+                Vec::new(),
+                vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    issue_id("i-5"),
+                )],
+                Vec::new(),
+            ),
+            None,
+        );
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str())
+                .json_body_obj(&update_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
+        });
+
+        update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
             None,
             true,
         )
