@@ -921,7 +921,7 @@ async fn update_issue(
 }
 
 async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result<User> {
-    let token = auth::read_auth_token()?;
+    let token = auth::ensure_auth_token(client).await?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token.clone()))
         .await

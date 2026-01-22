@@ -709,7 +709,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let token = auth::read_auth_token()?;
+    let token = auth::ensure_auth_token(client).await?;
     let creator = User::new(Username::from(creator), token);
 
     let request = UpsertIssueRequest::new(
