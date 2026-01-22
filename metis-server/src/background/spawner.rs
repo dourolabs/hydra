@@ -77,7 +77,12 @@ impl AgentQueue {
         )
     }
 
-    async fn register_spawn_attempt(&self, issue_id: &IssueId, status: IssueStatus) -> bool {
+    async fn register_spawn_attempt(
+        &self,
+        issue_id: &IssueId,
+        status: IssueStatus,
+        max_tries: u32,
+    ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
         let entry = attempts.entry(issue_id.clone()).or_insert(SpawnAttempt {
             status,
@@ -91,12 +96,20 @@ impl AgentQueue {
             };
         }
 
-        if entry.attempts >= self.max_tries {
+        if entry.attempts >= max_tries {
             return false;
         }
 
         entry.attempts += 1;
         true
+    }
+
+    fn max_tries_for_issue(&self, issue: &Issue) -> u32 {
+        issue
+            .job_settings
+            .as_ref()
+            .and_then(|settings| settings.max_retries)
+            .unwrap_or(self.max_tries)
     }
 }
 
@@ -161,7 +174,11 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            if !self.register_spawn_attempt(&issue_id, issue.status).await {
+            let max_tries = self.max_tries_for_issue(&issue);
+            if !self
+                .register_spawn_attempt(&issue_id, issue.status, max_tries)
+                .await
+            {
                 continue;
             }
 
@@ -240,6 +257,7 @@ async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
         app::{ServiceRepository, ServiceState},
@@ -507,6 +525,46 @@ mod tests {
         }
 
         let queue = queue("agent-a");
+        let tasks = queue.spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn uses_job_settings_max_retries_override() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.max_tries = 3;
+
+        let state = test_state();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Override retries".to_string(),
+                    creator: String::new(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: Some(JobSettings {
+                        repo_name: None,
+                        remote_url: None,
+                        image: None,
+                        branch: None,
+                        max_retries: Some(1),
+                    }),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let mut tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(&state, tasks.remove(0)).await?;
+
         let tasks = queue.spawn(&state).await?;
         assert!(tasks.is_empty());
 
