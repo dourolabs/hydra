@@ -334,7 +334,7 @@ async fn create_patch(
             client,
             response.patch_id.clone(),
             assignee,
-            Some(issue_id),
+            issue_id,
             title,
             description,
         )
@@ -501,7 +501,7 @@ async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
     assignee: String,
-    parent_issue_id: Option<IssueId>,
+    parent_issue_id: IssueId,
     patch_title: String,
     patch_description: String,
 ) -> Result<IssueId> {
@@ -510,10 +510,10 @@ async fn create_merge_request_issue(
         bail!("Assignee must not be empty.");
     }
 
-    let mut dependencies = Vec::new();
-    if let Some(issue_id) = parent_issue_id.clone() {
-        dependencies.push(IssueDependency::new(IssueDependencyType::ChildOf, issue_id));
-    }
+    let dependencies = vec![IssueDependency::new(
+        IssueDependencyType::ChildOf,
+        parent_issue_id.clone(),
+    )];
 
     let summary = patch_title.trim();
     let title = if summary.is_empty() {
@@ -529,18 +529,16 @@ async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let creator = if let Some(issue_id) = parent_issue_id.as_ref() {
-        let parent_issue = client.get_issue(issue_id).await.with_context(|| {
-            format!("failed to fetch parent issue '{issue_id}' to determine merge-request creator")
-        })?;
-        let creator = parent_issue.issue.creator.trim();
-        if creator.is_empty() {
-            "unknown".to_string()
-        } else {
-            creator.to_string()
-        }
-    } else {
+    let parent_issue = client.get_issue(&parent_issue_id).await.with_context(|| {
+        format!(
+            "failed to fetch parent issue '{parent_issue_id}' to determine merge-request creator"
+        )
+    })?;
+    let creator = parent_issue.issue.creator.trim();
+    let creator = if creator.is_empty() {
         "unknown".to_string()
+    } else {
+        creator.to_string()
     };
 
     let response = client
