@@ -83,7 +83,7 @@ pub enum PatchesCommand {
             value_name = "ISSUE_ID",
             env = ENV_METIS_ISSUE_ID
         )]
-        issue_id: Option<IssueId>,
+        issue_id: IssueId,
 
         /// Commit range to include in the patch (e.g., base..HEAD). Defaults to metis/<issue-id>/base..HEAD.
         #[arg(long = "range", value_name = "COMMIT_RANGE")]
@@ -277,7 +277,7 @@ async fn create_patch(
     create_github_pr: bool,
     github_token: Option<String>,
     assignee: Option<String>,
-    issue_id: Option<IssueId>,
+    issue_id: IssueId,
     commit_range: Option<String>,
     allow_uncommitted: bool,
     repo_root: Option<&Path>,
@@ -291,7 +291,7 @@ async fn create_patch(
         bail!("Working directory has uncommitted changes. Commit them before creating a patch or re-run with --allow-uncommitted.");
     }
 
-    let commit_range = resolve_commit_range(commit_range, issue_id.as_ref())?;
+    let commit_range = resolve_commit_range(commit_range, &issue_id)?;
     let diff = git_diff_commit_range(&repo_root, &commit_range)?;
     if diff.trim().is_empty() {
         bail!("No changes found in commit range '{commit_range}'.");
@@ -361,10 +361,7 @@ async fn create_patch(
     Ok(())
 }
 
-fn resolve_commit_range(
-    commit_range: Option<String>,
-    issue_id: Option<&IssueId>,
-) -> Result<String> {
+fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
     if let Some(range) = commit_range {
         let trimmed = range.trim();
         if trimmed.is_empty() {
@@ -372,12 +369,6 @@ fn resolve_commit_range(
         }
         return Ok(trimmed.to_string());
     }
-
-    let issue_id = issue_id.ok_or_else(|| {
-        anyhow!(
-            "commit range is required; provide --range or set --issue-id/METIS_ISSUE_ID to default to metis/<issue-id>/base..HEAD"
-        )
-    })?;
 
     Ok(format!("metis/{}/base..HEAD", issue_id.as_ref()))
 }
@@ -510,7 +501,7 @@ async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
     assignee: String,
-    parent_issue_id: Option<IssueId>,
+    parent_issue_id: IssueId,
     patch_title: String,
     patch_description: String,
 ) -> Result<IssueId> {
@@ -519,10 +510,10 @@ async fn create_merge_request_issue(
         bail!("Assignee must not be empty.");
     }
 
-    let mut dependencies = Vec::new();
-    if let Some(issue_id) = parent_issue_id.clone() {
-        dependencies.push(IssueDependency::new(IssueDependencyType::ChildOf, issue_id));
-    }
+    let dependencies = vec![IssueDependency::new(
+        IssueDependencyType::ChildOf,
+        parent_issue_id.clone(),
+    )];
 
     let summary = patch_title.trim();
     let title = if summary.is_empty() {
@@ -538,18 +529,16 @@ async fn create_merge_request_issue(
     };
 
     let description = format!("Review patch {}: {title}", patch_id.as_ref());
-    let creator = if let Some(issue_id) = parent_issue_id.as_ref() {
-        let parent_issue = client.get_issue(issue_id).await.with_context(|| {
-            format!("failed to fetch parent issue '{issue_id}' to determine merge-request creator")
-        })?;
-        let creator = parent_issue.issue.creator.trim();
-        if creator.is_empty() {
-            "unknown".to_string()
-        } else {
-            creator.to_string()
-        }
-    } else {
+    let parent_issue = client.get_issue(&parent_issue_id).await.with_context(|| {
+        format!(
+            "failed to fetch parent issue '{parent_issue_id}' to determine merge-request creator"
+        )
+    })?;
+    let creator = parent_issue.issue.creator.trim();
+    let creator = if creator.is_empty() {
         "unknown".to_string()
+    } else {
+        creator.to_string()
     };
 
     let response = client
@@ -1184,7 +1173,7 @@ mod tests {
             false,
             None,
             None,
-            Some(issue_id.clone()),
+            issue_id.clone(),
             None,
             false,
             Some(&repo_path),
@@ -1221,6 +1210,7 @@ mod tests {
         let title = "patch with job title".to_string();
         let job_id_opt = Some(job_id.clone());
         let description = "patch with job id".to_string();
+        let issue_id = issue_id("i-job-1234");
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
         let expected_request = UpsertPatchRequest::new(Patch::new(
@@ -1248,7 +1238,7 @@ mod tests {
             false,
             None,
             None,
-            None,
+            issue_id.clone(),
             commit_range,
             false,
             Some(&repo_path),
@@ -1267,6 +1257,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let issue_id = issue_id("i-missing-job");
         let result = create_patch(
             &client,
             "missing job".to_string(),
@@ -1275,7 +1266,7 @@ mod tests {
             false,
             None,
             None,
-            None,
+            issue_id,
             commit_range,
             false,
             Some(&repo_path),
@@ -1297,6 +1288,7 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let issue_id = issue_id("i-gh-token");
 
         let result = create_patch(
             &client,
@@ -1306,7 +1298,7 @@ mod tests {
             true,
             None,
             None,
-            None,
+            issue_id,
             commit_range,
             false,
             Some(&repo_path),
@@ -1415,7 +1407,7 @@ mod tests {
             false,
             None,
             Some("owner-a".to_string()),
-            Some(parent_issue.clone()),
+            parent_issue.clone(),
             None,
             false,
             Some(&repo_path),
@@ -1489,6 +1481,7 @@ mod tests {
             TaskStatusLog::from_events(Vec::new()),
         );
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let issue_id = issue_id("i-service");
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
         let expected_request = UpsertPatchRequest::new(Patch::new(
             "backup patch".to_string(),
@@ -1515,7 +1508,7 @@ mod tests {
             false,
             None,
             None,
-            None,
+            issue_id.clone(),
             commit_range,
             false,
             Some(repo_path.as_path()),
