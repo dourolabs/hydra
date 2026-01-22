@@ -557,7 +557,21 @@ async fn create_issue(
             }
             trimmed.to_string()
         }
-        None => auth::resolve_auth_user(client).await?.to_string(),
+        None => {
+            if let Some(parent_id) = dependencies
+                .iter()
+                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+                .map(|dependency| dependency.issue_id.clone())
+            {
+                let parent = client
+                    .get_issue(&parent_id)
+                    .await
+                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
+                parent.issue.creator
+            } else {
+                auth::resolve_auth_user(client).await?.to_string()
+            }
+        }
     };
 
     let assignee = match assignee {
@@ -1661,10 +1675,6 @@ mod tests {
             .expect("create auth token dir");
         fs::write(&auth_token_path, "token-123").expect("write auth token");
 
-        let dependencies = vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            issue_id("i-1"),
-        )];
         let patch_ids = vec![patch_id("p-123")];
         let resolve_request = ResolveUserRequest::new("token-123".into());
         let resolve_response =
@@ -1680,6 +1690,86 @@ mod tests {
                 IssueType::MergeRequest,
                 "New issue description".into(),
                 "creator-a".into(),
+                "Initial notes".into(),
+                IssueStatus::Closed,
+                Some("team-a".into()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                patch_ids.clone(),
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
+        });
+
+        create_issue(
+            &client,
+            IssueType::MergeRequest,
+            IssueStatus::Closed,
+            Vec::new(),
+            patch_ids.clone(),
+            Some("team-a".into()),
+            None,
+            "New issue description".into(),
+            Some("Initial notes".into()),
+        )
+        .await
+        .unwrap();
+
+        resolve_mock.assert();
+        create_mock.assert();
+        assert_eq!(resolve_mock.hits(), 1);
+        assert_eq!(create_mock.hits(), 1);
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_issue_uses_parent_creator_for_child_dependency() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let parent_id = issue_id("i-1");
+        let dependencies = vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )];
+        let patch_ids = vec![patch_id("p-123")];
+
+        let parent_issue = IssueRecord::new(
+            parent_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Parent issue".into(),
+                "parent-owner".into(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        let get_parent_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{parent_id}").as_str());
+            then.status(200).json_body_obj(&parent_issue);
+        });
+
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::MergeRequest,
+                "New issue description".into(),
+                "parent-owner".into(),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -1712,14 +1802,10 @@ mod tests {
         .await
         .unwrap();
 
-        resolve_mock.assert();
+        get_parent_mock.assert();
         create_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
+        assert_eq!(get_parent_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     #[tokio::test]
