@@ -115,19 +115,14 @@ mod tests {
     use super::*;
     use crate::client::MetisClient;
     use std::env;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_temp_home<F, R>(action: F) -> R
     where
         F: FnOnce() -> R,
     {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_utils::env::lock();
         let original = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
         env::set_var("HOME", temp.path());

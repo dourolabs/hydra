@@ -25,7 +25,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 - Kubernetes cluster credentials (`kubectl` configured + the `kube` Rust client can talk to it).
 - Docker (for building worker/server images) and, for local clusters, [`kind`](https://kind.sigs.k8s.io/).
 - An `OPENAI_API_KEY` (export it or set it inside the server config).
-- A Github PAT token in `GH_TOKEN` with permissions Actions, Contents, Issues, Pull Requests, and Workflows (all Read & Write), Commit Statuses (Read).
+- A Github PAT token in `METIS_GITHUB_TOKEN` with permissions Actions, Contents, Issues, Pull Requests, and Workflows (all Read & Write), Commit Statuses (Read).
 
 ## Building & quick verification
 
@@ -127,7 +127,7 @@ For local development with a kind (Kubernetes in Docker) cluster:
 - Docker installed and the daemon running
 - `kind` and `kubectl` binaries installed and available in PATH
 - An `OPENAI_API_KEY` environment variable (export it before running the setup scripts)
-- Optional: `GH_TOKEN` if you need GitHub repository access.
+- Optional: `METIS_GITHUB_TOKEN` if you need GitHub repository access.
 
 #### Setup
 
@@ -153,7 +153,7 @@ For local development with a kind (Kubernetes in Docker) cluster:
    ./scripts/service.sh start
    ```
 
-   Starting the server will also deploy a Postgres pod/service inside the cluster and wire `database.url` in the server ConfigMap to it. Override defaults via `POSTGRES_*` or `SERVER_DATABASE_URL` if needed. The script still references the `OPENAI_API_KEY` and `GH_TOKEN` environment variables and provides them to the server -- you can set these on the command line if you haven't exported them.
+   Starting the server will also deploy a Postgres pod/service inside the cluster and wire `database.url` in the server ConfigMap to it. Override defaults via `POSTGRES_*` or `SERVER_DATABASE_URL` if needed. The script still references the `OPENAI_API_KEY` and `METIS_GITHUB_TOKEN` environment variables and provides them to the server -- you can set these on the command line if you haven't exported them.
 
    This script creates the `metis` namespace, RBAC resources, ConfigMap, and Deployment for the server.
 

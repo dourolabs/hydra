@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_GH_TOKEN, ENV_METIS_ISSUE_ID},
+    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
@@ -39,7 +39,7 @@ pub async fn run(
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     ensure_clean_destination(&dest)?;
-    let github_token = variables.get(ENV_GH_TOKEN).cloned();
+    let github_token = variables.get(ENV_METIS_GITHUB_TOKEN).cloned();
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
     let issue_branch_id = issue_id

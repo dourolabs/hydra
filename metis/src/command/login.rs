@@ -243,11 +243,9 @@ fn write_auth_token_file(token: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::env as test_env;
     use std::env;
-    use std::sync::Mutex;
     use tempfile::tempdir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn interpret_token_response_handles_pending_states() {
@@ -270,7 +268,7 @@ mod tests {
 
     #[test]
     fn auth_token_path_and_write_use_home_dir() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = test_env::lock();
         let original = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
         env::set_var("HOME", temp.path());

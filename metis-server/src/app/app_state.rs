@@ -3,8 +3,7 @@ use crate::{
     config::AppConfig,
     domain::{
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
-            UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
@@ -15,7 +14,7 @@ use crate::{
 use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
-    constants::ENV_METIS_ID,
+    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ID},
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
@@ -196,17 +195,6 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
-    async fn job_settings_for_issue(
-        &self,
-        issue_id: &IssueId,
-    ) -> Result<Option<JobSettings>, StoreError> {
-        let store = self.store.read().await;
-        store
-            .get_issue(issue_id)
-            .await
-            .map(|issue| issue.job_settings)
-    }
-
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
         let fallback_image = self.config.metis.worker_image.clone();
@@ -214,16 +202,24 @@ impl AppState {
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
-        let job_settings = match request.issue_id.as_ref() {
-            Some(issue_id) => self
-                .job_settings_for_issue(issue_id)
-                .await
-                .map_err(|source| CreateJobError::IssueLookup {
-                    source,
-                    issue_id: issue_id.clone(),
-                })?,
+        let issue = match request.issue_id.as_ref() {
+            Some(issue_id) => {
+                let store = self.store.read().await;
+                Some(store.get_issue(issue_id).await.map_err(|source| {
+                    CreateJobError::IssueLookup {
+                        source,
+                        issue_id: issue_id.clone(),
+                    }
+                })?)
+            }
             None => None,
         };
+        let job_settings = issue.as_ref().and_then(|issue| issue.job_settings.clone());
+        if let Some(issue) = issue.as_ref() {
+            env_vars
+                .entry(ENV_METIS_GITHUB_TOKEN.to_string())
+                .or_insert_with(|| issue.creator.github_token.clone());
+        }
 
         let task = Task::new(
             request.prompt,
