@@ -115,6 +115,8 @@ pub enum UpsertPatchError {
 pub enum UpsertIssueError {
     #[error("job_id may only be provided when creating an issue")]
     JobIdProvidedForUpdate,
+    #[error("issue creator must be set")]
+    MissingCreator,
     #[error("issue dependency '{dependency_id}' not found")]
     MissingDependency {
         #[source]
@@ -631,6 +633,9 @@ impl AppState {
                 }
 
                 let updated_issue = issue.clone();
+                if updated_issue.creator.username.as_ref().trim().is_empty() {
+                    return Err(UpsertIssueError::MissingCreator);
+                }
                 let is_dropping = updated_issue.status == IssueStatus::Dropped;
 
                 if let Err(source) =
@@ -735,6 +740,9 @@ impl AppState {
                             }
                         }
                     }
+                }
+                if issue.creator.username.as_ref().trim().is_empty() {
+                    return Err(UpsertIssueError::MissingCreator);
                 }
 
                 if let Err(source) = validate_issue_lifecycle(store.as_ref(), None, &issue).await {
@@ -1181,7 +1189,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            User::new(Username::from(""), String::new()),
+            User::new(Username::from("creator"), String::new()),
             String::new(),
             status,
             None,
@@ -1751,7 +1759,8 @@ mod tests {
 
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
+        let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
+        child_issue.creator = User::new(Username::from(""), String::new());
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1795,18 +1804,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_issue_without_parent_keeps_empty_creator() {
+    async fn create_issue_without_parent_rejects_empty_creator() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine);
 
-        let issue = issue_with_status("solo", IssueStatus::Open, vec![]);
-        let issue_id = state
+        let mut issue = issue_with_status("solo", IssueStatus::Open, vec![]);
+        issue.creator = User::new(Username::from(""), String::new());
+        let err = state
             .upsert_issue(None, UpsertIssueRequest::new(issue, None))
             .await
-            .unwrap();
-
-        let store = state.store.read().await;
-        let stored_issue = store.get_issue(&issue_id).await.unwrap();
-        assert!(stored_issue.creator.username.as_ref().is_empty());
+            .unwrap_err();
+        assert!(matches!(err, UpsertIssueError::MissingCreator));
     }
 }

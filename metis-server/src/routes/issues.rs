@@ -274,6 +274,7 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
         UpsertIssueError::JobIdProvidedForUpdate => {
             ApiError::bad_request("job_id may only be provided when creating an issue")
         }
+        UpsertIssueError::MissingCreator => ApiError::bad_request("issue creator must be set"),
         UpsertIssueError::MissingDependency { dependency_id, .. } => {
             ApiError::bad_request(format!("issue dependency '{dependency_id}' not found"))
         }
