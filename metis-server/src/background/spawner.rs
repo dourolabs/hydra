@@ -2,6 +2,8 @@
 use crate::app::TaskExt;
 #[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
+#[cfg(test)]
+use crate::domain::users::{User, Username};
 use crate::{
     app::AppState,
     config::AgentQueueConfig,
@@ -299,7 +301,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            String::new(),
+            User::new(Username::from(""), String::new()),
             String::new(),
             status,
             assignee.map(str::to_string),
@@ -543,7 +545,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Override retries".to_string(),
-                    creator: String::new(),
+                    creator: User::new(Username::from(""), String::new()),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -583,7 +585,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Already running".to_string(),
-                    creator: String::new(),
+                    creator: User::new(Username::from(""), String::new()),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -633,7 +635,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "First issue".to_string(),
-                    creator: String::new(),
+                    creator: User::new(Username::from(""), String::new()),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -650,7 +652,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Second issue".to_string(),
-                    creator: String::new(),
+                    creator: User::new(Username::from(""), String::new()),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
