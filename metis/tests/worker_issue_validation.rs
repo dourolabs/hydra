@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use metis_common::{
     issues::{IssueStatus, SearchIssuesQuery},
     task_status::Status,
+    users::{CreateUserRequest, Username},
 };
+use std::fs;
+use tempfile::tempdir;
 
 mod common;
 
@@ -15,10 +18,24 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     let prompt = "worker issue parent closure";
     let repo_arg = env.service_repo_name.to_string();
     let server_url = env.server.base_url();
+    let temp_home = tempdir().context("create temp home")?;
+    let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
+    fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+        .context("create auth token dir")?;
+    fs::write(&auth_token_path, "token-123").context("write auth token")?;
+    env.client
+        .create_user(&CreateUserRequest::new(
+            Username::from("worker"),
+            "token-123".to_string(),
+        ))
+        .await?;
 
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} {}",
-        repo_arg, server_url, prompt
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
+        repo_arg,
+        server_url,
+        temp_home.path().display(),
+        prompt
     )])
     .await?;
 
@@ -72,10 +89,24 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let prompt = "worker issue todo closure";
     let repo_arg = env.service_repo_name.to_string();
     let server_url = env.server.base_url();
+    let temp_home = tempdir().context("create temp home")?;
+    let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
+    fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+        .context("create auth token dir")?;
+    fs::write(&auth_token_path, "token-123").context("write auth token")?;
+    env.client
+        .create_user(&CreateUserRequest::new(
+            Username::from("worker"),
+            "token-123".to_string(),
+        ))
+        .await?;
 
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} {}",
-        repo_arg, server_url, prompt
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
+        repo_arg,
+        server_url,
+        temp_home.path().display(),
+        prompt
     )])
     .await?;
 

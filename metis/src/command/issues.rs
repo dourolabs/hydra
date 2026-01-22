@@ -11,7 +11,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
-    users::{ResolveUserRequest, User, Username},
+    users::{ResolveUserRequest, User},
     PatchId,
 };
 use serde::Serialize;
@@ -80,7 +80,7 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
 
-        /// Creator for the issue (defaults to the authenticated user).
+        /// Creator for the issue (must match the authenticated user).
         #[arg(long, value_name = "CREATOR")]
         creator: Option<String>,
 
@@ -114,7 +114,7 @@ pub enum IssueCommands {
         #[arg(long)]
         clear_assignee: bool,
 
-        /// Updated creator.
+        /// Updated creator (must match the authenticated user).
         #[arg(long, value_name = "CREATOR")]
         creator: Option<String>,
 
@@ -556,7 +556,14 @@ async fn create_issue(
             if trimmed.is_empty() {
                 bail!("Creator must not be empty.");
             }
-            User::new(Username::from(trimmed), String::new())
+            let authenticated_user = resolve_authenticated_user(client).await?;
+            if !creator_matches_user(trimmed, &authenticated_user) {
+                bail!(
+                    "Creator override must match the authenticated user ({})",
+                    authenticated_user.username.as_ref()
+                );
+            }
+            authenticated_user
         }
         None => {
             if let Some(parent_id) = dependencies
@@ -570,14 +577,7 @@ async fn create_issue(
                     .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
                 parent.issue.creator
             } else {
-                let token = auth::read_auth_token()?;
-                let response = client
-                    .resolve_user(&ResolveUserRequest::new(token.clone()))
-                    .await
-                    .context("failed to resolve user from auth token")?;
-                let mut user = User::new(response.user.username, token);
-                user.github_user_id = response.user.github_user_id;
-                user
+                resolve_authenticated_user(client).await?
             }
         }
     };
@@ -664,7 +664,14 @@ async fn update_issue(
         if trimmed.is_empty() {
             bail!("Creator must not be empty.");
         }
-        Some(User::new(Username::from(trimmed), String::new()))
+        let authenticated_user = resolve_authenticated_user(client).await?;
+        if !creator_matches_user(trimmed, &authenticated_user) {
+            bail!(
+                "Creator override must match the authenticated user ({})",
+                authenticated_user.username.as_ref()
+            );
+        }
+        Some(authenticated_user)
     } else {
         None
     };
@@ -728,6 +735,21 @@ async fn update_issue(
 
     println!("{}", response.issue_id);
     Ok(())
+}
+
+async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result<User> {
+    let token = auth::read_auth_token()?;
+    let response = client
+        .resolve_user(&ResolveUserRequest::new(token.clone()))
+        .await
+        .context("failed to resolve user from auth token")?;
+    let mut user = User::new(response.user.username, token);
+    user.github_user_id = response.user.github_user_id;
+    Ok(user)
+}
+
+fn creator_matches_user(creator: &str, user: &User) -> bool {
+    user.username.as_ref().eq_ignore_ascii_case(creator)
 }
 
 async fn manage_todo_list(
@@ -1746,6 +1768,53 @@ mod tests {
         create_mock.assert();
         assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
+        match original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_issue_rejects_creator_override_mismatch() {
+        let _guard = env_lock().lock().await;
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let original_home = env::var_os("HOME");
+        let temp = tempdir().expect("tempdir");
+        env::set_var("HOME", temp.path());
+        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+            .expect("create auth token dir");
+        fs::write(&auth_token_path, "token-123").expect("write auth token");
+
+        let resolve_request = ResolveUserRequest::new("token-123".into());
+        let resolve_response =
+            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
+        let resolve_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/users/resolve")
+                .json_body_obj(&resolve_request);
+            then.status(200).json_body_obj(&resolve_response);
+        });
+
+        let result = create_issue(
+            &client,
+            IssueType::Bug,
+            IssueStatus::Open,
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("creator-b".into()),
+            "Description".into(),
+            None,
+        )
+        .await;
+
+        resolve_mock.assert();
+        assert_eq!(resolve_mock.hits(), 1);
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("Creator override must match"));
+
         match original_home {
             Some(value) => env::set_var("HOME", value),
             None => env::remove_var("HOME"),

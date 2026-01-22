@@ -15,7 +15,6 @@ use metis_common::{
         GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
-    users::{User, Username},
     PatchId, RepoName, TaskId,
 };
 use octocrab::Octocrab;
@@ -535,18 +534,7 @@ async fn create_merge_request_issue(
             "failed to fetch parent issue '{parent_issue_id}' to determine merge-request creator"
         )
     })?;
-    let creator = if parent_issue
-        .issue
-        .creator
-        .username
-        .as_ref()
-        .trim()
-        .is_empty()
-    {
-        User::new(Username::from("unknown"), String::new())
-    } else {
-        parent_issue.issue.creator
-    };
+    let creator = parent_issue.issue.creator;
 
     let response = client
         .create_issue(&UpsertIssueRequest::new(
