@@ -17,7 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
-    users::{UserSummary, Username},
+    users::{User, Username},
     IssueId, TaskId,
 };
 use ratatui::{
@@ -242,7 +242,7 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    user: UserSummary,
+    user: User,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
@@ -277,7 +277,7 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             jobs_error: None,
             records_error: None,
-            user: UserSummary::new(Username::from("")),
+            user: User::new(Username::from(""), String::new()),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
@@ -313,7 +313,7 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    user: UserSummary,
+    user: User,
 ) -> Result<()> {
     let mut state = DashboardState {
         user,
@@ -1988,8 +1988,8 @@ mod tests {
         IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
     }
 
-    fn test_user(username: &str) -> UserSummary {
-        UserSummary::new(Username::from(username))
+    fn test_user(username: &str) -> User {
+        User::new(Username::from(username), String::from("token"))
     }
 
     #[test]
