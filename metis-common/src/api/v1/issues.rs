@@ -1,4 +1,5 @@
 pub use crate::IssueId;
+use crate::api::v1::users::User;
 use crate::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -400,8 +401,8 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(default)]
-    pub creator: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creator: Option<User>,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -423,7 +424,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: String,
+        creator: Option<User>,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -716,7 +717,7 @@ mod tests {
         let issue = Issue {
             issue_type: IssueType::Task,
             description: "with todos".to_string(),
-            creator: String::new(),
+            creator: None,
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,

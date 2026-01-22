@@ -542,14 +542,9 @@ async fn create_merge_request_issue(
         let parent_issue = client.get_issue(issue_id).await.with_context(|| {
             format!("failed to fetch parent issue '{issue_id}' to determine merge-request creator")
         })?;
-        let creator = parent_issue.issue.creator.trim();
-        if creator.is_empty() {
-            "unknown".to_string()
-        } else {
-            creator.to_string()
-        }
+        parent_issue.issue.creator
     } else {
-        "unknown".to_string()
+        None
     };
 
     let response = client
@@ -991,6 +986,7 @@ mod tests {
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
+        users::{User, Username},
         RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -1002,6 +998,10 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    fn sample_user(username: &str) -> User {
+        User::new(Username::from(username), "token".to_string())
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
@@ -1362,7 +1362,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "parent issue".to_string(),
-                "creator-a".to_string(),
+                Some(sample_user("creator-a")),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1379,7 +1379,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                "creator-a".to_string(),
+                Some(sample_user("creator-a")),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),

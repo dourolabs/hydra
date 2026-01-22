@@ -344,7 +344,11 @@ fn issue_matches(
             || issue.progress.to_lowercase().contains(term)
             || issue.issue_type.as_str() == term
             || issue.status.as_str() == term
-            || issue.creator.to_lowercase().contains(term)
+            || issue
+                .creator
+                .as_ref()
+                .map(|creator| creator.username.as_str().to_lowercase().contains(term))
+                .unwrap_or(false)
             || issue
                 .assignee
                 .as_deref()

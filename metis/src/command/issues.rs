@@ -11,6 +11,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
+    users::{User, Username},
     PatchId,
 };
 use serde::Serialize;
@@ -549,16 +550,7 @@ async fn create_issue(
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
 
-    let creator = match creator {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                bail!("Creator must not be empty.");
-            }
-            trimmed.to_string()
-        }
-        None => auth::resolve_auth_user(client).await?.to_string(),
-    };
+    let creator = resolve_creator_user(client, creator).await?;
 
     let assignee = match assignee {
         Some(value) => {
@@ -575,7 +567,7 @@ async fn create_issue(
         Issue::new(
             issue_type,
             description.to_string(),
-            creator,
+            Some(creator),
             progress,
             status,
             assignee,
@@ -594,6 +586,27 @@ async fn create_issue(
 
     println!("{}", response.issue_id);
     Ok(())
+}
+
+async fn resolve_creator_user(
+    client: &dyn MetisClientInterface,
+    creator: Option<String>,
+) -> Result<User> {
+    match creator {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("Creator must not be empty.");
+            }
+            let token = auth::read_auth_token().unwrap_or_default();
+            Ok(User::new(Username::from(trimmed), token))
+        }
+        None => {
+            let token = auth::read_auth_token()?;
+            let username = auth::resolve_auth_user(client).await?;
+            Ok(User::new(username, token))
+        }
+    }
 }
 
 async fn update_issue(
@@ -642,7 +655,8 @@ async fn update_issue(
         if trimmed.is_empty() {
             bail!("Creator must not be empty.");
         }
-        Some(trimmed.to_string())
+        let token = auth::read_auth_token().unwrap_or_default();
+        Some(User::new(Username::from(trimmed), token))
     } else {
         None
     };
@@ -689,7 +703,7 @@ async fn update_issue(
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
-        creator.unwrap_or(current.issue.creator),
+        creator.or(current.issue.creator),
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
@@ -897,9 +911,10 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
             dependencies,
             ..
         } = &issue_record.issue;
+        let creator_label = format_creator(creator);
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {creator}")?;
+        writeln!(writer, "Creator: {creator_label}")?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -938,6 +953,13 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
     }
     writer.flush()?;
     Ok(())
+}
+
+fn format_creator(creator: &Option<User>) -> String {
+    creator
+        .as_ref()
+        .map(|user| user.username.as_str().to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn print_issue_description_pretty(
@@ -993,13 +1015,14 @@ fn write_issue_details_pretty(
         todo_list,
         ..
     } = &issue_record.issue;
+    let creator_label = format_creator(creator);
 
     writeln!(
         writer,
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {creator}")?;
+    writeln!(writer, "{indent}Creator: {creator_label}")?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1257,7 +1280,7 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
+        users::{ResolveUserRequest, ResolveUserResponse, User, UserSummary, Username},
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -1300,7 +1323,7 @@ mod tests {
             Issue::new(
                 issue_type,
                 description.into(),
-                String::new(),
+                None,
                 String::new(),
                 status,
                 assignee.map(str::to_string),
@@ -1312,6 +1335,10 @@ mod tests {
         )
     }
 
+    fn sample_user(username: &str, token: &str) -> User {
+        User::new(Username::from(username), token.to_string())
+    }
+
     #[tokio::test]
     async fn list_issues_filters_by_query_and_prints_jsonl() {
         let server = MockServer::start();
@@ -1321,7 +1348,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "First issue".into(),
-                String::new(),
+                None,
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -1374,7 +1401,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                None,
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -1417,7 +1444,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "Edge case bug".into(),
-                String::new(),
+                None,
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".into()),
@@ -1679,7 +1706,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                "creator-a".into(),
+                Some(sample_user("creator-a", "token-123")),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -1803,7 +1830,7 @@ mod tests {
             Issue::new(
                 IssueType::Bug,
                 "Updated issue description".into(),
-                String::new(),
+                None,
                 "New progress".into(),
                 IssueStatus::Closed,
                 Some("owner-b".into()),
@@ -1868,7 +1895,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                None,
                 "Started work".into(),
                 IssueStatus::InProgress,
                 Some("owner-a".into()),
@@ -1885,7 +1912,7 @@ mod tests {
             Issue::new(
                 IssueType::Feature,
                 "Existing issue".into(),
-                String::new(),
+                None,
                 String::new(),
                 IssueStatus::InProgress,
                 None,
@@ -1942,7 +1969,7 @@ mod tests {
                 Issue::new(
                     IssueType::Bug,
                     "First issue\nwith context".into(),
-                    String::new(),
+                    None,
                     "Working on repro".into(),
                     IssueStatus::Open,
                     Some("owner-a".into()),
@@ -1960,7 +1987,7 @@ mod tests {
                 Issue::new(
                     IssueType::Feature,
                     "Follow-up work".into(),
-                    String::new(),
+                    None,
                     String::new(),
                     IssueStatus::InProgress,
                     None,
@@ -2008,7 +2035,7 @@ mod tests {
                 Issue::new(
                     IssueType::Task,
                     "has todos".into(),
-                    String::new(),
+                    None,
                     String::new(),
                     IssueStatus::Open,
                     None,
@@ -2177,7 +2204,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2195,7 +2222,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2231,7 +2258,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        None,
                         "Main progress".into(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2249,7 +2276,7 @@ mod tests {
                     Issue::new(
                         IssueType::Feature,
                         "Parent".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2267,7 +2294,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child".into(),
-                        String::new(),
+                        None,
                         "Child update".into(),
                         IssueStatus::InProgress,
                         None,
@@ -2286,8 +2313,8 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("Progress:\n    Main progress"));
-        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Creator: \n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
-        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Creator: \n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
+        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Creator: -\n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
+        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Creator: -\n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
     }
 
     #[test]
@@ -2303,7 +2330,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),
@@ -2321,7 +2348,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Parent description".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2339,7 +2366,7 @@ mod tests {
                     Issue::new(
                         IssueType::Bug,
                         "Child description".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         None,
@@ -2394,7 +2421,7 @@ mod tests {
                     Issue::new(
                         IssueType::Task,
                         "Main issue".into(),
-                        String::new(),
+                        None,
                         String::new(),
                         IssueStatus::Open,
                         Some("owner".into()),

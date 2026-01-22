@@ -1,4 +1,5 @@
 use metis_common::api::v1 as api;
+use metis_common::api::v1::users::User;
 use metis_common::{IssueId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -351,8 +352,8 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    #[serde(default)]
-    pub creator: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub creator: Option<User>,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -374,7 +375,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: String,
+        creator: Option<User>,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -930,6 +931,10 @@ mod tests {
         serde_urlencoded::from_str(&encoded).unwrap()
     }
 
+    fn sample_user(username: &str) -> User {
+        User::new(api::users::Username::from(username), "token".to_string())
+    }
+
     #[test]
     fn issue_graph_filters_roundtrip() {
         let left = IssueId::new();
@@ -1034,7 +1039,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "cool feature".to_string(),
-                creator: "alice".to_string(),
+                creator: Some(sample_user("alice")),
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),
