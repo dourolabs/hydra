@@ -663,6 +663,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                     spawned_from: Some(created.issue_id.clone()),
                     image: Some(default_image()),
                     env_vars: HashMap::new(),
+                    job_settings: None,
                 },
                 Utc::now(),
             )

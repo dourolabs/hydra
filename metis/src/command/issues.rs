@@ -1516,6 +1516,8 @@ mod tests {
         job_settings.image = Some("worker:123".into());
         job_settings.branch = Some("main".into());
         job_settings.max_retries = Some(5);
+        job_settings.cpu_limit = Some("750m".into());
+        job_settings.memory_limit = Some("2Gi".into());
         job_settings
     }
 

@@ -65,7 +65,7 @@ impl AgentQueue {
         }
     }
 
-    fn build_task(&self, _store: &dyn Store, issue_id: &IssueId) -> Task {
+    fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
@@ -76,6 +76,7 @@ impl AgentQueue {
             Some(issue_id.clone()),
             self.image.clone(),
             env_vars,
+            issue.job_settings.clone(),
         )
     }
 
@@ -184,7 +185,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(store.as_ref(), &issue_id);
+            let task = self.build_task(&issue_id, &issue);
             tasks.push(task);
             remaining_capacity -= 1;
         }
@@ -329,6 +330,7 @@ mod tests {
             spawned_from,
             image.map(str::to_string),
             env_vars,
+            None,
         )
     }
 
@@ -559,6 +561,8 @@ mod tests {
                         image: None,
                         branch: None,
                         max_retries: Some(1),
+                        cpu_limit: None,
+                        memory_limit: None,
                     }),
                     todo_list: Vec::new(),
                     dependencies: vec![],
@@ -614,6 +618,7 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
+                        job_settings: None,
                     },
                     Utc::now(),
                 )
@@ -681,6 +686,7 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
+                        job_settings: None,
                     },
                     Utc::now(),
                 )

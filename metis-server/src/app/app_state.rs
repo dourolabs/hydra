@@ -231,6 +231,7 @@ impl AppState {
             request.issue_id.clone(),
             request.image,
             env_vars,
+            job_settings.clone(),
         );
 
         task.resolve(
@@ -290,29 +291,28 @@ impl AppState {
         let resolved = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(task) => {
-                    let job_settings = match task.spawned_from.as_ref() {
-                        Some(issue_id) => match store.get_issue(issue_id).await {
-                            Ok(issue) => issue.job_settings,
-                            Err(err) => {
-                                warn!(
-                                    metis_id = %task_id,
-                                    issue_id = %issue_id,
-                                    error = %err,
-                                    "failed to load job settings for spawning"
-                                );
-                                return;
+                Ok(mut task) => {
+                    if task.job_settings.is_none() {
+                        if let Some(issue_id) = task.spawned_from.as_ref() {
+                            match store.get_issue(issue_id).await {
+                                Ok(issue) => {
+                                    task.job_settings = issue.job_settings;
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        metis_id = %task_id,
+                                        issue_id = %issue_id,
+                                        error = %err,
+                                        "failed to load job settings for spawning"
+                                    );
+                                    return;
+                                }
                             }
-                        },
-                        None => None,
-                    };
+                        }
+                    }
 
                     match task
-                        .resolve(
-                            self.service_state.as_ref(),
-                            &fallback_image,
-                            job_settings.as_ref(),
-                        )
+                        .resolve(self.service_state.as_ref(), &fallback_image, None)
                         .await
                     {
                         Ok(resolved) => resolved,
@@ -1221,6 +1221,7 @@ mod tests {
             None,
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
         )
     }
 
@@ -1231,6 +1232,7 @@ mod tests {
             Some(issue_id.clone()),
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
         )
     }
 

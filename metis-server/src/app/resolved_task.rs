@@ -57,6 +57,8 @@ impl TaskExt for Task {
         service_state: &ServiceState,
         job_settings: Option<&JobSettings>,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
+        let job_settings = job_settings.or(self.job_settings.as_ref());
+
         let mut resolved = service_state
             .resolve_bundle_spec(self.context.clone())
             .await?;
@@ -103,6 +105,8 @@ impl TaskExt for Task {
         fallback_image: &str,
         job_settings: Option<&JobSettings>,
     ) -> Result<String, TaskResolutionError> {
+        let job_settings = job_settings.or(self.job_settings.as_ref());
+
         if let Some(settings) = job_settings {
             if let Some(image) = &settings.image {
                 let trimmed = image.trim();

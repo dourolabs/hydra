@@ -1955,7 +1955,14 @@ mod tests {
 
         JobRecord::new(
             task_id(id),
-            Task::new("0".into(), BundleSpec::None, None, None, HashMap::new()),
+            Task::new(
+                "0".into(),
+                BundleSpec::None,
+                None,
+                None,
+                HashMap::new(),
+                None,
+            ),
             None,
             log,
         )

@@ -460,6 +460,10 @@ pub struct JobSettings {
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub memory_limit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -703,6 +707,8 @@ mod tests {
             image: Some("worker:latest".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(3),
+            cpu_limit: Some("500m".to_string()),
+            memory_limit: Some("1Gi".to_string()),
         };
         let todos = vec![
             TodoItem {

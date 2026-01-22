@@ -410,6 +410,10 @@ pub struct JobSettings {
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub memory_limit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,6 +774,8 @@ impl From<api::issues::JobSettings> for JobSettings {
             image: value.image,
             branch: value.branch,
             max_retries: value.max_retries,
+            cpu_limit: value.cpu_limit,
+            memory_limit: value.memory_limit,
         }
     }
 }
@@ -782,6 +788,8 @@ impl From<JobSettings> for api::issues::JobSettings {
         job_settings.image = value.image;
         job_settings.branch = value.branch;
         job_settings.max_retries = value.max_retries;
+        job_settings.cpu_limit = value.cpu_limit;
+        job_settings.memory_limit = value.memory_limit;
         job_settings
     }
 }
@@ -1030,6 +1038,8 @@ mod tests {
             image: Some("worker:latest".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(2),
+            cpu_limit: Some("400m".to_string()),
+            memory_limit: Some("768Mi".to_string()),
         };
         let payload = UpsertIssueRequest {
             issue: Issue {

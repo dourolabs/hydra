@@ -92,6 +92,7 @@ mod tests {
                 None,
                 None,
                 HashMap::new(),
+                None,
             ),
             None,
             TaskStatusLog::from_events(vec![Event::Created {

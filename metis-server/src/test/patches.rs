@@ -76,6 +76,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image),
                     env_vars: HashMap::new(),
+                    job_settings: None,
                 },
                 Utc::now(),
             )

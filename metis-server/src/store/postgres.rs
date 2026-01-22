@@ -876,6 +876,7 @@ mod tests {
             None,
             Some("metis-worker:latest".to_string()),
             Default::default(),
+            None,
         )
     }
 
