@@ -734,13 +734,13 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header);
+    render_dashboard_header(frame, layout.header, &state.username);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
 
-fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let title = "Metis Dashboard";
+fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect, username: &str) {
+    let title = dashboard_title(username);
     let hint = "Tab/Shift+Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -758,6 +758,15 @@ fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect) {
         Paragraph::new(hint_line).alignment(Alignment::Right),
         chunks[1],
     );
+}
+
+fn dashboard_title(username: &str) -> String {
+    let trimmed = username.trim();
+    if trimmed.is_empty() {
+        "Metis Dashboard".to_string()
+    } else {
+        format!("Metis Dashboard — {trimmed}")
+    }
 }
 
 fn render_issue_sections(
@@ -1962,6 +1971,16 @@ mod tests {
 
     fn blocked_on(issue_ref: &str) -> IssueDependency {
         IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
+    }
+
+    #[test]
+    fn dashboard_title_includes_username_when_present() {
+        assert_eq!(dashboard_title("cprussin"), "Metis Dashboard — cprussin");
+    }
+
+    #[test]
+    fn dashboard_title_skips_username_when_blank() {
+        assert_eq!(dashboard_title(" "), "Metis Dashboard");
     }
 
     fn job_details_with_issue(
