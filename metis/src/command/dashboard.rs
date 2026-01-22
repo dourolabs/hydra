@@ -600,6 +600,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
             let lines = issue_line_lines(
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
+                false,
             );
             let (content_len, view_height) = panel_scroll_metrics(area, &lines);
             if view_height == 0 {
@@ -613,7 +614,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
             )
         }
         PanelFocus::Running => {
-            let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+            let lines = issue_line_lines(&state.issue_lines.rows, "No issues found", true);
             let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
             if view_height == 0 {
                 return false;
@@ -627,7 +628,7 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
         }
         PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
-            let lines = issue_line_lines(&rows, "No completed issues");
+            let lines = issue_line_lines(&rows, "No completed issues", true);
             let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
             if view_height == 0 {
                 return false;
@@ -772,13 +773,14 @@ fn render_issue_sections(
         let lines = issue_line_lines(
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
+            false,
         );
         let panel = Panel::new(Line::from(title), lines);
         frame.render_stateful_widget(panel, rect, &mut state.user_unowned_issue_panel);
     }
 
     let running_title = issue_list_title("Running issues", &state.issue_lines);
-    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found", true);
     let running_panel = Panel::new(Line::from(running_title), running_lines);
     frame.render_stateful_widget(
         running_panel,
@@ -788,7 +790,7 @@ fn render_issue_sections(
 
     let completed_title = completed_issue_list_title(&state.completed_issue_lines);
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
-    let completed_lines = issue_line_lines(&completed_rows, "No completed issues");
+    let completed_lines = issue_line_lines(&completed_rows, "No completed issues", true);
     let completed_panel = Panel::new(Line::from(completed_title), completed_lines);
     frame.render_stateful_widget(
         completed_panel,
@@ -972,6 +974,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
             let lines = issue_line_lines(
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
+                false,
             );
             let (content_len, view_height) = panel_scroll_metrics(rect, &lines);
             matches!(
@@ -982,7 +985,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
             )
         }
         PanelFocus::Running => {
-            let lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+            let lines = issue_line_lines(&state.issue_lines.rows, "No issues found", true);
             let (content_len, view_height) = panel_scroll_metrics(panels.running, &lines);
             matches!(
                 state
@@ -993,7 +996,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         }
         PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
-            let lines = issue_line_lines(&rows, "No completed issues");
+            let lines = issue_line_lines(&rows, "No completed issues", true);
             let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
             matches!(
                 state
@@ -1072,6 +1075,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
         let lines = issue_line_lines(
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
+            false,
         );
         let (content_len, view_height) = panel_scroll_metrics(rect, &lines);
         state
@@ -1081,14 +1085,14 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
         state.user_unowned_issue_panel.sync_scroll(0, 0);
     }
 
-    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found");
+    let running_lines = issue_line_lines(&state.issue_lines.rows, "No issues found", true);
     let (running_len, running_view_height) = panel_scroll_metrics(panels.running, &running_lines);
     state
         .running_issue_panel
         .sync_scroll(running_len, running_view_height);
 
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
-    let completed_lines = issue_line_lines(&completed_rows, "No completed issues");
+    let completed_lines = issue_line_lines(&completed_rows, "No completed issues", true);
     let (completed_len, completed_view_height) =
         panel_scroll_metrics(panels.completed, &completed_lines);
     state
@@ -1129,7 +1133,11 @@ fn completed_issue_descendants<'a>(
         })
 }
 
-fn issue_line_lines(issue_lines: &[IssueLine], empty_message: &str) -> Vec<Line<'static>> {
+fn issue_line_lines(
+    issue_lines: &[IssueLine],
+    empty_message: &str,
+    show_hierarchy: bool,
+) -> Vec<Line<'static>> {
     if issue_lines.is_empty() {
         return vec![Line::from(Span::styled(
             empty_message.to_string(),
@@ -1141,8 +1149,10 @@ fn issue_line_lines(issue_lines: &[IssueLine], empty_message: &str) -> Vec<Line<
         .iter()
         .map(|line| {
             let mut spans = Vec::new();
-            spans.push(Span::raw(issue_prefix(line.depth)));
-            spans.push(Span::raw(" "));
+            if show_hierarchy {
+                spans.push(Span::raw(issue_prefix(line.depth)));
+                spans.push(Span::raw(" "));
+            }
             let (issue_status_label, issue_status_style) =
                 issue_status_display(line.status, &line.readiness);
             spans.push(Span::styled(
@@ -1441,7 +1451,11 @@ fn build_user_unowned_issue_lines(
         .cloned()
         .collect();
 
-    build_issue_lines(&assigned, jobs, false)
+    let mut lines = build_issue_lines(&assigned, jobs, false);
+    for row in &mut lines.rows {
+        row.depth = 0;
+    }
+    lines
 }
 
 fn build_issue_lines(
@@ -2356,6 +2370,33 @@ mod tests {
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open").to_string());
+    }
+
+    #[test]
+    fn user_unowned_issue_lines_flatten_depth() {
+        let issues = vec![
+            IssueRecord {
+                id: issue_id("i-root"),
+                description: "i-root".to_string(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("alice".to_string()),
+                dependencies: Vec::new(),
+            },
+            IssueRecord {
+                id: issue_id("i-child"),
+                description: "i-child".to_string(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("alice".to_string()),
+                dependencies: vec![child_of("i-root")],
+            },
+        ];
+
+        let lines = build_user_unowned_issue_lines("alice", &issues, &[]);
+
+        assert_eq!(lines.rows.len(), 2);
+        assert!(lines.rows.iter().all(|line| line.depth == 0));
     }
 
     #[test]
