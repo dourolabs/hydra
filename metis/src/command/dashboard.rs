@@ -1912,6 +1912,7 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{
@@ -3129,7 +3130,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn submit_issue_sends_task_request() {
+        let _guard = test_env::lock();
         let server = MockServer::start();
         let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");

@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_GH_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -70,7 +70,11 @@ pub enum PatchesCommand {
         github: bool,
 
         /// GitHub token to use when creating pull requests.
-        #[arg(long = "github-token", value_name = "TOKEN", env = ENV_GH_TOKEN)]
+        #[arg(
+            long = "github-token",
+            value_name = "TOKEN",
+            env = ENV_METIS_GITHUB_TOKEN
+        )]
         github_token: Option<String>,
 
         /// Assign the merge-request issue to a user and automatically create it.
@@ -303,7 +307,7 @@ async fn create_patch(
                 .as_deref()
                 .ok_or_else(|| {
                     anyhow!(
-                        "{ENV_GH_TOKEN} must be provided via --github-token or environment when using --github"
+                        "{ENV_METIS_GITHUB_TOKEN} must be provided via --github-token or environment when using --github"
                     )
                 })?,
         )
@@ -786,8 +790,9 @@ async fn create_github_pull_request(
     github_token: Option<&str>,
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
-    let github_token = github_token
-        .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
+    let github_token = github_token.ok_or_else(|| {
+        anyhow!("{ENV_METIS_GITHUB_TOKEN} is required when creating a GitHub pull request")
+    })?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
     push_branch(repo_root, &branch_name, Some(github_token))?;
     let pr_metadata =
@@ -1303,7 +1308,7 @@ mod tests {
 
         let error = result.unwrap_err().to_string();
         assert!(
-            error.contains(ENV_GH_TOKEN),
+            error.contains(ENV_METIS_GITHUB_TOKEN),
             "error should reference missing GitHub token: {error}"
         );
 
