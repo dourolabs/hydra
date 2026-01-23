@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use metis_common::users::{CreateUserRequest, UpdateGithubTokenRequest, Username};
+use metis_common::api::v1::login::{LoginRequest, LoginResponse};
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::{
@@ -14,7 +14,6 @@ use crate::client::MetisClientInterface;
 
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-const USER_PROFILE_URL: &str = "https://api.github.com/user";
 const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const GITHUB_SCOPE: &str = "read:user";
 const USER_AGENT_VALUE: &str = "metis-cli";
@@ -33,12 +32,6 @@ struct TokenPollResponse {
     access_token: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubUserResponse {
-    login: String,
-    id: u64,
 }
 
 enum TokenPollState {
@@ -61,13 +54,12 @@ pub async fn run(client: &dyn MetisClientInterface, token_path: &PathBuf) -> Res
     println!("Waiting for authorization...");
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let profile = fetch_github_profile(&http, &token).await?;
-    store_github_credentials(client, &profile, &token).await?;
-    write_auth_token_file(token_path, &token)?;
+    let login_response = login_with_github_token(client, &token).await?;
+    write_auth_token_file(token_path, &login_response.login_token)?;
 
     println!(
         "Logged in as {}. Stored token at {}.",
-        profile.login,
+        login_response.user.username,
         token_path.display()
     );
 
@@ -168,49 +160,15 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
     }
 }
 
-async fn fetch_github_profile(http: &reqwest::Client, token: &str) -> Result<GithubUserResponse> {
-    let response = http
-        .get(USER_PROFILE_URL)
-        .header(ACCEPT, "application/json")
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .bearer_auth(token)
-        .send()
-        .await
-        .context("failed to fetch GitHub user profile")?
-        .error_for_status()
-        .context("GitHub user profile request failed")?;
-
-    response
-        .json::<GithubUserResponse>()
-        .await
-        .context("failed to decode GitHub user profile response")
-}
-
-async fn store_github_credentials(
+async fn login_with_github_token(
     client: &dyn MetisClientInterface,
-    profile: &GithubUserResponse,
     token: &str,
-) -> Result<Username> {
-    let username: Username = profile.login.as_str().into();
-    let create_request = CreateUserRequest::new(username.clone(), token.to_string())
-        .with_github_user_id(Some(profile.id));
-
-    match client.create_user(&create_request).await {
-        Ok(response) => Ok(response.user.username),
-        Err(create_err) => {
-            let update_request = UpdateGithubTokenRequest::new(token.to_string())
-                .with_github_user_id(Some(profile.id));
-            match client
-                .set_user_github_token(&username, &update_request)
-                .await
-            {
-                Ok(response) => Ok(response.user.username),
-                Err(update_err) => Err(anyhow!(
-                    "failed to store GitHub credentials (create error: {create_err}; update error: {update_err})"
-                )),
-            }
-        }
-    }
+) -> Result<LoginResponse> {
+    let request = LoginRequest::new(token.to_string());
+    client
+        .login(&request)
+        .await
+        .context("failed to exchange GitHub token for Metis login token")
 }
 
 fn write_auth_token_file(token_path: &PathBuf, token: &str) -> Result<()> {
