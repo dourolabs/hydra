@@ -17,7 +17,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{TaskId, constants::ENV_METIS_GITHUB_TOKEN, job_status::GetJobStatusResponse};
+use metis_common::{TaskId, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -101,7 +101,6 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
             rev: "develop".to_string()
         }
     );
-    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
     Ok(())
@@ -166,7 +165,6 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let resolved = task
         .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
-    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
     Ok(())
@@ -195,48 +193,6 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
     let Task { env_vars, .. } = task;
     assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
     assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Result<()> {
-    let mut state = test_state();
-    let (repo_name, repo) = service_repository();
-    seed_repository(&mut state, repo.clone()).await?;
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
-    let store = state.store.clone();
-    let server = spawn_test_server_with_state(state).await?;
-
-    let client = test_client();
-    let response = client
-        .post(format!("{}/v1/jobs", server.base_url()))
-        .json(&json!({
-            "prompt": "0",
-            "context": { "type": "service_repository", "name": repo_name.to_string() },
-            "variables": { ENV_METIS_GITHUB_TOKEN: "user-supplied" }
-        }))
-        .send()
-        .await?;
-
-    assert!(response.status().is_success());
-    let body: CreateJobResponse = response.json().await?;
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task
-        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
-        .await?;
-    assert_eq!(
-        resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN),
-        Some(&"user-supplied".to_string())
-    );
-    assert_eq!(
-        resolved.env_vars.get("PROMPT"),
-        None,
-        "server should not inject prompt automatically"
-    );
-    assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
     Ok(())
 }
@@ -305,7 +261,6 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
-    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/issue:latest");
 
     let context_response = client
@@ -325,8 +280,6 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
-    assert_eq!(worker_context.variables.get(ENV_METIS_GITHUB_TOKEN), None);
-
     Ok(())
 }
 

@@ -282,8 +282,9 @@ impl AppState {
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
-        let fallback_image = self.config.job.default_image.clone();
-        let (resolved, user) = {
+        let job_config = self.config.job.clone();
+        let fallback_image = job_config.default_image.clone();
+        let (resolved, user, job_settings) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(mut task) => {
@@ -320,12 +321,13 @@ impl AppState {
 
                     let merged = JobSettings::merge(task.job_settings.clone(), job_settings);
                     task.job_settings = merged;
+                    let merged_job_settings = task.job_settings.clone();
 
                     match task
                         .resolve(store.as_ref(), self.service_state.as_ref(), &fallback_image)
                         .await
                     {
-                        Ok(resolved) => (resolved, user),
+                        Ok(resolved) => (resolved, user, merged_job_settings),
                         Err(err) => {
                             warn!(
                                 metis_id = %task_id,
@@ -347,9 +349,31 @@ impl AppState {
             }
         };
 
+        let cpu_limit = job_settings
+            .cpu_limit
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| job_config.cpu_limit.clone());
+        let memory_limit = job_settings
+            .memory_limit
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| job_config.memory_limit.clone());
+
         match self
             .job_engine
-            .create_job(&task_id, &resolved.image, &resolved.env_vars, user.as_ref())
+            .create_job(
+                &task_id,
+                &resolved.image,
+                &resolved.env_vars,
+                cpu_limit,
+                memory_limit,
+                user.as_ref(),
+            )
             .await
         {
             Ok(()) => {
@@ -1209,8 +1233,8 @@ mod tests {
     use crate::{
         domain::{
             issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
-                UpsertIssueRequest,
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
+                TodoItem, UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
             users::Username,
@@ -1422,6 +1446,7 @@ mod tests {
     async fn start_pending_task_spawns_and_marks_running() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
+        let config = state.config.clone();
         let task = sample_task();
 
         let task_id = {
@@ -1438,6 +1463,61 @@ mod tests {
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
+        let limits = job_engine
+            .resource_limits_for_job(&task_id)
+            .expect("resource limits should be recorded");
+        assert_eq!(
+            limits,
+            (
+                config.job.cpu_limit.clone(),
+                config.job.memory_limit.clone()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn start_pending_task_uses_issue_resource_limits() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let job_settings = JobSettings {
+            cpu_limit: Some("750m".to_string()),
+            memory_limit: Some("2Gi".to_string()),
+            ..Default::default()
+        };
+
+        let issue_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "with limits".to_string(),
+                    creator: Username::from("creator"),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: None,
+                    job_settings: job_settings.clone(),
+                    todo_list: Vec::new(),
+                    dependencies: Vec::new(),
+                    patches: Vec::new(),
+                })
+                .await
+                .unwrap()
+        };
+
+        let task_id = {
+            let mut store = state.store.write().await;
+            store
+                .add_task(task_for_issue(&issue_id), Utc::now())
+                .await
+                .unwrap()
+        };
+
+        state.start_pending_task(task_id.clone()).await;
+
+        let limits = job_engine
+            .resource_limits_for_job(&task_id)
+            .expect("resource limits should be recorded");
+        assert_eq!(limits, ("750m".to_string(), "2Gi".to_string()));
     }
 
     #[tokio::test]
