@@ -25,7 +25,6 @@ use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
-const GH_TOKEN_ENV_VAR: &str = "GH_TOKEN";
 
 #[async_trait]
 pub trait Spawner: Send + Sync {
@@ -68,10 +67,6 @@ impl AgentQueue {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        let github_token = issue.creator.github_token.trim();
-        if !github_token.is_empty() {
-            env_vars.insert(GH_TOKEN_ENV_VAR.to_string(), github_token.to_string());
-        }
         Task::new(
             self.prompt.clone(),
             self.context_spec.clone(),
