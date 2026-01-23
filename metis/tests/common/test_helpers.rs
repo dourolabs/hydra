@@ -298,7 +298,6 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
             remote_url.to_string(),
             Some("main".to_string()),
             None,
-            None,
         ),
     );
 

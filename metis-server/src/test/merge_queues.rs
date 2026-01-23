@@ -20,7 +20,6 @@ fn state_with_repo(repo_name: &str) -> crate::app::AppState {
         format!("https://example.com/{}.git", repo.as_str()),
         None,
         None,
-        None,
     );
     state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
         repo, repository,
@@ -42,7 +41,6 @@ async fn state_with_repo_and_patch(
             .expect("tempdir path is valid utf-8")
             .to_string(),
         Some("main".to_string()),
-        None,
         None,
     );
 
