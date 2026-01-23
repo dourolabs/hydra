@@ -27,7 +27,10 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use super::{MergeQueueError, ServiceState, TaskResolutionError};
+use super::{
+    MergeQueueError, RepositoryError, ServiceRepository, ServiceRepositoryConfig,
+    ServiceRepositoryInfo, ServiceState, TaskResolutionError,
+};
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
@@ -197,6 +200,29 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
+    pub async fn list_repositories(&self) -> Vec<ServiceRepositoryInfo> {
+        self.service_state.list_repository_info().await
+    }
+
+    pub async fn get_repository(&self, name: &RepoName) -> Option<ServiceRepository> {
+        self.service_state.repository(name).await
+    }
+
+    pub async fn create_repository(
+        &self,
+        repository: ServiceRepository,
+    ) -> Result<ServiceRepository, RepositoryError> {
+        self.service_state.create_repository(repository).await
+    }
+
+    pub async fn update_repository(
+        &self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<ServiceRepository, RepositoryError> {
+        self.service_state.update_repository(name, config).await
+    }
+
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
 

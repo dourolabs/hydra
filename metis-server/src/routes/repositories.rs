@@ -22,7 +22,7 @@ pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
-    let repositories = state.service_state.list_repository_info().await;
+    let repositories = state.list_repositories().await;
     let response = ListRepositoriesResponse::new(repositories);
     info!(
         repository_count = response.repositories.len(),
@@ -38,7 +38,6 @@ pub async fn create_repository(
     info!(repository = %payload.name, "create_repository invoked");
     let repository = build_repository(payload.name, payload.repository)?;
     let created = state
-        .service_state
         .create_repository(repository)
         .await
         .map_err(map_repository_error)?;
@@ -60,7 +59,6 @@ pub async fn update_repository(
 
     let config = normalize_config(payload.repository)?;
     let updated = state
-        .service_state
         .update_repository(name.clone(), config)
         .await
         .map_err(map_repository_error)?;
