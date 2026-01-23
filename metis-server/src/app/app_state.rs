@@ -292,27 +292,30 @@ impl AppState {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(mut task) => {
-                    if task.job_settings.is_none() {
-                        if let Some(issue_id) = task.spawned_from.as_ref() {
-                            match store.get_issue(issue_id).await {
-                                Ok(issue) => {
-                                    task.job_settings = issue.job_settings;
-                                }
-                                Err(err) => {
-                                    warn!(
-                                        metis_id = %task_id,
-                                        issue_id = %issue_id,
-                                        error = %err,
-                                        "failed to load job settings for spawning"
-                                    );
-                                    return;
-                                }
+                    let issue_job_settings = match task.spawned_from.as_ref() {
+                        Some(issue_id) => match store.get_issue(issue_id).await {
+                            Ok(issue) => issue.job_settings,
+                            Err(err) => {
+                                warn!(
+                                    metis_id = %task_id,
+                                    issue_id = %issue_id,
+                                    error = %err,
+                                    "failed to load job settings for spawning"
+                                );
+                                return;
                             }
-                        }
-                    }
+                        },
+                        None => None,
+                    };
+                    let existing = task.job_settings.take();
+                    task.job_settings = JobSettings::merge(existing, issue_job_settings);
 
                     match task
-                        .resolve(self.service_state.as_ref(), &fallback_image, None)
+                        .resolve(
+                            self.service_state.as_ref(),
+                            &fallback_image,
+                            task.job_settings.as_ref(),
+                        )
                         .await
                     {
                         Ok(resolved) => resolved,

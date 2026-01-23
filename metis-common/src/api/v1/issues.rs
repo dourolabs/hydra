@@ -466,6 +466,81 @@ pub struct JobSettings {
     pub memory_limit: Option<String>,
 }
 
+impl JobSettings {
+    pub fn merge(primary: Option<Self>, secondary: Option<Self>) -> Option<Self> {
+        match (primary, secondary) {
+            (Some(mut first), Some(mut second)) => {
+                first.apply_owned(&mut second);
+                Some(first)
+            }
+            (Some(first), None) => Some(first),
+            (None, Some(second)) => Some(second),
+            (None, None) => None,
+        }
+    }
+
+    pub fn merge_refs(primary: Option<&Self>, secondary: Option<&Self>) -> Option<Self> {
+        match (primary, secondary) {
+            (Some(first), Some(second)) => {
+                let mut merged = first.clone();
+                merged.apply_ref(second);
+                Some(merged)
+            }
+            (Some(first), None) => Some(first.clone()),
+            (None, Some(second)) => Some(second.clone()),
+            (None, None) => None,
+        }
+    }
+
+    fn apply_owned(&mut self, other: &mut Self) {
+        if self.repo_name.is_none() {
+            self.repo_name = other.repo_name.take();
+        }
+        if self.remote_url.is_none() {
+            self.remote_url = other.remote_url.take();
+        }
+        if self.image.is_none() {
+            self.image = other.image.take();
+        }
+        if self.branch.is_none() {
+            self.branch = other.branch.take();
+        }
+        if self.max_retries.is_none() {
+            self.max_retries = other.max_retries.take();
+        }
+        if self.cpu_limit.is_none() {
+            self.cpu_limit = other.cpu_limit.take();
+        }
+        if self.memory_limit.is_none() {
+            self.memory_limit = other.memory_limit.take();
+        }
+    }
+
+    fn apply_ref(&mut self, other: &Self) {
+        if self.repo_name.is_none() {
+            self.repo_name = other.repo_name.clone();
+        }
+        if self.remote_url.is_none() {
+            self.remote_url = other.remote_url.clone();
+        }
+        if self.image.is_none() {
+            self.image = other.image.clone();
+        }
+        if self.branch.is_none() {
+            self.branch = other.branch.clone();
+        }
+        if self.max_retries.is_none() {
+            self.max_retries = other.max_retries;
+        }
+        if self.cpu_limit.is_none() {
+            self.cpu_limit = other.cpu_limit.clone();
+        }
+        if self.memory_limit.is_none() {
+            self.memory_limit = other.memory_limit.clone();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct IssueRecord {
