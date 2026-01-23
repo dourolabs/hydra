@@ -566,6 +566,7 @@ impl Store for MemoryStore {
     }
 
     async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        super::validate_actor_name(name)?;
         self.actors
             .get(name)
             .cloned()
@@ -1465,6 +1466,18 @@ mod tests {
         assert!(matches!(
             err,
             StoreError::ActorNotFound(missing) if missing == name
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_actor_invalid_name_returns_error() {
+        let store = MemoryStore::new();
+
+        let err = store.get_actor("u-").await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidActorName(name) if name == "u-"
         ));
     }
 }

@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::Actor,
+    actors::{Actor, ActorError},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
@@ -15,6 +15,14 @@ pub mod postgres;
 
 pub use crate::domain::jobs::Task;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
+
+pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
+    match Actor::parse_name(name) {
+        Ok(_) => Ok(()),
+        Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
+        Err(ActorError::GithubLookupFailed(message)) => Err(StoreError::Internal(message)),
+    }
+}
 
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
