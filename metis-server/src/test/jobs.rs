@@ -41,9 +41,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task
-        .resolve(service_state.as_ref(), &default_image, None)
-        .await?;
+    let resolved = task.resolve(service_state.as_ref(), &default_image).await?;
     let Task {
         context, prompt, ..
     } = task;
@@ -86,7 +84,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, None)
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     let Task { context, .. } = task;
     assert_eq!(
@@ -135,7 +133,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, None)
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
@@ -172,7 +170,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, None)
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),
@@ -239,7 +237,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, None)
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_GH_TOKEN),
@@ -288,7 +286,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
-                job_settings: Some(job_settings.clone()),
+                job_settings: job_settings.clone(),
                 todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
@@ -314,7 +312,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
     let task = store_read.get_task(&body.job_id).await?;
     drop(store_read);
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, Some(&job_settings))
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.context.bundle,
@@ -379,7 +377,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: None,
-                job_settings: Some(job_settings.clone()),
+                job_settings: job_settings.clone(),
                 todo_list: Vec::new(),
                 dependencies: Vec::new(),
                 patches: Vec::new(),
@@ -405,7 +403,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
     let task = store_read.get_task(&body.job_id).await?;
     drop(store_read);
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image, Some(&job_settings))
+        .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.context.bundle,
@@ -497,7 +495,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 now - Duration::seconds(30),
             )
@@ -511,7 +509,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 now - Duration::seconds(20),
             )
@@ -525,7 +523,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 now - Duration::seconds(10),
             )
@@ -570,7 +568,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 now - Duration::seconds(20),
             )
@@ -634,7 +632,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 now - Duration::seconds(30),
             )
@@ -885,7 +883,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -948,7 +946,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1000,7 +998,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1049,7 +1047,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1098,7 +1096,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1212,7 +1210,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1245,7 +1243,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                     spawned_from: None,
                     image: Some(default_image.clone()),
                     env_vars: HashMap::new(),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )
@@ -1295,7 +1293,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                         "SECRET_VALUE".to_string(),
                         "keep-me-safe".to_string(),
                     )]),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                 },
                 Utc::now(),
             )

@@ -14,8 +14,8 @@ pub struct Task {
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env_vars: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job_settings: Option<JobSettings>,
+    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
+    pub job_settings: JobSettings,
 }
 
 impl Task {
@@ -33,7 +33,7 @@ impl Task {
             spawned_from,
             image,
             env_vars,
-            job_settings,
+            job_settings: job_settings.unwrap_or_default(),
         }
     }
 }
@@ -239,7 +239,7 @@ impl From<api::jobs::Task> for Task {
             spawned_from: value.spawned_from,
             image: value.image,
             env_vars: value.env_vars,
-            job_settings: value.job_settings.map(Into::into),
+            job_settings: value.job_settings.into(),
         }
     }
 }
@@ -252,7 +252,7 @@ impl From<Task> for api::jobs::Task {
             value.spawned_from,
             value.image,
             value.env_vars,
-            value.job_settings.map(Into::into),
+            Some(value.job_settings.into()),
         )
     }
 }

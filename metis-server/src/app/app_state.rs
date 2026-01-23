@@ -196,10 +196,7 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
-    async fn job_settings_for_issue(
-        &self,
-        issue_id: &IssueId,
-    ) -> Result<Option<JobSettings>, StoreError> {
+    async fn job_settings_for_issue(&self, issue_id: &IssueId) -> Result<JobSettings, StoreError> {
         let store = self.store.read().await;
         store
             .get_issue(issue_id)
@@ -215,13 +212,12 @@ impl AppState {
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
 
         let job_settings = match request.issue_id.as_ref() {
-            Some(issue_id) => self
-                .job_settings_for_issue(issue_id)
-                .await
-                .map_err(|source| CreateJobError::IssueLookup {
+            Some(issue_id) => Some(self.job_settings_for_issue(issue_id).await.map_err(
+                |source| CreateJobError::IssueLookup {
                     source,
                     issue_id: issue_id.clone(),
-                })?,
+                },
+            )?),
             None => None,
         };
 
@@ -234,12 +230,8 @@ impl AppState {
             job_settings.clone(),
         );
 
-        task.resolve(
-            self.service_state.as_ref(),
-            &fallback_image,
-            job_settings.as_ref(),
-        )
-        .await?;
+        task.resolve(self.service_state.as_ref(), &fallback_image)
+            .await?;
 
         let mut store = self.store.write().await;
         store
@@ -294,7 +286,7 @@ impl AppState {
                 Ok(mut task) => {
                     let issue_job_settings = match task.spawned_from.as_ref() {
                         Some(issue_id) => match store.get_issue(issue_id).await {
-                            Ok(issue) => issue.job_settings,
+                            Ok(issue) => Some(issue.job_settings),
                             Err(err) => {
                                 warn!(
                                     metis_id = %task_id,
@@ -307,15 +299,13 @@ impl AppState {
                         },
                         None => None,
                     };
-                    let existing = task.job_settings.take();
-                    task.job_settings = JobSettings::merge(existing, issue_job_settings);
+                    if let Some(settings) = issue_job_settings {
+                        let merged = JobSettings::merge(task.job_settings.clone(), settings);
+                        task.job_settings = merged;
+                    }
 
                     match task
-                        .resolve(
-                            self.service_state.as_ref(),
-                            &fallback_image,
-                            task.job_settings.as_ref(),
-                        )
+                        .resolve(self.service_state.as_ref(), &fallback_image)
                         .await
                     {
                         Ok(resolved) => resolved,

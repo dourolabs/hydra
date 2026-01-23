@@ -23,7 +23,7 @@ pub async fn get_job_context(
 
         let issue_job_settings = match task.spawned_from.clone() {
             Some(issue_id) => match store.get_issue(&issue_id).await {
-                Ok(issue) => issue.job_settings,
+                Ok(issue) => Some(issue.job_settings),
                 Err(StoreError::IssueNotFound(_)) => {
                     return Err(ApiError::not_found(format!("issue '{issue_id}' not found")));
                 }
@@ -38,11 +38,13 @@ pub async fn get_job_context(
         (task, issue_job_settings)
     };
 
-    let existing = task.job_settings.take();
-    task.job_settings = JobSettings::merge(existing, issue_job_settings);
+    if let Some(settings) = issue_job_settings {
+        let merged = JobSettings::merge(task.job_settings.clone(), settings);
+        task.job_settings = merged;
+    }
 
     let resolved = task
-        .resolve_context(state.service_state.as_ref(), task.job_settings.as_ref())
+        .resolve_context(state.service_state.as_ref())
         .await
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);

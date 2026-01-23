@@ -76,7 +76,7 @@ impl AgentQueue {
             Some(issue_id.clone()),
             self.image.clone(),
             env_vars,
-            issue.job_settings.clone(),
+            Some(issue.job_settings.clone()),
         )
     }
 
@@ -108,11 +108,7 @@ impl AgentQueue {
     }
 
     fn max_tries_for_issue(&self, issue: &Issue) -> u32 {
-        issue
-            .job_settings
-            .as_ref()
-            .and_then(|settings| settings.max_retries)
-            .unwrap_or(self.max_tries)
+        issue.job_settings.max_retries.unwrap_or(self.max_tries)
     }
 }
 
@@ -555,7 +551,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: Some(JobSettings {
+                    job_settings: JobSettings {
                         repo_name: None,
                         remote_url: None,
                         image: None,
@@ -563,7 +559,7 @@ mod tests {
                         max_retries: Some(1),
                         cpu_limit: None,
                         memory_limit: None,
-                    }),
+                    },
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -597,7 +593,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -618,7 +614,7 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: None,
+                        job_settings: JobSettings::default(),
                     },
                     Utc::now(),
                 )
@@ -648,7 +644,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -665,7 +661,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: None,
+                    job_settings: JobSettings::default(),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -686,7 +682,7 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: None,
+                        job_settings: JobSettings::default(),
                     },
                     Utc::now(),
                 )
@@ -834,7 +830,7 @@ mod tests {
 
         let fallback_image = state.config.metis.worker_image.clone();
         let resolved = tasks[0]
-            .resolve(state.service_state.as_ref(), &fallback_image, None)
+            .resolve(state.service_state.as_ref(), &fallback_image)
             .await?;
         assert_eq!(
             tasks[0].context,
