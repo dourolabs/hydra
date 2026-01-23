@@ -11,7 +11,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
-    users::{ResolveUserRequest, User},
+    users::{ResolveUserRequest, User, Username},
     PatchId, RepoName,
 };
 use serde::Serialize;
@@ -80,10 +80,6 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
 
-        /// Creator for the issue (must match the authenticated user).
-        #[arg(long, value_name = "CREATOR")]
-        creator: Option<String>,
-
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -133,10 +129,6 @@ pub enum IssueCommands {
         /// Remove the current assignee.
         #[arg(long)]
         clear_assignee: bool,
-
-        /// Updated creator (must match the authenticated user).
-        #[arg(long, value_name = "CREATOR")]
-        creator: Option<String>,
 
         /// Updated description.
         #[arg(long, value_name = "DESCRIPTION")]
@@ -290,7 +282,6 @@ pub async fn run(
             dependencies,
             patches,
             assignee,
-            creator,
             description,
             progress,
             repo_name,
@@ -299,9 +290,9 @@ pub async fn run(
             branch,
             max_retries,
         } => {
+            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
             create_issue(
                 client,
-                token_path,
                 r#type,
                 status,
                 dependencies,
@@ -324,7 +315,6 @@ pub async fn run(
             status,
             assignee,
             clear_assignee,
-            creator,
             description,
             dependencies,
             clear_dependencies,
@@ -339,9 +329,9 @@ pub async fn run(
             max_retries,
             clear_job_settings,
         } => {
+            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
             update_issue(
                 client,
-                token_path,
                 id,
                 r#type,
                 status,
@@ -682,13 +672,12 @@ fn resolve_job_settings(
 
 async fn create_issue(
     client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
     issue_type: IssueType,
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<String>,
-    creator: Option<String>,
+    creator: Username,
     description: String,
     progress: Option<String>,
     repo_name: Option<String>,
@@ -705,40 +694,6 @@ async fn create_issue(
     let progress = progress
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
-
-    let creator = match creator {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                bail!("Creator must not be empty.");
-            }
-            let authenticated_user = resolve_authenticated_user(client, token_path).await?;
-            if !creator_matches_user(trimmed, &authenticated_user) {
-                bail!(
-                    "Creator override must match the authenticated user ({})",
-                    authenticated_user.username.as_ref()
-                );
-            }
-            authenticated_user.username
-        }
-        None => {
-            if let Some(parent_id) = dependencies
-                .iter()
-                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-                .map(|dependency| dependency.issue_id.clone())
-            {
-                let parent = client
-                    .get_issue(&parent_id)
-                    .await
-                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
-                parent.issue.creator
-            } else {
-                resolve_authenticated_user(client, token_path)
-                    .await?
-                    .username
-            }
-        }
-    };
 
     let assignee = match assignee {
         Some(value) => {
@@ -788,13 +743,12 @@ async fn create_issue(
 
 async fn update_issue(
     client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
     id: IssueId,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
-    creator: Option<String>,
+    creator: Username,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
@@ -834,23 +788,6 @@ async fn update_issue(
         None
     };
 
-    let creator = if let Some(value) = creator {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("Creator must not be empty.");
-        }
-        let authenticated_user = resolve_authenticated_user(client, token_path).await?;
-        if !creator_matches_user(trimmed, &authenticated_user) {
-            bail!(
-                "Creator override must match the authenticated user ({})",
-                authenticated_user.username.as_ref()
-            );
-        }
-        Some(authenticated_user.username)
-    } else {
-        None
-    };
-
     let dependencies_update = if clear_dependencies {
         Some(Vec::new())
     } else if dependencies.is_empty() {
@@ -883,7 +820,6 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && status.is_none()
         && assignee.is_none()
-        && creator.is_none()
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
@@ -911,7 +847,7 @@ async fn update_issue(
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
-        creator.unwrap_or(current.issue.creator),
+        creator,
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
@@ -944,9 +880,33 @@ async fn resolve_authenticated_user(
     Ok(user)
 }
 
-fn creator_matches_user(creator: &str, user: &User) -> bool {
-    user.username.as_ref().eq_ignore_ascii_case(creator)
+async fn resolve_creator_username(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
+    dependencies: &[IssueDependency],
+) -> Result<Username> {
+    // First try to resolve the authenticated user
+    match resolve_authenticated_user(client, token_path).await {
+        Ok(user) => Ok(user.username),
+        Err(_) => {
+            // If that fails, try to get the creator from the parent issue
+            if let Some(parent_id) = dependencies
+                .iter()
+                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+                .map(|dependency| dependency.issue_id.clone())
+            {
+                let parent = client
+                    .get_issue(&parent_id)
+                    .await
+                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
+                Ok(parent.issue.creator)
+            } else {
+                bail!("Failed to resolve authenticated user and no parent issue found");
+            }
+        }
+    }
 }
+
 
 async fn manage_todo_list(
     client: &dyn MetisClientInterface,
@@ -1945,13 +1905,12 @@ mod tests {
 
         create_issue(
             &client,
-            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             Vec::new(),
             patch_ids.clone(),
             Some("team-a".into()),
-            None,
+            Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
             None,
@@ -2019,13 +1978,12 @@ mod tests {
 
         create_issue(
             &client,
-            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             Vec::new(),
             vec![],
             Some("team-a".into()),
-            None,
+            Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
             Some("dourolabs/example".into()),
@@ -2046,48 +2004,8 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn create_issue_rejects_creator_override_mismatch() {
-        let _guard = test_env::lock();
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
-
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
-
-        let result = create_issue(
-            &client,
-            &auth_token_path,
-            IssueType::Bug,
-            IssueStatus::Open,
-            Vec::new(),
-            Vec::new(),
-            None,
-            Some("creator-b".into()),
-            "Description".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
-
-        resolve_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("Creator override must match"));
+        // This test is no longer relevant since we removed the creator flag
+        // The creator is now always determined from authenticated user or parent issue
     }
 
     #[tokio::test]
@@ -2155,13 +2073,12 @@ mod tests {
 
         create_issue(
             &client,
-            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             dependencies.clone(),
             patch_ids.clone(),
             Some("team-a".into()),
-            None,
+            user("parent-owner"),
             "New issue description".into(),
             Some("Initial notes".into()),
             None,
@@ -2183,17 +2100,14 @@ mod tests {
     async fn create_issue_requires_description() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
         assert!(create_issue(
             &client,
-            &auth_token_path,
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
             Vec::new(),
             None,
-            None,
+            empty_user(),
             "   ".into(),
             None,
             None,
@@ -2210,17 +2124,14 @@ mod tests {
     async fn create_issue_rejects_empty_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
         assert!(create_issue(
             &client,
-            &auth_token_path,
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
             Vec::new(),
             Some("   ".into()),
-            None,
+            empty_user(),
             "Valid description".into(),
             None,
             None,
@@ -2304,18 +2215,14 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-
         update_issue(
             &client,
-            &auth_token_path,
             target_issue_id,
             Some(IssueType::Bug),
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
-            None,
+            empty_user(),
             Some("Updated issue description".into()),
             vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
@@ -2393,18 +2300,14 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-
         update_issue(
             &client,
-            &auth_token_path,
             target_issue_id,
             None,
             None,
             None,
             true,
-            None,
+            empty_user(),
             None,
             vec![],
             true,
@@ -2483,18 +2386,14 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-
         update_issue(
             &client,
-            &auth_token_path,
             target_issue_id,
             None,
             None,
             None,
             false,
-            None,
+            empty_user(),
             None,
             vec![],
             false,

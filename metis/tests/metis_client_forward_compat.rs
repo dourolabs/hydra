@@ -17,7 +17,7 @@ use metis_common::{
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{CreateRepositoryRequest, ServiceRepositoryConfig, UpdateRepositoryRequest},
     task_status::{Event, Status},
-    users::{CreateUserRequest, UpdateGithubTokenRequest, User, Username},
+    users::{CreateUserRequest, UpdateGithubTokenRequest, Username},
     IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::Client as HttpClient;

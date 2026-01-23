@@ -242,7 +242,7 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    username: String,
+    username: Username,
     server_url: String,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
@@ -278,7 +278,7 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             jobs_error: None,
             records_error: None,
-            username: String::new(),
+            username: Username::from(""),
             server_url: String::new(),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
@@ -311,10 +311,9 @@ pub async fn run(
 ) -> Result<()> {
     let token_path_buf = token_path.to_path_buf();
     let username = auth::resolve_auth_user(client, &token_path_buf)
-        .await?
-        .to_string();
+        .await?;
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username, server_url, token_path).await;
+    let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
     ratatui::restore();
     result
 }
@@ -322,10 +321,9 @@ pub async fn run(
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: String,
-    server_url: &str,
-    token_path: &std::path::Path,
-) -> Result<()> {
+    username: Username,
+    server_url: &str,)
+ -> Result<()> {
     let mut state = DashboardState {
         username,
         server_url: server_url.to_string(),
@@ -392,7 +390,7 @@ async fn run_dashboard_loop(
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &mut state))?;
                             let submission_result =
-                                submit_issue(client, &submission, &state.username, token_path)
+                                submit_issue(client, &submission, &state.username)
                             .await;
                             handle_issue_submission_result(
                                 &mut state,
@@ -713,8 +711,7 @@ fn handle_issue_submission_result(
 async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
-    creator: &str,
-    _token_path: &std::path::Path,
+    creator: &Username,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -722,13 +719,12 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let creator = Username::from(creator);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
             IssueType::Task,
             submission.prompt.trim().to_string(),
-            creator,
+            creator.clone(),
             String::new(),
             IssueStatus::Open,
             assignee,
@@ -749,7 +745,7 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header, &state.username, &state.server_url);
+    render_dashboard_header(frame, layout.header, state.username.as_str(), &state.server_url);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
@@ -1418,7 +1414,7 @@ fn update_views(state: &mut DashboardState) -> bool {
 
     let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
     let user_unowned_issue_lines =
-        build_user_unowned_issue_lines(&state.username, &state.issues, &state.jobs);
+        build_user_unowned_issue_lines(state.username.as_str(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
     update_assignee_options(state);
 
@@ -2473,7 +2469,7 @@ mod tests {
             issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
         ];
         let mut state = DashboardState {
-            username: "alice".to_string(),
+            username: Username::from("alice"),
             issues,
             ..Default::default()
         };
@@ -2778,7 +2774,7 @@ mod tests {
             .collect();
         let mut state = DashboardState {
             issues,
-            username: "alice".to_string(),
+            username: Username::from("alice"),
             ..DashboardState::default()
         };
         update_views(&mut state);
@@ -3210,7 +3206,7 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission, " metis-user ", &auth_token_path)
+        let created = submit_issue(&client, &submission, &Username::from(" metis-user "))
             .await
             .expect("submission failed");
 
