@@ -1,6 +1,7 @@
 use crate::{
     config::DatabaseSection,
     domain::{
+        actors::Actor,
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
         task_status::Event,
@@ -32,6 +33,7 @@ pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 2;
 pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
+pub const ACTOR_SCHEMA_VERSION: i32 = 1;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -113,6 +115,11 @@ const PAYLOAD_TABLES: &[PayloadTable] = &[
         table: TABLE_REPOSITORIES,
         target_version: REPOSITORY_SCHEMA_VERSION,
     },
+    PayloadTable {
+        object_type: "actor",
+        table: TABLE_ACTORS,
+        target_version: ACTOR_SCHEMA_VERSION,
+    },
 ];
 
 /// Migrate any outdated payloads to the current schema versions using the
@@ -158,6 +165,7 @@ const TABLE_TASKS: &str = "metis.tasks";
 const TABLE_TASK_STATUS_LOGS: &str = "metis.task_status_logs";
 const TABLE_USERS: &str = "metis.users";
 const TABLE_REPOSITORIES: &str = "metis.repositories";
+const TABLE_ACTORS: &str = "metis.actors";
 
 #[derive(Clone)]
 pub struct PostgresStore {
@@ -829,6 +837,38 @@ impl Store for PostgresStore {
             &status_log,
         )
         .await
+    }
+
+    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_ACTORS} WHERE id = $1"
+        ))
+        .bind(&name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists > 0 {
+            return Err(StoreError::ActorAlreadyExists(name));
+        }
+
+        self.insert_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
+            .await
+    }
+
+    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        self.fetch_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
+    }
+
+    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+        let mut actors = self
+            .fetch_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
+            .await?;
+        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(actors)
     }
 
     async fn add_user(&mut self, user: User) -> Result<(), StoreError> {

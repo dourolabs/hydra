@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::domain::{
+    actors::Actor,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     task_status::Event,
@@ -37,6 +38,8 @@ pub struct MemoryStore {
     status_logs: HashMap<TaskId, TaskStatusLog>,
     /// Maps usernames to their User data
     users: HashMap<Username, User>,
+    /// Maps actor names to their Actor data
+    actors: HashMap<String, Actor>,
 }
 
 impl MemoryStore {
@@ -53,6 +56,7 @@ impl MemoryStore {
             patch_issues: HashMap::new(),
             status_logs: HashMap::new(),
             users: HashMap::new(),
+            actors: HashMap::new(),
         }
     }
 
@@ -551,6 +555,33 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        if self.actors.contains_key(&name) {
+            return Err(StoreError::ActorAlreadyExists(name));
+        }
+
+        self.actors.insert(name, actor);
+        Ok(())
+    }
+
+    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        self.actors
+            .get(name)
+            .cloned()
+            .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
+    }
+
+    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+        let mut actors: Vec<_> = self
+            .actors
+            .iter()
+            .map(|(name, actor)| (name.clone(), actor.clone()))
+            .collect();
+        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(actors)
+    }
+
     async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
         if self.users.contains_key(&user.username) {
             return Err(StoreError::UserAlreadyExists(user.username.clone()));
@@ -611,6 +642,7 @@ impl Store for MemoryStore {
 mod tests {
     use super::*;
     use crate::domain::{
+        actors::{Actor, UserOrWorker},
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
         },
@@ -619,7 +651,7 @@ mod tests {
         users::{User, Username},
     };
     use chrono::Utc;
-    use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
+    use metis_common::{RepoName, TaskId, repositories::ServiceRepositoryConfig};
     use std::{collections::HashSet, str::FromStr};
 
     fn sample_repository_config() -> ServiceRepositoryConfig {
@@ -1372,5 +1404,38 @@ mod tests {
         let err = store.delete_user(&username).await.unwrap_err();
 
         assert!(matches!(err, StoreError::UserNotFound(name) if name == username));
+    }
+
+    #[tokio::test]
+    async fn add_and_get_actor_by_name() {
+        let mut store = MemoryStore::new();
+        let actor = Actor {
+            auth_token_hash: "hash".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+        };
+
+        let name = actor.name();
+        store.add_actor(actor.clone()).await.unwrap();
+
+        let fetched = store.get_actor(&name).await.unwrap();
+        assert_eq!(fetched, actor);
+    }
+
+    #[tokio::test]
+    async fn add_actor_rejects_duplicate_name() {
+        let mut store = MemoryStore::new();
+        let actor = Actor {
+            auth_token_hash: "hash".to_string(),
+            user_or_worker: UserOrWorker::Task(TaskId::new()),
+        };
+        let name = actor.name();
+
+        store.add_actor(actor.clone()).await.unwrap();
+        let err = store.add_actor(actor).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::ActorAlreadyExists(existing) if existing == name
+        ));
     }
 }

@@ -1,4 +1,5 @@
 use crate::domain::{
+    actors::Actor,
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
@@ -43,6 +44,10 @@ pub enum StoreError {
     UserAlreadyExists(Username),
     #[error("User not found for token")]
     UserNotFoundForToken,
+    #[error("Actor not found: {0}")]
+    ActorNotFound(String),
+    #[error("Actor already exists: {0}")]
+    ActorAlreadyExists(String),
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -272,6 +277,15 @@ pub trait Store: Send + Sync {
         last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    /// Adds a new actor to the store.
+    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError>;
+
+    /// Gets an actor by its canonical name.
+    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError>;
+
+    /// Lists all actors with their canonical names.
+    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError>;
 
     /// Adds a new user to the store.
     async fn add_user(&mut self, user: User) -> Result<(), StoreError>;
