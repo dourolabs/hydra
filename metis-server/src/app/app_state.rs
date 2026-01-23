@@ -28,8 +28,8 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use super::{
-    MergeQueueError, RepositoryError, ServiceRepository, ServiceRepositoryConfig,
-    ServiceRepositoryInfo, ServiceState, TaskResolutionError,
+    GitCache, MergeQueueError, RepositoryError, ServiceRepository, ServiceRepositoryConfig,
+    ServiceRepositoryInfo, TaskResolutionError,
 };
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
@@ -37,7 +37,7 @@ use super::{
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
-    pub service_state: Arc<ServiceState>,
+    pub git_cache: Arc<GitCache>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
     pub spawners: Vec<Arc<dyn Spawner>>,
@@ -201,18 +201,18 @@ pub enum UpdateTodoListError {
 
 impl AppState {
     pub async fn list_repositories(&self) -> Vec<ServiceRepositoryInfo> {
-        self.service_state.list_repository_info().await
+        self.git_cache.list_repository_info().await
     }
 
     pub async fn get_repository(&self, name: &RepoName) -> Option<ServiceRepository> {
-        self.service_state.repository(name).await
+        self.git_cache.repository(name).await
     }
 
     pub async fn create_repository(
         &self,
         repository: ServiceRepository,
     ) -> Result<ServiceRepository, RepositoryError> {
-        self.service_state.create_repository(repository).await
+        self.git_cache.create_repository(repository).await
     }
 
     pub async fn update_repository(
@@ -220,7 +220,7 @@ impl AppState {
         name: RepoName,
         config: ServiceRepositoryConfig,
     ) -> Result<ServiceRepository, RepositoryError> {
-        self.service_state.update_repository(name, config).await
+        self.git_cache.update_repository(name, config).await
     }
 
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
@@ -1010,7 +1010,7 @@ impl AppState {
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.service_state
+        self.git_cache
             .get_merge_queue(service_repo_name, branch_name)
             .await
     }
@@ -1021,7 +1021,7 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        if !self.service_state.has_repository(service_repo_name).await {
+        if !self.git_cache.has_repository(service_repo_name).await {
             return Err(MergeQueueError::UnknownRepository(
                 service_repo_name.clone(),
             ));
@@ -1038,7 +1038,7 @@ impl AppState {
             }
         };
 
-        self.service_state
+        self.git_cache
             .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id, &patch)
             .await
     }

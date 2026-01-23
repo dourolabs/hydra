@@ -254,7 +254,7 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::{ServiceRepository, ServiceState},
+        app::{GitCache, ServiceRepository},
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::test_state,
     };
@@ -785,7 +785,7 @@ mod tests {
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
         let mut state = test_state();
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
             repo_name.clone(),
             ServiceRepository::new(
                 repo_name.clone(),

@@ -1,5 +1,5 @@
 use crate::{
-    app::{ServiceRepository, ServiceRepositoryConfig, ServiceState},
+    app::{GitCache, ServiceRepository, ServiceRepositoryConfig},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature};
@@ -18,7 +18,7 @@ use tempfile::TempDir;
 async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         name.clone(),
         repository,
     )])));
@@ -45,7 +45,7 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
 #[tokio::test]
 async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result<()> {
     let state = test_state();
-    let service_state = state.service_state.clone();
+    let git_cache = state.git_cache.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -78,16 +78,16 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
         Some("ghcr.io/example/new-repo:main")
     );
 
-    let stored = service_state
+    let stored = git_cache
         .repository(&name)
         .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, remote_url);
 
-    let merge_queues = service_state.merge_queues.read().await;
+    let merge_queues = git_cache.merge_queues.read().await;
     assert!(merge_queues.contains_key(&name));
 
-    let cache_paths = service_state.cached_repository_paths().await;
+    let cache_paths = git_cache.cached_repository_paths().await;
     assert!(cache_paths.contains_key(&name));
 
     Ok(())
@@ -106,11 +106,11 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
         Some("ghcr.io/example/repo:main".to_string()),
     );
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         name.clone(),
         repository,
     )])));
-    let service_state = state.service_state.clone();
+    let git_cache = state.git_cache.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -138,7 +138,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     assert!(body.repository.default_branch.is_none());
     assert!(body.repository.default_image.is_none());
 
-    let stored = service_state
+    let stored = git_cache
         .repository(&name)
         .await
         .expect("repository should be stored");
@@ -146,13 +146,13 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     assert!(stored.default_branch.is_none());
     assert!(stored.default_image.is_none());
 
-    let merge_queues = service_state.merge_queues.read().await;
+    let merge_queues = git_cache.merge_queues.read().await;
     let repo_queues = merge_queues
         .get(&name)
         .expect("merge queues should exist after update");
     assert!(repo_queues.is_empty());
 
-    let cache_paths = service_state.cached_repository_paths().await;
+    let cache_paths = git_cache.cached_repository_paths().await;
     assert!(cache_paths.contains_key(&name));
 
     Ok(())
@@ -191,7 +191,7 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
 async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         name.clone(),
         repository,
     )])));

@@ -3,7 +3,7 @@ use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId};
 use metis_server::{
-    app::{AppState, ServiceState},
+    app::{AppState, GitCache},
     config::ServiceSection,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
@@ -307,7 +307,7 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
     Ok(AppState {
         config: Arc::new(server_config),
         github_app: None,
-        service_state: Arc::new(ServiceState::from_config(&service_section)),
+        git_cache: Arc::new(GitCache::from_config(&service_section)),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()) as Box<dyn Store>)),
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),

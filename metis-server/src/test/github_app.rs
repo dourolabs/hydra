@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ServiceState},
+    app::{AppState, GitCache},
     store::MemoryStore,
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
 };
@@ -15,7 +15,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
     let state = AppState {
         config: Arc::new(config),
         github_app: None,
-        service_state: Arc::new(ServiceState::default()),
+        git_cache: Arc::new(GitCache::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),

@@ -1,6 +1,6 @@
 use crate::domain::jobs::BundleSpec;
 use crate::{
-    app::{AppState, ServiceState},
+    app::{AppState, GitCache},
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
     store::MemoryStore,
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
@@ -27,7 +27,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
     AppState {
         config: Arc::new(config),
         github_app: None,
-        service_state: Arc::new(ServiceState::default()),
+        git_cache: Arc::new(GitCache::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),

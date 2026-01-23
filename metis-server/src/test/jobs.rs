@@ -7,7 +7,7 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
-    app::ServiceState,
+    app::GitCache,
     job_engine::JobStatus,
     store::{Status, Task, TaskError},
     test_utils::{
@@ -59,7 +59,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo_name.clone(),
         repo.clone(),
     )])));
@@ -134,7 +134,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo_name.clone(),
         repo.clone(),
     )])));
@@ -194,7 +194,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo_name.clone(),
         repo.clone(),
     )])));
@@ -281,7 +281,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo_name.clone(),
         repo.clone(),
     )])));

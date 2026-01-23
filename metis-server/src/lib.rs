@@ -15,7 +15,7 @@ pub mod test_utils;
 #[cfg(test)]
 mod test;
 
-use crate::app::{AppState, ServiceState};
+use crate::app::{AppState, GitCache};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
@@ -138,7 +138,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    let service_state = ServiceState::from_config(&app_config.service);
+    let git_cache = GitCache::from_config(&app_config.service);
     let github_app = build_github_app_client(&app_config.github_app)?;
 
     // Resolve OpenAI API key
@@ -194,7 +194,7 @@ pub async fn run() -> anyhow::Result<()> {
     let state = AppState {
         config: Arc::new(app_config),
         github_app,
-        service_state: Arc::new(service_state),
+        git_cache: Arc::new(git_cache),
         store,
         job_engine: Arc::new(job_engine),
         spawners,

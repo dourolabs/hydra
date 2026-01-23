@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ServiceState},
+    app::{AppState, GitCache},
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection, ServiceSection,
@@ -63,7 +63,7 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
     AppState {
         config: Arc::new(test_app_config()),
         github_app: None,
-        service_state: Arc::new(ServiceState::default()),
+        git_cache: Arc::new(GitCache::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
         spawners: Vec::new(),

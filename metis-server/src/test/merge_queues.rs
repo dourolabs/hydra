@@ -1,5 +1,5 @@
 use crate::{
-    app::{ServiceRepository, ServiceState},
+    app::{GitCache, ServiceRepository},
     domain::patches::{Patch, PatchStatus},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
@@ -21,7 +21,7 @@ fn state_with_repo(repo_name: &str) -> crate::app::AppState {
         None,
         None,
     );
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo, repository,
     )])));
 
@@ -45,7 +45,7 @@ async fn state_with_repo_and_patch(
     );
 
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+    state.git_cache = Arc::new(GitCache::with_repositories(HashMap::from([(
         repo.clone(),
         repository,
     )])));

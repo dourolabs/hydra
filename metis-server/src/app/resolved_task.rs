@@ -1,4 +1,4 @@
-use super::{AppState, BundleResolutionError, ResolvedBundle, ServiceState};
+use super::{AppState, BundleResolutionError, GitCache, ResolvedBundle};
 use crate::domain::jobs::{Bundle, BundleSpec, Task};
 use std::collections::HashMap;
 
@@ -22,15 +22,13 @@ pub enum TaskResolutionError {
 
 async fn resolve_context(
     task: &Task,
-    service_state: &ServiceState,
+    git_cache: &GitCache,
 ) -> Result<ResolvedBundle, BundleResolutionError> {
-    let mut resolved = service_state
-        .resolve_bundle_spec(task.context.clone())
-        .await?;
+    let mut resolved = git_cache.resolve_bundle_spec(task.context.clone()).await?;
 
     let settings = &task.job_settings;
     if let Some(repo_name) = &settings.repo_name {
-        resolved = service_state
+        resolved = git_cache
             .resolve_bundle_spec(BundleSpec::ServiceRepository {
                 name: repo_name.clone(),
                 rev: settings.branch.clone(),
@@ -105,10 +103,10 @@ fn resolve_env_vars(task: &Task, _resolved: &ResolvedBundle) -> HashMap<String, 
 
 async fn resolve_task(
     task: &Task,
-    service_state: &ServiceState,
+    git_cache: &GitCache,
     fallback_image: &str,
 ) -> Result<ResolvedTask, TaskResolutionError> {
-    let context = resolve_context(task, service_state).await?;
+    let context = resolve_context(task, git_cache).await?;
     let image = resolve_image(task, &context, fallback_image)?;
     let env_vars = resolve_env_vars(task, &context);
 
@@ -122,6 +120,6 @@ async fn resolve_task(
 impl AppState {
     pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
         let fallback_image = &self.config.job.default_image;
-        resolve_task(task, self.service_state.as_ref(), fallback_image).await
+        resolve_task(task, self.git_cache.as_ref(), fallback_image).await
     }
 }

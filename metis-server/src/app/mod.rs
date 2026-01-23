@@ -45,9 +45,9 @@ impl ConnectedRepository {
     }
 }
 
-/// Aggregated state for repositories the service can interact with.
+/// Aggregated cache for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
-pub struct ServiceState {
+pub struct GitCache {
     pub repositories: Arc<RwLock<HashMap<RepoName, ServiceRepository>>>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
@@ -144,7 +144,7 @@ fn connect_repository(repo: &ServiceRepository) -> Result<ConnectedRepository, G
 }
 
 #[allow(clippy::result_large_err)]
-impl ServiceState {
+impl GitCache {
     pub fn from_config(config: &ServiceSection) -> Self {
         let repositories = config
             .repositories
