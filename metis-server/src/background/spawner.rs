@@ -15,9 +15,9 @@ use crate::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
+use metis_common::IssueId;
 #[cfg(test)]
 use metis_common::RepoName;
-use metis_common::{IssueId, constants::ENV_METIS_GITHUB_TOKEN};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -63,14 +63,10 @@ impl AgentQueue {
         }
     }
 
-    fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
+    fn build_task(&self, issue_id: &IssueId) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        env_vars
-            .entry(ENV_METIS_GITHUB_TOKEN.to_string())
-            .or_insert_with(|| issue.creator.github_token.clone());
-
         Task::new(
             self.prompt.clone(),
             self.context_spec.clone(),
@@ -185,7 +181,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(&issue_id, &issue);
+            let task = self.build_task(&issue_id);
             tasks.push(task);
             remaining_capacity -= 1;
         }
@@ -846,10 +842,7 @@ mod tests {
             }
         );
         assert_eq!(resolved.image, "repo-image");
-        assert_eq!(
-            resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN),
-            Some(&"creator-token".to_string())
-        );
+        assert_eq!(resolved.env_vars.get("METIS_GITHUB_TOKEN"), None);
         assert_eq!(
             resolved
                 .env_vars

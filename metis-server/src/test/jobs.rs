@@ -315,10 +315,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
-    assert_eq!(
-        resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN),
-        Some(&"token".to_string())
-    );
+    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/issue:latest");
 
     let context_response = client
@@ -338,10 +335,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
-    assert_eq!(
-        worker_context.variables.get(ENV_METIS_GITHUB_TOKEN),
-        Some(&"token".to_string())
-    );
+    assert_eq!(worker_context.variables.get(ENV_METIS_GITHUB_TOKEN), None);
 
     Ok(())
 }
