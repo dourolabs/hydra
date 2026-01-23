@@ -2675,6 +2675,87 @@ mod tests {
     }
 
     #[test]
+    fn space_toggles_issue_children_expansion() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        update_panel_focus(&mut state);
+        update_views(&mut state);
+
+        assert_eq!(state.issue_lines.rows.len(), 2);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_lines.rows.len(), 1);
+        assert!(state.collapsed_issue_ids.contains(&issue_id("i-root")));
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_lines.rows.len(), 2);
+        assert!(!state.collapsed_issue_ids.contains(&issue_id("i-root")));
+    }
+
+    #[test]
+    fn space_does_not_toggle_when_issue_creator_focused() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        update_panel_focus(&mut state);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(state.issue_lines.rows.len(), 2);
+        assert!(state.collapsed_issue_ids.is_empty());
+    }
+
+    #[test]
+    fn space_does_not_toggle_without_issue_selection() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        update_panel_focus(&mut state);
+        update_views(&mut state);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert!(state.issue_lines.rows.is_empty());
+        assert!(state.collapsed_issue_ids.is_empty());
+    }
+
+    #[test]
     fn status_panel_selection_scrolls_into_view() {
         let mut state = dashboard_state_with_issues(12);
         let size = Rect {
