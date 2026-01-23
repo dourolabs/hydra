@@ -154,7 +154,7 @@ async fn resolve_creator_github_token(
 ) -> Result<Option<String>> {
     // Note: GitHub tokens are no longer stored in issues.
     // This function should be updated to use the authenticated user's token instead.
-    Ok(None)
+    Err("function is not working right now")
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
