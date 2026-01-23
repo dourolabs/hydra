@@ -14,7 +14,7 @@ use crate::{
 use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
-    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ID},
+    constants::ENV_METIS_ID,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
@@ -215,11 +215,6 @@ impl AppState {
             None => None,
         };
         let job_settings = issue.as_ref().and_then(|issue| issue.job_settings.clone());
-        if let Some(issue) = issue.as_ref() {
-            env_vars
-                .entry(ENV_METIS_GITHUB_TOKEN.to_string())
-                .or_insert_with(|| issue.creator.github_token.clone());
-        }
 
         let task = Task::new(
             request.prompt,
