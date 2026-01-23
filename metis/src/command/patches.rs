@@ -1,4 +1,4 @@
-use std::{io::Write, path::Path, path::PathBuf, process::Command};
+use std::{io::Write, path::Path, path::PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
@@ -27,7 +27,7 @@ use crate::git::{
     diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
-use tempfile::NamedTempFile;
+use git2::Repository;
 
 /// ANSI color codes
 const GREEN: &str = "\x1b[32m";
@@ -875,20 +875,34 @@ fn parse_pr_repository(url: &str) -> Option<(String, String)> {
     Some((owner.to_string(), repo.to_string()))
 }
 
-fn parse_pr_number(url: &str) -> Option<u64> {
+fn parse_github_remote_url(url: &str) -> Option<(String, String)> {
     let trimmed = url.trim();
-    let without_scheme = trimmed
+    let without_prefix = trimmed
         .strip_prefix("https://github.com/")
-        .or_else(|| trimmed.strip_prefix("http://github.com/"))?;
-    let mut segments = without_scheme.split('/');
-    let _owner = segments.next()?;
-    let _repo = segments.next()?;
-    let pr_segment = segments.next()?;
-    if pr_segment != "pull" {
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let mut segments = without_prefix.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    if owner.is_empty() || repo.is_empty() {
         return None;
     }
-    let pr_number_str = segments.next()?;
-    pr_number_str.parse().ok()
+    Some((owner.to_string(), repo.to_string()))
+}
+
+fn github_repo_from_origin(repo_root: &Path) -> Result<(String, String)> {
+    let repo =
+        Repository::discover(repo_root).context("failed to open git repository for PR creation")?;
+    let remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote for PR creation")?;
+    let url = remote
+        .url()
+        .ok_or_else(|| anyhow!("origin remote has no URL"))?;
+    parse_github_remote_url(url)
+        .ok_or_else(|| anyhow!("failed to parse GitHub repository from origin URL '{url}'"))
 }
 
 async fn open_pull_request(
@@ -898,53 +912,30 @@ async fn open_pull_request(
     branch: &str,
     github_token: &str,
 ) -> Result<GhPrCreateResponse> {
-    let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
-    writeln!(body_file, "{description}").context("failed to write pull request description")?;
-
-    // Create the PR (gh pr create doesn't support --json)
-    let create_output = Command::new("gh")
-        .args(["pr", "create"])
-        .args(["--head", branch])
-        .args(["--title", title])
-        .args(["--body-file"])
-        .arg(body_file.path())
-        .current_dir(repo_root)
-        .output()
-        .context("failed to create GitHub pull request")?;
-
-    if !create_output.status.success() {
-        let stdout = String::from_utf8_lossy(&create_output.stdout);
-        let stderr = String::from_utf8_lossy(&create_output.stderr);
-        bail!("failed to open GitHub pull request for branch '{branch}': {stderr}{stdout}");
-    }
-
-    // Extract PR URL from output (gh pr create outputs the URL to stdout)
-    let stdout = String::from_utf8_lossy(&create_output.stdout);
-    let pr_url = stdout
-        .lines()
-        .find(|line| line.contains("github.com") && line.contains("/pull/"))
-        .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
-
-    // Use octocrab to get structured PR metadata
     let crab = build_octocrab_client(github_token).context("failed to create octocrab client")?;
-
-    let (owner, repo) = parse_pr_repository(pr_url.trim())
-        .ok_or_else(|| anyhow!("failed to parse repository from PR URL: {pr_url}"))?;
-    let pr_number = parse_pr_number(pr_url.trim())
-        .ok_or_else(|| anyhow!("failed to parse PR number from URL: {pr_url}"))?;
+    let (owner, repo) = github_repo_from_origin(repo_root)?;
+    let repo_info =
+        crab.repos(&owner, &repo).get().await.with_context(|| {
+            format!("failed to load GitHub repository metadata for {owner}/{repo}")
+        })?;
+    let base_branch = repo_info
+        .default_branch
+        .ok_or_else(|| anyhow!("GitHub repository {owner}/{repo} has no default branch"))?;
 
     let pr = crab
-        .pulls(owner, repo)
-        .get(pr_number)
+        .pulls(&owner, &repo)
+        .create(title, branch, &base_branch)
+        .body(description)
+        .send()
         .await
-        .context("failed to fetch GitHub pull request metadata")?;
+        .context("failed to create GitHub pull request")?;
 
     Ok(GhPrCreateResponse {
         url: pr
             .html_url
             .as_ref()
             .map(ToString::to_string)
-            .unwrap_or_else(|| pr_url.trim().to_string()),
+            .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/pull/{}", pr.number)),
         number: pr.number,
         head_ref_name: Some(pr.head.ref_field.clone()),
         base_ref_name: Some(pr.base.ref_field.clone()),
@@ -1788,5 +1779,21 @@ mod tests {
         assert_eq!(current_branch(&repo_path)?, branch);
 
         Ok(())
+    }
+
+    #[test]
+    fn parse_github_remote_url_handles_https_and_ssh() {
+        assert_eq!(
+            parse_github_remote_url("https://github.com/dourolabs/metis.git"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
+        assert_eq!(
+            parse_github_remote_url("git@github.com:dourolabs/metis.git"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
+        assert_eq!(
+            parse_github_remote_url("ssh://git@github.com/dourolabs/metis"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
     }
 }
