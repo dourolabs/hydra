@@ -7,8 +7,8 @@ use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{
-            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec, ResourceRequirements, Secret, Volume,
-            VolumeMount,
+            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec,
+            ResourceRequirements, Secret, Volume, VolumeMount,
         },
     },
     apimachinery::pkg::api::resource::Quantity,
