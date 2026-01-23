@@ -1,6 +1,4 @@
 #[cfg(test)]
-use crate::app::TaskExt;
-#[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
@@ -824,10 +822,7 @@ mod tests {
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
 
-        let fallback_image = state.config.job.default_image.clone();
-        let resolved = tasks[0]
-            .resolve(state.service_state.as_ref(), &fallback_image)
-            .await?;
+        let resolved = state.resolve_task(&tasks[0]).await?;
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {

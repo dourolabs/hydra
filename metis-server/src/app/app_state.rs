@@ -27,7 +27,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use super::{MergeQueueError, ServiceState, TaskExt, TaskResolutionError};
+use super::{MergeQueueError, ServiceState, TaskResolutionError};
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
@@ -199,7 +199,6 @@ pub enum UpdateTodoListError {
 impl AppState {
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
-        let fallback_image = self.config.job.default_image.clone();
 
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
@@ -230,8 +229,7 @@ impl AppState {
             job_settings.clone(),
         );
 
-        task.resolve(self.service_state.as_ref(), &fallback_image)
-            .await?;
+        self.resolve_task(&task).await?;
 
         let mut store = self.store.write().await;
         store
@@ -280,7 +278,6 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
-        let fallback_image = job_config.default_image.clone();
         let (resolved, user, job_settings) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
@@ -320,10 +317,7 @@ impl AppState {
                     task.job_settings = merged;
                     let merged_job_settings = task.job_settings.clone();
 
-                    match task
-                        .resolve(self.service_state.as_ref(), &fallback_image)
-                        .await
-                    {
+                    match self.resolve_task(&task).await {
                         Ok(resolved) => (resolved, user, merged_job_settings),
                         Err(err) => {
                             warn!(

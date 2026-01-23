@@ -24,7 +24,7 @@ pub use app_state::{
 pub use metis_common::repositories::{
     ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo,
 };
-pub use resolved_task::{ResolvedTask, TaskExt, TaskResolutionError};
+pub use resolved_task::{ResolvedTask, TaskResolutionError};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
