@@ -458,7 +458,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
-            if is_issue_tree_space_key(key, state.selected_panel) {
+            if is_issue_tree_space_key(key, state) {
                 toggle_selected_issue_children(state);
                 return EventOutcome {
                     should_quit: false,
@@ -544,13 +544,16 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
 }
 
-fn is_issue_tree_space_key(key: KeyEvent, panel: PanelFocus) -> bool {
-    if !key.modifiers.is_empty() {
+fn is_issue_tree_space_key(key: KeyEvent, state: &DashboardState) -> bool {
+    if !key.modifiers.is_empty() || state.issue_creator_panel.focused() {
         return false;
     }
 
     matches!(key.code, KeyCode::Char(' '))
-        && matches!(panel, PanelFocus::Running | PanelFocus::Completed)
+        && matches!(
+            state.selected_panel,
+            PanelFocus::Running | PanelFocus::Completed
+        )
 }
 
 fn selection_key_delta(key: KeyEvent) -> Option<i32> {
@@ -671,7 +674,6 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 
 // Toggle handler for issue tree expansion; invoke this when a keybinding (e.g. spacebar)
 // should expand or collapse the children of the currently selected issue.
-#[allow(dead_code)]
 fn toggle_selected_issue_children(state: &mut DashboardState) -> bool {
     let selected_panel = state.selected_panel;
     let Some(issue_id) = selected_issue_id(state, selected_panel) else {
