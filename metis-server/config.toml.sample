@@ -37,6 +37,8 @@ github_token = ""
 # GitHub App configuration for device flow and API access.
 # All fields are required; use the values from your GitHub App settings.
 app_id = 1
+# GitHub App installation id (from the installation in the target organization/user).
+installation_id = 2
 # OAuth client_id for device flow (public).
 client_id = "replace-with-client-id"
 # OAuth client_secret for device flow (private).

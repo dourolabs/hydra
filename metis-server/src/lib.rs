@@ -138,8 +138,13 @@ pub async fn run() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    let service_state = ServiceState::from_config(&app_config.service);
     let github_app = build_github_app_client(&app_config.github_app)?;
+    let github_installation =
+        build_github_installation_client(github_app.as_ref(), &app_config.github_app)?;
+    let service_state = ServiceState::from_config(&app_config.service);
+    service_state
+        .set_github_installation(github_installation)
+        .await;
 
     // Resolve OpenAI API key
     let openai_api_key = env::var(ENV_OPENAI_API_KEY)
@@ -221,4 +226,17 @@ fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<O
         .build()
         .map(Some)
         .context("building GitHub App client")
+}
+
+fn build_github_installation_client(
+    github_app: Option<&Octocrab>,
+    config: &GithubAppSection,
+) -> anyhow::Result<Option<Octocrab>> {
+    let Some(github_app) = github_app else {
+        return Ok(None);
+    };
+    github_app
+        .installation(config.installation_id())
+        .context("building GitHub App installation client")
+        .map(Some)
 }

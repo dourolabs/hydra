@@ -5,7 +5,7 @@ pub use kube::build_kube_client;
 use crate::domain::jobs::BundleSpec;
 use anyhow::{Context, Result, ensure};
 use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
-use octocrab::models::AppId;
+use octocrab::models::{AppId, InstallationId};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -148,6 +148,7 @@ pub struct ServiceSection {
 #[derive(Debug, Deserialize, Clone)]
 pub struct GithubAppSection {
     pub app_id: u64,
+    pub installation_id: u64,
     pub client_id: String,
     pub client_secret: String,
     pub private_key: String,
@@ -156,6 +157,10 @@ pub struct GithubAppSection {
 impl GithubAppSection {
     pub fn app_id(&self) -> AppId {
         AppId(self.app_id)
+    }
+
+    pub fn installation_id(&self) -> InstallationId {
+        InstallationId(self.installation_id)
     }
 
     pub fn client_id(&self) -> &str {
@@ -174,6 +179,10 @@ impl GithubAppSection {
         ensure!(
             self.app_id > 0,
             "github_app.app_id must be a positive integer"
+        );
+        ensure!(
+            self.installation_id > 0,
+            "github_app.installation_id must be a positive integer"
         );
         ensure!(
             non_empty(&self.client_id).is_some(),
@@ -447,6 +456,7 @@ mod tests {
     fn github_app_section_rejects_blank_client_id() {
         let github_app = GithubAppSection {
             app_id: 42,
+            installation_id: 100,
             client_id: "  ".to_string(),
             client_secret: "\n".to_string(),
             private_key: "key".to_string(),
@@ -483,6 +493,7 @@ mod tests {
             r#"
 [github_app]
 app_id = 1
+installation_id = 2
 client_id = "client-id"
 client_secret = "client-secret"
 "#,

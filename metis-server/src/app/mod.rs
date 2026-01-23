@@ -10,8 +10,12 @@ use crate::{
     merge_queue::MergeQueueImpl,
     store::StoreError,
 };
+use anyhow::Context;
+use chrono::Duration;
 use git2::Repository;
 use metis_common::{PatchId, RepoName, merge_queues::MergeQueue};
+use octocrab::Octocrab;
+use secrecy::ExposeSecret;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
 use thiserror::Error;
@@ -52,6 +56,7 @@ pub struct ServiceState {
     pub repositories: Arc<RwLock<HashMap<RepoName, ServiceRepository>>>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
+    pub github_installation: Arc<RwLock<Option<Octocrab>>>,
 }
 
 #[derive(Debug)]
@@ -198,7 +203,28 @@ impl ServiceState {
             repositories: Arc::new(RwLock::new(repositories)),
             merge_queues: Arc::new(RwLock::new(merge_queues)),
             git_cache: Arc::new(RwLock::new(HashMap::new())),
+            github_installation: Arc::new(RwLock::new(None)),
         }
+    }
+
+    pub async fn set_github_installation(&self, installation: Option<Octocrab>) {
+        let mut current = self.github_installation.write().await;
+        *current = installation;
+    }
+
+    pub async fn github_installation_token(&self) -> anyhow::Result<Option<String>> {
+        let installation = {
+            let current = self.github_installation.read().await;
+            current.clone()
+        };
+        let Some(installation) = installation else {
+            return Ok(None);
+        };
+        let token = installation
+            .installation_token_with_buffer(Duration::minutes(5))
+            .await
+            .context("requesting GitHub App installation token")?;
+        Ok(Some(token.expose_secret().to_string()))
     }
 
     pub async fn list_repository_info(&self) -> Vec<ServiceRepositoryInfo> {

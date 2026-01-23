@@ -46,6 +46,7 @@ pub fn test_app_config() -> AppConfig {
         service: ServiceSection::default(),
         github_app: GithubAppSection {
             app_id: 1,
+            installation_id: 2,
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
             private_key: "private-key".to_string(),

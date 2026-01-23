@@ -3449,6 +3449,7 @@ dependencies = [
  "metis-common",
  "octocrab",
  "reqwest",
+ "secrecy 0.10.3",
  "serde",
  "serde_json",
  "serde_urlencoded",
