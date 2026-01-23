@@ -6,8 +6,12 @@ use futures::{channel::mpsc, io::AsyncReadExt};
 use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
-        core::v1::{Container, EnvVar, Pod, PodSpec, PodTemplateSpec, Secret, Volume, VolumeMount},
+        core::v1::{
+            Container, EnvVar, Pod, PodSpec, PodTemplateSpec, ResourceRequirements, Secret, Volume,
+            VolumeMount,
+        },
     },
+    apimachinery::pkg::api::resource::Quantity,
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
 };
 use kube::{
@@ -458,6 +462,8 @@ impl JobEngine for KubernetesJobEngine {
         metis_id: &TaskId,
         image: &str,
         env_vars: &HashMap<String, String>,
+        cpu_limit: String,
+        memory_limit: String,
         user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
@@ -509,6 +515,14 @@ impl JobEngine for KubernetesJobEngine {
             env: Some(self.build_env_vars(metis_id, env_vars)),
             ..Default::default()
         };
+
+        container.resources = Some(ResourceRequirements {
+            requests: Some(BTreeMap::from([
+                ("cpu".to_string(), Quantity(cpu_limit)),
+                ("memory".to_string(), Quantity(memory_limit)),
+            ])),
+            ..Default::default()
+        });
 
         let mut volumes = Vec::new();
         if let Some(secret_name) = &secret_name {
