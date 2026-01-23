@@ -1,3 +1,4 @@
+pub mod actors;
 pub mod issues;
 pub mod jobs;
 pub mod patches;

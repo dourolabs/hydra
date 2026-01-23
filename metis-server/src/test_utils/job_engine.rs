@@ -15,6 +15,7 @@ pub struct MockJobEngine {
     jobs: Arc<Mutex<Vec<MetisJob>>>,
     logs: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
     env_vars: Arc<Mutex<HashMap<TaskId, HashMap<String, String>>>>,
+    resource_limits: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
 }
 
 impl MockJobEngine {
@@ -61,6 +62,11 @@ impl MockJobEngine {
         let env_vars = self.env_vars.lock().unwrap();
         env_vars.get(metis_id).cloned()
     }
+
+    pub fn resource_limits_for_job(&self, metis_id: &TaskId) -> Option<(String, String)> {
+        let limits = self.resource_limits.lock().unwrap();
+        limits.get(metis_id).cloned()
+    }
 }
 
 #[async_trait]
@@ -70,6 +76,8 @@ impl JobEngine for MockJobEngine {
         metis_id: &TaskId,
         _image: &str,
         env_vars: &HashMap<String, String>,
+        cpu_limit: String,
+        memory_limit: String,
         _user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
@@ -89,6 +97,10 @@ impl JobEngine for MockJobEngine {
             .lock()
             .unwrap()
             .insert(metis_id.clone(), env_vars.clone());
+        self.resource_limits
+            .lock()
+            .unwrap()
+            .insert(metis_id.clone(), (cpu_limit, memory_limit));
         Ok(())
     }
 
@@ -208,7 +220,14 @@ mod tests {
         let metis_id = TaskId::new();
 
         engine
-            .create_job(&metis_id, "image", &env_vars, None)
+            .create_job(
+                &metis_id,
+                "image",
+                &env_vars,
+                "250m".to_string(),
+                "128Mi".to_string(),
+                None,
+            )
             .await
             .expect("job creation should succeed");
 
@@ -216,5 +235,10 @@ mod tests {
             .env_vars_for_job(&metis_id)
             .expect("env vars should be recorded");
         assert_eq!(recorded.get("FOO"), Some(&"bar".to_string()));
+
+        let limits = engine
+            .resource_limits_for_job(&metis_id)
+            .expect("resource limits should be recorded");
+        assert_eq!(limits, ("250m".to_string(), "128Mi".to_string()));
     }
 }

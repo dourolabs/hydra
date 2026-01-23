@@ -9,7 +9,7 @@ use metis::{
     config::{self, AppConfig},
     constants,
 };
-use metis_common::constants::ENV_METIS_SERVER_URL;
+use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +34,10 @@ struct Cli {
     /// Path to the auth token file (defaults to ~/.local/share/metis/auth-token).
     #[arg(long = "token", value_name = "PATH", global = true, default_value = auth::DEFAULT_AUTH_TOKEN_PATH)]
     token: String,
+
+    /// Browser command for opening links (defaults to $BROWSER).
+    #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
+    browser: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -113,7 +117,13 @@ async fn dispatch(
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command, token_path).await?,
         Commands::Dashboard => {
-            command::dashboard::run(client, &app_config.server.url, token_path).await?
+            command::dashboard::run(
+                client,
+                &app_config.server.url,
+                token_path,
+                cli.browser.as_deref(),
+            )
+            .await?
         }
         Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
@@ -175,6 +185,7 @@ mod tests {
             config: None,
             server_url: None,
             token: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            browser: None,
             command: Some(super::Commands::Agents { pretty: false }),
         }
     }

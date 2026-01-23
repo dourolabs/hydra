@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
+    process::Command,
     time::Duration,
 };
 
@@ -16,9 +17,10 @@ use metis_common::{
         IssueType, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobRecord, SearchJobsQuery},
+    patches::{GithubPr, PatchRecord},
     task_status::{Status, TaskError, TaskStatusLog},
     users::Username,
-    IssueId, TaskId,
+    IssueId, PatchId, TaskId,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -75,6 +77,7 @@ struct IssueRecord {
     status: IssueStatus,
     assignee: Option<String>,
     dependencies: Vec<IssueDependency>,
+    patches: Vec<PatchId>,
 }
 
 #[derive(Default, Clone, PartialEq)]
@@ -243,6 +246,7 @@ struct DashboardState {
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
     collapsed_issue_ids: HashSet<IssueId>,
+    known_completed_issue_ids: HashSet<IssueId>,
     // Keep per-panel selection indices so each list preserves context across refreshes.
     user_unowned_issue_selection: IssueSelectionState,
     running_issue_selection: IssueSelectionState,
@@ -256,6 +260,7 @@ struct DashboardState {
     records_error: Option<String>,
     username: Username,
     server_url: String,
+    browser_command: Option<String>,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
@@ -274,6 +279,7 @@ impl Default for DashboardState {
         configure_issue_tree_panel_keybindings(&mut running_issue_panel);
         let mut user_unowned_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut user_unowned_issue_panel);
+        user_unowned_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
         let mut completed_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut completed_issue_panel);
 
@@ -284,6 +290,7 @@ impl Default for DashboardState {
             user_unowned_issue_lines: IssueLines::default(),
             completed_issue_lines: CompletedIssueLines::default(),
             collapsed_issue_ids: HashSet::new(),
+            known_completed_issue_ids: HashSet::new(),
             user_unowned_issue_selection: IssueSelectionState::default(),
             running_issue_selection: IssueSelectionState::default(),
             completed_issue_selection: IssueSelectionState::default(),
@@ -296,6 +303,7 @@ impl Default for DashboardState {
             records_error: None,
             username: Username::from(""),
             server_url: String::new(),
+            browser_command: None,
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
@@ -326,17 +334,20 @@ struct IssueSubmission {
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
+    open_issue_pr: Option<IssueId>,
 }
 
 pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
     token_path: &std::path::Path,
+    browser_command: Option<&str>,
 ) -> Result<()> {
     let token_path_buf = token_path.to_path_buf();
     let username = auth::resolve_auth_user(client, &token_path_buf).await?;
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
+    let result =
+        run_dashboard_loop(client, &mut terminal, username, server_url, browser_command).await;
     ratatui::restore();
     result
 }
@@ -346,10 +357,12 @@ async fn run_dashboard_loop(
     terminal: &mut DefaultTerminal,
     username: Username,
     server_url: &str,
+    browser_command: Option<&str>,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
         server_url: server_url.to_string(),
+        browser_command: browser_command.map(str::to_string),
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);
@@ -407,6 +420,15 @@ async fn run_dashboard_loop(
                         if outcome.should_quit {
                             break;
                         }
+                        if let Some(issue_id) = outcome.open_issue_pr {
+                            if let Err(err) =
+                                open_issue_pr(client, &state, &issue_id).await
+                            {
+                                state.records_error = Some(format!(
+                                    "Failed to open pull request for {issue_id}: {err}"
+                                ));
+                            }
+                        }
                         if let Some(submission) = outcome.submission {
                             let assignee = submission.assignee.clone();
                             state.issue_draft.info_message =
@@ -454,6 +476,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: true,
                     submission: None,
+                    open_issue_pr: None,
                 };
             }
 
@@ -462,6 +485,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    open_issue_pr: None,
                 };
             }
 
@@ -470,6 +494,15 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    open_issue_pr: None,
+                };
+            }
+
+            if is_issue_pr_open_key(key, state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: selected_issue_id(state, PanelFocus::UserOwned),
                 };
             }
 
@@ -483,6 +516,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission,
+                open_issue_pr: None,
             }
         }
         Event::Paste(text) => {
@@ -490,6 +524,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    open_issue_pr: None,
                 };
             }
 
@@ -503,6 +538,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                open_issue_pr: None,
             }
         }
         Event::Resize(width, height) => {
@@ -511,6 +547,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                open_issue_pr: None,
             }
         }
         Event::Mouse(mouse) => {
@@ -519,11 +556,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                open_issue_pr: None,
             }
         }
         _ => EventOutcome {
             should_quit: false,
             submission: None,
+            open_issue_pr: None,
         },
     }
 }
@@ -561,6 +600,15 @@ fn is_issue_tree_space_key(key: KeyEvent, state: &DashboardState) -> bool {
             state.selected_panel,
             PanelFocus::Running | PanelFocus::Completed
         )
+}
+
+fn is_issue_pr_open_key(key: KeyEvent, state: &DashboardState) -> bool {
+    if key.code != KeyCode::Enter || !key.modifiers.is_empty() {
+        return false;
+    }
+
+    matches!(state.selected_panel, PanelFocus::UserOwned)
+        && selected_issue_id(state, PanelFocus::UserOwned).is_some()
 }
 
 fn selection_key_delta(key: KeyEvent) -> Option<i32> {
@@ -717,7 +765,10 @@ fn selected_issue_id(state: &DashboardState, panel: PanelFocus) -> Option<IssueI
             let rows = completed_issue_rows(&state.completed_issue_lines);
             issue_id_for_selection(&rows, &state.completed_issue_selection)
         }
-        PanelFocus::UserOwned => None,
+        PanelFocus::UserOwned => issue_id_for_selection(
+            &state.user_unowned_issue_lines.rows,
+            &state.user_unowned_issue_selection,
+        ),
         PanelFocus::NewIssue => None,
     }
 }
@@ -764,6 +815,82 @@ fn set_selection_for_issue(
     } else {
         false
     }
+}
+
+async fn open_issue_pr(
+    client: &dyn MetisClientInterface,
+    state: &DashboardState,
+    issue_id: &IssueId,
+) -> Result<()> {
+    let browser_command = state
+        .browser_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .context("browser command is not configured")?;
+    let issue = state
+        .issues
+        .iter()
+        .find(|issue| issue.id == *issue_id)
+        .context("issue not found")?;
+    let mut last_error = None;
+
+    for patch_id in &issue.patches {
+        match client.get_patch(patch_id).await {
+            Ok(patch) => {
+                if let Some(url) = patch_pr_url(&patch) {
+                    return open_browser(browser_command, &url);
+                }
+            }
+            Err(err) => {
+                last_error = Some(err);
+            }
+        }
+    }
+
+    if let Some(err) = last_error {
+        Err(err).context("failed to fetch patch for issue")
+    } else {
+        anyhow::bail!("no pull request found for issue")
+    }
+}
+
+fn patch_pr_url(patch: &PatchRecord) -> Option<String> {
+    patch.patch.github.as_ref().map(github_pr_url)
+}
+
+fn github_pr_url(github: &GithubPr) -> String {
+    if let Some(url) = &github.url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    format!(
+        "https://github.com/{}/{}/pull/{}",
+        github.owner, github.repo, github.number
+    )
+}
+
+fn parse_browser_command(browser_command: &str) -> Result<(String, Vec<String>)> {
+    let trimmed = browser_command.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("browser command is empty");
+    }
+
+    let parts = shlex::split(trimmed).context("browser command has invalid quoting")?;
+    let (command, args) = parts.split_first().context("browser command is empty")?;
+    Ok((command.to_string(), args.to_vec()))
+}
+
+fn open_browser(browser_command: &str, url: &str) -> Result<()> {
+    let (command, args) = parse_browser_command(browser_command)?;
+    let mut cmd = Command::new(command);
+    cmd.args(args);
+    cmd.arg(url);
+    cmd.spawn().context("failed to launch browser")?;
+    Ok(())
 }
 
 fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -1746,6 +1873,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
         status: issue.status,
         assignee: issue.assignee,
         dependencies: issue.dependencies,
+        patches: issue.patches,
     })
 }
 
@@ -1761,6 +1889,8 @@ fn update_views(state: &mut DashboardState) -> bool {
     state
         .collapsed_issue_ids
         .retain(|issue_id| known_issue_ids.contains(issue_id));
+
+    seed_completed_issue_collapses(state);
 
     let issue_lines = build_issue_lines_with_collapsed(
         &state.issues,
@@ -1789,6 +1919,28 @@ fn update_views(state: &mut DashboardState) -> bool {
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
+}
+
+fn seed_completed_issue_collapses(state: &mut DashboardState) {
+    let nodes = build_issue_nodes(&state.issues, &state.jobs);
+    if nodes.is_empty() {
+        state.known_completed_issue_ids.clear();
+        return;
+    }
+
+    let completed_issue_ids = completed_issue_tree_ids(&nodes);
+    for issue_id in &completed_issue_ids {
+        if state.known_completed_issue_ids.contains(issue_id) {
+            continue;
+        }
+        if nodes
+            .get(issue_id)
+            .is_some_and(|node| !node.children.is_empty())
+        {
+            state.collapsed_issue_ids.insert(issue_id.clone());
+        }
+    }
+    state.known_completed_issue_ids = completed_issue_ids;
 }
 
 fn clamp_issue_selections(state: &mut DashboardState) {
@@ -1989,6 +2141,43 @@ fn build_issue_nodes(issues: &[IssueRecord], jobs: &[JobDetails]) -> HashMap<Iss
     }
 
     nodes
+}
+
+fn completed_issue_tree_ids(nodes: &HashMap<IssueId, IssueNode>) -> HashSet<IssueId> {
+    let mut roots: Vec<IssueId> = nodes
+        .iter()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(id, _)| id.clone())
+        .collect();
+    roots.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
+
+    let mut completed_ids = HashSet::new();
+    for root in roots {
+        if !is_completed_tree(&root, nodes, &mut HashSet::new()) {
+            continue;
+        }
+        collect_issue_ids(&root, nodes, &mut completed_ids);
+    }
+
+    completed_ids
+}
+
+fn collect_issue_ids(
+    id: &IssueId,
+    nodes: &HashMap<IssueId, IssueNode>,
+    collected: &mut HashSet<IssueId>,
+) {
+    if !collected.insert(id.clone()) {
+        return;
+    }
+
+    let Some(node) = nodes.get(id) else {
+        return;
+    };
+
+    for child in &node.children {
+        collect_issue_ids(child, nodes, collected);
+    }
 }
 
 #[cfg(test)]
@@ -2442,6 +2631,7 @@ mod tests {
             status,
             assignee: None,
             dependencies,
+            patches: Vec::new(),
         }
     }
 
@@ -2453,6 +2643,7 @@ mod tests {
             status,
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
+            patches: Vec::new(),
         }
     }
 
@@ -2523,6 +2714,47 @@ mod tests {
 
         assert!(message.contains("boom"));
         assert!(!message.contains("note that should be ignored"));
+    }
+
+    #[test]
+    fn github_pr_url_prefers_configured_url() {
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "metis".to_string(),
+            42,
+            None,
+            None,
+            Some(" https://example.com/pr/42 ".to_string()),
+            None,
+        );
+
+        assert_eq!(github_pr_url(&github), "https://example.com/pr/42");
+    }
+
+    #[test]
+    fn github_pr_url_falls_back_to_default() {
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "metis".to_string(),
+            42,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            github_pr_url(&github),
+            "https://github.com/octo/metis/pull/42"
+        );
+    }
+
+    #[test]
+    fn parse_browser_command_handles_quotes() {
+        let (command, args) = parse_browser_command("open -a \"Google Chrome\"").unwrap();
+
+        assert_eq!(command, "open");
+        assert_eq!(args, vec!["-a".to_string(), "Google Chrome".to_string()]);
     }
 
     #[test]
@@ -2645,6 +2877,7 @@ mod tests {
             status: IssueStatus::Open,
             assignee: None,
             dependencies: Vec::new(),
+            patches: Vec::new(),
         }];
 
         let lines = build_issue_lines(&issues, &[], false);
@@ -2658,9 +2891,12 @@ mod tests {
         let issues: Vec<IssueRecord> = (0..issue_count)
             .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, Vec::new()))
             .collect();
+        let issue_lines = build_issue_lines(&issues, &[], false);
+        let user_unowned_issue_lines = build_issue_lines(&issues, &[], false);
         DashboardState {
-            issue_lines: build_issue_lines(&issues, &[], false),
-            user_unowned_issue_lines: build_issue_lines(&issues, &[], false),
+            issues,
+            issue_lines,
+            user_unowned_issue_lines,
             ..DashboardState::default()
         }
     }
@@ -2686,6 +2922,20 @@ mod tests {
             handle_status_panel_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut state);
         assert!(!moved);
         assert_eq!(state.running_issue_selection.index, 2);
+    }
+
+    #[test]
+    fn enter_on_user_owned_issue_requests_pr_open() {
+        let mut state = dashboard_state_with_issues(1);
+        state.selected_panel = PanelFocus::UserOwned;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert_eq!(outcome.open_issue_pr, Some(issue_id("i-0")));
+        assert!(outcome.submission.is_none());
     }
 
     #[test]
@@ -3035,6 +3285,53 @@ mod tests {
     }
 
     #[test]
+    fn completed_issue_trees_default_to_collapsed() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+
+        update_views(&mut state);
+
+        assert!(state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        let descendants = state
+            .completed_issue_lines
+            .descendants
+            .get(&issue_id("i-root"))
+            .expect("missing descendants");
+        assert!(descendants.is_empty());
+    }
+
+    #[test]
+    fn completed_issue_expansion_persists_across_refresh() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+
+        update_views(&mut state);
+        state.selected_panel = PanelFocus::Completed;
+        update_panel_focus(&mut state);
+
+        let toggled = toggle_selected_issue_children(&mut state);
+        assert!(toggled);
+        assert!(!state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        assert_eq!(completed_issue_rows(&state.completed_issue_lines).len(), 2);
+
+        update_views(&mut state);
+        assert!(!state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        assert_eq!(completed_issue_rows(&state.completed_issue_lines).len(), 2);
+    }
+
+    #[test]
     fn user_unowned_issue_lines_empty_without_username() {
         let issues = vec![issue_with_assignee(
             "i-open",
@@ -3082,6 +3379,7 @@ mod tests {
                 status: IssueStatus::Open,
                 assignee: Some("alice".to_string()),
                 dependencies: Vec::new(),
+                patches: Vec::new(),
             },
             IssueRecord {
                 id: issue_id("i-child"),
@@ -3090,6 +3388,7 @@ mod tests {
                 status: IssueStatus::Open,
                 assignee: Some("alice".to_string()),
                 dependencies: vec![child_of("i-root")],
+                patches: Vec::new(),
             },
         ];
 

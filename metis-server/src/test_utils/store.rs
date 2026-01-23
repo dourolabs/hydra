@@ -1,5 +1,6 @@
 use crate::{
     domain::{
+        actors::Actor,
         issues::{Issue, IssueGraphFilter},
         patches::Patch,
         users::{User, Username},
@@ -161,6 +162,18 @@ impl Store for FailingStore {
         _last_message: Option<String>,
         _completion_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_actor(&mut self, _actor: Actor) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn get_actor(&self, _name: &str) -> Result<Actor, StoreError> {
+        fail()
+    }
+
+    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
         fail()
     }
 

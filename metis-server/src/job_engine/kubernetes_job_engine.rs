@@ -7,10 +7,11 @@ use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{
-            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec, Secret, Volume,
+            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec, ResourceRequirements, Secret, Volume,
             VolumeMount,
         },
     },
+    apimachinery::pkg::api::resource::Quantity,
     apimachinery::pkg::apis::meta::v1::ObjectMeta,
 };
 use kube::{
@@ -464,8 +465,8 @@ async fn resolve_pod_name_impl(
 // Default path for auth token in containers (expanded from ~/.local/share/metis/auth-token)
 // The file will be mounted at this path via a secret volume
 #[allow(dead_code)]
-const AUTH_TOKEN_PATH: &str = "/worker/.local/share/metis/auth-token";
-const AUTH_TOKEN_MOUNT_DIR: &str = "/worker/.local/share/metis";
+const AUTH_TOKEN_PATH: &str = "/home/worker/.local/share/metis/auth-token";
+const AUTH_TOKEN_MOUNT_DIR: &str = "/home/worker/.local/share/metis";
 const AUTH_TOKEN_SECRET_NAME_PREFIX: &str = "metis-auth-token-";
 
 #[async_trait]
@@ -475,6 +476,8 @@ impl JobEngine for KubernetesJobEngine {
         metis_id: &TaskId,
         image: &str,
         env_vars: &HashMap<String, String>,
+        cpu_limit: String,
+        memory_limit: String,
         user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
@@ -527,6 +530,14 @@ impl JobEngine for KubernetesJobEngine {
             ..Default::default()
         };
 
+        container.resources = Some(ResourceRequirements {
+            requests: Some(BTreeMap::from([
+                ("cpu".to_string(), Quantity(cpu_limit)),
+                ("memory".to_string(), Quantity(memory_limit)),
+            ])),
+            ..Default::default()
+        });
+
         let mut volumes = Vec::new();
         if let Some(secret_name) = &secret_name {
             // Add volume mount for auth token
@@ -548,7 +559,7 @@ impl JobEngine for KubernetesJobEngine {
                     items: Some(vec![k8s_openapi::api::core::v1::KeyToPath {
                         key: "auth-token".to_string(),
                         path: "auth-token".to_string(), // This will be at <mount_path>/auth-token
-                        mode: Some(0o600),
+                        mode: Some(0o666),
                     }]),
                     ..Default::default()
                 }),
