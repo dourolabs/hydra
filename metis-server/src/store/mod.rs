@@ -20,7 +20,9 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
         Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
-        Err(ActorError::GithubLookupFailed(message)) => Err(StoreError::Internal(message)),
+        Err(ActorError::GithubLookupFailed(message)) => {
+            Err(StoreError::GithubTokenInvalid(message))
+        }
     }
 }
 
@@ -56,6 +58,8 @@ pub enum StoreError {
     ActorNotFound(String),
     #[error("Actor already exists: {0}")]
     ActorAlreadyExists(String),
+    #[error("Invalid GitHub token: {0}")]
+    GithubTokenInvalid(String),
     #[error("Invalid actor name: {0}")]
     InvalidActorName(String),
 }
@@ -63,7 +67,7 @@ pub enum StoreError {
 fn map_actor_error(error: ActorError) -> StoreError {
     match error {
         ActorError::InvalidActorName(name) => StoreError::InvalidActorName(name),
-        other => StoreError::Internal(other.to_string()),
+        ActorError::GithubLookupFailed(message) => StoreError::GithubTokenInvalid(message),
     }
 }
 
