@@ -1855,9 +1855,9 @@ mod tests {
     #[tokio::test]
     async fn create_issue_submits_issue_record() {
         let server = MockServer::start();
-        let client = metis_client(&server);        
+        let client = metis_client(&server);
 
-        let patch_ids = vec![patch_id("p-123")];        
+        let patch_ids = vec![patch_id("p-123")];
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,

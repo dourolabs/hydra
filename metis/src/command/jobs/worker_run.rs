@@ -15,6 +15,7 @@ use metis_common::{
 };
 use tempfile::Builder;
 
+use crate::auth;
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
@@ -30,6 +31,7 @@ pub async fn run(
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
+    token_path: &PathBuf,
 ) -> Result<()> {
     let WorkerContext {
         request_context,
@@ -45,8 +47,7 @@ pub async fn run(
         .as_ref()
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
-    let issue_id_for_token = issue_id.clone();
-    let github_token = resolve_creator_github_token(client, issue_id_for_token, &job).await?;
+    let github_token = auth::ensure_auth_token(client, token_path).await.ok();
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -147,15 +148,6 @@ pub async fn run(
     }
 }
 
-async fn resolve_creator_github_token(
-    _client: &dyn MetisClientInterface,
-    _issue_id: Option<IssueId>,
-    _job_id: &TaskId,
-) -> Result<Option<String>> {
-    // Note: GitHub tokens are no longer stored in issues.
-    // This function should be updated to use the authenticated user's token instead.
-    Err("function is not working right now")
-}
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
     if dest.exists() {
