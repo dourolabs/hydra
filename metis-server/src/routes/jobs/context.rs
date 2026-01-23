@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, TaskExt},
-    domain::jobs::WorkerContext,
+    domain::{issues::JobSettings, jobs::WorkerContext},
     routes::jobs::{ApiError, JobIdPath},
     store::StoreError,
 };
@@ -14,16 +14,16 @@ pub async fn get_job_context(
 ) -> Result<Json<v1::jobs::WorkerContext>, ApiError> {
     info!(job_id = %job_id, "get_job_context invoked");
 
-    let (task, job_settings) = {
+    let (mut task, issue_job_settings) = {
         let store = state.store.read().await;
         let task = store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task");
             ApiError::not_found(format!("Job '{job_id}' not found"))
         })?;
 
-        let job_settings = match task.spawned_from.as_ref() {
-            Some(issue_id) => match store.get_issue(issue_id).await {
-                Ok(issue) => issue.job_settings,
+        let issue_job_settings = match task.spawned_from.clone() {
+            Some(issue_id) => match store.get_issue(&issue_id).await {
+                Ok(issue) => Some(issue.job_settings),
                 Err(StoreError::IssueNotFound(_)) => {
                     return Err(ApiError::not_found(format!("issue '{issue_id}' not found")));
                 }
@@ -35,11 +35,16 @@ pub async fn get_job_context(
             None => None,
         };
 
-        (task, job_settings)
+        (task, issue_job_settings)
     };
 
+    if let Some(settings) = issue_job_settings {
+        let merged = JobSettings::merge(task.job_settings.clone(), settings);
+        task.job_settings = merged;
+    }
+
     let resolved = task
-        .resolve_context(state.service_state.as_ref(), job_settings.as_ref())
+        .resolve_context(state.service_state.as_ref())
         .await
         .map_err(ApiError::from)?;
     let env_vars = task.resolve_env_vars(&resolved);

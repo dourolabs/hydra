@@ -605,20 +605,20 @@ async fn fetch_issues(
 }
 
 fn resolve_job_settings(
-    current: Option<JobSettings>,
+    current: JobSettings,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
     clear_job_settings: bool,
-) -> Result<(Option<JobSettings>, bool)> {
+) -> Result<(JobSettings, bool)> {
     if clear_job_settings {
-        return Ok((None, true));
+        return Ok((JobSettings::default(), true));
     }
 
     let mut changed = false;
-    let mut job_settings = current.clone().unwrap_or_default();
+    let mut job_settings = current.clone();
 
     if let Some(value) = repo_name {
         let trimmed = value.trim();
@@ -664,7 +664,7 @@ fn resolve_job_settings(
     }
 
     if changed {
-        Ok((Some(job_settings), true))
+        Ok((job_settings, true))
     } else {
         Ok((current, false))
     }
@@ -706,8 +706,8 @@ async fn create_issue(
         None => None,
     };
 
-    let (job_settings, _) = resolve_job_settings(
-        None,
+    let (job_settings, job_settings_requested) = resolve_job_settings(
+        JobSettings::default(),
         repo_name,
         remote_url,
         image,
@@ -715,6 +715,7 @@ async fn create_issue(
         max_retries,
         false,
     )?;
+    let job_settings = job_settings_requested.then_some(job_settings);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -834,7 +835,7 @@ async fn update_issue(
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
-    let (job_settings, _) = resolve_job_settings(
+    let (job_settings, job_settings_changed) = resolve_job_settings(
         current.issue.job_settings.clone(),
         repo_name,
         remote_url,
@@ -843,6 +844,11 @@ async fn update_issue(
         max_retries,
         clear_job_settings,
     )?;
+    let job_settings = if job_settings_changed {
+        Some(job_settings)
+    } else {
+        Some(current.issue.job_settings.clone())
+    };
 
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
@@ -1477,6 +1483,8 @@ mod tests {
         job_settings.image = Some("worker:123".into());
         job_settings.branch = Some("main".into());
         job_settings.max_retries = Some(5);
+        job_settings.cpu_limit = Some("750m".into());
+        job_settings.memory_limit = Some("2Gi".into());
         job_settings
     }
 
@@ -1907,7 +1915,9 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
 
-        let mut job_settings = sample_job_settings();
+        let mut job_settings = JobSettings::default();
+        job_settings.repo_name = Some(sample_repo_name());
+        job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:latest".into());
         job_settings.branch = Some("feature/job-settings".into());
         job_settings.max_retries = Some(4);
@@ -2031,7 +2041,12 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-9");
-        let job_settings = sample_job_settings();
+        let mut job_settings = JobSettings::default();
+        job_settings.repo_name = Some(sample_repo_name());
+        job_settings.remote_url = Some("https://example.com/service.git".into());
+        job_settings.image = Some("worker:123".into());
+        job_settings.branch = Some("main".into());
+        job_settings.max_retries = Some(5);
         let current_issue = api_issue_record(
             "i-9",
             IssueType::Task,

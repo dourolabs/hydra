@@ -359,8 +359,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub job_settings: Option<JobSettings>,
+    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
+    pub job_settings: JobSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -390,7 +390,7 @@ impl Issue {
             progress,
             status,
             assignee,
-            job_settings,
+            job_settings: job_settings.unwrap_or_default(),
             todo_list,
             dependencies,
             patches,
@@ -398,7 +398,7 @@ impl Issue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct JobSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub repo_name: Option<RepoName>,
@@ -410,6 +410,45 @@ pub struct JobSettings {
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub memory_limit: Option<String>,
+}
+
+impl JobSettings {
+    pub fn is_default(value: &Self) -> bool {
+        value == &Self::default()
+    }
+
+    pub fn merge(mut primary: Self, mut secondary: Self) -> Self {
+        primary.apply_owned(&mut secondary);
+        primary
+    }
+
+    fn apply_owned(&mut self, other: &mut Self) {
+        if self.repo_name.is_none() {
+            self.repo_name = other.repo_name.take();
+        }
+        if self.remote_url.is_none() {
+            self.remote_url = other.remote_url.take();
+        }
+        if self.image.is_none() {
+            self.image = other.image.take();
+        }
+        if self.branch.is_none() {
+            self.branch = other.branch.take();
+        }
+        if self.max_retries.is_none() {
+            self.max_retries = other.max_retries.take();
+        }
+        if self.cpu_limit.is_none() {
+            self.cpu_limit = other.cpu_limit.take();
+        }
+        if self.memory_limit.is_none() {
+            self.memory_limit = other.memory_limit.take();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,6 +809,8 @@ impl From<api::issues::JobSettings> for JobSettings {
             image: value.image,
             branch: value.branch,
             max_retries: value.max_retries,
+            cpu_limit: value.cpu_limit,
+            memory_limit: value.memory_limit,
         }
     }
 }
@@ -782,6 +823,8 @@ impl From<JobSettings> for api::issues::JobSettings {
         job_settings.image = value.image;
         job_settings.branch = value.branch;
         job_settings.max_retries = value.max_retries;
+        job_settings.cpu_limit = value.cpu_limit;
+        job_settings.memory_limit = value.memory_limit;
         job_settings
     }
 }
@@ -795,7 +838,7 @@ impl From<api::issues::Issue> for Issue {
             progress: value.progress,
             status: value.status.into(),
             assignee: value.assignee,
-            job_settings: value.job_settings.map(Into::into),
+            job_settings: value.job_settings.into(),
             todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
@@ -812,7 +855,7 @@ impl From<Issue> for api::issues::Issue {
             value.progress,
             value.status.into(),
             value.assignee,
-            value.job_settings.map(Into::into),
+            Some(value.job_settings.into()),
             value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
@@ -1030,6 +1073,8 @@ mod tests {
             image: Some("worker:latest".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(2),
+            cpu_limit: Some("400m".to_string()),
+            memory_limit: Some("768Mi".to_string()),
         };
         let payload = UpsertIssueRequest {
             issue: Issue {
@@ -1039,7 +1084,7 @@ mod tests {
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),
-                job_settings: Some(job_settings.clone()),
+                job_settings: job_settings.clone(),
                 todo_list: vec![TodoItem {
                     description: "todo".to_string(),
                     is_done: false,
@@ -1070,7 +1115,7 @@ mod tests {
         assert_eq!(decoded.issue.issue_type, payload.issue.issue_type);
         assert_eq!(decoded.issue.description, payload.issue.description);
         assert_eq!(decoded.issue.todo_list.len(), 1);
-        assert_eq!(decoded.issue.job_settings, Some(job_settings));
+        assert_eq!(decoded.issue.job_settings, job_settings);
     }
 
     #[test]

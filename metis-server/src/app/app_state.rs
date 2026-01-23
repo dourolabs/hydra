@@ -3,7 +3,8 @@ use crate::{
     config::AppConfig,
     domain::{
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
+            UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
@@ -198,7 +199,7 @@ pub enum UpdateTodoListError {
 impl AppState {
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
-        let fallback_image = self.config.metis.worker_image.clone();
+        let fallback_image = self.config.job.default_image.clone();
 
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
@@ -215,7 +216,10 @@ impl AppState {
             }
             None => None,
         };
-        let job_settings = issue.as_ref().and_then(|issue| issue.job_settings.clone());
+        let job_settings = issue
+            .as_ref()
+            .map(|issue| issue.job_settings.clone())
+            .filter(|settings| !JobSettings::is_default(settings));
 
         let task = Task::new(
             request.prompt,
@@ -223,14 +227,11 @@ impl AppState {
             request.issue_id.clone(),
             request.image,
             env_vars,
+            job_settings.clone(),
         );
 
-        task.resolve(
-            self.service_state.as_ref(),
-            &fallback_image,
-            job_settings.as_ref(),
-        )
-        .await?;
+        task.resolve(self.service_state.as_ref(), &fallback_image)
+            .await?;
 
         let mut store = self.store.write().await;
         store
@@ -278,11 +279,11 @@ impl AppState {
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
-        let fallback_image = self.config.metis.worker_image.clone();
+        let fallback_image = self.config.job.default_image.clone();
         let (resolved, user) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(task) => {
+                Ok(mut task) => {
                     let (job_settings, user) = match task.spawned_from.as_ref() {
                         Some(issue_id) => {
                             match store.get_issue(issue_id).await {
@@ -311,15 +312,14 @@ impl AppState {
                                 }
                             }
                         }
-                        None => (None, None),
+                        None => (JobSettings::default(), None),
                     };
 
+                    let merged = JobSettings::merge(task.job_settings.clone(), job_settings);
+                    task.job_settings = merged;
+
                     match task
-                        .resolve(
-                            self.service_state.as_ref(),
-                            &fallback_image,
-                            job_settings.as_ref(),
-                        )
+                        .resolve(self.service_state.as_ref(), &fallback_image)
                         .await
                     {
                         Ok(resolved) => (resolved, user),
@@ -1228,6 +1228,7 @@ mod tests {
             None,
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
         )
     }
 
@@ -1238,6 +1239,7 @@ mod tests {
             Some(issue_id.clone()),
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
         )
     }
 

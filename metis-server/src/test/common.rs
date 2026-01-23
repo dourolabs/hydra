@@ -3,7 +3,7 @@ use metis_common::{RepoName, TaskId};
 use std::str::FromStr;
 
 pub(crate) fn default_image() -> String {
-    crate::config::MetisSection::default().worker_image
+    "metis-worker:latest".to_string()
 }
 
 pub(crate) fn task_id(value: &str) -> TaskId {

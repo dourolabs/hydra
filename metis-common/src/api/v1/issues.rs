@@ -408,8 +408,8 @@ pub struct Issue {
     pub status: IssueStatus,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub job_settings: Option<JobSettings>,
+    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
+    pub job_settings: JobSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo_list: Vec<TodoItem>,
     #[serde(default)]
@@ -439,7 +439,7 @@ impl Issue {
             progress,
             status,
             assignee,
-            job_settings,
+            job_settings: job_settings.unwrap_or_default(),
             todo_list,
             dependencies,
             patches,
@@ -460,6 +460,45 @@ pub struct JobSettings {
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub memory_limit: Option<String>,
+}
+
+impl JobSettings {
+    pub fn is_default(value: &Self) -> bool {
+        value == &Self::default()
+    }
+
+    pub fn merge(mut primary: Self, mut secondary: Self) -> Self {
+        primary.apply_owned(&mut secondary);
+        primary
+    }
+
+    fn apply_owned(&mut self, other: &mut Self) {
+        if self.repo_name.is_none() {
+            self.repo_name = other.repo_name.take();
+        }
+        if self.remote_url.is_none() {
+            self.remote_url = other.remote_url.take();
+        }
+        if self.image.is_none() {
+            self.image = other.image.take();
+        }
+        if self.branch.is_none() {
+            self.branch = other.branch.take();
+        }
+        if self.max_retries.is_none() {
+            self.max_retries = other.max_retries.take();
+        }
+        if self.cpu_limit.is_none() {
+            self.cpu_limit = other.cpu_limit.take();
+        }
+        if self.memory_limit.is_none() {
+            self.memory_limit = other.memory_limit.take();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -692,7 +731,7 @@ mod tests {
 
         assert!(issue.todo_list.is_empty());
         assert_eq!(issue.status, IssueStatus::Open);
-        assert!(issue.job_settings.is_none());
+        assert!(JobSettings::is_default(&issue.job_settings));
     }
 
     #[test]
@@ -703,6 +742,8 @@ mod tests {
             image: Some("worker:latest".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(3),
+            cpu_limit: Some("500m".to_string()),
+            memory_limit: Some("1Gi".to_string()),
         };
         let todos = vec![
             TodoItem {
@@ -721,7 +762,7 @@ mod tests {
             progress: String::new(),
             status: IssueStatus::Open,
             assignee: None,
-            job_settings: Some(job_settings.clone()),
+            job_settings: job_settings.clone(),
             todo_list: todos.clone(),
             dependencies: Vec::new(),
             patches: Vec::new(),
@@ -732,6 +773,6 @@ mod tests {
 
         let round_trip: Issue = serde_json::from_value(value).expect("issue should deserialize");
         assert_eq!(round_trip.todo_list, todos);
-        assert_eq!(round_trip.job_settings, Some(job_settings));
+        assert_eq!(round_trip.job_settings, job_settings);
     }
 }

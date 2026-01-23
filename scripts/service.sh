@@ -90,9 +90,13 @@ generate_server_config() {
   cat <<EOF
 [metis]
 namespace = "${NAMESPACE}"
-worker_image = "${CLIENT_IMAGE}"
 server_hostname = "server.${NAMESPACE}.svc.cluster.local"
 OPENAI_API_KEY = "${SERVER_OPENAI_API_KEY}"
+
+[job]
+default_image = "${CLIENT_IMAGE}"
+cpu_limit = "500m"
+memory_limit = "1Gi"
 
 [database]
 url = "${SERVER_DATABASE_URL}"

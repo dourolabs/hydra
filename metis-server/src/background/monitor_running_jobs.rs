@@ -110,6 +110,7 @@ mod tests {
             None,
             None,
             HashMap::new(),
+            None,
         );
         let task_id = store
             .add_task(task, Utc::now())

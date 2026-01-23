@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, ServiceState},
     config::{
-        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, KubernetesSection,
-        MetisSection, ServiceSection,
+        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
+        KubernetesSection, MetisSection, ServiceSection,
     },
     job_engine::JobEngine,
     run_with_state,
@@ -42,6 +42,11 @@ pub fn test_app_config() -> AppConfig {
     AppConfig {
         metis: MetisSection::default(),
         kubernetes: KubernetesSection::default(),
+        job: JobSection {
+            default_image: "metis-worker:latest".to_string(),
+            cpu_limit: "500m".to_string(),
+            memory_limit: "1Gi".to_string(),
+        },
         database: DatabaseSection::default(),
         service: ServiceSection::default(),
         github_app: GithubAppSection {

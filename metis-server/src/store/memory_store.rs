@@ -581,6 +581,7 @@ mod tests {
             None,
             Some("metis-worker:latest".to_string()),
             HashMap::new(),
+            None,
         )
     }
 
