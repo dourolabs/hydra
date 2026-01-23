@@ -23,7 +23,7 @@ use std::{collections::HashMap, sync::Arc};
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
     let state = test_state();
-    let default_image = state.config.metis.worker_image.clone();
+    let default_image = state.config.job.default_image.clone();
     let service_state = state.service_state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -65,7 +65,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
         repo.clone(),
     )])));
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -111,7 +111,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let state = test_state();
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -147,7 +147,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         repo.clone(),
     )])));
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -211,7 +211,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
         repo.clone(),
     )])));
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -256,7 +256,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         repo.clone(),
     )])));
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -349,7 +349,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         repo.clone(),
     )])));
     let service_state = state.service_state.clone();
-    let fallback_image = state.config.metis.worker_image.clone();
+    let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 

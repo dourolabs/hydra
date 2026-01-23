@@ -198,7 +198,7 @@ pub enum UpdateTodoListError {
 impl AppState {
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
-        let fallback_image = self.config.metis.worker_image.clone();
+        let fallback_image = self.config.job.default_image.clone();
 
         let mut env_vars = request.variables;
         env_vars.insert(ENV_METIS_ID.to_string(), job_id.to_string());
@@ -278,7 +278,7 @@ impl AppState {
     }
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
-        let fallback_image = self.config.metis.worker_image.clone();
+        let fallback_image = self.config.job.default_image.clone();
         let resolved = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {

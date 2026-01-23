@@ -17,6 +17,7 @@ use std::{
 pub struct AppConfig {
     #[serde(default)]
     pub metis: MetisSection,
+    pub job: JobSection,
     #[serde(default)]
     pub kubernetes: KubernetesSection,
     #[serde(default)]
@@ -54,8 +55,6 @@ impl AppConfig {
 pub struct MetisSection {
     #[serde(default = "default_namespace")]
     pub namespace: String,
-    #[serde(default = "default_worker_image")]
-    pub worker_image: String,
     #[serde(default)]
     pub server_hostname: String,
     #[serde(default, rename = "OPENAI_API_KEY")]
@@ -66,11 +65,20 @@ impl Default for MetisSection {
     fn default() -> Self {
         Self {
             namespace: default_namespace(),
-            worker_image: default_worker_image(),
             server_hostname: String::new(),
             openai_api_key: None,
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct JobSection {
+    #[serde(default)]
+    pub default_image: String,
+    #[serde(default = "default_cpu_limit")]
+    pub cpu_limit: String,
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -294,10 +302,6 @@ fn default_namespace() -> String {
     "default".to_string()
 }
 
-fn default_worker_image() -> String {
-    "metis-worker:latest".to_string()
-}
-
 pub const DEFAULT_AGENT_MAX_TRIES: u32 = 3;
 pub const DEFAULT_AGENT_MAX_SIMULTANEOUS: u32 = u32::MAX;
 const fn default_min_connections() -> u32 {
@@ -374,6 +378,14 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
         interval_secs: default_github_poll_interval_secs(),
         ..Default::default()
     }
+}
+
+fn default_cpu_limit() -> String {
+    "500m".to_string()
+}
+
+fn default_memory_limit() -> String {
+    "1Gi".to_string()
 }
 
 #[cfg(test)]
