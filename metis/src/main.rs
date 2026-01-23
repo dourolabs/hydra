@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
+    auth,
     client::{MetisClient, MetisClientInterface},
     command,
     config::{self, AppConfig},
@@ -29,6 +30,10 @@ struct Cli {
         global = true
     )]
     server_url: Option<String>,
+
+    /// Path to the auth token file (defaults to ~/.local/share/metis/auth-token).
+    #[arg(long = "token", value_name = "PATH", global = true, default_value = auth::DEFAULT_AUTH_TOKEN_PATH)]
+    token: String,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -92,24 +97,28 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let app_config = load_app_config(&cli)?;
     let client = MetisClient::from_config(&app_config)?;
+    let token_path = config::expand_path(PathBuf::from(&cli.token));
 
-    dispatch(cli, &client, &app_config).await
+    dispatch(cli, &client, &app_config, &token_path).await
 }
 
 async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
+    token_path: &PathBuf,
 ) -> Result<()> {
     match resolve_command(cli.command) {
-        Commands::Jobs { command } => command::jobs::run(client, command).await?,
+        Commands::Jobs { command } => command::jobs::run(client, command, token_path).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
-        Commands::Patches { command } => command::patches::run(client, command).await?,
-        Commands::Dashboard => command::dashboard::run(client, &app_config.server.url).await?,
-        Commands::Issues { command } => command::issues::run(client, command).await?,
+        Commands::Patches { command } => command::patches::run(client, command, token_path).await?,
+        Commands::Dashboard => {
+            command::dashboard::run(client, &app_config.server.url, token_path).await?
+        }
+        Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
-        Commands::Login => command::login::run(client).await?,
+        Commands::Login => command::login::run(client, token_path).await?,
         Commands::Chat {
             prompt,
             model,
@@ -156,7 +165,7 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
 #[cfg(test)]
 mod tests {
     use super::{load_app_config, resolve_command, Cli, Commands};
-    use crate::constants::DEFAULT_CONFIG_FILE;
+    use crate::{auth, constants::DEFAULT_CONFIG_FILE};
     use clap::Parser;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -165,6 +174,7 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
+            token: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
             command: Some(super::Commands::Agents { pretty: false }),
         }
     }

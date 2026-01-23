@@ -550,6 +550,13 @@ impl Store for MemoryStore {
             .cloned()
             .ok_or(StoreError::UserNotFoundForToken)
     }
+
+    async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        self.users
+            .get(username)
+            .cloned()
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
 }
 
 #[cfg(test)]
@@ -599,7 +606,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             "issue details".to_string(),
-            User::new(Username::from("creator"), String::new()),
+            Username::from("creator"),
             String::new(),
             IssueStatus::Open,
             None,

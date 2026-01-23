@@ -8,7 +8,7 @@ use crate::{
             UpsertIssueResponse,
         },
         jobs::BundleSpec,
-        users::{User, Username},
+        users::Username,
     },
     job_engine::{JobEngine, JobStatus},
     store::Task,
@@ -25,7 +25,7 @@ use std::{collections::HashMap, sync::Arc};
 fn issue(
     issue_type: IssueType,
     description: &str,
-    creator: User,
+    creator: Username,
     progress: String,
     status: IssueStatus,
     assignee: Option<&str>,
@@ -47,16 +47,16 @@ fn issue(
     )
 }
 
-fn user(username: &str) -> User {
-    User::new(Username::from(username), "token".to_string())
+fn user(username: &str) -> Username {
+    Username::from(username)
 }
 
-fn default_user() -> User {
+fn default_user() -> Username {
     user("creator")
 }
 
-fn missing_user() -> User {
-    User::new(Username::from(""), String::new())
+fn missing_user() -> Username {
+    Username::from("")
 }
 
 fn todo(description: &str, is_done: bool) -> TodoItem {

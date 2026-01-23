@@ -1,4 +1,4 @@
-use super::users::User;
+use super::users::Username;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -352,7 +352,7 @@ pub struct Issue {
     #[serde(rename = "type")]
     pub issue_type: IssueType,
     pub description: String,
-    pub creator: User,
+    pub creator: Username,
     #[serde(default)]
     pub progress: String,
     #[serde(default)]
@@ -374,7 +374,7 @@ impl Issue {
     pub fn new(
         issue_type: IssueType,
         description: String,
-        creator: User,
+        creator: Username,
         progress: String,
         status: IssueStatus,
         assignee: Option<String>,
@@ -1035,7 +1035,7 @@ mod tests {
             issue: Issue {
                 issue_type: IssueType::Task,
                 description: "cool feature".to_string(),
-                creator: User::new(Username::from("alice"), "token".to_string()),
+                creator: Username::from("alice"),
                 progress: "in-progress".to_string(),
                 status: IssueStatus::Open,
                 assignee: Some("bob".to_string()),

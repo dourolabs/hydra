@@ -7,6 +7,7 @@ use crate::{
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
+        users::User,
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
@@ -278,24 +279,39 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let fallback_image = self.config.metis.worker_image.clone();
-        let resolved = {
+        let (resolved, user) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(task) => {
-                    let job_settings = match task.spawned_from.as_ref() {
-                        Some(issue_id) => match store.get_issue(issue_id).await {
-                            Ok(issue) => issue.job_settings,
-                            Err(err) => {
-                                warn!(
-                                    metis_id = %task_id,
-                                    issue_id = %issue_id,
-                                    error = %err,
-                                    "failed to load job settings for spawning"
-                                );
-                                return;
+                    let (job_settings, user) = match task.spawned_from.as_ref() {
+                        Some(issue_id) => {
+                            match store.get_issue(issue_id).await {
+                                Ok(issue) => {
+                                    // Look up user by issue creator
+                                    let user: Option<User> =
+                                        store.get_user(&issue.creator).await.ok(); // Log warning but don't fail if user not found
+                                    if user.is_none() {
+                                        warn!(
+                                            metis_id = %task_id,
+                                            issue_id = %issue_id,
+                                            creator = %issue.creator,
+                                            "user not found for issue creator, job will run without GitHub token"
+                                        );
+                                    }
+                                    (issue.job_settings, user)
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        metis_id = %task_id,
+                                        issue_id = %issue_id,
+                                        error = %err,
+                                        "failed to load issue for spawning"
+                                    );
+                                    return;
+                                }
                             }
-                        },
-                        None => None,
+                        }
+                        None => (None, None),
                     };
 
                     match task
@@ -306,7 +322,7 @@ impl AppState {
                         )
                         .await
                     {
-                        Ok(resolved) => resolved,
+                        Ok(resolved) => (resolved, user),
                         Err(err) => {
                             warn!(
                                 metis_id = %task_id,
@@ -330,7 +346,7 @@ impl AppState {
 
         match self
             .job_engine
-            .create_job(&task_id, &resolved.image, &resolved.env_vars)
+            .create_job(&task_id, &resolved.image, &resolved.env_vars, user.as_ref())
             .await
         {
             Ok(()) => {
@@ -677,7 +693,7 @@ impl AppState {
                 }
 
                 let updated_issue = issue.clone();
-                if updated_issue.creator.username.as_ref().trim().is_empty() {
+                if updated_issue.creator.as_ref().trim().is_empty() {
                     return Err(UpsertIssueError::MissingCreator);
                 }
                 let is_dropping = updated_issue.status == IssueStatus::Dropped;
@@ -762,7 +778,7 @@ impl AppState {
                     }
                 }
 
-                if issue.creator.username.as_ref().trim().is_empty() {
+                if issue.creator.as_ref().trim().is_empty() {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
                     }) {
@@ -785,7 +801,7 @@ impl AppState {
                         }
                     }
                 }
-                if issue.creator.username.as_ref().trim().is_empty() {
+                if issue.creator.as_ref().trim().is_empty() {
                     return Err(UpsertIssueError::MissingCreator);
                 }
 
@@ -1195,7 +1211,7 @@ mod tests {
                 UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
-            users::{User, Username},
+            users::Username,
         },
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
@@ -1233,7 +1249,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             description.to_string(),
-            User::new(Username::from("creator"), String::new()),
+            Username::from("creator"),
             String::new(),
             status,
             None,
@@ -1795,7 +1811,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = User::new(Username::from("parent-creator"), "token".to_string());
+        parent_issue.creator = Username::from("parent-creator");
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1804,7 +1820,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = User::new(Username::from(""), String::new());
+        child_issue.creator = Username::from("");
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1812,10 +1828,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(
-            stored_child.creator,
-            User::new(Username::from("parent-creator"), "token".to_string())
-        );
+        assert_eq!(stored_child.creator, Username::from("parent-creator"));
     }
 
     #[tokio::test]
@@ -1824,7 +1837,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
-        parent_issue.creator = User::new(Username::from("parent-creator"), "token".to_string());
+        parent_issue.creator = Username::from("parent-creator");
         let parent_id = state
             .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
             .await
@@ -1833,7 +1846,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
-        child_issue.creator = User::new(Username::from("explicit-creator"), "token".to_string());
+        child_issue.creator = Username::from("explicit-creator");
         let child_id = state
             .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
             .await
@@ -1841,10 +1854,7 @@ mod tests {
 
         let store = state.store.read().await;
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(
-            stored_child.creator,
-            User::new(Username::from("explicit-creator"), "token".to_string())
-        );
+        assert_eq!(stored_child.creator, Username::from("explicit-creator"));
     }
 
     #[tokio::test]
@@ -1853,7 +1863,7 @@ mod tests {
         let state = test_state_with_engine(job_engine);
 
         let mut issue = issue_with_status("solo", IssueStatus::Open, vec![]);
-        issue.creator = User::new(Username::from(""), String::new());
+        issue.creator = Username::from("");
         let err = state
             .upsert_issue(None, UpsertIssueRequest::new(issue, None))
             .await

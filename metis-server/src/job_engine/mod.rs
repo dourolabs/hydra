@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+use crate::domain::users::User;
+
 mod kubernetes_job_engine;
 
 pub use kubernetes_job_engine::KubernetesJobEngine;
@@ -79,6 +81,7 @@ pub trait JobEngine: Send + Sync {
     /// * `metis_id` - The Metis ID to use for the job
     /// * `image` - The container image the job should run
     /// * `env_vars` - Environment variables to inject into the job container
+    /// * `user` - Optional user whose GitHub token should be mounted in the job
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -87,6 +90,7 @@ pub trait JobEngine: Send + Sync {
         metis_id: &TaskId,
         image: &str,
         env_vars: &HashMap<String, String>,
+        user: Option<&User>,
     ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.

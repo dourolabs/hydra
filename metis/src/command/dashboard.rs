@@ -17,7 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
-    users::{User, Username},
+    users::Username,
     IssueId, TaskId,
 };
 use ratatui::{
@@ -252,7 +252,7 @@ struct DashboardState {
     issue_draft_scroll: ListScrollState,
     jobs_error: Option<String>,
     records_error: Option<String>,
-    username: String,
+    username: Username,
     server_url: String,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
@@ -292,7 +292,7 @@ impl Default for DashboardState {
             issue_draft_scroll: ListScrollState::default(),
             jobs_error: None,
             records_error: None,
-            username: String::new(),
+            username: Username::from(""),
             server_url: String::new(),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
@@ -326,8 +326,13 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, server_url: &str) -> Result<()> {
-    let username = auth::resolve_auth_user(client).await?.to_string();
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    server_url: &str,
+    token_path: &std::path::Path,
+) -> Result<()> {
+    let token_path_buf = token_path.to_path_buf();
+    let username = auth::resolve_auth_user(client, &token_path_buf).await?;
     let mut terminal = ratatui::init();
     let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
     ratatui::restore();
@@ -337,7 +342,7 @@ pub async fn run(client: &dyn MetisClientInterface, server_url: &str) -> Result<
 async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
-    username: String,
+    username: Username,
     server_url: &str,
 ) -> Result<()> {
     let mut state = DashboardState {
@@ -815,7 +820,7 @@ fn handle_issue_submission_result(
 async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
-    creator: &str,
+    creator: &Username,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -823,14 +828,12 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let token = auth::ensure_auth_token(client).await?;
-    let creator = User::new(Username::from(creator), token);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
             IssueType::Task,
             submission.prompt.trim().to_string(),
-            creator,
+            creator.clone(),
             String::new(),
             IssueStatus::Open,
             assignee,
@@ -851,7 +854,12 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header, &state.username, &state.server_url);
+    render_dashboard_header(
+        frame,
+        layout.header,
+        state.username.as_str(),
+        &state.server_url,
+    );
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
@@ -1744,7 +1752,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.collapsed_issue_ids,
     );
     let user_unowned_issue_lines =
-        build_user_unowned_issue_lines(&state.username, &state.issues, &state.jobs);
+        build_user_unowned_issue_lines(state.username.as_str(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines_with_collapsed(
         &state.issues,
         &state.jobs,
@@ -2350,7 +2358,6 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{
@@ -2365,8 +2372,6 @@ mod tests {
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
-    use std::{env, fs};
-    use tempfile::tempdir;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
@@ -2984,7 +2989,7 @@ mod tests {
             issue_with_assignee("i-agent", IssueStatus::Open, Some("bot")),
         ];
         let mut state = DashboardState {
-            username: "alice".to_string(),
+            username: Username::from("alice"),
             issues,
             ..Default::default()
         };
@@ -3291,7 +3296,7 @@ mod tests {
             .collect();
         let mut state = DashboardState {
             issues,
-            username: "alice".to_string(),
+            username: Username::from("alice"),
             ..DashboardState::default()
         };
         update_views(&mut state);
@@ -3688,25 +3693,13 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn submit_issue_sends_task_request() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
-        let original_home = env::var_os("HOME");
-        let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/issues").json_body(json!({
                 "issue": {
                     "type": "task",
                     "description": "Draft release notes",
-                    "creator": {
-                        "username": " metis-user ",
-                        "github_user_id": null,
-                        "github_token": "token-123"
-                    },
+                    "creator": " metis-user ",
                     "progress": "",
                     "status": "open",
                     "assignee": "alice",
@@ -3725,16 +3718,12 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission, " metis-user ")
+        let created = submit_issue(&client, &submission, &Username::from(" metis-user "))
             .await
             .expect("submission failed");
 
         assert_eq!(created, issue_id("i-new"));
         mock.assert();
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {

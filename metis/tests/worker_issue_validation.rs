@@ -46,8 +46,8 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
 
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env.run_as_worker(
         vec![
-            "metis issues create --creator worker \"parent issue\" | tee parent_id.txt".to_string(),
-            "metis issues create --creator worker --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
+            "metis issues create \"parent issue\" | tee parent_id.txt".to_string(),
+            "metis issues create --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
                 .to_string(),
             "metis issues update $(cat parent_id.txt) --status closed".to_string(),
         ],
@@ -118,8 +118,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env
         .run_as_worker(
             vec![
-                "metis issues create --creator worker \"issue with todos\" | tee issue_id.txt"
-                    .to_string(),
+                "metis issues create \"issue with todos\" | tee issue_id.txt".to_string(),
                 "metis issues todo $(cat issue_id.txt) --add \"write more tests\"".to_string(),
                 "metis issues update $(cat issue_id.txt) --status closed".to_string(),
             ],
