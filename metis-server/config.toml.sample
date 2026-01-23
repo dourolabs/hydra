@@ -118,3 +118,7 @@ cluster_name = "kind-local-dev"
 
 # Optional explicit API server endpoint; leave blank to use kubeconfig default.
 api_server = ""
+
+# Optional imagePullSecret configured via 1Password operator for pulling images.
+# Leave blank to omit imagePullSecrets from the worker pod spec.
+# image_pull_secret = "ghcr-credentials"

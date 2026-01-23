@@ -7,8 +7,8 @@ use k8s_openapi::{
     api::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{
-            Container, EnvVar, Pod, PodSpec, PodTemplateSpec, ResourceRequirements, Secret, Volume,
-            VolumeMount,
+            Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec,
+            ResourceRequirements, Secret, Volume, VolumeMount,
         },
     },
     apimachinery::pkg::api::resource::Quantity,
@@ -30,6 +30,7 @@ pub struct KubernetesJobEngine {
     pub openai_api_key: String,
     pub server_hostname: String,
     pub client: Client,
+    pub image_pull_secret: Option<String>,
 }
 
 fn merge_env_vars(
@@ -62,6 +63,19 @@ fn merge_env_vars(
             ..Default::default()
         })
         .collect()
+}
+
+fn build_image_pull_secrets(image_pull_secret: Option<&str>) -> Option<Vec<LocalObjectReference>> {
+    image_pull_secret
+        .and_then(|name| {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .map(|name| vec![LocalObjectReference { name: Some(name) }])
 }
 
 impl KubernetesJobEngine {
@@ -553,6 +567,8 @@ impl JobEngine for KubernetesJobEngine {
             });
         }
 
+        let image_pull_secrets = build_image_pull_secrets(self.image_pull_secret.as_deref());
+
         let job = Job {
             metadata: ObjectMeta {
                 name: Some(job_name.clone()),
@@ -573,6 +589,7 @@ impl JobEngine for KubernetesJobEngine {
                             Some(volumes)
                         },
                         restart_policy: Some("Never".into()),
+                        image_pull_secrets,
                         ..Default::default()
                     }),
                 },
@@ -867,6 +884,21 @@ mod tests {
             .collect();
 
         assert!(!merged_map.contains_key(ENV_METIS_SERVER_URL));
+    }
+
+    #[test]
+    fn build_image_pull_secrets_includes_reference_when_set() {
+        let secrets = build_image_pull_secrets(Some("ghcr-credentials"))
+            .expect("expected image_pull_secrets");
+
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name.as_deref(), Some("ghcr-credentials"));
+    }
+
+    #[test]
+    fn build_image_pull_secrets_omits_blank_and_none() {
+        assert!(build_image_pull_secrets(None).is_none());
+        assert!(build_image_pull_secrets(Some("   ")).is_none());
     }
 
     #[test]

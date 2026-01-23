@@ -133,6 +133,8 @@ pub struct KubernetesSection {
     pub cluster_name: String,
     #[serde(default)]
     pub api_server: String,
+    #[serde(default)]
+    pub image_pull_secret: Option<String>,
 }
 
 impl Default for KubernetesSection {
@@ -143,6 +145,7 @@ impl Default for KubernetesSection {
             context: String::new(),
             cluster_name: String::new(),
             api_server: String::new(),
+            image_pull_secret: None,
         }
     }
 }
