@@ -98,6 +98,8 @@ struct IssueLine {
     assignee: Option<String>,
     task: Option<TaskIndicator>,
     depth: usize,
+    has_children: bool,
+    collapsed: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -1409,7 +1411,11 @@ fn issue_line_lines(
         .map(|(index, line)| {
             let mut spans = Vec::new();
             if show_hierarchy {
-                spans.push(Span::raw(issue_prefix(line.depth)));
+                spans.push(Span::raw(issue_prefix(
+                    line.depth,
+                    line.has_children,
+                    line.collapsed,
+                )));
                 spans.push(Span::raw(" "));
             }
             let (issue_status_label, issue_status_style) =
@@ -1629,11 +1635,22 @@ fn render_panel_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: Scroll
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
-fn issue_prefix(depth: usize) -> String {
-    if depth == 0 {
+fn issue_prefix(depth: usize, has_children: bool, collapsed: bool) -> String {
+    let base = if depth == 0 {
         "|".to_string()
     } else {
         format!("│{}", "  ".repeat(depth))
+    };
+    format!("{base}{}", issue_tree_indicator(has_children, collapsed))
+}
+
+fn issue_tree_indicator(has_children: bool, collapsed: bool) -> &'static str {
+    if !has_children {
+        " "
+    } else if collapsed {
+        "+"
+    } else {
+        "-"
     }
 }
 
@@ -2058,6 +2075,8 @@ fn append_issue(
         assignee: node.record.assignee.clone(),
         task: node.task.clone(),
         depth,
+        has_children: !node.children.is_empty(),
+        collapsed: collapsed_issue_ids.contains(id),
     });
 
     if collapsed_issue_ids.contains(id) {
@@ -2098,6 +2117,8 @@ fn collect_issue_lines(
         assignee: node.record.assignee.clone(),
         task: node.task.clone(),
         depth,
+        has_children: !node.children.is_empty(),
+        collapsed: collapsed_issue_ids.contains(id),
     });
 
     if collapsed_issue_ids.contains(id) {
@@ -2441,6 +2462,14 @@ mod tests {
 
     fn blocked_on(issue_ref: &str) -> IssueDependency {
         IssueDependency::new(IssueDependencyType::BlockedOn, issue_id(issue_ref))
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        let mut text = String::new();
+        for span in &line.spans {
+            text.push_str(span.content.as_ref());
+        }
+        text
     }
 
     #[test]
@@ -3113,6 +3142,34 @@ mod tests {
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-open-root").to_string());
+    }
+
+    #[test]
+    fn issue_line_prefix_shows_collapsed_indicator() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+        let mut collapsed = HashSet::new();
+        collapsed.insert(issue_id("i-root"));
+
+        let lines = build_issue_lines_with_collapsed(&issues, &[], false, &collapsed);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, None, false);
+
+        assert!(line_text(&rendered[0]).starts_with("|+ "));
+    }
+
+    #[test]
+    fn issue_line_prefix_shows_expanded_indicator() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+
+        let lines = build_issue_lines(&issues, &[], false);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, None, false);
+
+        assert!(line_text(&rendered[0]).starts_with("|- "));
     }
 
     #[test]
