@@ -998,13 +998,10 @@ mod tests {
             None,
         );
 
-        let installation = select_github_installation(
-            state.github_app.as_ref(),
-            &github.owner,
-            &github.repo,
-        )
-            .await
-            .expect("select should not error without app");
+        let installation =
+            select_github_installation(state.github_app.as_ref(), &github.owner, &github.repo)
+                .await
+                .expect("select should not error without app");
 
         assert!(installation.is_none());
     }
