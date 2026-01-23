@@ -84,6 +84,7 @@ impl TestEnvironment {
         let temp_dir =
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
+        let token_path = temp_dir.path().join("auth-token");
 
         let bash_commands = BashCommands::new_with_failure(commands, fail_after_run);
 
@@ -94,6 +95,7 @@ impl TestEnvironment {
             None,
             None,
             &bash_commands,
+            &token_path,
         )
         .await;
 
@@ -295,7 +297,6 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
         metis_common::repositories::ServiceRepositoryConfig::new(
             remote_url.to_string(),
             Some("main".to_string()),
-            None,
             None,
         ),
     );

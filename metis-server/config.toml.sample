@@ -35,8 +35,6 @@ idle_timeout_secs = 300
 remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
 default_image = "metis-worker:latest"
-# Optional fallback token for repository access; most operations use the issue creator's token.
-github_token = ""
 
 [github_app]
 # GitHub App configuration for device flow and API access.

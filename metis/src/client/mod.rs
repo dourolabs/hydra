@@ -1184,14 +1184,13 @@ mod tests {
     use std::str::FromStr;
 
     #[tokio::test]
-    async fn list_repositories_fetches_config_without_secrets() -> Result<()> {
+    async fn list_repositories_fetches_config() -> Result<()> {
         let server = MockServer::start();
         let repositories = vec![ServiceRepositoryInfo::new(
             RepoName::from_str("dourolabs/metis")?,
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("ghcr.io/example/repo:main".to_string()),
-            true,
         )];
         let payload = ListRepositoriesResponse::new(repositories);
 
@@ -1206,13 +1205,6 @@ mod tests {
 
         mock.assert();
         assert_eq!(response, payload);
-        assert!(
-            response
-                .repositories
-                .first()
-                .expect("repository response should not be empty")
-                .github_token_present
-        );
 
         Ok(())
     }
@@ -1226,7 +1218,6 @@ mod tests {
             ServiceRepositoryConfig::new(
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
-                Some("token-123".to_string()),
                 Some("ghcr.io/example/new-repo:main".to_string()),
             ),
         );
@@ -1235,7 +1226,6 @@ mod tests {
             request.repository.remote_url.clone(),
             request.repository.default_branch.clone(),
             request.repository.default_image.clone(),
-            true,
         ));
 
         let mock = server.mock(|when, then| {
@@ -1243,7 +1233,6 @@ mod tests {
                 "name": "dourolabs/new-repo",
                 "remote_url": "https://example.com/new-repo.git",
                 "default_branch": "main",
-                "github_token": "token-123",
                 "default_image": "ghcr.io/example/new-repo:main"
             }));
             then.status(200).json_body_obj(&response_body);
@@ -1255,7 +1244,6 @@ mod tests {
 
         mock.assert();
         assert_eq!(response.repository.name, repo_name);
-        assert!(response.repository.github_token_present);
         assert_eq!(
             response.repository.default_image.as_deref(),
             Some("ghcr.io/example/new-repo:main")
@@ -1272,7 +1260,6 @@ mod tests {
             "https://example.com/updated.git".to_string(),
             None,
             None,
-            None,
         ));
 
         let mock = server.mock(|when, then| {
@@ -1281,7 +1268,6 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/updated.git",
                     "default_branch": null,
-                    "github_token": null,
                     "default_image": null
                 }));
             then.status(404);

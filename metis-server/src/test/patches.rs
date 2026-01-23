@@ -10,7 +10,7 @@ use crate::{
             ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
         },
-        users::{User, Username},
+        users::Username,
     },
     store::Task,
     test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
@@ -142,7 +142,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
     let merge_request_issue = Issue::new(
         IssueType::MergeRequest,
         "linked merge request".to_string(),
-        User::new(Username::from("creator"), String::new()),
+        Username::from("creator"),
         String::new(),
         IssueStatus::Open,
         None,

@@ -3,7 +3,7 @@ use crate::app::TaskExt;
 #[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
-use crate::domain::users::{User, Username};
+use crate::domain::users::Username;
 use crate::{
     app::AppState,
     config::AgentQueueConfig,
@@ -263,8 +263,8 @@ mod tests {
     use chrono::Utc;
     use std::sync::Arc;
 
-    fn default_user() -> User {
-        User::new(Username::from("spawner"), "creator-token".to_string())
+    fn default_user() -> Username {
+        Username::from("spawner")
     }
 
     fn queue(agent_name: &str) -> AgentQueue {
@@ -793,7 +793,6 @@ mod tests {
                 repo_name.clone(),
                 "https://github.com/dourolabs/metis.git".to_string(),
                 Some("main".to_string()),
-                Some("token".to_string()),
                 Some("repo-image".to_string()),
             ),
         )])));
@@ -852,6 +851,62 @@ mod tests {
                 .map(|value| value.as_str()),
             Some(issue_id.as_ref())
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sets_creator_github_token_env_var() -> anyhow::Result<()> {
+        let state = test_state();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Needs token".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings::default(),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let queue = queue("agent-a");
+        let tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_empty_creator_github_token_env_var() -> anyhow::Result<()> {
+        let state = test_state();
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Empty token".to_string(),
+                    creator: Username::from("spawner"),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings::default(),
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let queue = queue("agent-a");
+        let tasks = queue.spawn(&state).await?;
+        assert_eq!(tasks.len(), 1);
 
         Ok(())
     }

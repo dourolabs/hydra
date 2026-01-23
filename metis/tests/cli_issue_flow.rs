@@ -36,7 +36,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let description = "integration flow issue";
 
     run_metis_command(
-        &["issues", "create", "--creator", "test-user", description],
+        &["issues", "create", description],
         &app_config,
         temp_home.path(),
     )

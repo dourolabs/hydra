@@ -11,7 +11,7 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
-    users::{ResolveUserRequest, User},
+    users::{ResolveUserRequest, User, Username},
     PatchId, RepoName,
 };
 use serde::Serialize;
@@ -80,10 +80,6 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
 
-        /// Creator for the issue (must match the authenticated user).
-        #[arg(long, value_name = "CREATOR")]
-        creator: Option<String>,
-
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
         description: String,
@@ -133,10 +129,6 @@ pub enum IssueCommands {
         /// Remove the current assignee.
         #[arg(long)]
         clear_assignee: bool,
-
-        /// Updated creator (must match the authenticated user).
-        #[arg(long, value_name = "CREATOR")]
-        creator: Option<String>,
 
         /// Updated description.
         #[arg(long, value_name = "DESCRIPTION")]
@@ -257,7 +249,11 @@ pub enum IssueCommands {
     },
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: IssueCommands,
+    token_path: &std::path::PathBuf,
+) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
@@ -286,7 +282,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             dependencies,
             patches,
             assignee,
-            creator,
             description,
             progress,
             repo_name,
@@ -295,6 +290,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             branch,
             max_retries,
         } => {
+            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
             create_issue(
                 client,
                 r#type,
@@ -319,7 +315,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             status,
             assignee,
             clear_assignee,
-            creator,
             description,
             dependencies,
             clear_dependencies,
@@ -334,6 +329,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             max_retries,
             clear_job_settings,
         } => {
+            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
             update_issue(
                 client,
                 id,
@@ -681,7 +677,7 @@ async fn create_issue(
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<String>,
-    creator: Option<String>,
+    creator: Username,
     description: String,
     progress: Option<String>,
     repo_name: Option<String>,
@@ -698,38 +694,6 @@ async fn create_issue(
     let progress = progress
         .map(|value| value.trim().to_string())
         .unwrap_or_default();
-
-    let creator = match creator {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                bail!("Creator must not be empty.");
-            }
-            let authenticated_user = resolve_authenticated_user(client).await?;
-            if !creator_matches_user(trimmed, &authenticated_user) {
-                bail!(
-                    "Creator override must match the authenticated user ({})",
-                    authenticated_user.username.as_ref()
-                );
-            }
-            authenticated_user
-        }
-        None => {
-            if let Some(parent_id) = dependencies
-                .iter()
-                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-                .map(|dependency| dependency.issue_id.clone())
-            {
-                let parent = client
-                    .get_issue(&parent_id)
-                    .await
-                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
-                parent.issue.creator
-            } else {
-                resolve_authenticated_user(client).await?
-            }
-        }
-    };
 
     let assignee = match assignee {
         Some(value) => {
@@ -785,7 +749,7 @@ async fn update_issue(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
-    creator: Option<String>,
+    creator: Username,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
@@ -825,23 +789,6 @@ async fn update_issue(
         None
     };
 
-    let creator = if let Some(value) = creator {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("Creator must not be empty.");
-        }
-        let authenticated_user = resolve_authenticated_user(client).await?;
-        if !creator_matches_user(trimmed, &authenticated_user) {
-            bail!(
-                "Creator override must match the authenticated user ({})",
-                authenticated_user.username.as_ref()
-            );
-        }
-        Some(authenticated_user)
-    } else {
-        None
-    };
-
     let dependencies_update = if clear_dependencies {
         Some(Vec::new())
     } else if dependencies.is_empty() {
@@ -874,7 +821,6 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && status.is_none()
         && assignee.is_none()
-        && creator.is_none()
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
@@ -907,7 +853,7 @@ async fn update_issue(
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
-        creator.unwrap_or(current.issue.creator),
+        creator,
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
@@ -926,8 +872,11 @@ async fn update_issue(
     Ok(())
 }
 
-async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result<User> {
-    let token = auth::ensure_auth_token(client).await?;
+async fn resolve_authenticated_user(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
+) -> Result<User> {
+    let token = auth::ensure_auth_token(client, token_path).await?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token.clone()))
         .await
@@ -937,8 +886,31 @@ async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result
     Ok(user)
 }
 
-fn creator_matches_user(creator: &str, user: &User) -> bool {
-    user.username.as_ref().eq_ignore_ascii_case(creator)
+async fn resolve_creator_username(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
+    dependencies: &[IssueDependency],
+) -> Result<Username> {
+    // First try to resolve the authenticated user
+    match resolve_authenticated_user(client, token_path).await {
+        Ok(user) => Ok(user.username),
+        Err(_) => {
+            // If that fails, try to get the creator from the parent issue
+            if let Some(parent_id) = dependencies
+                .iter()
+                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+                .map(|dependency| dependency.issue_id.clone())
+            {
+                let parent = client
+                    .get_issue(&parent_id)
+                    .await
+                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
+                Ok(parent.issue.creator)
+            } else {
+                bail!("Failed to resolve authenticated user and no parent issue found");
+            }
+        }
+    }
 }
 
 async fn manage_todo_list(
@@ -1132,7 +1104,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {}", creator.username.as_ref())?;
+        writeln!(writer, "Creator: {}", creator.as_ref())?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -1232,7 +1204,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {}", creator.username.as_ref())?;
+    writeln!(writer, "{indent}Creator: {}", creator.as_ref())?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1480,7 +1452,6 @@ fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
@@ -1491,14 +1462,11 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::{ResolveUserRequest, ResolveUserResponse, User, UserSummary, Username},
+        users::Username,
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::env;
-    use std::fs;
     use std::str::FromStr;
-    use tempfile::tempdir;
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1520,12 +1488,8 @@ mod tests {
         job_settings
     }
 
-    fn user(username: &str) -> User {
-        User::new(Username::from(username), String::new())
-    }
-
-    fn empty_user() -> User {
-        User::new(Username::from(""), String::new())
+    fn empty_user() -> Username {
+        Username::from("")
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
@@ -1895,38 +1859,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn create_issue_submits_issue_record() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
-        let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
 
         let patch_ids = vec![patch_id("p-123")];
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                {
-                    let mut creator = User::new(Username::from("creator-a"), "token-123".into());
-                    creator.github_user_id = resolve_response.user.github_user_id;
-                    creator
-                },
+                Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -1952,7 +1894,7 @@ mod tests {
             Vec::new(),
             patch_ids.clone(),
             Some("team-a".into()),
-            None,
+            Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
             None,
@@ -1964,52 +1906,24 @@ mod tests {
         .await
         .unwrap();
 
-        resolve_mock.assert();
         create_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn create_issue_sets_job_settings() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
-        let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
 
         let mut job_settings = sample_job_settings();
         job_settings.image = Some("worker:latest".into());
         job_settings.branch = Some("feature/job-settings".into());
         job_settings.max_retries = Some(4);
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                {
-                    let mut creator = User::new(Username::from("creator-a"), "token-123".into());
-                    creator.github_user_id = resolve_response.user.github_user_id;
-                    creator
-                },
+                Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -2035,7 +1949,7 @@ mod tests {
             Vec::new(),
             vec![],
             Some("team-a".into()),
-            None,
+            Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
             Some("dourolabs/example".into()),
@@ -2047,151 +1961,9 @@ mod tests {
         .await
         .unwrap();
 
-        resolve_mock.assert();
         create_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
-        assert_eq!(create_mock.hits(), 1);
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
-    }
-
-    #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
-    async fn create_issue_rejects_creator_override_mismatch() {
-        let _guard = test_env::lock();
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
-        let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
-
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
-
-        let result = create_issue(
-            &client,
-            IssueType::Bug,
-            IssueStatus::Open,
-            Vec::new(),
-            Vec::new(),
-            None,
-            Some("creator-b".into()),
-            "Description".into(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
-
-        resolve_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("Creator override must match"));
-
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
-    }
-
-    #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
-    async fn create_issue_uses_parent_creator_for_child_dependency() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let parent_id = issue_id("i-1");
-        let dependencies = vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_id.clone(),
-        )];
-        let patch_ids = vec![patch_id("p-123")];
-
-        let parent_issue = IssueRecord::new(
-            parent_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "Parent issue".into(),
-                user("parent-owner"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
-        );
-
-        let get_parent_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{parent_id}").as_str());
-            then.status(200).json_body_obj(&parent_issue);
-        });
-
-        let create_request = UpsertIssueRequest::new(
-            Issue::new(
-                IssueType::MergeRequest,
-                "New issue description".into(),
-                user("parent-owner"),
-                "Initial notes".into(),
-                IssueStatus::Closed,
-                Some("team-a".into()),
-                None,
-                Vec::new(),
-                dependencies.clone(),
-                patch_ids.clone(),
-            ),
-            None,
-        );
-        let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/issues")
-                .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
-        });
-
-        create_issue(
-            &client,
-            IssueType::MergeRequest,
-            IssueStatus::Closed,
-            dependencies.clone(),
-            patch_ids.clone(),
-            Some("team-a".into()),
-            None,
-            "New issue description".into(),
-            Some("Initial notes".into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        get_parent_mock.assert();
-        create_mock.assert();
-        assert_eq!(get_parent_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
     }
-
     #[tokio::test]
     async fn create_issue_requires_description() {
         let server = MockServer::start();
@@ -2203,7 +1975,7 @@ mod tests {
             vec![],
             Vec::new(),
             None,
-            None,
+            empty_user(),
             "   ".into(),
             None,
             None,
@@ -2227,7 +1999,7 @@ mod tests {
             vec![],
             Vec::new(),
             Some("   ".into()),
-            None,
+            empty_user(),
             "Valid description".into(),
             None,
             None,
@@ -2318,7 +2090,7 @@ mod tests {
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
-            None,
+            empty_user(),
             Some("Updated issue description".into()),
             vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
@@ -2403,7 +2175,7 @@ mod tests {
             None,
             None,
             true,
-            None,
+            empty_user(),
             None,
             vec![],
             true,
@@ -2489,7 +2261,7 @@ mod tests {
             None,
             None,
             false,
-            None,
+            empty_user(),
             None,
             vec![],
             false,

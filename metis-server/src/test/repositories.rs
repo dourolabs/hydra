@@ -36,7 +36,6 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
     let repository = &body.repositories[0];
 
     assert_eq!(repository.name, name);
-    assert!(repository.github_token_present);
     assert!(repository.default_branch.is_some());
     assert!(repository.default_image.is_some());
 
@@ -59,7 +58,6 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
         ServiceRepositoryConfig::new(
             remote_url.clone(),
             Some("main".to_string()),
-            Some("token-456".to_string()),
             Some("ghcr.io/example/new-repo:main".to_string()),
         ),
     );
@@ -73,7 +71,6 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
     let body: UpsertRepositoryResponse = response.json().await?;
     assert_eq!(body.repository.name, name);
-    assert!(body.repository.github_token_present);
     assert_eq!(body.repository.remote_url, remote_url);
     assert_eq!(body.repository.default_branch.as_deref(), Some("main"));
     assert_eq!(
@@ -86,7 +83,6 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
         .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, remote_url);
-    assert_eq!(stored.github_token.as_deref(), Some("token-456"));
 
     let merge_queues = service_state.merge_queues.read().await;
     assert!(merge_queues.contains_key(&name));
@@ -107,7 +103,6 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
         name.clone(),
         repo_url(&original_remote),
         Some("develop".to_string()),
-        Some("token-123".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
     );
     let mut state = test_state();
@@ -121,7 +116,6 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
 
     let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
         repo_url(&updated_remote),
-        None,
         None,
         None,
     ));
@@ -141,7 +135,6 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let body: UpsertRepositoryResponse = response.json().await?;
     assert_eq!(body.repository.name, name);
     assert_eq!(body.repository.remote_url, repo_url(&updated_remote));
-    assert!(!body.repository.github_token_present);
     assert!(body.repository.default_branch.is_none());
     assert!(body.repository.default_image.is_none());
 
@@ -150,7 +143,6 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
         .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, repo_url(&updated_remote));
-    assert!(stored.github_token.is_none());
     assert!(stored.default_branch.is_none());
     assert!(stored.default_image.is_none());
 
@@ -175,7 +167,6 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
 
     let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
         repo_url(&remote_dir),
-        None,
         None,
         None,
     ));
@@ -209,7 +200,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
     let bad_payload = CreateRepositoryRequest::new(
         RepoName::from_str("dourolabs/new-repo")?,
-        ServiceRepositoryConfig::new("   ".to_string(), None, None, None),
+        ServiceRepositoryConfig::new("   ".to_string(), None, None),
     );
     let bad_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
@@ -220,12 +211,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
     let duplicate_payload = CreateRepositoryRequest::new(
         name.clone(),
-        ServiceRepositoryConfig::new(
-            "https://example.com/new-repo.git".to_string(),
-            None,
-            None,
-            None,
-        ),
+        ServiceRepositoryConfig::new("https://example.com/new-repo.git".to_string(), None, None),
     );
     let duplicate_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
