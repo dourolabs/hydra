@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use octocrab::Octocrab;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
@@ -559,9 +558,8 @@ impl Store for MemoryStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_client: &Octocrab,
     ) -> Result<(User, Actor, String), StoreError> {
-        let (user, actor, auth_token) = Actor::new_for_github_token(github_token, github_client)
+        let (user, actor, auth_token) = Actor::new_for_github_token(github_token)
             .await
             .map_err(super::map_actor_error)?;
 
@@ -679,7 +677,6 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::{RepoName, TaskId, repositories::ServiceRepositoryConfig};
-    use octocrab::Octocrab;
     use serde_json::json;
     use std::{collections::HashSet, str::FromStr};
 
@@ -759,15 +756,6 @@ mod tests {
             "patch_url": null,
             "email": null
         })
-    }
-
-    fn build_github_client(base_url: String) -> Octocrab {
-        Octocrab::builder()
-            .base_uri(base_url)
-            .unwrap()
-            .personal_token("gh-token".to_string())
-            .build()
-            .unwrap()
     }
 
     #[tokio::test]
@@ -1513,10 +1501,11 @@ mod tests {
                 .json_body(github_user_response("octo", 42));
         });
 
-        let github_client = build_github_client(server.base_url());
+        let _env_guard =
+            crate::test_utils::EnvVarGuard::set(Actor::ENV_GITHUB_API_URL, &server.base_url());
         let mut store = MemoryStore::new();
         let (user, actor, auth_token) = store
-            .create_actor_for_github_token("gh-token".to_string(), &github_client)
+            .create_actor_for_github_token("gh-token".to_string())
             .await
             .unwrap();
 

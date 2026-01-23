@@ -22,11 +22,13 @@ pub struct Actor {
 }
 
 impl Actor {
+    pub(crate) const ENV_GITHUB_API_URL: &str = "METIS_GITHUB_API_URL";
+
     /// Creates a new user-backed actor from a GitHub token.
     pub async fn new_for_github_token(
         github_token: String,
-        github_client: &Octocrab,
     ) -> Result<(User, Actor, String), ActorError> {
+        let github_client = Self::build_github_client(&github_token)?;
         let github_user = github_client
             .current()
             .user()
@@ -84,6 +86,21 @@ impl Actor {
         encoded
     }
 
+    fn build_github_client(github_token: &str) -> Result<Octocrab, ActorError> {
+        let builder = Octocrab::builder();
+        let builder = match std::env::var(Self::ENV_GITHUB_API_URL) {
+            Ok(base_url) => builder
+                .base_uri(base_url)
+                .map_err(|err| ActorError::GithubLookupFailed(format!("{err}")))?,
+            Err(_) => builder,
+        };
+
+        builder
+            .personal_token(github_token.to_string())
+            .build()
+            .map_err(|err| ActorError::GithubLookupFailed(format!("{err}")))
+    }
+
     pub fn parse_name(name: &str) -> Result<UserOrWorker, ActorError> {
         if let Some(username) = name.strip_prefix("u-") {
             if username.is_empty() {
@@ -114,6 +131,7 @@ pub enum UserOrWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::EnvVarGuard;
     use httpmock::prelude::*;
     use serde_json::json;
 
@@ -143,15 +161,6 @@ mod tests {
         })
     }
 
-    fn build_github_client(base_url: String) -> Octocrab {
-        Octocrab::builder()
-            .base_uri(base_url)
-            .unwrap()
-            .personal_token("gh-token".to_string())
-            .build()
-            .unwrap()
-    }
-
     #[tokio::test]
     async fn new_for_github_token_creates_user_and_actor() {
         let server = MockServer::start_async().await;
@@ -162,11 +171,10 @@ mod tests {
                 .json_body(github_user_response("octo", 42));
         });
 
-        let github_client = build_github_client(server.base_url());
-        let (user, actor, auth_token) =
-            Actor::new_for_github_token("gh-token".to_string(), &github_client)
-                .await
-                .expect("actor should be created");
+        let _env_guard = EnvVarGuard::set(Actor::ENV_GITHUB_API_URL, &server.base_url());
+        let (user, actor, auth_token) = Actor::new_for_github_token("gh-token".to_string())
+            .await
+            .expect("actor should be created");
 
         assert!(!auth_token.is_empty());
         assert_eq!(user.username, Username::from("octo"));
@@ -187,8 +195,8 @@ mod tests {
             then.status(500);
         });
 
-        let github_client = build_github_client(server.base_url());
-        let err = Actor::new_for_github_token("gh-token".to_string(), &github_client)
+        let _env_guard = EnvVarGuard::set(Actor::ENV_GITHUB_API_URL, &server.base_url());
+        let err = Actor::new_for_github_token("gh-token".to_string())
             .await
             .expect_err("should fail when GitHub lookup fails");
         assert!(matches!(err, ActorError::GithubLookupFailed(_)));

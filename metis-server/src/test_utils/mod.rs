@@ -21,6 +21,53 @@ pub mod store;
 pub use job_engine::MockJobEngine;
 pub use store::FailingStore;
 
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard};
+
+#[cfg(test)]
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub struct EnvVarGuard {
+    _lock: MutexGuard<'static, ()>,
+    key: &'static str,
+    previous: Option<String>,
+}
+
+#[cfg(test)]
+impl EnvVarGuard {
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let lock = ENV_LOCK.lock().expect("env lock poisoned");
+        let previous = std::env::var(key).ok();
+        // SAFETY: tests serialize env var updates via ENV_LOCK.
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self {
+            _lock: lock,
+            key,
+            previous,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            // SAFETY: tests serialize env var updates via ENV_LOCK.
+            unsafe {
+                std::env::set_var(self.key, previous);
+            }
+        } else {
+            // SAFETY: tests serialize env var updates via ENV_LOCK.
+            unsafe {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
+
 pub struct TestServer {
     pub address: String,
     handle: JoinHandle<anyhow::Result<()>>,
