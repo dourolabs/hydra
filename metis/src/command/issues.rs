@@ -1915,7 +1915,9 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
 
-        let mut job_settings = sample_job_settings();
+        let mut job_settings = JobSettings::default();
+        job_settings.repo_name = Some(sample_repo_name());
+        job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:latest".into());
         job_settings.branch = Some("feature/job-settings".into());
         job_settings.max_retries = Some(4);
@@ -2039,7 +2041,12 @@ mod tests {
         let server = MockServer::start();
         let client = metis_client(&server);
         let target_issue_id = issue_id("i-9");
-        let job_settings = sample_job_settings();
+        let mut job_settings = JobSettings::default();
+        job_settings.repo_name = Some(sample_repo_name());
+        job_settings.remote_url = Some("https://example.com/service.git".into());
+        job_settings.image = Some("worker:123".into());
+        job_settings.branch = Some("main".into());
+        job_settings.max_retries = Some(5);
         let current_issue = api_issue_record(
             "i-9",
             IssueType::Task,

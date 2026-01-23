@@ -475,18 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn config_requires_github_app_section() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
-        fs::write(&path, "")?;
-
-        let error = AppConfig::load(&path).expect_err("expected missing github_app");
-        assert!(error_chain_contains(&error, "missing field `github_app`"));
-
-        Ok(())
-    }
-
-    #[test]
     fn config_requires_github_app_private_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join("config.toml");

@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, ServiceState},
     config::{
-        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection, 
+        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection, ServiceSection,
     },
     job_engine::JobEngine,
