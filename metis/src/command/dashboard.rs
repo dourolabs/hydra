@@ -256,6 +256,8 @@ struct DashboardState {
     records_error: Option<String>,
     username: Username,
     server_url: String,
+    #[allow(dead_code)]
+    browser_command: Option<String>,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
@@ -296,6 +298,7 @@ impl Default for DashboardState {
             records_error: None,
             username: Username::from(""),
             server_url: String::new(),
+            browser_command: None,
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
@@ -332,11 +335,13 @@ pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
     token_path: &std::path::Path,
+    browser_command: Option<&str>,
 ) -> Result<()> {
     let token_path_buf = token_path.to_path_buf();
     let username = auth::resolve_auth_user(client, &token_path_buf).await?;
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
+    let result =
+        run_dashboard_loop(client, &mut terminal, username, server_url, browser_command).await;
     ratatui::restore();
     result
 }
@@ -346,10 +351,12 @@ async fn run_dashboard_loop(
     terminal: &mut DefaultTerminal,
     username: Username,
     server_url: &str,
+    browser_command: Option<&str>,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
         server_url: server_url.to_string(),
+        browser_command: browser_command.map(str::to_string),
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);

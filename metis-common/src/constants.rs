@@ -7,3 +7,4 @@ pub const ENV_METIS_SERVER_URL: &str = "METIS_SERVER_URL";
 pub const ENV_METIS_API_ORIGIN: &str = "METIS_API_ORIGIN";
 pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
+pub const ENV_BROWSER: &str = "BROWSER";
