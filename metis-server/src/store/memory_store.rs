@@ -10,7 +10,7 @@ use crate::domain::{
     task_status::Event,
     users::{User, Username},
 };
-use metis_common::{IssueId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -23,6 +23,8 @@ pub struct MemoryStore {
     issues: HashMap<IssueId, Issue>,
     /// Maps patch IDs to their Patch data
     patches: HashMap<PatchId, Patch>,
+    /// Maps repository names to their configurations
+    repositories: HashMap<RepoName, ServiceRepositoryConfig>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
     issue_children: HashMap<IssueId, Vec<IssueId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
@@ -44,6 +46,7 @@ impl MemoryStore {
             tasks: HashMap::new(),
             issues: HashMap::new(),
             patches: HashMap::new(),
+            repositories: HashMap::new(),
             issue_children: HashMap::new(),
             issue_blocked_on: HashMap::new(),
             issue_tasks: HashMap::new(),
@@ -163,6 +166,51 @@ impl Default for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
+    async fn add_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        if self.repositories.contains_key(&name) {
+            return Err(StoreError::RepositoryAlreadyExists(name));
+        }
+
+        self.repositories.insert(name, config);
+        Ok(())
+    }
+
+    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError> {
+        self.repositories
+            .get(name)
+            .cloned()
+            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
+    }
+
+    async fn update_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        if !self.repositories.contains_key(&name) {
+            return Err(StoreError::RepositoryNotFound(name));
+        }
+
+        self.repositories.insert(name, config);
+        Ok(())
+    }
+
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError> {
+        let mut repositories: Vec<_> = self
+            .repositories
+            .iter()
+            .map(|(name, config)| (name.clone(), config.clone()))
+            .collect();
+        repositories.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(repositories)
+    }
+
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
@@ -571,8 +619,16 @@ mod tests {
         users::{User, Username},
     };
     use chrono::Utc;
-    use metis_common::RepoName;
+    use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
     use std::{collections::HashSet, str::FromStr};
+
+    fn sample_repository_config() -> ServiceRepositoryConfig {
+        ServiceRepositoryConfig::new(
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            Some("image:latest".to_string()),
+        )
+    }
 
     fn spawn_task() -> Task {
         Task::new(
@@ -616,6 +672,65 @@ mod tests {
             dependencies,
             Vec::new(),
         )
+    }
+
+    #[tokio::test]
+    async fn repository_crud_round_trip() {
+        let mut store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert_eq!(fetched, config);
+
+        let mut updated = config.clone();
+        updated.default_branch = Some("develop".to_string());
+        store
+            .update_repository(name.clone(), updated.clone())
+            .await
+            .unwrap();
+
+        let list = store.list_repositories().await.unwrap();
+        assert_eq!(list, vec![(name.clone(), updated.clone())]);
+
+        let fetched_again = store.get_repository(&name).await.unwrap();
+        assert_eq!(fetched_again, updated);
+    }
+
+    #[tokio::test]
+    async fn add_repository_rejects_duplicates() {
+        let mut store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+
+        store
+            .add_repository(name.clone(), sample_repository_config())
+            .await
+            .unwrap();
+
+        let err = store
+            .add_repository(name.clone(), sample_repository_config())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::RepositoryAlreadyExists(existing) if existing == name
+        ));
+
+        let missing_name = RepoName::from_str("dourolabs/other").unwrap();
+        let err = store
+            .update_repository(missing_name.clone(), sample_repository_config())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::RepositoryNotFound(existing) if existing == missing_name
+        ));
     }
 
     #[tokio::test]

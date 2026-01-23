@@ -8,7 +8,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
 use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
@@ -21,6 +21,35 @@ fn fail<T>() -> Result<T, StoreError> {
 
 #[async_trait]
 impl Store for FailingStore {
+    async fn add_repository(
+        &mut self,
+        _name: RepoName,
+        _config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn get_repository(
+        &self,
+        _name: &RepoName,
+    ) -> Result<ServiceRepositoryConfig, StoreError> {
+        fail()
+    }
+
+    async fn update_repository(
+        &mut self,
+        _name: RepoName,
+        _config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError> {
+        fail()
+    }
+
     async fn add_issue(&mut self, _issue: Issue) -> Result<IssueId, StoreError> {
         fail()
     }
