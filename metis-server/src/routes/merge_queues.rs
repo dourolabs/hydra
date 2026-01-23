@@ -1,4 +1,5 @@
 use crate::app::{AppState, MergeQueueError};
+use anyhow::anyhow;
 use axum::{
     Json,
     extract::{Path, State},
@@ -69,7 +70,17 @@ fn map_merge_queue_error(err: MergeQueueError) -> ApiError {
     match err {
         MergeQueueError::UnknownRepository(name) => {
             error!(service_repo = %name, "unknown repository for merge queue");
-            ApiError::bad_request(format!("unknown repository '{name}'"))
+            ApiError::not_found(format!("repository '{name}' not found"))
+        }
+        MergeQueueError::RepositoryLookup { repo_name, source } => {
+            error!(
+                service_repo = %repo_name,
+                error = %source,
+                "failed to load repository for merge queue"
+            );
+            ApiError::internal(anyhow!(
+                "failed to load repository '{repo_name}' for merge queue"
+            ))
         }
         MergeQueueError::PatchNotFound { patch_id } => {
             error!(patch_id = %patch_id, "patch not found when enqueuing merge request");

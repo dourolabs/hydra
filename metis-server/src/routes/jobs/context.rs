@@ -43,10 +43,12 @@ pub async fn get_job_context(
         task.job_settings = merged;
     }
 
-    let resolved = task
-        .resolve_context(state.service_state.as_ref())
-        .await
-        .map_err(ApiError::from)?;
+    let resolved = {
+        let store = state.store.read().await;
+        task.resolve_context(store.as_ref(), state.service_state.as_ref())
+            .await
+            .map_err(ApiError::from)?
+    };
     let env_vars = task.resolve_env_vars(&resolved);
 
     let context: v1::jobs::WorkerContext =

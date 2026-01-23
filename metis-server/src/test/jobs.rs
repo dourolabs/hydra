@@ -7,9 +7,10 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
-    app::{ServiceState, TaskExt},
+    app::TaskExt,
     job_engine::JobStatus,
     store::{Status, Task, TaskError},
+    test::common::seed_repository,
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client, test_state,
         test_state_with_engine,
@@ -41,7 +42,9 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &default_image).await?;
+    let resolved = task
+        .resolve(store_read.as_ref(), service_state.as_ref(), &default_image)
+        .await?;
     let Task {
         context, prompt, ..
     } = task;
@@ -60,10 +63,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    seed_repository(&mut state, repo.clone()).await?;
     let service_state = state.service_state.clone();
     let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
@@ -84,7 +84,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     let Task { context, .. } = task;
     assert_eq!(
@@ -130,7 +130,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
@@ -142,10 +142,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    seed_repository(&mut state, repo.clone()).await?;
     let service_state = state.service_state.clone();
     let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
@@ -167,7 +164,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
@@ -206,10 +203,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    seed_repository(&mut state, repo.clone()).await?;
     let service_state = state.service_state.clone();
     let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
@@ -231,7 +225,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN),
@@ -251,10 +245,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
 async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    seed_repository(&mut state, repo.clone()).await?;
     let service_state = state.service_state.clone();
     let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
@@ -304,9 +295,8 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    drop(store_read);
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.context.bundle,
@@ -344,10 +334,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
     let mut state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    seed_repository(&mut state, repo.clone()).await?;
     let service_state = state.service_state.clone();
     let fallback_image = state.config.job.default_image.clone();
     let store = state.store.clone();
@@ -397,9 +384,8 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    drop(store_read);
     let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
+        .resolve(store_read.as_ref(), service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
         resolved.context.bundle,

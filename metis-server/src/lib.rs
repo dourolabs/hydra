@@ -15,7 +15,7 @@ pub mod test_utils;
 #[cfg(test)]
 mod test;
 
-use crate::app::{AppState, ServiceState};
+use crate::app::{AppState, ServiceState, sync_repositories_from_config};
 use crate::background::{AgentQueue, Spawner, start_background_scheduler};
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
@@ -138,7 +138,6 @@ pub async fn run() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    let service_state = ServiceState::from_config(&app_config.service);
     let github_app = build_github_app_client(&app_config.github_app)?;
 
     // Resolve OpenAI API key
@@ -176,6 +175,22 @@ pub async fn run() -> anyhow::Result<()> {
         Some(pool) => Arc::new(RwLock::new(Box::new(PostgresStore::new(pool)))),
         None => Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
     };
+
+    {
+        let mut store_writer = store.write().await;
+        sync_repositories_from_config(store_writer.as_mut(), &app_config.service).await?;
+    }
+
+    let repository_names = {
+        let store_reader = store.read().await;
+        store_reader
+            .list_repositories()
+            .await?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+    };
+    let service_state = ServiceState::with_repository_names(repository_names);
 
     let spawners = build_spawners(&app_config);
 

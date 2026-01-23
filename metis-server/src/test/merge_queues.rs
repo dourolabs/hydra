@@ -1,7 +1,7 @@
 use crate::{
-    app::{ServiceRepository, ServiceState},
+    app::ServiceRepository,
     domain::patches::{Patch, PatchStatus},
-    test::{spawn_test_server_with_state, test_client, test_state},
+    test::{common::seed_repository, spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature, build::CheckoutBuilder};
 use metis_common::{
@@ -9,10 +9,10 @@ use metis_common::{
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
 };
 use reqwest::StatusCode;
-use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr};
 use tempfile::TempDir;
 
-fn state_with_repo(repo_name: &str) -> crate::app::AppState {
+async fn state_with_repo(repo_name: &str) -> crate::app::AppState {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let mut state = test_state();
     let repository = ServiceRepository::new(
@@ -21,9 +21,9 @@ fn state_with_repo(repo_name: &str) -> crate::app::AppState {
         None,
         None,
     );
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo, repository,
-    )])));
+    seed_repository(&mut state, repository)
+        .await
+        .expect("failed to seed repository");
 
     state
 }
@@ -45,10 +45,7 @@ async fn state_with_repo_and_patch(
     );
 
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo.clone(),
-        repository,
-    )])));
+    seed_repository(&mut state, repository).await?;
 
     let patch = Patch::new(
         "Test patch".to_string(),
@@ -156,7 +153,7 @@ fn git_diff_for_commits(
 
 #[tokio::test]
 async fn get_merge_queue_returns_empty_for_new_branch() -> anyhow::Result<()> {
-    let state = state_with_repo("dourolabs/api");
+    let state = state_with_repo("dourolabs/api").await;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -222,7 +219,7 @@ async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
         .send()
         .await?;
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let enqueue_response = client
         .post(format!(
@@ -233,7 +230,7 @@ async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
         .send()
         .await?;
 
-    assert_eq!(enqueue_response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(enqueue_response.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }

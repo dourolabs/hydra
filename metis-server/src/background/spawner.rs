@@ -256,12 +256,11 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::{ServiceRepository, ServiceState},
+        app::ServiceRepository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::test_state,
+        test::{common::seed_repository, test_state},
     };
     use chrono::Utc;
-    use std::sync::Arc;
 
     fn default_user() -> Username {
         Username::from("spawner")
@@ -787,15 +786,16 @@ mod tests {
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
         let mut state = test_state();
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            repo_name.clone(),
+        seed_repository(
+            &mut state,
             ServiceRepository::new(
                 repo_name.clone(),
                 "https://github.com/dourolabs/metis.git".to_string(),
                 Some("main".to_string()),
                 Some("repo-image".to_string()),
             ),
-        )])));
+        )
+        .await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
@@ -825,8 +825,13 @@ mod tests {
         assert_eq!(tasks.len(), 1);
 
         let fallback_image = state.config.job.default_image.clone();
+        let store = state.store.read().await;
         let resolved = tasks[0]
-            .resolve(state.service_state.as_ref(), &fallback_image)
+            .resolve(
+                store.as_ref(),
+                state.service_state.as_ref(),
+                &fallback_image,
+            )
             .await?;
         assert_eq!(
             tasks[0].context,

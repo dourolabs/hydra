@@ -1,6 +1,6 @@
 use crate::{
-    app::{ServiceRepository, ServiceRepositoryConfig, ServiceState},
-    test::{spawn_test_server_with_state, test_client, test_state},
+    app::{ServiceRepository, ServiceRepositoryConfig},
+    test::{common::seed_repository, spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature};
 use metis_common::{
@@ -11,17 +11,14 @@ use metis_common::{
     },
 };
 use reqwest::StatusCode;
-use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr};
 use tempfile::TempDir;
 
 #[tokio::test]
 async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        name.clone(),
-        repository,
-    )])));
+    seed_repository(&mut state, repository.clone()).await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -46,6 +43,7 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
 async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result<()> {
     let state = test_state();
     let service_state = state.service_state.clone();
+    let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -78,8 +76,9 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
         Some("ghcr.io/example/new-repo:main")
     );
 
-    let stored = service_state
-        .repository(&name)
+    let store_read = store.read().await;
+    let stored = store_read
+        .get_repository(&name)
         .await
         .expect("repository should be stored");
     assert_eq!(stored.remote_url, remote_url);
@@ -106,11 +105,9 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
         Some("ghcr.io/example/repo:main".to_string()),
     );
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        name.clone(),
-        repository,
-    )])));
+    seed_repository(&mut state, repository).await?;
     let service_state = state.service_state.clone();
+    let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -138,10 +135,13 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     assert!(body.repository.default_branch.is_none());
     assert!(body.repository.default_image.is_none());
 
-    let stored = service_state
-        .repository(&name)
-        .await
-        .expect("repository should be stored");
+    let stored = {
+        let store_read = store.read().await;
+        store_read
+            .get_repository(&name)
+            .await
+            .expect("repository should be stored")
+    };
     assert_eq!(stored.remote_url, repo_url(&updated_remote));
     assert!(stored.default_branch.is_none());
     assert!(stored.default_image.is_none());
@@ -191,10 +191,7 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
 async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        name.clone(),
-        repository,
-    )])));
+    seed_repository(&mut state, repository.clone()).await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 

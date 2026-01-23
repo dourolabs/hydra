@@ -230,8 +230,11 @@ impl AppState {
             job_settings.clone(),
         );
 
-        task.resolve(self.service_state.as_ref(), &fallback_image)
-            .await?;
+        {
+            let store = self.store.read().await;
+            task.resolve(store.as_ref(), self.service_state.as_ref(), &fallback_image)
+                .await?;
+        }
 
         let mut store = self.store.write().await;
         store
@@ -319,7 +322,7 @@ impl AppState {
                     task.job_settings = merged;
 
                     match task
-                        .resolve(self.service_state.as_ref(), &fallback_image)
+                        .resolve(store.as_ref(), self.service_state.as_ref(), &fallback_image)
                         .await
                     {
                         Ok(resolved) => (resolved, user),
@@ -966,8 +969,9 @@ impl AppState {
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
+        let store = self.store.read().await;
         self.service_state
-            .get_merge_queue(service_repo_name, branch_name)
+            .get_merge_queue(store.as_ref(), service_repo_name, branch_name)
             .await
     }
 
@@ -977,25 +981,23 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        if !self.service_state.has_repository(service_repo_name).await {
-            return Err(MergeQueueError::UnknownRepository(
-                service_repo_name.clone(),
-            ));
-        }
-
-        let patch = {
-            let store = self.store.read().await;
-            match store.get_patch(&patch_id).await {
-                Ok(patch) => patch,
-                Err(StoreError::PatchNotFound(_)) => {
-                    return Err(MergeQueueError::PatchNotFound { patch_id });
-                }
-                Err(source) => return Err(MergeQueueError::PatchLookup { patch_id, source }),
+        let store = self.store.read().await;
+        let patch = match store.get_patch(&patch_id).await {
+            Ok(patch) => patch,
+            Err(StoreError::PatchNotFound(_)) => {
+                return Err(MergeQueueError::PatchNotFound { patch_id });
             }
+            Err(source) => return Err(MergeQueueError::PatchLookup { patch_id, source }),
         };
 
         self.service_state
-            .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id, &patch)
+            .add_patch_to_merge_queue(
+                store.as_ref(),
+                service_repo_name,
+                branch_name,
+                patch_id,
+                &patch,
+            )
             .await
     }
 

@@ -1,5 +1,8 @@
 use super::{BundleResolutionError, ResolvedBundle, ServiceState};
-use crate::domain::jobs::{Bundle, BundleSpec, Task};
+use crate::{
+    domain::jobs::{Bundle, BundleSpec, Task},
+    store::Store,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -25,6 +28,7 @@ pub enum TaskResolutionError {
 pub trait TaskExt {
     async fn resolve_context(
         &self,
+        store: &dyn Store,
         service_state: &ServiceState,
     ) -> Result<ResolvedBundle, BundleResolutionError>;
 
@@ -38,6 +42,7 @@ pub trait TaskExt {
 
     async fn resolve(
         &self,
+        store: &dyn Store,
         service_state: &ServiceState,
         fallback_image: &str,
     ) -> Result<ResolvedTask, TaskResolutionError>;
@@ -47,19 +52,23 @@ pub trait TaskExt {
 impl TaskExt for Task {
     async fn resolve_context(
         &self,
+        store: &dyn Store,
         service_state: &ServiceState,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
         let mut resolved = service_state
-            .resolve_bundle_spec(self.context.clone())
+            .resolve_bundle_spec(store, self.context.clone())
             .await?;
 
         let settings = &self.job_settings;
         if let Some(repo_name) = &settings.repo_name {
             resolved = service_state
-                .resolve_bundle_spec(BundleSpec::ServiceRepository {
-                    name: repo_name.clone(),
-                    rev: settings.branch.clone(),
-                })
+                .resolve_bundle_spec(
+                    store,
+                    BundleSpec::ServiceRepository {
+                        name: repo_name.clone(),
+                        rev: settings.branch.clone(),
+                    },
+                )
                 .await?;
         }
 
@@ -130,10 +139,11 @@ impl TaskExt for Task {
 
     async fn resolve(
         &self,
+        store: &dyn Store,
         service_state: &ServiceState,
         fallback_image: &str,
     ) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = self.resolve_context(service_state).await?;
+        let context = self.resolve_context(store, service_state).await?;
         let image = self.resolve_image(&context, fallback_image)?;
         let env_vars = self.resolve_env_vars(&context);
 

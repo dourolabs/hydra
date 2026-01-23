@@ -3,7 +3,7 @@ use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId};
 use metis_server::{
-    app::{AppState, ServiceState},
+    app::{sync_repositories_from_config, AppState, ServiceState},
     config::ServiceSection,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
@@ -133,7 +133,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let state = app_state_with_repo(&remote_url, &service_repo_name)?;
+    let state = app_state_with_repo(&remote_url, &service_repo_name).await?;
     let server = spawn_test_server_with_state(state)
         .await
         .context("failed to start test server")?;
@@ -290,7 +290,7 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
     Ok(remote_dir_str.to_string())
 }
 
-fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppState> {
+async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppState> {
     let mut service_section = ServiceSection::default();
     service_section.repositories.insert(
         repo_name.clone(),
@@ -304,11 +304,30 @@ fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppStat
     let mut server_config = test_app_config();
     server_config.service = service_section.clone();
 
+    let store: Arc<RwLock<Box<dyn Store>>> =
+        Arc::new(RwLock::new(Box::new(MemoryStore::new()) as Box<dyn Store>));
+
+    {
+        let mut store_writer = store.write().await;
+        sync_repositories_from_config(store_writer.as_mut(), &service_section).await?;
+    }
+
+    let service_state = {
+        let store_reader = store.read().await;
+        ServiceState::with_repository_names(
+            store_reader
+                .list_repositories()
+                .await?
+                .into_iter()
+                .map(|(name, _)| name),
+        )
+    };
+
     Ok(AppState {
         config: Arc::new(server_config),
         github_app: None,
-        service_state: Arc::new(ServiceState::from_config(&service_section)),
-        store: Arc::new(RwLock::new(Box::new(MemoryStore::new()) as Box<dyn Store>)),
+        service_state: Arc::new(service_state),
+        store,
         job_engine: Arc::new(MockJobEngine::new()),
         spawners: Vec::new(),
     })

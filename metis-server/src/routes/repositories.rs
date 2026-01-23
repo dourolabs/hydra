@@ -2,6 +2,7 @@ use crate::{
     app::{AppState, RepositoryError, ServiceRepository, ServiceRepositoryConfig},
     config::non_empty,
 };
+use anyhow::anyhow;
 use axum::{
     Json,
     extract::{Path, State},
@@ -22,7 +23,17 @@ pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
-    let repositories = state.service_state.list_repository_info().await;
+    let repositories = {
+        let store = state.store.read().await;
+        state
+            .service_state
+            .list_repository_info(store.as_ref())
+            .await
+            .map_err(|err| {
+                error!(error = %err, "failed to list repositories");
+                ApiError::internal(anyhow!("failed to list repositories"))
+            })?
+    };
     let response = ListRepositoriesResponse::new(repositories);
     info!(
         repository_count = response.repositories.len(),
@@ -37,11 +48,14 @@ pub async fn create_repository(
 ) -> Result<Json<UpsertRepositoryResponse>, ApiError> {
     info!(repository = %payload.name, "create_repository invoked");
     let repository = build_repository(payload.name, payload.repository)?;
-    let created = state
-        .service_state
-        .create_repository(repository)
-        .await
-        .map_err(map_repository_error)?;
+    let created = {
+        let mut store = state.store.write().await;
+        state
+            .service_state
+            .create_repository(&mut **store, repository)
+            .await
+            .map_err(map_repository_error)?
+    };
 
     info!(repository = %created.name, "create_repository completed");
     Ok(Json(UpsertRepositoryResponse::new(
@@ -59,11 +73,14 @@ pub async fn update_repository(
     info!(repository = %name, "update_repository invoked");
 
     let config = normalize_config(payload.repository)?;
-    let updated = state
-        .service_state
-        .update_repository(name.clone(), config)
-        .await
-        .map_err(map_repository_error)?;
+    let updated = {
+        let mut store = state.store.write().await;
+        state
+            .service_state
+            .update_repository(&mut **store, name.clone(), config)
+            .await
+            .map_err(map_repository_error)?
+    };
 
     info!(repository = %name, "update_repository completed");
     Ok(Json(UpsertRepositoryResponse::new(
@@ -115,6 +132,16 @@ fn map_repository_error(err: RepositoryError) -> ApiError {
             );
             ApiError::bad_request(format!(
                 "failed to refresh repository '{repo_name}': {source}"
+            ))
+        }
+        RepositoryError::Store { repo_name, source } => {
+            error!(
+                repository = %repo_name,
+                error = %source,
+                "failed to persist repository"
+            );
+            ApiError::internal(anyhow!(
+                "failed to persist repository '{repo_name}' to store"
             ))
         }
     }

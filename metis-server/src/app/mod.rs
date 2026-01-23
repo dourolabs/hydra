@@ -8,7 +8,7 @@ use crate::{
         patches::Patch,
     },
     merge_queue::MergeQueueImpl,
-    store::StoreError,
+    store::{Store, StoreError},
 };
 use git2::Repository;
 use metis_common::{PatchId, RepoName, merge_queues::MergeQueue};
@@ -48,7 +48,6 @@ impl ConnectedRepository {
 /// Aggregated state for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
 pub struct ServiceState {
-    pub repositories: Arc<RwLock<HashMap<RepoName, ServiceRepository>>>,
     pub merge_queues: Arc<RwLock<HashMap<RepoName, HashMap<String, MergeQueueImpl>>>>,
     pub git_cache: Arc<RwLock<HashMap<RepoName, Arc<Mutex<CachedRepository>>>>>,
 }
@@ -63,6 +62,12 @@ pub struct CachedRepository {
 pub enum BundleResolutionError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(RepoName),
+    #[error("failed to load repository '{repo_name}'")]
+    RepositoryLookup {
+        repo_name: RepoName,
+        #[source]
+        source: StoreError,
+    },
     #[error("unsupported bundle specification")]
     UnsupportedBundleSpec,
 }
@@ -71,6 +76,12 @@ pub enum BundleResolutionError {
 pub enum MergeQueueError {
     #[error("unknown repository '{0}'")]
     UnknownRepository(RepoName),
+    #[error("failed to load repository '{repo_name}'")]
+    RepositoryLookup {
+        repo_name: RepoName,
+        #[source]
+        source: StoreError,
+    },
     #[error("patch '{patch_id}' not found")]
     PatchNotFound { patch_id: PatchId },
     #[error("patch '{patch_id}' targets repository '{patch_repo}' instead of '{service_repo}'")]
@@ -116,6 +127,12 @@ pub enum RepositoryError {
     AlreadyExists(RepoName),
     #[error("repository '{0}' not found")]
     NotFound(RepoName),
+    #[error("failed to persist repository '{repo_name}'")]
+    Store {
+        repo_name: RepoName,
+        #[source]
+        source: StoreError,
+    },
     #[error("failed to refresh repository '{repo_name}'")]
     Git {
         repo_name: RepoName,
@@ -145,133 +162,130 @@ fn connect_repository(repo: &ServiceRepository) -> Result<ConnectedRepository, G
 
 #[allow(clippy::result_large_err)]
 impl ServiceState {
-    pub fn from_config(config: &ServiceSection) -> Self {
-        let repositories = config
-            .repositories
-            .iter()
-            .map(|(name, repo)| {
-                let default_branch = repo
-                    .default_branch
-                    .as_deref()
-                    .and_then(non_empty)
-                    .map(str::to_owned);
-
-                (
-                    name.clone(),
-                    ServiceRepository::new(
-                        name.clone(),
-                        repo.remote_url.clone(),
-                        default_branch,
-                        repo.default_image
-                            .as_deref()
-                            .and_then(non_empty)
-                            .map(str::to_owned),
-                    ),
-                )
-            })
-            .collect();
-
-        Self::with_repositories(repositories)
-    }
-
-    pub fn with_repositories(repositories: HashMap<RepoName, ServiceRepository>) -> Self {
-        let repositories: HashMap<RepoName, ServiceRepository> = repositories
+    pub fn with_repository_names<I>(names: I) -> Self
+    where
+        I: IntoIterator<Item = RepoName>,
+    {
+        let merge_queues = names
             .into_iter()
-            .map(|(name, mut repository)| {
-                repository.name = name.clone();
-                (name, repository)
-            })
-            .collect();
-        let merge_queues = repositories
-            .keys()
-            .map(|name| (name.clone(), HashMap::new()))
+            .map(|name| (name, HashMap::new()))
             .collect();
 
         Self {
-            repositories: Arc::new(RwLock::new(repositories)),
             merge_queues: Arc::new(RwLock::new(merge_queues)),
             git_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub async fn list_repository_info(&self) -> Vec<ServiceRepositoryInfo> {
-        let repositories = self.repositories.read().await;
-
-        repositories
-            .values()
-            .map(ServiceRepository::without_secret)
-            .collect()
+    pub async fn for_store(store: &dyn Store) -> Result<Self, StoreError> {
+        let repositories = store.list_repositories().await?;
+        Ok(Self::with_repository_names(
+            repositories.into_iter().map(|(name, _)| name),
+        ))
     }
 
-    pub async fn repository(&self, name: &RepoName) -> Option<ServiceRepository> {
-        let repositories = self.repositories.read().await;
+    pub async fn list_repository_info(
+        &self,
+        store: &dyn Store,
+    ) -> Result<Vec<ServiceRepositoryInfo>, StoreError> {
+        let repositories = store.list_repositories().await?;
 
-        repositories.get(name).cloned()
+        Ok(repositories
+            .into_iter()
+            .map(|(name, config)| ServiceRepository::from((name, config)).without_secret())
+            .collect())
     }
 
-    pub async fn has_repository(&self, name: &RepoName) -> bool {
-        let repositories = self.repositories.read().await;
+    pub async fn repository(
+        &self,
+        store: &dyn Store,
+        name: &RepoName,
+    ) -> Result<ServiceRepository, StoreError> {
+        repository_from_store(store, name).await
+    }
 
-        repositories.contains_key(name)
+    pub async fn has_repository(
+        &self,
+        store: &dyn Store,
+        name: &RepoName,
+    ) -> Result<bool, StoreError> {
+        match store.get_repository(name).await {
+            Ok(_) => Ok(true),
+            Err(StoreError::RepositoryNotFound(_)) => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     pub async fn create_repository(
         &self,
+        store: &mut dyn Store,
         repository: ServiceRepository,
     ) -> Result<ServiceRepository, RepositoryError> {
         let name = repository.name.clone();
 
-        {
-            let mut repositories = self.repositories.write().await;
-
-            if repositories.contains_key(&name) {
-                return Err(RepositoryError::AlreadyExists(name));
+        match store.get_repository(&name).await {
+            Ok(_) => return Err(RepositoryError::AlreadyExists(name)),
+            Err(StoreError::RepositoryNotFound(_)) => {}
+            Err(source) => {
+                return Err(RepositoryError::Store {
+                    repo_name: name,
+                    source,
+                });
             }
-
-            repositories.insert(name.clone(), repository);
         }
 
-        if let Err(err) = self.refresh_repository(&name).await {
-            {
-                let mut repositories = self.repositories.write().await;
-                repositories.remove(&name);
-            }
-            let mut git_cache = self.git_cache.write().await;
-            git_cache.remove(&name);
-
+        if let Err(err) = self.refresh_repository(&repository).await {
+            self.cleanup_repository_state(&name).await;
             return Err(RepositoryError::Git {
                 repo_name: name,
                 source: err,
             });
         }
 
+        if let Err(source) = store
+            .add_repository(
+                name.clone(),
+                ServiceRepositoryConfig::new(
+                    repository.remote_url.clone(),
+                    repository.default_branch.clone(),
+                    repository.default_image.clone(),
+                ),
+            )
+            .await
+        {
+            self.cleanup_repository_state(&name).await;
+            return match source {
+                StoreError::RepositoryAlreadyExists(_) => Err(RepositoryError::AlreadyExists(name)),
+                other => Err(RepositoryError::Store {
+                    repo_name: name,
+                    source: other,
+                }),
+            };
+        }
+
         self.initialize_merge_queue(&name).await;
 
-        let repositories = self.repositories.read().await;
-        Ok(repositories
-            .get(&name)
-            .cloned()
-            .expect("repository should exist after creation"))
+        Ok(repository)
     }
 
     pub async fn update_repository(
         &self,
+        store: &mut dyn Store,
         name: RepoName,
         config: ServiceRepositoryConfig,
     ) -> Result<ServiceRepository, RepositoryError> {
-        let previous = {
-            let mut repositories = self.repositories.write().await;
-
-            let Some(repository) = repositories.get_mut(&name) else {
-                return Err(RepositoryError::NotFound(name));
-            };
-
-            let previous = repository.clone();
-            repository.remote_url = config.remote_url;
-            repository.default_branch = config.default_branch;
-            repository.default_image = config.default_image;
-            previous
+        let previous_config = match store.get_repository(&name).await {
+            Ok(config) => config,
+            Err(StoreError::RepositoryNotFound(_)) => return Err(RepositoryError::NotFound(name)),
+            Err(source) => {
+                return Err(RepositoryError::Store {
+                    repo_name: name,
+                    source,
+                });
+            }
         };
+
+        let repository = ServiceRepository::from((name.clone(), config.clone()));
 
         let previous_merge_queues = {
             let mut merge_queues = self.merge_queues.write().await;
@@ -282,37 +296,65 @@ impl ServiceState {
             git_cache.remove(&name)
         };
 
-        if let Err(err) = self.refresh_repository(&name).await {
-            {
-                let mut repositories = self.repositories.write().await;
-                repositories.insert(name.clone(), previous);
-            }
-
-            {
-                let mut merge_queues = self.merge_queues.write().await;
-                if let Some(existing) = previous_merge_queues {
-                    merge_queues.insert(name.clone(), existing);
-                } else {
-                    merge_queues.remove(&name);
-                }
-            }
-
-            if let Some(cache) = previous_cache {
-                let mut git_cache = self.git_cache.write().await;
-                git_cache.insert(name.clone(), cache);
-            }
-
+        if let Err(err) = self.refresh_repository(&repository).await {
+            self.restore_repository_state(&name, previous_merge_queues, previous_cache)
+                .await;
             return Err(RepositoryError::Git {
                 repo_name: name,
                 source: err,
             });
         }
 
-        let repositories = self.repositories.read().await;
-        Ok(repositories
-            .get(&name)
-            .cloned()
-            .expect("repository should exist after update"))
+        if let Err(source) = store.update_repository(name.clone(), config).await {
+            self.restore_repository_state(&name, previous_merge_queues, previous_cache)
+                .await;
+            if let Err(restore_err) = store
+                .update_repository(name.clone(), previous_config.clone())
+                .await
+            {
+                tracing::warn!(
+                    repository = %name,
+                    error = %restore_err,
+                    "failed to restore previous repository config after update failure"
+                );
+            }
+            return Err(match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name),
+                other => RepositoryError::Store {
+                    repo_name: name,
+                    source: other,
+                },
+            });
+        }
+
+        Ok(repository)
+    }
+
+    async fn restore_repository_state(
+        &self,
+        name: &RepoName,
+        previous_merge_queues: Option<HashMap<String, MergeQueueImpl>>,
+        previous_cache: Option<Arc<Mutex<CachedRepository>>>,
+    ) {
+        let mut merge_queues = self.merge_queues.write().await;
+        if let Some(queues) = previous_merge_queues {
+            merge_queues.insert(name.clone(), queues);
+        } else {
+            merge_queues.remove(name);
+        }
+
+        let mut git_cache = self.git_cache.write().await;
+        if let Some(cache) = previous_cache {
+            git_cache.insert(name.clone(), cache);
+        }
+    }
+
+    async fn cleanup_repository_state(&self, name: &RepoName) {
+        let mut merge_queues = self.merge_queues.write().await;
+        merge_queues.remove(name);
+
+        let mut git_cache = self.git_cache.write().await;
+        git_cache.remove(name);
     }
 
     async fn initialize_merge_queue(&self, name: &RepoName) {
@@ -337,6 +379,7 @@ impl ServiceState {
     /// Returns the instantiated bundle and an optional GitHub token to surface to the worker.
     pub async fn resolve_bundle_spec(
         &self,
+        store: &dyn Store,
         spec: BundleSpec,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
         match spec {
@@ -349,10 +392,17 @@ impl ServiceState {
                 default_image: None,
             }),
             BundleSpec::ServiceRepository { name, rev } => {
-                let repositories = self.repositories.read().await;
-                let repo = repositories
-                    .get(&name)
-                    .ok_or_else(|| BundleResolutionError::UnknownRepository(name.clone()))?;
+                let repo = repository_from_store(store, &name)
+                    .await
+                    .map_err(|err| match err {
+                        StoreError::RepositoryNotFound(_) => {
+                            BundleResolutionError::UnknownRepository(name.clone())
+                        }
+                        other => BundleResolutionError::RepositoryLookup {
+                            repo_name: name.clone(),
+                            source: other,
+                        },
+                    })?;
 
                 let resolved_rev = rev
                     .or_else(|| repo.default_branch.clone())
@@ -371,10 +421,12 @@ impl ServiceState {
 
     pub async fn get_merge_queue(
         &self,
+        store: &dyn Store,
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_repository_exists(service_repo_name).await?;
+        self.repository_for_merge_queue(store, service_repo_name)
+            .await?;
 
         let merge_queues = self.merge_queues.read().await;
         let queue = merge_queues
@@ -388,12 +440,15 @@ impl ServiceState {
 
     pub async fn add_patch_to_merge_queue(
         &self,
+        store: &dyn Store,
         service_repo_name: &RepoName,
         branch_name: &str,
         patch_id: PatchId,
         patch: &Patch,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_repository_exists(service_repo_name).await?;
+        let repository = self
+            .repository_for_merge_queue(store, service_repo_name)
+            .await?;
 
         if patch.service_repo_name != *service_repo_name {
             return Err(MergeQueueError::PatchRepositoryMismatch {
@@ -403,7 +458,7 @@ impl ServiceState {
             });
         }
 
-        let repository = self.refresh_repository(service_repo_name).await?;
+        let repository = self.refresh_repository(&repository).await?;
 
         let mut merge_queues = self.merge_queues.write().await;
         let repo_queues = merge_queues.entry(service_repo_name.clone()).or_default();
@@ -442,48 +497,52 @@ impl ServiceState {
         Ok(merge_queue_response(queue))
     }
 
-    async fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), MergeQueueError> {
-        let repositories = self.repositories.read().await;
-
-        if repositories.contains_key(name) {
-            Ok(())
-        } else {
-            Err(MergeQueueError::UnknownRepository(name.clone()))
-        }
+    async fn repository_for_merge_queue(
+        &self,
+        store: &dyn Store,
+        name: &RepoName,
+    ) -> Result<ServiceRepository, MergeQueueError> {
+        repository_from_store(store, name)
+            .await
+            .map_err(|err| match err {
+                StoreError::RepositoryNotFound(_) => {
+                    MergeQueueError::UnknownRepository(name.clone())
+                }
+                other => MergeQueueError::RepositoryLookup {
+                    repo_name: name.clone(),
+                    source: other,
+                },
+            })
     }
 
-    async fn refresh_repository(&self, name: &RepoName) -> Result<Repository, MergeQueueError> {
+    async fn refresh_repository(
+        &self,
+        service_repo: &ServiceRepository,
+    ) -> Result<Repository, MergeQueueError> {
         let cache_entry = {
             let mut git_cache = self.git_cache.write().await;
-            if let Some(entry) = git_cache.get(name) {
+            if let Some(entry) = git_cache.get(&service_repo.name) {
                 entry.clone()
             } else {
-                let repo_cfg = {
-                    let repositories = self.repositories.read().await;
-                    repositories
-                        .get(name)
-                        .expect("refresh_repository called after ensure_repository_exists")
-                        .clone()
-                };
                 let ConnectedRepository {
                     repository: _,
                     _workdir,
-                } = connect_repository(&repo_cfg).map_err(|source| MergeQueueError::Git {
-                    repo_name: name.clone(),
+                } = connect_repository(service_repo).map_err(|source| MergeQueueError::Git {
+                    repo_name: service_repo.name.clone(),
                     source: source.into(),
                 })?;
                 let cached = Arc::new(Mutex::new(CachedRepository {
                     path: _workdir.path().to_path_buf(),
                     _workdir,
                 }));
-                git_cache.insert(name.clone(), cached.clone());
+                git_cache.insert(service_repo.name.clone(), cached.clone());
                 cached
             }
         };
 
         let cached = cache_entry.lock().await;
         let repository = Repository::open(&cached.path).map_err(|source| MergeQueueError::Git {
-            repo_name: name.clone(),
+            repo_name: service_repo.name.clone(),
             source: source.into(),
         })?;
         drop(cached);
@@ -492,13 +551,13 @@ impl ServiceState {
             repository
                 .find_remote("origin")
                 .map_err(|source| MergeQueueError::Git {
-                    repo_name: name.clone(),
+                    repo_name: service_repo.name.clone(),
                     source: source.into(),
                 })?;
         remote
             .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
             .map_err(|source| MergeQueueError::Git {
-                repo_name: name.clone(),
+                repo_name: service_repo.name.clone(),
                 source: source.into(),
             })?;
 
@@ -519,6 +578,47 @@ fn merge_queue_response(queue: &MergeQueueImpl) -> MergeQueue {
 
 fn branch_ref(branch_name: &str) -> String {
     format!("refs/remotes/origin/{branch_name}")
+}
+
+pub async fn sync_repositories_from_config(
+    store: &mut dyn Store,
+    config: &ServiceSection,
+) -> Result<(), StoreError> {
+    for (name, repository) in &config.repositories {
+        let normalized = ServiceRepositoryConfig::new(
+            repository.remote_url.clone(),
+            repository
+                .default_branch
+                .as_deref()
+                .and_then(non_empty)
+                .map(str::to_owned),
+            repository
+                .default_image
+                .as_deref()
+                .and_then(non_empty)
+                .map(str::to_owned),
+        );
+
+        match store.add_repository(name.clone(), normalized.clone()).await {
+            Ok(()) => {}
+            Err(StoreError::RepositoryAlreadyExists(_)) => {
+                store.update_repository(name.clone(), normalized).await?;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(())
+}
+
+async fn repository_from_store(
+    store: &dyn Store,
+    name: &RepoName,
+) -> Result<ServiceRepository, StoreError> {
+    store
+        .get_repository(name)
+        .await
+        .map(|config| ServiceRepository::from((name.clone(), config)))
 }
 
 #[cfg(test)]
