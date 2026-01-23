@@ -11,7 +11,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use metis_common::{IssueId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -31,6 +31,7 @@ pub const PATCH_SCHEMA_VERSION: i32 = 1;
 pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 2;
+pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -107,6 +108,11 @@ const PAYLOAD_TABLES: &[PayloadTable] = &[
         table: TABLE_USERS,
         target_version: USER_SCHEMA_VERSION,
     },
+    PayloadTable {
+        object_type: "repository",
+        table: TABLE_REPOSITORIES,
+        target_version: REPOSITORY_SCHEMA_VERSION,
+    },
 ];
 
 /// Migrate any outdated payloads to the current schema versions using the
@@ -151,6 +157,7 @@ const TABLE_PATCHES: &str = "metis.patches";
 const TABLE_TASKS: &str = "metis.tasks";
 const TABLE_TASK_STATUS_LOGS: &str = "metis.task_status_logs";
 const TABLE_USERS: &str = "metis.users";
+const TABLE_REPOSITORIES: &str = "metis.repositories";
 
 #[derive(Clone)]
 pub struct PostgresStore {
@@ -205,6 +212,23 @@ impl PostgresStore {
 
         if exists == 0 {
             Err(StoreError::TaskNotFound(id.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn ensure_repository_exists(&self, name: &RepoName) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_REPOSITORIES} WHERE id = $1"
+        ))
+        .bind(name_str.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists == 0 {
+            Err(StoreError::RepositoryNotFound(name.clone()))
         } else {
             Ok(())
         }
@@ -363,6 +387,90 @@ fn ensure_schema_version(
 
 #[async_trait]
 impl Store for PostgresStore {
+    async fn add_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_REPOSITORIES} WHERE id = $1"
+        ))
+        .bind(name_str.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if exists > 0 {
+            return Err(StoreError::RepositoryAlreadyExists(name));
+        }
+
+        self.insert_payload(
+            TABLE_REPOSITORIES,
+            "repository",
+            name_str.as_str(),
+            REPOSITORY_SCHEMA_VERSION,
+            &config,
+        )
+        .await
+    }
+
+    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError> {
+        let name_str = name.as_str();
+        self.fetch_payload(
+            TABLE_REPOSITORIES,
+            "repository",
+            name_str.as_str(),
+            REPOSITORY_SCHEMA_VERSION,
+        )
+        .await?
+        .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
+    }
+
+    async fn update_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError> {
+        let name_str = name.as_str();
+        self.ensure_repository_exists(&name).await?;
+
+        self.update_payload(
+            TABLE_REPOSITORIES,
+            "repository",
+            name_str.as_str(),
+            REPOSITORY_SCHEMA_VERSION,
+            &config,
+        )
+        .await
+    }
+
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError> {
+        let mut rows = self
+            .fetch_payloads_with_ids::<ServiceRepositoryConfig>(
+                TABLE_REPOSITORIES,
+                "repository",
+                REPOSITORY_SCHEMA_VERSION,
+            )
+            .await?
+            .into_iter()
+            .map(|(id, repo)| {
+                RepoName::from_str(&id)
+                    .map(|name| (name, repo))
+                    .map_err(|err| {
+                        StoreError::Internal(format!(
+                            "invalid repository id stored in database: {err}"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(rows)
+    }
+
     async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
@@ -840,7 +948,7 @@ mod tests {
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
-    use metis_common::RepoName;
+    use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
     use std::{collections::HashSet, str::FromStr};
 
     #[allow(dead_code)]
@@ -886,6 +994,75 @@ mod tests {
         )
     }
 
+    #[allow(dead_code)]
+    fn sample_repository_config() -> ServiceRepositoryConfig {
+        ServiceRepositoryConfig::new(
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            Some("image:latest".to_string()),
+        )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn repository_round_trip(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert_eq!(fetched, config);
+
+        let mut updated = config.clone();
+        updated.default_image = Some("other:latest".to_string());
+        store
+            .update_repository(name.clone(), updated.clone())
+            .await
+            .unwrap();
+
+        let list = store.list_repositories().await.unwrap();
+        assert_eq!(list, vec![(name.clone(), updated.clone())]);
+
+        let fetched_again = store.get_repository(&name).await.unwrap();
+        assert_eq!(fetched_again, updated);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn repository_add_rejects_duplicate(pool: PgStorePool) {
+        let mut store = PostgresStore::new(pool);
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+
+        store
+            .add_repository(name.clone(), sample_repository_config())
+            .await
+            .unwrap();
+
+        let err = store
+            .add_repository(name.clone(), sample_repository_config())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::RepositoryAlreadyExists(existing) if existing == name
+        ));
+
+        let missing = RepoName::from_str("dourolabs/missing").unwrap();
+        let err = store
+            .update_repository(missing.clone(), sample_repository_config())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::RepositoryNotFound(existing) if existing == missing
+        ));
+    }
+
     #[test]
     fn init_migration_drops_triggers_before_create() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -900,6 +1077,7 @@ mod tests {
             "set_timestamp_tasks",
             "set_timestamp_task_status_logs",
             "set_timestamp_users",
+            "set_timestamp_repositories",
         ];
 
         for trigger in triggers {

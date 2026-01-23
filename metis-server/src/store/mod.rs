@@ -5,7 +5,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, TaskId};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -33,6 +33,10 @@ pub enum StoreError {
     Internal(String),
     #[error("Invalid status transition: task is not in Pending state")]
     InvalidStatusTransition,
+    #[error("Repository not found: {0}")]
+    RepositoryNotFound(RepoName),
+    #[error("Repository already exists: {0}")]
+    RepositoryAlreadyExists(RepoName),
     #[error("User not found: {0}")]
     UserNotFound(Username),
     #[error("User already exists: {0}")]
@@ -48,6 +52,32 @@ pub enum StoreError {
 /// caller before invoking store operations.
 #[async_trait]
 pub trait Store: Send + Sync {
+    /// Adds a repository configuration under the provided name.
+    ///
+    /// Returns an error if a repository with the same name already exists.
+    async fn add_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError>;
+
+    /// Retrieves a repository configuration by name.
+    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError>;
+
+    /// Updates an existing repository configuration.
+    ///
+    /// Returns an error if the repository does not exist.
+    async fn update_repository(
+        &mut self,
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<(), StoreError>;
+
+    /// Lists all repository configurations keyed by name.
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError>;
+
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
     /// Returns an error if any declared dependencies reference missing issues.

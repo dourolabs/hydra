@@ -42,7 +42,8 @@ VALUES
     ('patch', 1),
     ('task', 1),
     ('task_status_log', 1),
-    ('user', 1)
+    ('user', 1),
+    ('repository', 1)
 ON CONFLICT (object_type) DO NOTHING;
 
 -- Placeholder hook for evolving JSON payloads without breaking reads.
@@ -131,5 +132,20 @@ CREATE TABLE IF NOT EXISTS metis.users (
 DROP TRIGGER IF EXISTS set_timestamp_users ON metis.users;
 CREATE TRIGGER set_timestamp_users
 BEFORE UPDATE ON metis.users
+FOR EACH ROW
+EXECUTE FUNCTION metis.touch_updated_at();
+
+CREATE TABLE IF NOT EXISTS metis.repositories (
+    id TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL DEFAULT metis.current_schema_version('repository'),
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (schema_version > 0)
+);
+
+DROP TRIGGER IF EXISTS set_timestamp_repositories ON metis.repositories;
+CREATE TRIGGER set_timestamp_repositories
+BEFORE UPDATE ON metis.repositories
 FOR EACH ROW
 EXECUTE FUNCTION metis.touch_updated_at();
