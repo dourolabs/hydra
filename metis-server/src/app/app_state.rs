@@ -7,8 +7,9 @@ use crate::{
             UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
+        login::LoginResponse,
         patches::{PatchStatus, UpsertPatchRequest},
-        users::User,
+        users::{User, UserSummary},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
@@ -199,7 +200,34 @@ pub enum UpdateTodoListError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum LoginError {
+    #[error("invalid github token: {0}")]
+    InvalidGithubToken(String),
+    #[error("login store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+}
+
 impl AppState {
+    pub async fn login_with_github_token(
+        &self,
+        github_token: String,
+    ) -> Result<LoginResponse, LoginError> {
+        let mut store = self.store.write().await;
+        let (user, _actor, login_token) = store
+            .create_actor_for_github_token(github_token)
+            .await
+            .map_err(|source| match source {
+            StoreError::GithubTokenInvalid(message) => LoginError::InvalidGithubToken(message),
+            other => LoginError::Store { source: other },
+        })?;
+
+        Ok(LoginResponse::new(login_token, UserSummary::from(user)))
+    }
+
     pub async fn list_repositories(&self) -> Vec<ServiceRepositoryInfo> {
         self.service_state.list_repository_info().await
     }
@@ -1247,7 +1275,7 @@ async fn active_tasks_for_issue(
 
 #[cfg(test)]
 mod tests {
-    use super::UpsertIssueError;
+    use super::{LoginError, UpsertIssueError};
     use crate::{
         domain::{
             issues::{
@@ -1259,10 +1287,15 @@ mod tests {
         },
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
-        test_utils::{MockJobEngine, test_state, test_state_with_engine},
+        test_utils::{
+            MockJobEngine, test_state, test_state_with_engine, test_state_with_github_client,
+        },
     };
     use chrono::{Duration, Utc};
+    use httpmock::prelude::*;
     use metis_common::{IssueId, TaskId};
+    use octocrab::Octocrab;
+    use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
 
     fn sample_task() -> Task {
@@ -1304,6 +1337,87 @@ mod tests {
             dependencies,
             Vec::new(),
         )
+    }
+
+    fn github_user_response(login: &str, id: u64) -> serde_json::Value {
+        json!({
+            "login": login,
+            "id": id,
+            "node_id": "NODEID",
+            "avatar_url": "https://example.com/avatar",
+            "gravatar_id": "gravatar",
+            "url": "https://example.com/user",
+            "html_url": "https://example.com/user",
+            "followers_url": "https://example.com/followers",
+            "following_url": "https://example.com/following",
+            "gists_url": "https://example.com/gists",
+            "starred_url": "https://example.com/starred",
+            "subscriptions_url": "https://example.com/subscriptions",
+            "organizations_url": "https://example.com/orgs",
+            "repos_url": "https://example.com/repos",
+            "events_url": "https://example.com/events",
+            "received_events_url": "https://example.com/received_events",
+            "type": "User",
+            "site_admin": false,
+            "name": null,
+            "patch_url": null,
+            "email": null
+        })
+    }
+
+    fn build_github_client(base_url: String) -> Octocrab {
+        Octocrab::builder()
+            .base_uri(base_url)
+            .unwrap()
+            .personal_token("gh-token".to_string())
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn login_persists_user_and_actor() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let _mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+
+        let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+        let response = state
+            .login_with_github_token("gh-token".to_string())
+            .await
+            .expect("login should succeed");
+
+        assert!(!response.login_token.is_empty());
+        assert_eq!(response.user.username.as_str(), "octo");
+
+        let store_read = state.store.read().await;
+        let users = store_read.list_users().await?;
+        let actors = store_read.list_actors().await?;
+        assert_eq!(users.len(), 1);
+        assert_eq!(actors.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_returns_error_for_invalid_token() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let _mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(401);
+        });
+
+        let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+        let err = state
+            .login_with_github_token("bad-token".to_string())
+            .await
+            .expect_err("login should fail for invalid token");
+
+        assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
     }
 
     #[tokio::test]

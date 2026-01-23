@@ -847,8 +847,30 @@ impl Store for PostgresStore {
             .await
             .map_err(super::map_actor_error)?;
 
-        self.add_user(user.clone()).await?;
-        self.add_actor(actor.clone()).await?;
+        if let Err(err) = self.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    self.set_user_github_token(
+                        &user.username,
+                        user.github_token.clone(),
+                        user.github_user_id,
+                    )
+                    .await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        if let Err(err) = self.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    let name = actor.name();
+                    self.update_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
+                        .await?;
+                }
+                other => return Err(other),
+            }
+        }
 
         Ok((user, actor, auth_token))
     }

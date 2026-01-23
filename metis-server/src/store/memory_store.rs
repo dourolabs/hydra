@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 use octocrab::Octocrab;
 
 use super::issue_graph::IssueGraphContext;
@@ -43,7 +43,7 @@ pub struct MemoryStore {
     users: HashMap<Username, User>,
     /// Maps actor names to their Actor data
     actors: HashMap<String, Actor>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     github_client: Option<Octocrab>,
 }
 
@@ -62,13 +62,13 @@ impl MemoryStore {
             status_logs: HashMap::new(),
             users: HashMap::new(),
             actors: HashMap::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-utils"))]
             github_client: None,
         }
     }
 
-    #[cfg(test)]
-    fn new_with_github_client(github_client: Octocrab) -> Self {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn new_with_github_client(github_client: Octocrab) -> Self {
         let mut store = Self::new();
         store.github_client = Some(github_client);
         store
@@ -580,8 +580,8 @@ impl Store for MemoryStore {
                     .await
                     .map_err(super::map_actor_error)?;
 
-            self.add_user(user.clone()).await?;
-            self.add_actor(actor.clone()).await?;
+            self.upsert_user_and_actor(user.clone(), actor.clone())
+                .await?;
 
             return Ok((user, actor, auth_token));
         }
@@ -590,8 +590,8 @@ impl Store for MemoryStore {
             .await
             .map_err(super::map_actor_error)?;
 
-        self.add_user(user.clone()).await?;
-        self.add_actor(actor.clone()).await?;
+        self.upsert_user_and_actor(user.clone(), actor.clone())
+            .await?;
 
         Ok((user, actor, auth_token))
     }
@@ -686,6 +686,35 @@ impl Store for MemoryStore {
             .get(username)
             .cloned()
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
+}
+
+impl MemoryStore {
+    async fn upsert_user_and_actor(&mut self, user: User, actor: Actor) -> Result<(), StoreError> {
+        if let Err(err) = self.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    self.set_user_github_token(
+                        &user.username,
+                        user.github_token.clone(),
+                        user.github_user_id,
+                    )
+                    .await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        if let Err(err) = self.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    self.actors.insert(actor.name(), actor);
+                }
+                other => return Err(other),
+            }
+        }
+
+        Ok(())
     }
 }
 
