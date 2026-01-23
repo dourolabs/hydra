@@ -269,11 +269,11 @@ impl Default for DashboardState {
         issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
-        configure_status_panel_keybindings(&mut running_issue_panel);
+        configure_issue_tree_panel_keybindings(&mut running_issue_panel);
         let mut user_unowned_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut user_unowned_issue_panel);
         let mut completed_issue_panel = PanelState::new();
-        configure_status_panel_keybindings(&mut completed_issue_panel);
+        configure_issue_tree_panel_keybindings(&mut completed_issue_panel);
 
         let mut state = Self {
             jobs: Vec::new(),
@@ -309,6 +309,11 @@ fn configure_status_panel_keybindings(panel: &mut PanelState) {
     panel.register_keybinding(KeyCode::Down, KeyModifiers::NONE, "Select");
     panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
     panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+}
+
+fn configure_issue_tree_panel_keybindings(panel: &mut PanelState) {
+    configure_status_panel_keybindings(panel);
+    panel.register_keybinding(KeyCode::Char(' '), KeyModifiers::NONE, "Expand/Collapse");
 }
 
 struct IssueSubmission {
@@ -453,6 +458,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if is_issue_tree_space_key(key, state) {
+                toggle_selected_issue_children(state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
                 PanelFocus::UserOwned | PanelFocus::Running | PanelFocus::Completed => {
@@ -529,6 +542,18 @@ fn is_panel_focus_key(key: KeyEvent) -> bool {
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
+}
+
+fn is_issue_tree_space_key(key: KeyEvent, state: &DashboardState) -> bool {
+    if !key.modifiers.is_empty() || state.issue_creator_panel.focused() {
+        return false;
+    }
+
+    matches!(key.code, KeyCode::Char(' '))
+        && matches!(
+            state.selected_panel,
+            PanelFocus::Running | PanelFocus::Completed
+        )
 }
 
 fn selection_key_delta(key: KeyEvent) -> Option<i32> {
@@ -649,7 +674,6 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
 
 // Toggle handler for issue tree expansion; invoke this when a keybinding (e.g. spacebar)
 // should expand or collapse the children of the currently selected issue.
-#[allow(dead_code)]
 fn toggle_selected_issue_children(state: &mut DashboardState) -> bool {
     let selected_panel = state.selected_panel;
     let Some(issue_id) = selected_issue_id(state, selected_panel) else {
