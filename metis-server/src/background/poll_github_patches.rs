@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
-use metis_common::{PatchId, RepoName, github::build_octocrab_client};
+use metis_common::PatchId;
 use octocrab::{
     Octocrab,
     models::{
@@ -174,17 +174,16 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, &patch.service_repo_name).await else {
+    let Some(client) = select_github_installation_client(state, &github).await? else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
             repo = %github.repo,
             service_repo_name = %patch.service_repo_name,
-            "skipping GitHub sync because no token is configured for the service repository"
+            "skipping GitHub sync because no GitHub App installation token is available"
         );
         return Ok(());
     };
-    let client = build_octocrab_client(&token).context("building GitHub client")?;
 
     let pr = client
         .pulls(&github.owner, &github.repo)
@@ -396,12 +395,47 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-async fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
-    state
-        .service_state
-        .repository(service_repo_name)
+async fn select_github_installation_client(
+    state: &AppState,
+    github: &GithubPr,
+) -> anyhow::Result<Option<Octocrab>> {
+    let Some(app_client) = state.github_app.as_ref() else {
+        return Ok(None);
+    };
+
+    let installation = match app_client
+        .apps()
+        .get_repository_installation(&github.owner, &github.repo)
         .await
-        .and_then(|repo| repo.github_token.clone())
+    {
+        Ok(installation) => installation,
+        Err(err) => {
+            warn!(
+                owner = %github.owner,
+                repo = %github.repo,
+                error = %err,
+                "failed to lookup GitHub App installation"
+            );
+            return Ok(None);
+        }
+    };
+
+    let (installation_client, _token) =
+        match app_client.installation_and_token(installation.id).await {
+            Ok(result) => result,
+            Err(err) => {
+                warn!(
+                    owner = %github.owner,
+                    repo = %github.repo,
+                    installation_id = %installation.id,
+                    error = %err,
+                    "failed to fetch GitHub App installation token"
+                );
+                return Ok(None);
+            }
+        };
+
+    Ok(Some(installation_client))
 }
 
 fn build_review_entries(
@@ -650,14 +684,12 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use metis_common::RepoName;
     use serde_json::json;
-    use std::{collections::HashMap, str::FromStr, sync::Arc};
+    use std::{str::FromStr, sync::Arc};
     use tokio::sync::RwLock;
 
-    use crate::{
-        app::{ServiceRepository, ServiceState},
-        test_utils::{FailingStore, test_state},
-    };
+    use crate::test_utils::{FailingStore, test_state};
 
     fn sample_diff() -> String {
         "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
@@ -993,30 +1025,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_github_token_returns_none_for_unknown_repo() {
+    async fn select_github_installation_client_returns_none_without_app() {
         let state = test_state();
-        let repo_name = RepoName::from_str("dourolabs/api").unwrap();
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            1,
+            None,
+            None,
+            None,
+            None,
+        );
 
-        assert!(select_github_token(&state, &repo_name).await.is_none());
-    }
+        let client = select_github_installation_client(&state, &github)
+            .await
+            .expect("select should not error without app");
 
-    #[tokio::test]
-    async fn select_github_token_uses_service_repo_name() {
-        let mut state = test_state();
-        let repo_name = RepoName::from_str("dourolabs/api").unwrap();
-        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            repo_name.clone(),
-            ServiceRepository::new(
-                repo_name.clone(),
-                "https://github.com/dourolabs/api.git".to_string(),
-                None,
-                Some("svc-token".to_string()),
-                None,
-            ),
-        )])));
-
-        let token = select_github_token(&state, &repo_name).await;
-
-        assert_eq!(token.as_deref(), Some("svc-token"));
+        assert!(client.is_none());
     }
 }
