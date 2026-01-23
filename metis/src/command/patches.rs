@@ -5,6 +5,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    github::build_octocrab_client,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -17,7 +18,6 @@ use metis_common::{
     },
     PatchId, RepoName, TaskId,
 };
-use octocrab::Octocrab;
 use serde::Deserialize;
 
 use crate::client::MetisClientInterface;
@@ -926,10 +926,7 @@ async fn open_pull_request(
         .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
 
     // Use octocrab to get structured PR metadata
-    let crab = Octocrab::builder()
-        .personal_token(github_token.to_string())
-        .build()
-        .context("failed to create octocrab client")?;
+    let crab = build_octocrab_client(github_token).context("failed to create octocrab client")?;
 
     let (owner, repo) = parse_pr_repository(pr_url.trim())
         .ok_or_else(|| anyhow!("failed to parse repository from PR URL: {pr_url}"))?;
