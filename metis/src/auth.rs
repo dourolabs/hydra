@@ -1,28 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use metis_common::users::{ResolveUserRequest, Username};
-use std::{
-    env, fs,
-    future::Future,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    pin::Pin,
-};
+use std::{fs, future::Future, io::ErrorKind, path::PathBuf, pin::Pin};
 
-use crate::config;
 use crate::{client::MetisClientInterface, command::login};
 
-const AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
-
-pub(crate) fn resolve_auth_token_path() -> Result<PathBuf> {
-    let home = env::var_os("HOME")
-        .ok_or_else(|| anyhow!("HOME is not set; cannot resolve auth token path"))?;
-    let raw_path = Path::new(AUTH_TOKEN_PATH);
-    let expanded = config::expand_path(raw_path);
-    if expanded.to_string_lossy().starts_with('~') {
-        return Ok(PathBuf::from(home).join(".local/share/metis/auth-token"));
-    }
-    Ok(expanded)
-}
+pub const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
 
 enum AuthTokenState {
     Missing(PathBuf),
@@ -30,32 +12,31 @@ enum AuthTokenState {
     Present(String),
 }
 
-fn read_auth_token_state() -> Result<AuthTokenState> {
-    let path = resolve_auth_token_path()?;
-    let token = match fs::read_to_string(&path) {
+fn read_auth_token_state(token_path: &PathBuf) -> Result<AuthTokenState> {
+    let token = match fs::read_to_string(token_path) {
         Ok(token) => token,
         Err(err) => {
             if err.kind() == ErrorKind::NotFound {
-                return Ok(AuthTokenState::Missing(path));
+                return Ok(AuthTokenState::Missing(token_path.clone()));
             }
             return Err(anyhow!(
                 "failed to read auth token from {}: {err}",
-                path.display()
+                token_path.display()
             ));
         }
     };
 
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        return Ok(AuthTokenState::Empty(path));
+        return Ok(AuthTokenState::Empty(token_path.clone()));
     }
 
     Ok(AuthTokenState::Present(trimmed.to_string()))
 }
 
 #[allow(dead_code)]
-pub(crate) fn read_auth_token() -> Result<String> {
-    match read_auth_token_state()? {
+pub(crate) fn read_auth_token(token_path: &PathBuf) -> Result<String> {
+    match read_auth_token_state(token_path)? {
         AuthTokenState::Missing(path) => Err(anyhow!(
             "Auth token not found at {}. Run `metis login`.",
             path.display()
@@ -68,24 +49,34 @@ pub(crate) fn read_auth_token() -> Result<String> {
     }
 }
 
-pub(crate) async fn ensure_auth_token(client: &dyn MetisClientInterface) -> Result<String> {
-    ensure_auth_token_with_login(client, |client| Box::pin(login::run(client))).await
+pub(crate) async fn ensure_auth_token(
+    client: &dyn MetisClientInterface,
+    token_path: &PathBuf,
+) -> Result<String> {
+    ensure_auth_token_with_login(client, token_path, |client, token_path| {
+        Box::pin(login::run(client, token_path))
+    })
+    .await
 }
 
 async fn ensure_auth_token_with_login<F>(
     client: &dyn MetisClientInterface,
+    token_path: &PathBuf,
     login_runner: F,
 ) -> Result<String>
 where
-    F: for<'a> Fn(&'a dyn MetisClientInterface) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>,
+    F: for<'a> Fn(
+        &'a dyn MetisClientInterface,
+        &'a PathBuf,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>,
 {
-    match read_auth_token_state()? {
+    match read_auth_token_state(token_path)? {
         AuthTokenState::Present(token) => Ok(token),
         AuthTokenState::Missing(_) | AuthTokenState::Empty(_) => {
-            login_runner(client)
+            login_runner(client, token_path)
                 .await
                 .context("failed to run login flow")?;
-            match read_auth_token_state()? {
+            match read_auth_token_state(token_path)? {
                 AuthTokenState::Present(token) => Ok(token),
                 AuthTokenState::Missing(path) => Err(anyhow!(
                     "Auth token not found at {} after login.",
@@ -101,8 +92,11 @@ where
 }
 
 #[allow(dead_code)]
-pub(crate) async fn resolve_auth_user(client: &dyn MetisClientInterface) -> Result<Username> {
-    let token = ensure_auth_token(client).await?;
+pub(crate) async fn resolve_auth_user(
+    client: &dyn MetisClientInterface,
+    token_path: &PathBuf,
+) -> Result<Username> {
+    let token = ensure_auth_token(client, token_path).await?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token))
         .await
@@ -114,104 +108,94 @@ pub(crate) async fn resolve_auth_user(client: &dyn MetisClientInterface) -> Resu
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use std::env;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
 
-    fn with_temp_home<F, R>(action: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        let _guard = crate::test_utils::env::lock();
-        let original = env::var_os("HOME");
-        let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-
-        let result = action();
-
-        match original {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
-
-        result
-    }
-
     #[test]
     fn ensure_auth_token_triggers_login_when_missing() {
-        with_temp_home(|| {
-            let login_calls = AtomicUsize::new(0);
-            let client = MetisClient::new("http://localhost").expect("client");
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("runtime");
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("auth-token");
+        let login_calls = AtomicUsize::new(0);
+        let client = MetisClient::new("http://localhost").expect("client");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
 
-            let token = runtime
-                .block_on(ensure_auth_token_with_login(&client, |_client| {
+        let token = runtime
+            .block_on(ensure_auth_token_with_login(
+                &client,
+                &token_path,
+                |_client, token_path| {
                     login_calls.fetch_add(1, Ordering::SeqCst);
-                    let path = resolve_auth_token_path().expect("auth path");
-                    fs::create_dir_all(path.parent().expect("auth parent"))
+                    fs::create_dir_all(token_path.parent().expect("auth parent"))
                         .expect("create auth dir");
-                    fs::write(&path, "token-abc").expect("write auth token");
+                    fs::write(token_path, "token-abc").expect("write auth token");
                     Box::pin(async { Ok(()) })
-                }))
-                .expect("ensure auth token");
+                },
+            ))
+            .expect("ensure auth token");
 
-            assert_eq!(token, "token-abc");
-            assert_eq!(login_calls.load(Ordering::SeqCst), 1);
-        });
+        assert_eq!(token, "token-abc");
+        assert_eq!(login_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn ensure_auth_token_triggers_login_when_empty() {
-        with_temp_home(|| {
-            let login_calls = AtomicUsize::new(0);
-            let client = MetisClient::new("http://localhost").expect("client");
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("runtime");
-            let path = resolve_auth_token_path().expect("auth path");
-            fs::create_dir_all(path.parent().expect("auth parent")).expect("create auth dir");
-            fs::write(&path, "   \n").expect("write auth token");
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("auth-token");
+        fs::create_dir_all(token_path.parent().expect("auth parent")).expect("create auth dir");
+        fs::write(&token_path, "   \n").expect("write auth token");
 
-            let token = runtime
-                .block_on(ensure_auth_token_with_login(&client, |_client| {
+        let login_calls = AtomicUsize::new(0);
+        let client = MetisClient::new("http://localhost").expect("client");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let token = runtime
+            .block_on(ensure_auth_token_with_login(
+                &client,
+                &token_path,
+                |_client, token_path| {
                     login_calls.fetch_add(1, Ordering::SeqCst);
-                    let path = resolve_auth_token_path().expect("auth path");
-                    fs::write(&path, "token-empty").expect("write auth token");
+                    fs::write(token_path, "token-empty").expect("write auth token");
                     Box::pin(async { Ok(()) })
-                }))
-                .expect("ensure auth token");
+                },
+            ))
+            .expect("ensure auth token");
 
-            assert_eq!(token, "token-empty");
-            assert_eq!(login_calls.load(Ordering::SeqCst), 1);
-        });
+        assert_eq!(token, "token-empty");
+        assert_eq!(login_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn ensure_auth_token_skips_login_when_present() {
-        with_temp_home(|| {
-            let login_calls = AtomicUsize::new(0);
-            let client = MetisClient::new("http://localhost").expect("client");
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("runtime");
-            let path = resolve_auth_token_path().expect("auth path");
-            fs::create_dir_all(path.parent().expect("auth parent")).expect("create auth dir");
-            fs::write(&path, "  token-123 \n").expect("write auth token");
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("auth-token");
+        fs::create_dir_all(token_path.parent().expect("auth parent")).expect("create auth dir");
+        fs::write(&token_path, "  token-123 \n").expect("write auth token");
 
-            let token = runtime
-                .block_on(ensure_auth_token_with_login(&client, |_client| {
+        let login_calls = AtomicUsize::new(0);
+        let client = MetisClient::new("http://localhost").expect("client");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let token = runtime
+            .block_on(ensure_auth_token_with_login(
+                &client,
+                &token_path,
+                |_client, _token_path| {
                     login_calls.fetch_add(1, Ordering::SeqCst);
                     Box::pin(async { Ok(()) })
-                }))
-                .expect("ensure auth token");
+                },
+            ))
+            .expect("ensure auth token");
 
-            assert_eq!(token, "token-123");
-            assert_eq!(login_calls.load(Ordering::SeqCst), 0);
-        });
+        assert_eq!(token, "token-123");
+        assert_eq!(login_calls.load(Ordering::SeqCst), 0);
     }
 }

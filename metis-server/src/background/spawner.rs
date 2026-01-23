@@ -266,8 +266,8 @@ mod tests {
     use chrono::Utc;
     use std::sync::Arc;
 
-    fn default_user() -> User {
-        User::new(Username::from("spawner"), "creator-token".to_string())
+    fn default_user() -> Username {
+        Username::from("spawner")
     }
 
     fn queue(agent_name: &str) -> AgentQueue {

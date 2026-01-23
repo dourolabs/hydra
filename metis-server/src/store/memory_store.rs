@@ -599,7 +599,7 @@ mod tests {
         Issue::new(
             IssueType::Task,
             "issue details".to_string(),
-            User::new(Username::from("creator"), String::new()),
+            Username::from("creator"),
             String::new(),
             IssueStatus::Open,
             None,

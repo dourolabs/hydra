@@ -304,10 +304,16 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, server_url: &str) -> Result<()> {
-    let username = auth::resolve_auth_user(client).await?.to_string();
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    server_url: &str,
+    token_path: &std::path::PathBuf,
+) -> Result<()> {
+    let username = auth::resolve_auth_user(client, token_path)
+        .await?
+        .to_string();
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
+    let result = run_dashboard_loop(client, &mut terminal, username, server_url, token_path).await;
     ratatui::restore();
     result
 }
@@ -317,6 +323,7 @@ async fn run_dashboard_loop(
     terminal: &mut DefaultTerminal,
     username: String,
     server_url: &str,
+    token_path: &std::path::PathBuf,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
@@ -384,7 +391,7 @@ async fn run_dashboard_loop(
                                 Some(format!("Submitting issue for @{assignee}..."));
                             terminal.draw(|f| render(f, &mut state))?;
                             let submission_result =
-                                submit_issue(client, &submission, &state.username)
+                                submit_issue(client, &submission, &state.username, token_path)
                             .await;
                             handle_issue_submission_result(
                                 &mut state,
@@ -706,6 +713,7 @@ async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
     creator: &str,
+    token_path: &std::path::PathBuf,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {
@@ -713,8 +721,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let token = auth::ensure_auth_token(client).await?;
-    let creator = User::new(Username::from(creator), token);
+    let creator = Username::from(creator);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -1947,7 +1954,7 @@ mod tests {
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::HashMap;
-    use std::{env, fs};
+    use std::fs;
     use tempfile::tempdir;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
@@ -3169,10 +3176,8 @@ mod tests {
     async fn submit_issue_sends_task_request() {
         let _guard = test_env::lock();
         let server = MockServer::start();
-        let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        let auth_token_path = temp.path().join("auth-token");
         fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
             .expect("create auth token dir");
         fs::write(&auth_token_path, "token-123").expect("write auth token");
@@ -3204,16 +3209,12 @@ mod tests {
             assignee: "alice".to_string(),
         };
 
-        let created = submit_issue(&client, &submission, " metis-user ")
+        let created = submit_issue(&client, &submission, " metis-user ", &auth_token_path)
             .await
             .expect("submission failed");
 
         assert_eq!(created, issue_id("i-new"));
         mock.assert();
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     fn row_text(buffer: &Buffer, y: u16, width: u16) -> String {

@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::time::{sleep, Instant};
 
-use crate::{auth, client::MetisClientInterface};
+use crate::client::MetisClientInterface;
 
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
@@ -47,7 +47,7 @@ enum TokenPollState {
     Token(String),
 }
 
-pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, token_path: &PathBuf) -> Result<()> {
     let client_id = fetch_github_client_id(client)
         .await
         .context("failed to fetch GitHub client id from server")?;
@@ -63,7 +63,7 @@ pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
     let profile = fetch_github_profile(&http, &token).await?;
     store_github_credentials(client, &profile, &token).await?;
-    let token_path = write_auth_token_file(&token)?;
+    write_auth_token_file(token_path, &token)?;
 
     println!(
         "Logged in as {}. Stored token at {}.",
@@ -213,9 +213,8 @@ async fn store_github_credentials(
     }
 }
 
-fn write_auth_token_file(token: &str) -> Result<PathBuf> {
-    let path = auth::resolve_auth_token_path()?;
-    let parent = path
+fn write_auth_token_file(token_path: &PathBuf, token: &str) -> Result<()> {
+    let parent = token_path
         .parent()
         .ok_or_else(|| anyhow!("auth token path missing parent directory"))?;
     fs::create_dir_all(parent).context("failed to create auth token directory")?;
@@ -224,7 +223,7 @@ fn write_auth_token_file(token: &str) -> Result<PathBuf> {
         .create(true)
         .truncate(true)
         .write(true)
-        .open(&path)
+        .open(token_path)
         .context("failed to open auth token file for writing")?;
     file.write_all(token.as_bytes())
         .context("failed to write auth token file")?;
@@ -233,18 +232,16 @@ fn write_auth_token_file(token: &str) -> Result<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(token_path, fs::Permissions::from_mode(0o600))
             .context("failed to set auth token file permissions")?;
     }
 
-    Ok(path)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::env as test_env;
-    use std::env;
     use tempfile::tempdir;
 
     #[test]
@@ -267,31 +264,19 @@ mod tests {
     }
 
     #[test]
-    fn auth_token_path_and_write_use_home_dir() {
-        let _guard = test_env::lock();
-        let original = env::var_os("HOME");
+    fn auth_token_path_and_write_use_provided_path() {
         let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
+        let token_path = temp.path().join("auth-token");
 
-        let path = auth::resolve_auth_token_path().expect("auth path");
-        let expected = temp.path().join(".local/share/metis/auth-token");
-        assert_eq!(path, expected);
-
-        let written = write_auth_token_file("token-123").expect("write token");
-        assert_eq!(written, expected);
-        let contents = fs::read_to_string(&written).expect("read token");
+        write_auth_token_file(&token_path, "token-123").expect("write token");
+        let contents = fs::read_to_string(&token_path).expect("read token");
         assert_eq!(contents, "token-123");
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&written).unwrap().permissions().mode() & 0o777;
+            let mode = fs::metadata(&token_path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
-        }
-
-        match original {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
         }
     }
 }

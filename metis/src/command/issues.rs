@@ -257,7 +257,11 @@ pub enum IssueCommands {
     },
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: IssueCommands,
+    token_path: &std::path::PathBuf,
+) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
@@ -297,6 +301,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         } => {
             create_issue(
                 client,
+                token_path,
                 r#type,
                 status,
                 dependencies,
@@ -336,6 +341,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
         } => {
             update_issue(
                 client,
+                token_path,
                 id,
                 r#type,
                 status,
@@ -676,6 +682,7 @@ fn resolve_job_settings(
 
 async fn create_issue(
     client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
     issue_type: IssueType,
     status: IssueStatus,
     dependencies: Vec<IssueDependency>,
@@ -705,14 +712,14 @@ async fn create_issue(
             if trimmed.is_empty() {
                 bail!("Creator must not be empty.");
             }
-            let authenticated_user = resolve_authenticated_user(client).await?;
+            let authenticated_user = resolve_authenticated_user(client, token_path).await?;
             if !creator_matches_user(trimmed, &authenticated_user) {
                 bail!(
                     "Creator override must match the authenticated user ({})",
                     authenticated_user.username.as_ref()
                 );
             }
-            authenticated_user
+            authenticated_user.username
         }
         None => {
             if let Some(parent_id) = dependencies
@@ -726,7 +733,9 @@ async fn create_issue(
                     .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
                 parent.issue.creator
             } else {
-                resolve_authenticated_user(client).await?
+                resolve_authenticated_user(client, token_path)
+                    .await?
+                    .username
             }
         }
     };
@@ -779,6 +788,7 @@ async fn create_issue(
 
 async fn update_issue(
     client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
     id: IssueId,
     issue_type: Option<IssueType>,
     status: Option<IssueStatus>,
@@ -829,14 +839,14 @@ async fn update_issue(
         if trimmed.is_empty() {
             bail!("Creator must not be empty.");
         }
-        let authenticated_user = resolve_authenticated_user(client).await?;
+        let authenticated_user = resolve_authenticated_user(client, token_path).await?;
         if !creator_matches_user(trimmed, &authenticated_user) {
             bail!(
                 "Creator override must match the authenticated user ({})",
                 authenticated_user.username.as_ref()
             );
         }
-        Some(authenticated_user)
+        Some(authenticated_user.username)
     } else {
         None
     };
@@ -920,8 +930,11 @@ async fn update_issue(
     Ok(())
 }
 
-async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result<User> {
-    let token = auth::ensure_auth_token(client).await?;
+async fn resolve_authenticated_user(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
+) -> Result<User> {
+    let token = auth::ensure_auth_token(client, token_path).await?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token.clone()))
         .await
@@ -1489,7 +1502,6 @@ mod tests {
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::env;
     use std::fs;
     use std::str::FromStr;
     use tempfile::tempdir;
@@ -1892,10 +1904,8 @@ mod tests {
         let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        let auth_token_path = temp.path().join("auth-token");
         fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
             .expect("create auth token dir");
         fs::write(&auth_token_path, "token-123").expect("write auth token");
@@ -1939,6 +1949,7 @@ mod tests {
 
         create_issue(
             &client,
+            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             Vec::new(),
@@ -1960,10 +1971,6 @@ mod tests {
         create_mock.assert();
         assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     #[tokio::test]
@@ -1972,10 +1979,8 @@ mod tests {
         let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        let auth_token_path = temp.path().join("auth-token");
         fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
             .expect("create auth token dir");
         fs::write(&auth_token_path, "token-123").expect("write auth token");
@@ -2022,6 +2027,7 @@ mod tests {
 
         create_issue(
             &client,
+            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             Vec::new(),
@@ -2043,10 +2049,6 @@ mod tests {
         create_mock.assert();
         assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     #[tokio::test]
@@ -2055,10 +2057,8 @@ mod tests {
         let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");
-        env::set_var("HOME", temp.path());
-        let auth_token_path = temp.path().join(".local/share/metis/auth-token");
+        let auth_token_path = temp.path().join("auth-token");
         fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
             .expect("create auth token dir");
         fs::write(&auth_token_path, "token-123").expect("write auth token");
@@ -2075,6 +2075,7 @@ mod tests {
 
         let result = create_issue(
             &client,
+            &auth_token_path,
             IssueType::Bug,
             IssueStatus::Open,
             Vec::new(),
@@ -2095,11 +2096,6 @@ mod tests {
         assert_eq!(resolve_mock.hits(), 1);
         let error = result.unwrap_err().to_string();
         assert!(error.contains("Creator override must match"));
-
-        match original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
     }
 
     #[tokio::test]
@@ -2159,8 +2155,15 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
         });
 
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
+        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
+            .expect("create auth token dir");
+        fs::write(&auth_token_path, "token-123").expect("write auth token");
+
         create_issue(
             &client,
+            &auth_token_path,
             IssueType::MergeRequest,
             IssueStatus::Closed,
             dependencies.clone(),
@@ -2188,8 +2191,11 @@ mod tests {
     async fn create_issue_requires_description() {
         let server = MockServer::start();
         let client = metis_client(&server);
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
         assert!(create_issue(
             &client,
+            &auth_token_path,
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
@@ -2212,8 +2218,11 @@ mod tests {
     async fn create_issue_rejects_empty_assignee() {
         let server = MockServer::start();
         let client = metis_client(&server);
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
         assert!(create_issue(
             &client,
+            &auth_token_path,
             IssueType::Bug,
             IssueStatus::Open,
             vec![],
@@ -2303,8 +2312,12 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
+
         update_issue(
             &client,
+            &auth_token_path,
             target_issue_id,
             Some(IssueType::Bug),
             Some(IssueStatus::Closed),
@@ -2388,8 +2401,12 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
+
         update_issue(
             &client,
+            &auth_token_path,
             target_issue_id,
             None,
             None,
@@ -2474,8 +2491,12 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone()));
         });
 
+        let temp = tempdir().expect("tempdir");
+        let auth_token_path = temp.path().join("auth-token");
+
         update_issue(
             &client,
+            &auth_token_path,
             target_issue_id,
             None,
             None,
