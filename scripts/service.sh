@@ -20,12 +20,6 @@ SERVER_CONFIGMAP_NAME="${SERVER_CONFIGMAP_NAME:-metis-server-config}"
 SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/metis}"
 SERVER_CONFIG_FILE_NAME="${SERVER_CONFIG_FILE_NAME:-config.toml}"
 SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
-RESOURCE_QUOTA_NAME="${RESOURCE_QUOTA_NAME:-${NAMESPACE}-quota}"
-RESOURCE_QUOTA_PODS="${RESOURCE_QUOTA_PODS:-50}"
-RESOURCE_QUOTA_REQUESTS_CPU="${RESOURCE_QUOTA_REQUESTS_CPU:-4}"
-RESOURCE_QUOTA_REQUESTS_MEMORY="${RESOURCE_QUOTA_REQUESTS_MEMORY:-8Gi}"
-RESOURCE_QUOTA_LIMITS_CPU="${RESOURCE_QUOTA_LIMITS_CPU:-8}"
-RESOURCE_QUOTA_LIMITS_MEMORY="${RESOURCE_QUOTA_LIMITS_MEMORY:-16Gi}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 POSTGRES_SERVICE_NAME="${POSTGRES_SERVICE_NAME:-postgres}"
@@ -75,7 +69,6 @@ echo "Postgres database/user:   ${POSTGRES_DB}/${POSTGRES_USER}"
 echo "Server config ConfigMap:  ${SERVER_CONFIGMAP_NAME}"
 echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
 echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
-echo "Namespace quota:          ${RESOURCE_QUOTA_NAME} (pods=${RESOURCE_QUOTA_PODS}, reqs: ${RESOURCE_QUOTA_REQUESTS_CPU} CPU/${RESOURCE_QUOTA_REQUESTS_MEMORY}, limits: ${RESOURCE_QUOTA_LIMITS_CPU} CPU/${RESOURCE_QUOTA_LIMITS_MEMORY})"
 echo
 
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -228,19 +221,6 @@ metadata:
   name: ${NAMESPACE}
 ---
 apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: ${RESOURCE_QUOTA_NAME}
-  namespace: ${NAMESPACE}
-spec:
-  hard:
-    pods: "${RESOURCE_QUOTA_PODS}"
-    requests.cpu: "${RESOURCE_QUOTA_REQUESTS_CPU}"
-    requests.memory: "${RESOURCE_QUOTA_REQUESTS_MEMORY}"
-    limits.cpu: "${RESOURCE_QUOTA_LIMITS_CPU}"
-    limits.memory: "${RESOURCE_QUOTA_LIMITS_MEMORY}"
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: server-sa
@@ -254,7 +234,7 @@ metadata:
 rules:
   # Allow managing Pods directly (if you create Pod objects)
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods", "secrets"]
     verbs: ["create", "get", "list", "watch", "delete"]
   # Allow reading pod logs (subresource needed for kubectl logs)
   - apiGroups: [""]
