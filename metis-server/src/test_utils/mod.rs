@@ -8,6 +8,7 @@ use crate::{
     run_with_state,
     store::MemoryStore,
 };
+use octocrab::Octocrab;
 use reqwest::Client;
 use std::{
     sync::Arc,
@@ -71,6 +72,19 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
 
 pub fn test_state() -> AppState {
     test_state_with_engine(Arc::new(MockJobEngine::new()))
+}
+
+pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
+    AppState {
+        config: Arc::new(test_app_config()),
+        github_app: None,
+        service_state: Arc::new(ServiceState::default()),
+        store: Arc::new(RwLock::new(Box::new(MemoryStore::new_with_github_client(
+            github_client,
+        )))),
+        job_engine: Arc::new(MockJobEngine::new()),
+        spawners: Vec::new(),
+    }
 }
 
 pub fn test_client() -> Client {

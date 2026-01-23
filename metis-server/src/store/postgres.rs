@@ -13,7 +13,6 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
-use octocrab::Octocrab;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -843,14 +842,35 @@ impl Store for PostgresStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_client: &Octocrab,
     ) -> Result<(User, Actor, String), StoreError> {
-        let (user, actor, auth_token) = Actor::new_for_github_token(github_token, github_client)
+        let (user, actor, auth_token) = Actor::new_for_github_token(github_token)
             .await
             .map_err(super::map_actor_error)?;
 
-        self.add_user(user.clone()).await?;
-        self.add_actor(actor.clone()).await?;
+        if let Err(err) = self.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    self.set_user_github_token(
+                        &user.username,
+                        user.github_token.clone(),
+                        user.github_user_id,
+                    )
+                    .await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        if let Err(err) = self.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    let name = actor.name();
+                    self.update_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
+                        .await?;
+                }
+                other => return Err(other),
+            }
+        }
 
         Ok((user, actor, auth_token))
     }

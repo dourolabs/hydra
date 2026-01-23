@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use octocrab::Octocrab;
 use std::collections::{HashMap, HashSet};
+
+#[cfg(any(test, feature = "test-utils"))]
+use octocrab::Octocrab;
 
 use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
@@ -41,6 +43,8 @@ pub struct MemoryStore {
     users: HashMap<Username, User>,
     /// Maps actor names to their Actor data
     actors: HashMap<String, Actor>,
+    #[cfg(any(test, feature = "test-utils"))]
+    github_client: Option<Octocrab>,
 }
 
 impl MemoryStore {
@@ -58,7 +62,16 @@ impl MemoryStore {
             status_logs: HashMap::new(),
             users: HashMap::new(),
             actors: HashMap::new(),
+            #[cfg(any(test, feature = "test-utils"))]
+            github_client: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn new_with_github_client(github_client: Octocrab) -> Self {
+        let mut store = Self::new();
+        store.github_client = Some(github_client);
+        store
     }
 
     /// Updates issue adjacency indexes to match the provided dependency list.
@@ -559,14 +572,26 @@ impl Store for MemoryStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_client: &Octocrab,
     ) -> Result<(User, Actor, String), StoreError> {
-        let (user, actor, auth_token) = Actor::new_for_github_token(github_token, github_client)
+        #[cfg(test)]
+        if let Some(github_client) = self.github_client.as_ref() {
+            let (user, actor, auth_token) =
+                Actor::new_for_github_token_with_client(github_token, github_client)
+                    .await
+                    .map_err(super::map_actor_error)?;
+
+            self.upsert_user_and_actor(user.clone(), actor.clone())
+                .await?;
+
+            return Ok((user, actor, auth_token));
+        }
+
+        let (user, actor, auth_token) = Actor::new_for_github_token(github_token)
             .await
             .map_err(super::map_actor_error)?;
 
-        self.add_user(user.clone()).await?;
-        self.add_actor(actor.clone()).await?;
+        self.upsert_user_and_actor(user.clone(), actor.clone())
+            .await?;
 
         Ok((user, actor, auth_token))
     }
@@ -661,6 +686,35 @@ impl Store for MemoryStore {
             .get(username)
             .cloned()
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
+}
+
+impl MemoryStore {
+    async fn upsert_user_and_actor(&mut self, user: User, actor: Actor) -> Result<(), StoreError> {
+        if let Err(err) = self.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    self.set_user_github_token(
+                        &user.username,
+                        user.github_token.clone(),
+                        user.github_user_id,
+                    )
+                    .await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        if let Err(err) = self.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    self.actors.insert(actor.name(), actor);
+                }
+                other => return Err(other),
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1514,9 +1568,9 @@ mod tests {
         });
 
         let github_client = build_github_client(server.base_url());
-        let mut store = MemoryStore::new();
+        let mut store = MemoryStore::new_with_github_client(github_client);
         let (user, actor, auth_token) = store
-            .create_actor_for_github_token("gh-token".to_string(), &github_client)
+            .create_actor_for_github_token("gh-token".to_string())
             .await
             .unwrap();
 

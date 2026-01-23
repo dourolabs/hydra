@@ -7,7 +7,6 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
-use octocrab::Octocrab;
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -21,7 +20,9 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
         Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
-        Err(ActorError::GithubLookupFailed(message)) => Err(StoreError::Internal(message)),
+        Err(ActorError::GithubLookupFailed(message)) => {
+            Err(StoreError::GithubTokenInvalid(message))
+        }
     }
 }
 
@@ -57,6 +58,8 @@ pub enum StoreError {
     ActorNotFound(String),
     #[error("Actor already exists: {0}")]
     ActorAlreadyExists(String),
+    #[error("Invalid GitHub token: {0}")]
+    GithubTokenInvalid(String),
     #[error("Invalid actor name: {0}")]
     InvalidActorName(String),
 }
@@ -64,7 +67,7 @@ pub enum StoreError {
 fn map_actor_error(error: ActorError) -> StoreError {
     match error {
         ActorError::InvalidActorName(name) => StoreError::InvalidActorName(name),
-        other => StoreError::Internal(other.to_string()),
+        ActorError::GithubLookupFailed(message) => StoreError::GithubTokenInvalid(message),
     }
 }
 
@@ -300,7 +303,6 @@ pub trait Store: Send + Sync {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_client: &Octocrab,
     ) -> Result<(User, Actor, String), StoreError>;
 
     /// Creates and persists a task-backed actor for the given task.
