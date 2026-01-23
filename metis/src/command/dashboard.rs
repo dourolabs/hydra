@@ -269,11 +269,11 @@ impl Default for DashboardState {
         issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
-        configure_status_panel_keybindings(&mut running_issue_panel);
+        configure_issue_tree_panel_keybindings(&mut running_issue_panel);
         let mut user_unowned_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut user_unowned_issue_panel);
         let mut completed_issue_panel = PanelState::new();
-        configure_status_panel_keybindings(&mut completed_issue_panel);
+        configure_issue_tree_panel_keybindings(&mut completed_issue_panel);
 
         let mut state = Self {
             jobs: Vec::new(),
@@ -309,6 +309,11 @@ fn configure_status_panel_keybindings(panel: &mut PanelState) {
     panel.register_keybinding(KeyCode::Down, KeyModifiers::NONE, "Select");
     panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
     panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
+}
+
+fn configure_issue_tree_panel_keybindings(panel: &mut PanelState) {
+    configure_status_panel_keybindings(panel);
+    panel.register_keybinding(KeyCode::Char(' '), KeyModifiers::NONE, "Expand/Collapse");
 }
 
 struct IssueSubmission {
@@ -453,6 +458,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if is_issue_tree_space_key(key, state.selected_panel) {
+                toggle_selected_issue_children(state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                };
+            }
+
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
                 PanelFocus::UserOwned | PanelFocus::Running | PanelFocus::Completed => {
@@ -529,6 +542,15 @@ fn is_panel_focus_key(key: KeyEvent) -> bool {
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
+}
+
+fn is_issue_tree_space_key(key: KeyEvent, panel: PanelFocus) -> bool {
+    if !key.modifiers.is_empty() {
+        return false;
+    }
+
+    matches!(key.code, KeyCode::Char(' '))
+        && matches!(panel, PanelFocus::Running | PanelFocus::Completed)
 }
 
 fn selection_key_delta(key: KeyEvent) -> Option<i32> {
