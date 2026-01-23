@@ -3,7 +3,8 @@ use crate::{
     config::AppConfig,
     domain::{
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
+            UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
@@ -195,7 +196,6 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
-
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
         let fallback_image = self.config.metis.worker_image.clone();
@@ -215,7 +215,10 @@ impl AppState {
             }
             None => None,
         };
-        let job_settings = issue.as_ref().and_then(|issue| issue.job_settings.clone());
+        let job_settings = issue
+            .as_ref()
+            .map(|issue| issue.job_settings.clone())
+            .filter(|settings| !JobSettings::is_default(settings));
 
         let task = Task::new(
             request.prompt,
@@ -295,7 +298,9 @@ impl AppState {
                         },
                         None => None,
                     };
-                    if let Some(settings) = issue_job_settings {
+                    if let Some(settings) =
+                        issue_job_settings.filter(|settings| !JobSettings::is_default(settings))
+                    {
                         let merged = JobSettings::merge(task.job_settings.clone(), settings);
                         task.job_settings = merged;
                     }
