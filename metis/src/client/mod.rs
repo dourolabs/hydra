@@ -1184,7 +1184,7 @@ mod tests {
     use std::str::FromStr;
 
     #[tokio::test]
-    async fn list_repositories_fetches_config_without_secrets() -> Result<()> {
+    async fn list_repositories_fetches_config() -> Result<()> {
         let server = MockServer::start();
         let repositories = vec![ServiceRepositoryInfo::new(
             RepoName::from_str("dourolabs/metis")?,
