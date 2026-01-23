@@ -1438,4 +1438,46 @@ mod tests {
             StoreError::ActorAlreadyExists(existing) if existing == name
         ));
     }
+
+    #[tokio::test]
+    async fn create_task_actor_persists_and_verifies_token() {
+        let mut store = MemoryStore::new();
+        let task_id = TaskId::new();
+
+        let (actor, token) = Actor::new_for_task(task_id.clone(), &mut store)
+            .await
+            .unwrap();
+
+        assert_eq!(actor.user_or_worker, UserOrWorker::Task(task_id));
+        assert!(actor.verify_auth_token(&token));
+
+        let fetched = store.get_actor(&actor.name()).await.unwrap();
+        assert_eq!(fetched, actor);
+    }
+
+    #[tokio::test]
+    async fn lookup_actor_rejects_invalid_prefix() {
+        let store = MemoryStore::new();
+
+        let err = Actor::lookup_by_name(&store, "x-123").await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidActorName(name) if name == "x-123"
+        ));
+    }
+
+    #[tokio::test]
+    async fn lookup_actor_missing_returns_not_found() {
+        let store = MemoryStore::new();
+        let task_id = TaskId::new();
+        let name = format!("w-{task_id}");
+
+        let err = Actor::lookup_by_name(&store, &name).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            StoreError::ActorNotFound(missing) if missing == name
+        ));
+    }
 }

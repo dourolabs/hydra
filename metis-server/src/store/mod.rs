@@ -48,6 +48,8 @@ pub enum StoreError {
     ActorNotFound(String),
     #[error("Actor already exists: {0}")]
     ActorAlreadyExists(String),
+    #[error("Invalid actor name: {0}")]
+    InvalidActorName(String),
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.

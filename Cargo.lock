@@ -3443,7 +3443,6 @@ dependencies = [
  "chrono",
  "futures",
  "git2",
- "hex",
  "httpmock",
  "jsonwebtoken",
  "k8s-openapi",
