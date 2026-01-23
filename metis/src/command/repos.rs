@@ -51,18 +51,6 @@ pub struct UpsertRepositoryArgs {
     /// Clear the configured default image.
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
-
-    /// GitHub token to use when cloning this repository.
-    #[arg(
-        long = "github-token",
-        value_name = "TOKEN",
-        conflicts_with = "clear_github_token"
-    )]
-    pub github_token: Option<String>,
-
-    /// Remove any configured GitHub token.
-    #[arg(long = "clear-github-token")]
-    pub clear_github_token: bool,
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: ReposCommand) -> Result<()> {
@@ -145,12 +133,6 @@ fn build_repository_config(args: &UpsertRepositoryArgs) -> Result<ServiceReposit
             args.clear_default_branch,
             "default branch",
             "--clear-default-branch",
-        )?,
-        parse_optional(
-            &args.github_token,
-            args.clear_github_token,
-            "github token",
-            "--clear-github-token",
         )?,
         parse_optional(
             &args.default_image,
@@ -238,15 +220,6 @@ fn write_repository_details(
         "{indent}  default_image: {}",
         repository.default_image.as_deref().unwrap_or("<none>")
     )?;
-    writeln!(
-        writer,
-        "{indent}  github_token: {}",
-        if repository.github_token_present {
-            "set"
-        } else {
-            "not set"
-        }
-    )?;
     Ok(())
 }
 
@@ -268,8 +241,6 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
-            github_token: Some("token-123".to_string()),
-            clear_github_token: false,
         }
     }
 
@@ -279,7 +250,6 @@ mod tests {
             "https://example.com/metis.git".to_string(),
             Some("main".to_string()),
             Some("ghcr.io/dourolabs/metis:latest".to_string()),
-            true,
         )
     }
 
@@ -298,7 +268,6 @@ mod tests {
                 "git@github.com:dourolabs/api.git".to_string(),
                 None,
                 None,
-                false,
             ),
         ]);
         let server = MockServer::start();
@@ -318,9 +287,7 @@ mod tests {
         assert!(output.contains("remote_url: https://example.com/metis.git"));
         assert!(output.contains("default_branch: main"));
         assert!(output.contains("default_image: ghcr.io/dourolabs/metis:latest"));
-        assert!(output.contains("github_token: set"));
         assert!(output.contains("dourolabs/api"));
-        assert!(output.contains("github_token: not set"));
 
         list_mock.assert();
     }
@@ -353,8 +320,7 @@ mod tests {
                 "name": "dourolabs/metis",
                 "remote_url": "https://example.com/metis.git",
                 "default_branch": "main",
-                "default_image": "ghcr.io/dourolabs/metis:latest",
-                "github_token": "token-123"
+                "default_image": "ghcr.io/dourolabs/metis:latest"
             }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(repository.clone()));
@@ -368,7 +334,6 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Created repository:"));
         assert!(output.contains("dourolabs/metis"));
-        assert!(output.contains("github_token: set"));
 
         create_mock.assert();
     }
@@ -392,8 +357,6 @@ mod tests {
         let mut args = sample_upsert_args();
         args.clear_default_branch = true;
         args.default_branch = None;
-        args.clear_github_token = true;
-        args.github_token = None;
         args.default_image = Some("ghcr.io/dourolabs/metis:stable".to_string());
         let server = MockServer::start();
         let update_mock = server.mock(|when, then| {
@@ -402,8 +365,7 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": null,
-                    "default_image": "ghcr.io/dourolabs/metis:stable",
-                    "github_token": null
+                    "default_image": "ghcr.io/dourolabs/metis:stable"
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
@@ -411,7 +373,6 @@ mod tests {
                     args.remote_url.clone(),
                     None,
                     args.default_image.clone(),
-                    false,
                 )));
         });
         let client = mock_client(&server);
@@ -423,7 +384,6 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Updated repository:"));
         assert!(output.contains("default_branch: <none>"));
-        assert!(output.contains("github_token: not set"));
 
         update_mock.assert();
     }
@@ -437,8 +397,7 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/metis:latest",
-                    "github_token": "token-123"
+                    "default_image": "ghcr.io/dourolabs/metis:latest"
                 }));
             then.status(404);
         });
