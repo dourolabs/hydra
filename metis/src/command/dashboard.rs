@@ -310,8 +310,7 @@ pub async fn run(
     token_path: &std::path::Path,
 ) -> Result<()> {
     let token_path_buf = token_path.to_path_buf();
-    let username = auth::resolve_auth_user(client, &token_path_buf)
-        .await?;
+    let username = auth::resolve_auth_user(client, &token_path_buf).await?;
     let mut terminal = ratatui::init();
     let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
     ratatui::restore();
@@ -322,8 +321,8 @@ async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
     username: Username,
-    server_url: &str,)
- -> Result<()> {
+    server_url: &str,
+) -> Result<()> {
     let mut state = DashboardState {
         username,
         server_url: server_url.to_string(),
@@ -745,7 +744,12 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header, state.username.as_str(), &state.server_url);
+    render_dashboard_header(
+        frame,
+        layout.header,
+        state.username.as_str(),
+        &state.server_url,
+    );
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
@@ -3171,23 +3175,13 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn submit_issue_sends_task_request() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/issues").json_body(json!({
                 "issue": {
                     "type": "task",
                     "description": "Draft release notes",
-                    "creator": {
-                        "username": " metis-user ",
-                        "github_user_id": null,
-                        "github_token": "token-123"
-                    },
+                    "creator": " metis-user ",
                     "progress": "",
                     "status": "open",
                     "assignee": "alice",

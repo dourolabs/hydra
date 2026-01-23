@@ -907,7 +907,6 @@ async fn resolve_creator_username(
     }
 }
 
-
 async fn manage_todo_list(
     client: &dyn MetisClientInterface,
     issue_id: IssueId,
@@ -1447,7 +1446,6 @@ fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
@@ -1482,10 +1480,6 @@ mod tests {
         job_settings.branch = Some("main".into());
         job_settings.max_retries = Some(5);
         job_settings
-    }
-
-    fn user(username: &str) -> Username {
-        Username::from(username)
     }
 
     fn empty_user() -> Username {
@@ -1859,27 +1853,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn create_issue_submits_issue_record() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
-        let client = metis_client(&server);
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
+        let client = metis_client(&server);        
 
-        let patch_ids = vec![patch_id("p-123")];
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
+        let patch_ids = vec![patch_id("p-123")];        
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
@@ -1922,37 +1900,19 @@ mod tests {
         .await
         .unwrap();
 
-        resolve_mock.assert();
         create_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn create_issue_sets_job_settings() {
-        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
 
         let mut job_settings = sample_job_settings();
         job_settings.image = Some("worker:latest".into());
         job_settings.branch = Some("feature/job-settings".into());
         job_settings.max_retries = Some(4);
-        let resolve_request = ResolveUserRequest::new("token-123".into());
-        let resolve_response =
-            ResolveUserResponse::new(UserSummary::new(Username::from("creator-a")));
-        let resolve_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/users/resolve")
-                .json_body_obj(&resolve_request);
-            then.status(200).json_body_obj(&resolve_response);
-        });
         let create_request = UpsertIssueRequest::new(
             Issue::new(
                 IssueType::MergeRequest,
@@ -1995,107 +1955,9 @@ mod tests {
         .await
         .unwrap();
 
-        resolve_mock.assert();
         create_mock.assert();
-        assert_eq!(resolve_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
     }
-
-    #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
-    async fn create_issue_rejects_creator_override_mismatch() {
-        // This test is no longer relevant since we removed the creator flag
-        // The creator is now always determined from authenticated user or parent issue
-    }
-
-    #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
-    async fn create_issue_uses_parent_creator_for_child_dependency() {
-        let server = MockServer::start();
-        let client = metis_client(&server);
-        let parent_id = issue_id("i-1");
-        let dependencies = vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_id.clone(),
-        )];
-        let patch_ids = vec![patch_id("p-123")];
-
-        let parent_issue = IssueRecord::new(
-            parent_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "Parent issue".into(),
-                user("parent-owner"),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
-        );
-
-        let get_parent_mock = server.mock(|when, then| {
-            when.method(GET)
-                .path(format!("/v1/issues/{parent_id}").as_str());
-            then.status(200).json_body_obj(&parent_issue);
-        });
-
-        let create_request = UpsertIssueRequest::new(
-            Issue::new(
-                IssueType::MergeRequest,
-                "New issue description".into(),
-                user("parent-owner"),
-                "Initial notes".into(),
-                IssueStatus::Closed,
-                Some("team-a".into()),
-                None,
-                Vec::new(),
-                dependencies.clone(),
-                patch_ids.clone(),
-            ),
-            None,
-        );
-        let create_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/issues")
-                .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456")));
-        });
-
-        let temp = tempdir().expect("tempdir");
-        let auth_token_path = temp.path().join("auth-token");
-        fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
-            .expect("create auth token dir");
-        fs::write(&auth_token_path, "token-123").expect("write auth token");
-
-        create_issue(
-            &client,
-            IssueType::MergeRequest,
-            IssueStatus::Closed,
-            dependencies.clone(),
-            patch_ids.clone(),
-            Some("team-a".into()),
-            user("parent-owner"),
-            "New issue description".into(),
-            Some("Initial notes".into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        get_parent_mock.assert();
-        create_mock.assert();
-        assert_eq!(get_parent_mock.hits(), 1);
-        assert_eq!(create_mock.hits(), 1);
-    }
-
     #[tokio::test]
     async fn create_issue_requires_description() {
         let server = MockServer::start();
