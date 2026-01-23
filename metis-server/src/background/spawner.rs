@@ -3,7 +3,7 @@ use crate::app::TaskExt;
 #[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
-use crate::domain::users::{User, Username};
+use crate::domain::users::Username;
 use crate::{
     app::AppState,
     config::AgentQueueConfig,

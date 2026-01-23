@@ -1139,7 +1139,7 @@ fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Resul
         } = &issue_record.issue;
 
         writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {}", creator.username.as_ref())?;
+        writeln!(writer, "Creator: {}", creator.as_ref())?;
         writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
         writeln!(writer, "Description:")?;
         if description.trim().is_empty() {
@@ -1239,7 +1239,7 @@ fn write_issue_details_pretty(
         "{indent}Issue {} ({issue_type}, {status})",
         issue_record.id
     )?;
-    writeln!(writer, "{indent}Creator: {}", creator.username.as_ref())?;
+    writeln!(writer, "{indent}Creator: {}", creator.as_ref())?;
     writeln!(
         writer,
         "{indent}Assignee: {}",
@@ -1498,7 +1498,7 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::{ResolveUserRequest, ResolveUserResponse, User, UserSummary, Username},
+        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -1524,12 +1524,12 @@ mod tests {
         job_settings
     }
 
-    fn user(username: &str) -> User {
-        User::new(Username::from(username), String::new())
+    fn user(username: &str) -> Username {
+        Username::from(username)
     }
 
-    fn empty_user() -> User {
-        User::new(Username::from(""), String::new())
+    fn empty_user() -> Username {
+        Username::from("")
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
@@ -1924,11 +1924,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                {
-                    let mut creator = User::new(Username::from("creator-a"), "token-123".into());
-                    creator.github_user_id = resolve_response.user.github_user_id;
-                    creator
-                },
+                Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),
@@ -2002,11 +1998,7 @@ mod tests {
             Issue::new(
                 IssueType::MergeRequest,
                 "New issue description".into(),
-                {
-                    let mut creator = User::new(Username::from("creator-a"), "token-123".into());
-                    creator.github_user_id = resolve_response.user.github_user_id;
-                    creator
-                },
+                Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed,
                 Some("team-a".into()),

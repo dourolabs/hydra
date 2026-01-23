@@ -148,32 +148,13 @@ pub async fn run(
 }
 
 async fn resolve_creator_github_token(
-    client: &dyn MetisClientInterface,
-    issue_id: Option<IssueId>,
-    job_id: &TaskId,
+    _client: &dyn MetisClientInterface,
+    _issue_id: Option<IssueId>,
+    _job_id: &TaskId,
 ) -> Result<Option<String>> {
-    let issue_id = match issue_id {
-        Some(issue_id) => Some(issue_id),
-        None => {
-            let job = client.get_job(job_id).await.with_context(|| {
-                format!("failed to fetch job '{job_id}' to resolve creator GitHub token")
-            })?;
-            job.task.spawned_from
-        }
-    };
-
-    let Some(issue_id) = issue_id else {
-        return Ok(None);
-    };
-
-    let issue = client.get_issue(&issue_id).await.with_context(|| {
-        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
-    })?;
-    let token = issue.issue.creator.github_token.trim();
-    if token.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(token.to_string()))
+    // Note: GitHub tokens are no longer stored in issues.
+    // This function should be updated to use the authenticated user's token instead.
+    Ok(None)
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {

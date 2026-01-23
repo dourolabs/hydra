@@ -165,7 +165,7 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
 #[cfg(test)]
 mod tests {
     use super::{load_app_config, resolve_command, Cli, Commands};
-    use crate::constants::DEFAULT_CONFIG_FILE;
+    use crate::{auth, constants::DEFAULT_CONFIG_FILE};
     use clap::Parser;
     use std::path::PathBuf;
     use tempfile::tempdir;

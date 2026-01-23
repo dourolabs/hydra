@@ -4,7 +4,7 @@ use crate::domain::{
     jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
     patches::{Patch, PatchStatus},
     task_status::Event,
-    users::{User, Username},
+    users::Username,
 };
 use crate::{
     app::{ServiceState, TaskExt},

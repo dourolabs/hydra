@@ -17,7 +17,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     task_status::{Status, TaskError, TaskStatusLog},
-    users::{User, Username},
+    users::Username,
     IssueId, TaskId,
 };
 use ratatui::{
@@ -307,9 +307,10 @@ struct EventOutcome {
 pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
-    token_path: &std::path::PathBuf,
+    token_path: &std::path::Path,
 ) -> Result<()> {
-    let username = auth::resolve_auth_user(client, token_path)
+    let token_path_buf = token_path.to_path_buf();
+    let username = auth::resolve_auth_user(client, &token_path_buf)
         .await?
         .to_string();
     let mut terminal = ratatui::init();
@@ -323,7 +324,7 @@ async fn run_dashboard_loop(
     terminal: &mut DefaultTerminal,
     username: String,
     server_url: &str,
-    token_path: &std::path::PathBuf,
+    token_path: &std::path::Path,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
@@ -713,7 +714,7 @@ async fn submit_issue(
     client: &dyn MetisClientInterface,
     submission: &IssueSubmission,
     creator: &str,
-    token_path: &std::path::PathBuf,
+    _token_path: &std::path::Path,
 ) -> Result<IssueId> {
     let assignee = submission.assignee.trim();
     let assignee = if assignee.is_empty() {

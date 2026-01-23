@@ -347,17 +347,12 @@ async fn create_patch(
 }
 
 async fn resolve_creator_github_token(
-    client: &dyn MetisClientInterface,
-    issue_id: &IssueId,
+    _client: &dyn MetisClientInterface,
+    _issue_id: &IssueId,
 ) -> Result<String> {
-    let issue = client.get_issue(issue_id).await.with_context(|| {
-        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
-    })?;
-    let token = issue.issue.creator.github_token.trim();
-    if token.is_empty() {
-        bail!("GitHub token is missing for creator of issue '{issue_id}'");
-    }
-    Ok(token.to_string())
+    // Note: GitHub tokens are no longer stored in issues.
+    // This function should be updated to use the authenticated user's token instead.
+    bail!("GitHub token resolution from issue creator is no longer supported. Use the authenticated user's token instead.");
 }
 
 fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
@@ -963,7 +958,7 @@ mod tests {
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
-        users::{User, Username},
+        users::Username,
         RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -1275,7 +1270,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "missing github token".to_string(),
-                User::new(Username::from("creator-a"), String::new()),
+                Username::from("creator-a"),
                 String::new(),
                 IssueStatus::Open,
                 None,
@@ -1351,7 +1346,7 @@ mod tests {
             Issue::new(
                 IssueType::Task,
                 "parent issue".to_string(),
-                User::new(Username::from("creator-a"), String::new()),
+                Username::from("creator-a"),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),
@@ -1368,7 +1363,7 @@ mod tests {
                     "Review patch {}: custom patch title",
                     created_patch_id.as_ref()
                 ),
-                User::new(Username::from("creator-a"), String::new()),
+                Username::from("creator-a"),
                 String::new(),
                 IssueStatus::Open,
                 Some("owner-a".to_string()),

@@ -8,7 +8,7 @@ use crate::{
             UpsertIssueResponse,
         },
         jobs::BundleSpec,
-        users::{User, Username},
+        users::Username,
     },
     job_engine::{JobEngine, JobStatus},
     store::Task,

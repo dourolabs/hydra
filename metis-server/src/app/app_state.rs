@@ -1195,7 +1195,7 @@ mod tests {
                 UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
-            users::{User, Username},
+            users::Username,
         },
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},

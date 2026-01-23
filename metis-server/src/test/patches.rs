@@ -9,7 +9,7 @@ use crate::{
             ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
         },
-        users::{User, Username},
+        users::Username,
     },
     store::Task,
     test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
