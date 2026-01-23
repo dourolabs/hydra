@@ -451,8 +451,8 @@ async fn resolve_pod_name_impl(
 // Default path for auth token in containers (expanded from ~/.local/share/metis/auth-token)
 // The file will be mounted at this path via a secret volume
 #[allow(dead_code)]
-const AUTH_TOKEN_PATH: &str = "/worker/.local/share/metis/auth-token";
-const AUTH_TOKEN_MOUNT_DIR: &str = "/worker/.local/share/metis";
+const AUTH_TOKEN_PATH: &str = "/home/worker/.local/share/metis/auth-token";
+const AUTH_TOKEN_MOUNT_DIR: &str = "/home/worker/.local/share/metis";
 const AUTH_TOKEN_SECRET_NAME_PREFIX: &str = "metis-auth-token-";
 
 #[async_trait]
@@ -545,7 +545,7 @@ impl JobEngine for KubernetesJobEngine {
                     items: Some(vec![k8s_openapi::api::core::v1::KeyToPath {
                         key: "auth-token".to_string(),
                         path: "auth-token".to_string(), // This will be at <mount_path>/auth-token
-                        mode: Some(0o600),
+                        mode: Some(0o666),
                     }]),
                     ..Default::default()
                 }),
