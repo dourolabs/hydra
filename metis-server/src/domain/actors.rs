@@ -25,6 +25,16 @@ impl Actor {
     /// Creates a new user-backed actor from a GitHub token.
     pub async fn new_for_github_token(
         github_token: String,
+    ) -> Result<(User, Actor, String), ActorError> {
+        let github_client = Octocrab::builder()
+            .personal_token(github_token.clone())
+            .build()
+            .map_err(|err| ActorError::GithubLookupFailed(format!("{err}")))?;
+        Self::new_for_github_token_with_client(github_token, &github_client).await
+    }
+
+    pub(crate) async fn new_for_github_token_with_client(
+        github_token: String,
         github_client: &Octocrab,
     ) -> Result<(User, Actor, String), ActorError> {
         let github_user = github_client
@@ -164,7 +174,7 @@ mod tests {
 
         let github_client = build_github_client(server.base_url());
         let (user, actor, auth_token) =
-            Actor::new_for_github_token("gh-token".to_string(), &github_client)
+            Actor::new_for_github_token_with_client("gh-token".to_string(), &github_client)
                 .await
                 .expect("actor should be created");
 
@@ -188,7 +198,7 @@ mod tests {
         });
 
         let github_client = build_github_client(server.base_url());
-        let err = Actor::new_for_github_token("gh-token".to_string(), &github_client)
+        let err = Actor::new_for_github_token_with_client("gh-token".to_string(), &github_client)
             .await
             .expect_err("should fail when GitHub lookup fails");
         assert!(matches!(err, ActorError::GithubLookupFailed(_)));
