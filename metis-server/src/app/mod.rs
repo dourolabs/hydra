@@ -29,7 +29,6 @@ pub use resolved_task::{ResolvedTask, TaskExt, TaskResolutionError};
 #[derive(Debug, Clone)]
 pub struct ResolvedBundle {
     pub bundle: Bundle,
-    pub github_token: Option<String>,
     pub default_image: Option<String>,
 }
 
@@ -151,11 +150,6 @@ impl ServiceState {
             .repositories
             .iter()
             .map(|(name, repo)| {
-                let github_token = repo
-                    .github_token
-                    .as_deref()
-                    .and_then(non_empty)
-                    .map(str::to_owned);
                 let default_branch = repo
                     .default_branch
                     .as_deref()
@@ -168,7 +162,6 @@ impl ServiceState {
                         name.clone(),
                         repo.remote_url.clone(),
                         default_branch,
-                        github_token,
                         repo.default_image
                             .as_deref()
                             .and_then(non_empty)
@@ -276,7 +269,6 @@ impl ServiceState {
             let previous = repository.clone();
             repository.remote_url = config.remote_url;
             repository.default_branch = config.default_branch;
-            repository.github_token = config.github_token;
             repository.default_image = config.default_image;
             previous
         };
@@ -350,12 +342,10 @@ impl ServiceState {
         match spec {
             BundleSpec::None => Ok(ResolvedBundle {
                 bundle: Bundle::None,
-                github_token: None,
                 default_image: None,
             }),
             BundleSpec::GitRepository { url, rev } => Ok(ResolvedBundle {
                 bundle: Bundle::GitRepository { url, rev },
-                github_token: None,
                 default_image: None,
             }),
             BundleSpec::ServiceRepository { name, rev } => {
@@ -373,7 +363,6 @@ impl ServiceState {
                         url: repo.remote_url.clone(),
                         rev: resolved_rev,
                     },
-                    github_token: repo.github_token.clone(),
                     default_image: repo.default_image.clone(),
                 })
             }
@@ -554,7 +543,6 @@ mod tests {
                 .to_str()
                 .expect("tempdir path is valid utf-8")
                 .to_string(),
-            None,
             None,
             None,
         );

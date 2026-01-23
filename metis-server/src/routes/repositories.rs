@@ -93,9 +93,6 @@ fn normalize_config(
     config.default_image = config
         .default_image
         .and_then(|value| non_empty(&value).map(str::to_owned));
-    config.github_token = config
-        .github_token
-        .and_then(|value| non_empty(&value).map(str::to_owned));
 
     Ok(config)
 }
