@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use octocrab::Octocrab;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
@@ -555,6 +556,30 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn create_actor_for_github_token(
+        &mut self,
+        github_token: String,
+        github_client: &Octocrab,
+    ) -> Result<(User, Actor, String), StoreError> {
+        let (user, actor, auth_token) = Actor::new_for_github_token(github_token, github_client)
+            .await
+            .map_err(super::map_actor_error)?;
+
+        self.add_user(user.clone()).await?;
+        self.add_actor(actor.clone()).await?;
+
+        Ok((user, actor, auth_token))
+    }
+
+    async fn create_actor_for_task(
+        &mut self,
+        task_id: TaskId,
+    ) -> Result<(Actor, String), StoreError> {
+        let (actor, auth_token) = Actor::new_for_task(task_id);
+        self.add_actor(actor.clone()).await?;
+        Ok((actor, auth_token))
+    }
+
     async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         if self.actors.contains_key(&name) {
@@ -651,7 +676,10 @@ mod tests {
         users::{User, Username},
     };
     use chrono::Utc;
+    use httpmock::prelude::*;
     use metis_common::{RepoName, TaskId, repositories::ServiceRepositoryConfig};
+    use octocrab::Octocrab;
+    use serde_json::json;
     use std::{collections::HashSet, str::FromStr};
 
     fn sample_repository_config() -> ServiceRepositoryConfig {
@@ -704,6 +732,41 @@ mod tests {
             dependencies,
             Vec::new(),
         )
+    }
+
+    fn github_user_response(login: &str, id: u64) -> serde_json::Value {
+        json!({
+            "login": login,
+            "id": id,
+            "node_id": "NODEID",
+            "avatar_url": "https://example.com/avatar",
+            "gravatar_id": "gravatar",
+            "url": "https://example.com/user",
+            "html_url": "https://example.com/user",
+            "followers_url": "https://example.com/followers",
+            "following_url": "https://example.com/following",
+            "gists_url": "https://example.com/gists",
+            "starred_url": "https://example.com/starred",
+            "subscriptions_url": "https://example.com/subscriptions",
+            "organizations_url": "https://example.com/orgs",
+            "repos_url": "https://example.com/repos",
+            "events_url": "https://example.com/events",
+            "received_events_url": "https://example.com/received_events",
+            "type": "User",
+            "site_admin": false,
+            "name": null,
+            "patch_url": null,
+            "email": null
+        })
+    }
+
+    fn build_github_client(base_url: String) -> Octocrab {
+        Octocrab::builder()
+            .base_uri(base_url)
+            .unwrap()
+            .personal_token("gh-token".to_string())
+            .build()
+            .unwrap()
     }
 
     #[tokio::test]
@@ -1440,12 +1503,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_github_actor_persists_user_and_actor() {
+        let server = MockServer::start_async().await;
+        let _mock = server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+
+        let github_client = build_github_client(server.base_url());
+        let mut store = MemoryStore::new();
+        let (user, actor, auth_token) = store
+            .create_actor_for_github_token("gh-token".to_string(), &github_client)
+            .await
+            .unwrap();
+
+        assert!(!auth_token.is_empty());
+        assert_eq!(user.username, Username::from("octo"));
+
+        let fetched_user = store.get_user(&user.username).await.unwrap();
+        let fetched_actor = store.get_actor(&actor.name()).await.unwrap();
+
+        assert_eq!(fetched_user, user);
+        assert_eq!(fetched_actor, actor);
+    }
+
+    #[tokio::test]
     async fn create_task_actor_persists_and_verifies_token() {
         let mut store = MemoryStore::new();
         let task_id = TaskId::new();
 
-        let (actor, token) = Actor::new_for_task(task_id.clone());
-        store.add_actor(actor.clone()).await.unwrap();
+        let (actor, token) = store.create_actor_for_task(task_id.clone()).await.unwrap();
 
         assert_eq!(actor.user_or_worker, UserOrWorker::Task(task_id));
         assert!(actor.verify_auth_token(&token));

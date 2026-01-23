@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use octocrab::Octocrab;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -837,6 +838,30 @@ impl Store for PostgresStore {
             &status_log,
         )
         .await
+    }
+
+    async fn create_actor_for_github_token(
+        &mut self,
+        github_token: String,
+        github_client: &Octocrab,
+    ) -> Result<(User, Actor, String), StoreError> {
+        let (user, actor, auth_token) = Actor::new_for_github_token(github_token, github_client)
+            .await
+            .map_err(super::map_actor_error)?;
+
+        self.add_user(user.clone()).await?;
+        self.add_actor(actor.clone()).await?;
+
+        Ok((user, actor, auth_token))
+    }
+
+    async fn create_actor_for_task(
+        &mut self,
+        task_id: TaskId,
+    ) -> Result<(Actor, String), StoreError> {
+        let (actor, auth_token) = Actor::new_for_task(task_id);
+        self.add_actor(actor.clone()).await?;
+        Ok((actor, auth_token))
     }
 
     async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {

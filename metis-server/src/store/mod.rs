@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::Actor,
+    actors::{Actor, ActorError},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
@@ -7,6 +7,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use octocrab::Octocrab;
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -50,6 +51,13 @@ pub enum StoreError {
     ActorAlreadyExists(String),
     #[error("Invalid actor name: {0}")]
     InvalidActorName(String),
+}
+
+fn map_actor_error(error: ActorError) -> StoreError {
+    match error {
+        ActorError::InvalidActorName(name) => StoreError::InvalidActorName(name),
+        other => StoreError::Internal(other.to_string()),
+    }
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -279,6 +287,19 @@ pub trait Store: Send + Sync {
         last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    /// Creates and persists a user-backed actor from a GitHub token.
+    async fn create_actor_for_github_token(
+        &mut self,
+        github_token: String,
+        github_client: &Octocrab,
+    ) -> Result<(User, Actor, String), StoreError>;
+
+    /// Creates and persists a task-backed actor for the given task.
+    async fn create_actor_for_task(
+        &mut self,
+        task_id: TaskId,
+    ) -> Result<(Actor, String), StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError>;

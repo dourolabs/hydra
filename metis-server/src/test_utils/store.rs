@@ -10,6 +10,7 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use octocrab::Octocrab;
 use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
@@ -162,6 +163,21 @@ impl Store for FailingStore {
         _last_message: Option<String>,
         _completion_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn create_actor_for_github_token(
+        &mut self,
+        _github_token: String,
+        _github_client: &Octocrab,
+    ) -> Result<(User, Actor, String), StoreError> {
+        fail()
+    }
+
+    async fn create_actor_for_task(
+        &mut self,
+        _task_id: TaskId,
+    ) -> Result<(Actor, String), StoreError> {
         fail()
     }
 
