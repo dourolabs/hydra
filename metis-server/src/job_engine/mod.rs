@@ -81,6 +81,8 @@ pub trait JobEngine: Send + Sync {
     /// * `metis_id` - The Metis ID to use for the job
     /// * `image` - The container image the job should run
     /// * `env_vars` - Environment variables to inject into the job container
+    /// * `cpu_limit` - CPU request for the job container
+    /// * `memory_limit` - Memory request for the job container
     /// * `user` - Optional user whose GitHub token should be mounted in the job
     ///
     /// # Returns
@@ -90,6 +92,8 @@ pub trait JobEngine: Send + Sync {
         metis_id: &TaskId,
         image: &str,
         env_vars: &HashMap<String, String>,
+        cpu_limit: String,
+        memory_limit: String,
         user: Option<&User>,
     ) -> Result<(), JobEngineError>;
 
