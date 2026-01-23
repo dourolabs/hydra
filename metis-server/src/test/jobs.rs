@@ -7,7 +7,6 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
-    app::ServiceState,
     job_engine::JobStatus,
     store::{Status, Task, TaskError},
     test_utils::{
@@ -19,6 +18,24 @@ use chrono::{Duration, Utc};
 use metis_common::{TaskId, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
+
+async fn add_repository(
+    state: &crate::app::AppState,
+    repository: &crate::app::ServiceRepository,
+) -> anyhow::Result<()> {
+    let mut store = state.store.write().await;
+    store
+        .add_repository(
+            repository.name.clone(),
+            crate::app::ServiceRepositoryConfig::new(
+                repository.remote_url.clone(),
+                repository.default_branch.clone(),
+                repository.default_image.clone(),
+            ),
+        )
+        .await?;
+    Ok(())
+}
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
@@ -57,12 +74,9 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
-    let mut state = test_state();
+    let state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    add_repository(&state, &repo).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -132,12 +146,9 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
-    let mut state = test_state();
+    let state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    add_repository(&state, &repo).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -192,12 +203,9 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
-    let mut state = test_state();
+    let state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    add_repository(&state, &repo).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -279,12 +287,9 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 
 #[tokio::test]
 async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
-    let mut state = test_state();
+    let state = test_state();
     let (repo_name, repo) = service_repository();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo_name.clone(),
-        repo.clone(),
-    )])));
+    add_repository(&state, &repo).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;

@@ -22,7 +22,10 @@ pub async fn list_repositories(
     State(state): State<AppState>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
-    let repositories = state.list_repositories().await;
+    let repositories = state
+        .list_repositories()
+        .await
+        .map_err(map_repository_error)?;
     let response = ListRepositoriesResponse::new(repositories);
     info!(
         repository_count = response.repositories.len(),
@@ -104,6 +107,10 @@ fn map_repository_error(err: RepositoryError) -> ApiError {
         RepositoryError::NotFound(name) => {
             error!(repository = %name, "repository not found");
             ApiError::not_found(format!("repository '{name}' not found"))
+        }
+        RepositoryError::Store { source } => {
+            error!(error = %source, "repository store error");
+            ApiError::internal("repository store error")
         }
         RepositoryError::Git { repo_name, source } => {
             error!(

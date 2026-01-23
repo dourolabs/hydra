@@ -1,5 +1,5 @@
 use crate::{
-    app::{ServiceRepository, ServiceState},
+    app::ServiceRepositoryConfig,
     domain::patches::{Patch, PatchStatus},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
@@ -9,23 +9,36 @@ use metis_common::{
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
 };
 use reqwest::StatusCode;
-use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr};
 use tempfile::TempDir;
 
-fn state_with_repo(repo_name: &str) -> crate::app::AppState {
+async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppState, TempDir)> {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
-    let mut state = test_state();
-    let repository = ServiceRepository::new(
-        repo.clone(),
-        format!("https://example.com/{}.git", repo.as_str()),
-        None,
-        None,
-    );
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo, repository,
-    )])));
+    let remote_dir = TempDir::new()?;
+    let repository = Repository::init(remote_dir.path())?;
+    let signature = Signature::now("Tester", "tester@example.com")?;
+    commit_file(&repository, "README.md", "base\n", "base", &signature)?;
 
-    state
+    let state = test_state();
+    {
+        let mut store = state.store.write().await;
+        store
+            .add_repository(
+                repo.clone(),
+                ServiceRepositoryConfig::new(
+                    remote_dir
+                        .path()
+                        .to_str()
+                        .expect("tempdir path should be utf-8")
+                        .to_string(),
+                    None,
+                    None,
+                ),
+            )
+            .await?;
+    }
+
+    Ok((state, remote_dir))
 }
 
 async fn state_with_repo_and_patch(
@@ -33,22 +46,25 @@ async fn state_with_repo_and_patch(
 ) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
     let (remote_dir, diff) = create_repository_with_patch()?;
-    let repository = ServiceRepository::new(
-        repo.clone(),
-        remote_dir
-            .path()
-            .to_str()
-            .expect("tempdir path is valid utf-8")
-            .to_string(),
-        Some("main".to_string()),
-        None,
-    );
 
-    let mut state = test_state();
-    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-        repo.clone(),
-        repository,
-    )])));
+    let state = test_state();
+    {
+        let mut store = state.store.write().await;
+        store
+            .add_repository(
+                repo.clone(),
+                ServiceRepositoryConfig::new(
+                    remote_dir
+                        .path()
+                        .to_str()
+                        .expect("tempdir path is valid utf-8")
+                        .to_string(),
+                    Some("main".to_string()),
+                    None,
+                ),
+            )
+            .await?;
+    }
 
     let patch = Patch::new(
         "Test patch".to_string(),
@@ -156,7 +172,7 @@ fn git_diff_for_commits(
 
 #[tokio::test]
 async fn get_merge_queue_returns_empty_for_new_branch() -> anyhow::Result<()> {
-    let state = state_with_repo("dourolabs/api");
+    let (state, _remote_dir) = state_with_repo("dourolabs/api").await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 

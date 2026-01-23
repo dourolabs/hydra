@@ -254,12 +254,11 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::{ServiceRepository, ServiceState},
+        app::ServiceRepositoryConfig,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::test_state,
     };
     use chrono::Utc;
-    use std::sync::Arc;
 
     fn default_user() -> Username {
         Username::from("spawner")
@@ -783,17 +782,21 @@ mod tests {
 
     #[tokio::test]
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
-        let mut state = test_state();
+        let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
-            repo_name.clone(),
-            ServiceRepository::new(
-                repo_name.clone(),
-                "https://github.com/dourolabs/metis.git".to_string(),
-                Some("main".to_string()),
-                Some("repo-image".to_string()),
-            ),
-        )])));
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_repository(
+                    repo_name.clone(),
+                    ServiceRepositoryConfig::new(
+                        "https://github.com/dourolabs/metis.git".to_string(),
+                        Some("main".to_string()),
+                        Some("repo-image".to_string()),
+                    ),
+                )
+                .await?;
+        }
         let issue_id = {
             let mut store = state.store.write().await;
             store

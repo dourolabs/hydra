@@ -7,7 +7,7 @@ use crate::{
             UpsertIssueRequest,
         },
         jobs::CreateJobRequest,
-        patches::{PatchStatus, UpsertPatchRequest},
+        patches::{Patch, PatchStatus, UpsertPatchRequest},
         users::User,
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -200,19 +200,44 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
-    pub async fn list_repositories(&self) -> Vec<ServiceRepositoryInfo> {
-        self.service_state.list_repository_info().await
-    }
+    pub async fn list_repositories(&self) -> Result<Vec<ServiceRepositoryInfo>, RepositoryError> {
+        let store = self.store.read().await;
+        let repositories = store
+            .list_repositories()
+            .await
+            .map_err(|source| RepositoryError::Store { source })?;
 
-    pub async fn get_repository(&self, name: &RepoName) -> Option<ServiceRepository> {
-        self.service_state.repository(name).await
+        Ok(repositories
+            .into_iter()
+            .map(|(name, config)| ServiceRepository::from((name, config)).without_secret())
+            .collect())
     }
 
     pub async fn create_repository(
         &self,
         repository: ServiceRepository,
     ) -> Result<ServiceRepository, RepositoryError> {
-        self.service_state.create_repository(repository).await
+        {
+            let mut store = self.store.write().await;
+            store
+                .add_repository(
+                    repository.name.clone(),
+                    ServiceRepositoryConfig::new(
+                        repository.remote_url.clone(),
+                        repository.default_branch.clone(),
+                        repository.default_image.clone(),
+                    ),
+                )
+                .await
+                .map_err(|source| match source {
+                    StoreError::RepositoryAlreadyExists(name) => {
+                        RepositoryError::AlreadyExists(name)
+                    }
+                    other => RepositoryError::Store { source: other },
+                })?;
+        }
+
+        Ok(repository)
     }
 
     pub async fn update_repository(
@@ -220,7 +245,23 @@ impl AppState {
         name: RepoName,
         config: ServiceRepositoryConfig,
     ) -> Result<ServiceRepository, RepositoryError> {
-        self.service_state.update_repository(name, config).await
+        {
+            let mut store = self.store.write().await;
+            store
+                .update_repository(name.clone(), config.clone())
+                .await
+                .map_err(|source| match source {
+                    StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                    StoreError::RepositoryAlreadyExists(_) => {
+                        RepositoryError::AlreadyExists(name.clone())
+                    }
+                    other => RepositoryError::Store { source: other },
+                })?;
+        }
+
+        self.service_state.clear_cache(&name).await;
+
+        Ok(ServiceRepository::from((name, config)))
     }
 
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
@@ -1010,8 +1051,22 @@ impl AppState {
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
+        let repository = self
+            .repository_from_store(service_repo_name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => {
+                    MergeQueueError::UnknownRepository(service_repo_name.clone())
+                }
+                other => MergeQueueError::RepositoryLookup {
+                    repo_name: service_repo_name.clone(),
+                    source: other,
+                },
+            })?;
+
+        self.service_state.ensure_cached(&repository).await?;
         self.service_state
-            .get_merge_queue(service_repo_name, branch_name)
+            .get_merge_queue(&repository, branch_name)
             .await
     }
 
@@ -1021,31 +1076,48 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        if !self.service_state.has_repository(service_repo_name).await {
-            return Err(MergeQueueError::UnknownRepository(
-                service_repo_name.clone(),
-            ));
-        }
-
-        let patch = {
-            let store = self.store.read().await;
-            match store.get_patch(&patch_id).await {
-                Ok(patch) => patch,
-                Err(StoreError::PatchNotFound(_)) => {
-                    return Err(MergeQueueError::PatchNotFound { patch_id });
+        let repository = self
+            .repository_from_store(service_repo_name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => {
+                    MergeQueueError::UnknownRepository(service_repo_name.clone())
                 }
-                Err(source) => return Err(MergeQueueError::PatchLookup { patch_id, source }),
-            }
-        };
+                other => MergeQueueError::RepositoryLookup {
+                    repo_name: service_repo_name.clone(),
+                    source: other,
+                },
+            })?;
 
+        let patch = self.load_patch(patch_id.clone()).await?;
+
+        self.service_state.ensure_cached(&repository).await?;
         self.service_state
-            .add_patch_to_merge_queue(service_repo_name, branch_name, patch_id, &patch)
+            .add_patch_to_merge_queue(&repository, branch_name, patch_id, &patch)
             .await
     }
 
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.read().await;
         issue_ready(store.as_ref(), issue_id).await
+    }
+
+    pub(crate) async fn repository_from_store(
+        &self,
+        name: &RepoName,
+    ) -> Result<ServiceRepository, StoreError> {
+        let store = self.store.read().await;
+        let config = store.get_repository(name).await?;
+        Ok(ServiceRepository::from((name.clone(), config)))
+    }
+
+    async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
+        let store = self.store.read().await;
+        match store.get_patch(&patch_id).await {
+            Ok(patch) => Ok(patch),
+            Err(StoreError::PatchNotFound(_)) => Err(MergeQueueError::PatchNotFound { patch_id }),
+            Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
+        }
     }
 }
 
