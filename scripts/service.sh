@@ -132,7 +132,7 @@ metis issues todo \$METIS_ISSUE_ID --add "thing that needs to be done"
 metis issues todo \$METIS_ISSUE_ID --done 1
 
 IMPORTANT: if your task is to make a change to the codebase, your task should not be closed until you submit a patch and
-the patch is merged. Use `metis patches create --title <title> --description <description>` to submit the patch.
+the patch is merged. Use 'metis patches create --title <title> --description <description>' to submit the patch.
 
 You may also use the issue tracker to create follow-up issues or request work to be performed by another agent in the system.
 These issues will be done in the future, and once done another agent will pick up the current issue and continue working.
