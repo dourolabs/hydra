@@ -63,7 +63,7 @@ impl AgentQueue {
         }
     }
 
-    fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
+    fn build_task(&self, issue_id: &IssueId) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
@@ -181,7 +181,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(&issue_id, &issue);
+            let task = self.build_task(&issue_id);
             tasks.push(task);
             remaining_capacity -= 1;
         }
@@ -877,10 +877,6 @@ mod tests {
         let queue = queue("agent-a");
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            tasks[0].env_vars.get(GH_TOKEN_ENV_VAR),
-            Some(&"creator-token".to_string())
-        );
 
         Ok(())
     }
@@ -894,11 +890,7 @@ mod tests {
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
                     description: "Empty token".to_string(),
-                    creator: User {
-                        username: Username::from("spawner"),
-                        github_user_id: None,
-                        github_token: "   ".to_string(),
-                    },
+                    creator: Username::from("spawner"),
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
@@ -913,7 +905,6 @@ mod tests {
         let queue = queue("agent-a");
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].env_vars.get(GH_TOKEN_ENV_VAR), None);
 
         Ok(())
     }
