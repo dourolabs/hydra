@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
-use metis_common::{PatchId, RepoName};
+use metis_common::{PatchId, RepoName, github::build_octocrab_client};
 use octocrab::{
     Octocrab,
     models::{
@@ -184,7 +184,7 @@ async fn sync_patch_from_github(
         );
         return Ok(());
     };
-    let client = github_client(token)?;
+    let client = build_octocrab_client(&token).context("building GitHub client")?;
 
     let pr = client
         .pulls(&github.owner, &github.repo)
@@ -524,13 +524,6 @@ fn patch_status_from_github(pr: &PullRequest) -> PatchStatus {
     } else {
         PatchStatus::Closed
     }
-}
-
-fn github_client(token: String) -> anyhow::Result<Octocrab> {
-    Octocrab::builder()
-        .personal_token(token)
-        .build()
-        .context("building GitHub client")
 }
 
 async fn fetch_ci_status(
