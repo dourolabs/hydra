@@ -3397,6 +3397,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "shellexpand",
+ "shlex",
  "tempfile",
  "textwrap",
  "tokio",

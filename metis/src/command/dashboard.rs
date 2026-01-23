@@ -260,7 +260,6 @@ struct DashboardState {
     records_error: Option<String>,
     username: Username,
     server_url: String,
-    #[allow(dead_code)]
     browser_command: Option<String>,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
@@ -874,13 +873,21 @@ fn github_pr_url(github: &GithubPr) -> String {
     )
 }
 
-fn open_browser(browser_command: &str, url: &str) -> Result<()> {
-    let mut parts = browser_command.split_whitespace();
-    let command = parts.next().context("browser command is empty")?;
-    let mut cmd = Command::new(command);
-    for arg in parts {
-        cmd.arg(arg);
+fn parse_browser_command(browser_command: &str) -> Result<(String, Vec<String>)> {
+    let trimmed = browser_command.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("browser command is empty");
     }
+
+    let parts = shlex::split(trimmed).context("browser command has invalid quoting")?;
+    let (command, args) = parts.split_first().context("browser command is empty")?;
+    Ok((command.to_string(), args.to_vec()))
+}
+
+fn open_browser(browser_command: &str, url: &str) -> Result<()> {
+    let (command, args) = parse_browser_command(browser_command)?;
+    let mut cmd = Command::new(command);
+    cmd.args(args);
     cmd.arg(url);
     cmd.spawn().context("failed to launch browser")?;
     Ok(())
@@ -2740,6 +2747,14 @@ mod tests {
             github_pr_url(&github),
             "https://github.com/octo/metis/pull/42"
         );
+    }
+
+    #[test]
+    fn parse_browser_command_handles_quotes() {
+        let (command, args) = parse_browser_command("open -a \"Google Chrome\"").unwrap();
+
+        assert_eq!(command, "open");
+        assert_eq!(args, vec!["-a".to_string(), "Google Chrome".to_string()]);
     }
 
     #[test]
