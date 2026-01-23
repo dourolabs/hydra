@@ -1,7 +1,6 @@
 use super::{BundleResolutionError, ResolvedBundle, ServiceState};
 use crate::domain::jobs::{Bundle, BundleSpec, Task};
 use async_trait::async_trait;
-use metis_common::constants::ENV_GH_TOKEN;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -125,14 +124,8 @@ impl TaskExt for Task {
         Ok(trimmed.to_string())
     }
 
-    fn resolve_env_vars(&self, resolved: &ResolvedBundle) -> HashMap<String, String> {
-        let mut env_vars = self.env_vars.clone();
-        if let Some(token) = &resolved.github_token {
-            env_vars
-                .entry(ENV_GH_TOKEN.to_string())
-                .or_insert_with(|| token.clone());
-        }
-        env_vars
+    fn resolve_env_vars(&self, _resolved: &ResolvedBundle) -> HashMap<String, String> {
+        self.env_vars.clone()
     }
 
     async fn resolve(

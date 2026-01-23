@@ -18,8 +18,6 @@ use async_trait::async_trait;
 use metis_common::IssueId;
 #[cfg(test)]
 use metis_common::RepoName;
-#[cfg(test)]
-use metis_common::constants::ENV_GH_TOKEN;
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -69,7 +67,6 @@ impl AgentQueue {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-
         Task::new(
             self.prompt.clone(),
             self.context_spec.clone(),
@@ -267,7 +264,7 @@ mod tests {
     use std::sync::Arc;
 
     fn default_user() -> User {
-        User::new(Username::from("spawner"), String::new())
+        User::new(Username::from("spawner"), "creator-token".to_string())
     }
 
     fn queue(agent_name: &str) -> AgentQueue {
@@ -847,10 +844,7 @@ mod tests {
             }
         );
         assert_eq!(resolved.image, "repo-image");
-        assert_eq!(
-            resolved.env_vars.get(ENV_GH_TOKEN),
-            Some(&"token".to_string())
-        );
+        assert_eq!(resolved.env_vars.get("METIS_GITHUB_TOKEN"), None);
         assert_eq!(
             resolved
                 .env_vars

@@ -243,6 +243,7 @@ struct DashboardState {
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: String,
+    server_url: String,
     issue_draft: IssueDraft,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
@@ -278,6 +279,7 @@ impl Default for DashboardState {
             jobs_error: None,
             records_error: None,
             username: String::new(),
+            server_url: String::new(),
             issue_draft: IssueDraft::default(),
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
@@ -302,10 +304,10 @@ struct EventOutcome {
     submission: Option<IssueSubmission>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, server_url: &str) -> Result<()> {
     let username = auth::resolve_auth_user(client).await?.to_string();
     let mut terminal = ratatui::init();
-    let result = run_dashboard_loop(client, &mut terminal, username).await;
+    let result = run_dashboard_loop(client, &mut terminal, username, server_url).await;
     ratatui::restore();
     result
 }
@@ -314,9 +316,11 @@ async fn run_dashboard_loop(
     client: &dyn MetisClientInterface,
     terminal: &mut DefaultTerminal,
     username: String,
+    server_url: &str,
 ) -> Result<()> {
     let mut state = DashboardState {
         username,
+        server_url: server_url.to_string(),
         ..DashboardState::default()
     };
     update_panel_focus(&mut state);
@@ -709,7 +713,7 @@ async fn submit_issue(
     } else {
         Some(assignee.to_string())
     };
-    let token = auth::read_auth_token()?;
+    let token = auth::ensure_auth_token(client).await?;
     let creator = User::new(Username::from(creator), token);
 
     let request = UpsertIssueRequest::new(
@@ -737,13 +741,18 @@ async fn submit_issue(
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
-    render_dashboard_header(frame, layout.header, &state.username);
+    render_dashboard_header(frame, layout.header, &state.username, &state.server_url);
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
 }
 
-fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect, username: &str) {
-    let title = dashboard_title(username);
+fn render_dashboard_header(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    username: &str,
+    server_url: &str,
+) {
+    let title = dashboard_title(username, server_url);
     let hint = "Tab/Shift+Tab to change panels, j/k or Up/Down to scroll, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -763,12 +772,24 @@ fn render_dashboard_header(frame: &mut Frame, area: ratatui::layout::Rect, usern
     );
 }
 
-fn dashboard_title(username: &str) -> String {
+fn dashboard_title(username: &str, server_url: &str) -> String {
     let trimmed = username.trim();
+    let server_url = format_server_url(server_url);
     if trimmed.is_empty() {
         "Metis Dashboard".to_string()
+    } else if let Some(server_url) = server_url {
+        format!("Metis Dashboard — {trimmed} @ {server_url}")
     } else {
         format!("Metis Dashboard — {trimmed}")
+    }
+}
+
+fn format_server_url(server_url: &str) -> Option<String> {
+    let trimmed = server_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -1912,6 +1933,7 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{
@@ -2000,12 +2022,26 @@ mod tests {
 
     #[test]
     fn dashboard_title_includes_username_when_present() {
-        assert_eq!(dashboard_title("cprussin"), "Metis Dashboard — cprussin");
+        assert_eq!(
+            dashboard_title("cprussin", ""),
+            "Metis Dashboard — cprussin"
+        );
     }
 
     #[test]
     fn dashboard_title_skips_username_when_blank() {
-        assert_eq!(dashboard_title(" "), "Metis Dashboard");
+        assert_eq!(
+            dashboard_title(" ", "https://example.com"),
+            "Metis Dashboard"
+        );
+    }
+
+    #[test]
+    fn dashboard_title_appends_server_url_when_present() {
+        assert_eq!(
+            dashboard_title("cprussin", "https://example.com/"),
+            "Metis Dashboard — cprussin @ https://example.com"
+        );
     }
 
     fn job_details_with_issue(
@@ -3136,7 +3172,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn submit_issue_sends_task_request() {
+        let _guard = test_env::lock();
         let server = MockServer::start();
         let original_home = env::var_os("HOME");
         let temp = tempdir().expect("tempdir");

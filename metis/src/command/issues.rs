@@ -927,7 +927,7 @@ async fn update_issue(
 }
 
 async fn resolve_authenticated_user(client: &dyn MetisClientInterface) -> Result<User> {
-    let token = auth::read_auth_token()?;
+    let token = auth::ensure_auth_token(client).await?;
     let response = client
         .resolve_user(&ResolveUserRequest::new(token.clone()))
         .await
@@ -1480,6 +1480,7 @@ fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
@@ -1497,15 +1498,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::str::FromStr;
-    use std::sync::OnceLock;
     use tempfile::tempdir;
-    use tokio::sync::Mutex;
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn env_lock() -> &'static Mutex<()> {
-        ENV_LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
@@ -1902,8 +1895,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_issue_submits_issue_record() {
-        let _guard = env_lock().lock().await;
+        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
         let original_home = env::var_os("HOME");
@@ -1981,8 +1975,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_issue_sets_job_settings() {
-        let _guard = env_lock().lock().await;
+        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
         let original_home = env::var_os("HOME");
@@ -2063,8 +2058,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_issue_rejects_creator_override_mismatch() {
-        let _guard = env_lock().lock().await;
+        let _guard = test_env::lock();
         let server = MockServer::start();
         let client = metis_client(&server);
         let original_home = env::var_os("HOME");
@@ -2115,6 +2111,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_issue_uses_parent_creator_for_child_dependency() {
         let server = MockServer::start();
         let client = metis_client(&server);

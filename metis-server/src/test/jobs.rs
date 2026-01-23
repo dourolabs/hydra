@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{TaskId, constants::ENV_GH_TOKEN, job_status::GetJobStatusResponse};
+use metis_common::{TaskId, constants::ENV_METIS_GITHUB_TOKEN, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -101,10 +101,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
             rev: "develop".to_string()
         }
     );
-    assert_eq!(
-        resolved.env_vars.get(ENV_GH_TOKEN),
-        Some(&"token-123".to_string())
-    );
+    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/repo:main");
 
     Ok(())
@@ -172,10 +169,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let resolved = task
         .resolve(service_state.as_ref(), &fallback_image)
         .await?;
-    assert_eq!(
-        resolved.env_vars.get(ENV_GH_TOKEN),
-        Some(&"token-123".to_string())
-    );
+    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
     Ok(())
@@ -227,7 +221,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
         .json(&json!({
             "prompt": "0",
             "context": { "type": "service_repository", "name": repo_name.to_string() },
-            "variables": { ENV_GH_TOKEN: "user-supplied" }
+            "variables": { ENV_METIS_GITHUB_TOKEN: "user-supplied" }
         }))
         .send()
         .await?;
@@ -240,7 +234,7 @@ async fn create_job_respects_user_supplied_github_token_variable() -> anyhow::Re
         .resolve(service_state.as_ref(), &fallback_image)
         .await?;
     assert_eq!(
-        resolved.env_vars.get(ENV_GH_TOKEN),
+        resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN),
         Some(&"user-supplied".to_string())
     );
     assert_eq!(
@@ -321,6 +315,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
+    assert_eq!(resolved.env_vars.get(ENV_METIS_GITHUB_TOKEN), None);
     assert_eq!(resolved.image, "ghcr.io/example/issue:latest");
 
     let context_response = client
@@ -340,6 +335,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             rev: "issue-branch".to_string(),
         }
     );
+    assert_eq!(worker_context.variables.get(ENV_METIS_GITHUB_TOKEN), None);
 
     Ok(())
 }

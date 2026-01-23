@@ -1,10 +1,11 @@
-use std::{io::Write, path::Path, path::PathBuf, process::Command};
+use std::{io::Write, path::Path, path::PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_GH_TOKEN, ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
+    github::build_octocrab_client,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -17,7 +18,6 @@ use metis_common::{
     },
     PatchId, RepoName, TaskId,
 };
-use octocrab::Octocrab;
 use serde::Deserialize;
 
 use crate::client::MetisClientInterface;
@@ -27,7 +27,7 @@ use crate::git::{
     diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
-use tempfile::NamedTempFile;
+use git2::Repository;
 
 /// ANSI color codes
 const GREEN: &str = "\x1b[32m";
@@ -68,10 +68,6 @@ pub enum PatchesCommand {
         /// Create a GitHub pull request with the patch contents.
         #[arg(long = "github")]
         github: bool,
-
-        /// GitHub token to use when creating pull requests.
-        #[arg(long = "github-token", value_name = "TOKEN", env = ENV_GH_TOKEN)]
-        github_token: Option<String>,
 
         /// Assign the merge-request issue to a user and automatically create it.
         #[arg(long = "assignee", value_name = "ASSIGNEE")]
@@ -167,7 +163,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
             description,
             job,
             github,
-            github_token,
             assignee,
             issue_id,
             commit_range,
@@ -179,7 +174,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> 
                 description,
                 job,
                 github,
-                github_token,
                 assignee,
                 issue_id,
                 commit_range,
@@ -275,7 +269,6 @@ async fn create_patch(
     description: String,
     job_id: Option<TaskId>,
     create_github_pr: bool,
-    github_token: Option<String>,
     assignee: Option<String>,
     issue_id: IssueId,
     commit_range: Option<String>,
@@ -298,15 +291,7 @@ async fn create_patch(
     }
 
     let github_token = if create_github_pr {
-        Some(
-            github_token
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "{ENV_GH_TOKEN} must be provided via --github-token or environment when using --github"
-                    )
-                })?,
-        )
+        Some(resolve_creator_github_token(client, &issue_id).await?)
     } else {
         None
     };
@@ -322,7 +307,7 @@ async fn create_patch(
         patch_description,
         job_id.clone(),
         create_github_pr,
-        github_token,
+        github_token.as_deref(),
         is_automatic_backup,
         service_repo_name,
     )
@@ -359,6 +344,20 @@ async fn create_patch(
     println!("{}", serde_json::to_string(&output)?);
 
     Ok(())
+}
+
+async fn resolve_creator_github_token(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+) -> Result<String> {
+    let issue = client.get_issue(issue_id).await.with_context(|| {
+        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
+    })?;
+    let token = issue.issue.creator.github_token.trim();
+    if token.is_empty() {
+        bail!("GitHub token is missing for creator of issue '{issue_id}'");
+    }
+    Ok(token.to_string())
 }
 
 fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
@@ -618,6 +617,9 @@ pub async fn create_patch_artifact_from_repo(
         .context("failed to create patch")?;
 
     if create_github_pr {
+        let github_token = github_token.ok_or_else(|| {
+            anyhow!("Creator GitHub token is required to create a GitHub pull request")
+        })?;
         let github_pr = create_github_pull_request(
             repo_root,
             &title,
@@ -783,11 +785,9 @@ async fn create_github_pull_request(
     repo_root: &Path,
     title: &str,
     description: &str,
-    github_token: Option<&str>,
+    github_token: &str,
     job_id: Option<&str>,
 ) -> Result<GithubPr> {
-    let github_token = github_token
-        .ok_or_else(|| anyhow!("{ENV_GH_TOKEN} is required when creating a GitHub pull request"))?;
     let branch_name = ensure_feature_branch(repo_root, job_id)?;
     push_branch(repo_root, &branch_name, Some(github_token))?;
     let pr_metadata =
@@ -875,20 +875,34 @@ fn parse_pr_repository(url: &str) -> Option<(String, String)> {
     Some((owner.to_string(), repo.to_string()))
 }
 
-fn parse_pr_number(url: &str) -> Option<u64> {
+fn parse_github_remote_url(url: &str) -> Option<(String, String)> {
     let trimmed = url.trim();
-    let without_scheme = trimmed
+    let without_prefix = trimmed
         .strip_prefix("https://github.com/")
-        .or_else(|| trimmed.strip_prefix("http://github.com/"))?;
-    let mut segments = without_scheme.split('/');
-    let _owner = segments.next()?;
-    let _repo = segments.next()?;
-    let pr_segment = segments.next()?;
-    if pr_segment != "pull" {
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let mut segments = without_prefix.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    if owner.is_empty() || repo.is_empty() {
         return None;
     }
-    let pr_number_str = segments.next()?;
-    pr_number_str.parse().ok()
+    Some((owner.to_string(), repo.to_string()))
+}
+
+fn github_repo_from_origin(repo_root: &Path) -> Result<(String, String)> {
+    let repo =
+        Repository::discover(repo_root).context("failed to open git repository for PR creation")?;
+    let remote = repo
+        .find_remote("origin")
+        .context("failed to find 'origin' remote for PR creation")?;
+    let url = remote
+        .url()
+        .ok_or_else(|| anyhow!("origin remote has no URL"))?;
+    parse_github_remote_url(url)
+        .ok_or_else(|| anyhow!("failed to parse GitHub repository from origin URL '{url}'"))
 }
 
 async fn open_pull_request(
@@ -898,56 +912,30 @@ async fn open_pull_request(
     branch: &str,
     github_token: &str,
 ) -> Result<GhPrCreateResponse> {
-    let mut body_file = NamedTempFile::new().context("failed to create temporary PR body file")?;
-    writeln!(body_file, "{description}").context("failed to write pull request description")?;
-
-    // Create the PR (gh pr create doesn't support --json)
-    let create_output = Command::new("gh")
-        .args(["pr", "create"])
-        .args(["--head", branch])
-        .args(["--title", title])
-        .args(["--body-file"])
-        .arg(body_file.path())
-        .current_dir(repo_root)
-        .output()
-        .context("failed to create GitHub pull request")?;
-
-    if !create_output.status.success() {
-        let stdout = String::from_utf8_lossy(&create_output.stdout);
-        let stderr = String::from_utf8_lossy(&create_output.stderr);
-        bail!("failed to open GitHub pull request for branch '{branch}': {stderr}{stdout}");
-    }
-
-    // Extract PR URL from output (gh pr create outputs the URL to stdout)
-    let stdout = String::from_utf8_lossy(&create_output.stdout);
-    let pr_url = stdout
-        .lines()
-        .find(|line| line.contains("github.com") && line.contains("/pull/"))
-        .ok_or_else(|| anyhow!("failed to extract PR URL from gh pr create output: {stdout}"))?;
-
-    // Use octocrab to get structured PR metadata
-    let crab = Octocrab::builder()
-        .personal_token(github_token.to_string())
-        .build()
-        .context("failed to create octocrab client")?;
-
-    let (owner, repo) = parse_pr_repository(pr_url.trim())
-        .ok_or_else(|| anyhow!("failed to parse repository from PR URL: {pr_url}"))?;
-    let pr_number = parse_pr_number(pr_url.trim())
-        .ok_or_else(|| anyhow!("failed to parse PR number from URL: {pr_url}"))?;
+    let crab = build_octocrab_client(github_token).context("failed to create octocrab client")?;
+    let (owner, repo) = github_repo_from_origin(repo_root)?;
+    let repo_info =
+        crab.repos(&owner, &repo).get().await.with_context(|| {
+            format!("failed to load GitHub repository metadata for {owner}/{repo}")
+        })?;
+    let base_branch = repo_info
+        .default_branch
+        .ok_or_else(|| anyhow!("GitHub repository {owner}/{repo} has no default branch"))?;
 
     let pr = crab
-        .pulls(owner, repo)
-        .get(pr_number)
+        .pulls(&owner, &repo)
+        .create(title, branch, &base_branch)
+        .body(description)
+        .send()
         .await
-        .context("failed to fetch GitHub pull request metadata")?;
+        .context("failed to create GitHub pull request")?;
 
     Ok(GhPrCreateResponse {
         url: pr
             .html_url
             .as_ref()
             .map(ToString::to_string)
-            .unwrap_or_else(|| pr_url.trim().to_string()),
+            .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/pull/{}", pr.number)),
         number: pr.number,
         head_ref_name: Some(pr.head.ref_field.clone()),
         base_ref_name: Some(pr.base.ref_field.clone()),
@@ -1169,7 +1157,6 @@ mod tests {
             Some(job_id),
             false,
             None,
-            None,
             issue_id.clone(),
             None,
             false,
@@ -1235,7 +1222,6 @@ mod tests {
             job_id_opt.clone(),
             false,
             None,
-            None,
             issue_id.clone(),
             commit_range,
             false,
@@ -1263,7 +1249,6 @@ mod tests {
             None,
             false,
             None,
-            None,
             issue_id,
             commit_range,
             false,
@@ -1281,12 +1266,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_patch_requires_github_token_when_creating_pr() -> Result<()> {
+    async fn create_patch_requires_creator_github_token_when_creating_pr() -> Result<()> {
         let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
         let server = MockServer::start();
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-gh-token");
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "missing github token".to_string(),
+                User::new(Username::from("creator-a"), String::new()),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let issue_mock = mock_get_issue(&server, issue_record);
 
         let result = create_patch(
             &client,
@@ -1294,7 +1295,6 @@ mod tests {
             "pr description".to_string(),
             Some(task_id("t-job-gh-token")),
             true,
-            None,
             None,
             issue_id,
             commit_range,
@@ -1305,9 +1305,10 @@ mod tests {
 
         let error = result.unwrap_err().to_string();
         assert!(
-            error.contains(ENV_GH_TOKEN),
-            "error should reference missing GitHub token: {error}"
+            error.contains("GitHub token is missing for creator of issue"),
+            "error should reference missing creator GitHub token: {error}"
         );
+        issue_mock.assert();
 
         Ok(())
     }
@@ -1404,7 +1405,6 @@ mod tests {
             "custom patch description".to_string(),
             Some(job_id),
             false,
-            None,
             Some("owner-a".to_string()),
             parent_issue.clone(),
             None,
@@ -1506,7 +1506,6 @@ mod tests {
             "backup description".to_string(),
             Some(job_id.clone()),
             false,
-            None,
             None,
             issue_id.clone(),
             commit_range,
@@ -1785,5 +1784,21 @@ mod tests {
         assert_eq!(current_branch(&repo_path)?, branch);
 
         Ok(())
+    }
+
+    #[test]
+    fn parse_github_remote_url_handles_https_and_ssh() {
+        assert_eq!(
+            parse_github_remote_url("https://github.com/dourolabs/metis.git"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
+        assert_eq!(
+            parse_github_remote_url("git@github.com:dourolabs/metis.git"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
+        assert_eq!(
+            parse_github_remote_url("ssh://git@github.com/dourolabs/metis"),
+            Some(("dourolabs".to_string(), "metis".to_string()))
+        );
     }
 }

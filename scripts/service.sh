@@ -101,7 +101,6 @@ url = "${SERVER_DATABASE_URL}"
 [service.repositories."dourolabs/metis"]
 remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
-github_token = "${GH_TOKEN}"
 
 [github_app]
 app_id = ${SERVER_GITHUB_APP_ID}
