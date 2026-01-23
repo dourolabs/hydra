@@ -858,6 +858,7 @@ impl Store for PostgresStore {
     }
 
     async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        super::validate_actor_name(name)?;
         self.fetch_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))

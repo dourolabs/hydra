@@ -170,6 +170,7 @@ impl Store for FailingStore {
     }
 
     async fn get_actor(&self, _name: &str) -> Result<Actor, StoreError> {
+        crate::store::validate_actor_name(_name)?;
         fail()
     }
 
