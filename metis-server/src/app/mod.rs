@@ -334,7 +334,6 @@ impl ServiceState {
     }
 
     /// Resolve a BundleSpec into a concrete Bundle using server state.
-    /// Returns the instantiated bundle and an optional GitHub token to surface to the worker.
     pub async fn resolve_bundle_spec(
         &self,
         spec: BundleSpec,

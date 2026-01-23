@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::ENV_METIS_ISSUE_ID,
+    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ISSUE_ID},
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::GitOid,
@@ -46,7 +46,8 @@ pub async fn run(
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
     let issue_id_for_token = issue_id.clone();
-    let github_token = resolve_creator_github_token(client, issue_id_for_token, &job).await?;
+    let github_token =
+        resolve_github_token(client, issue_id_for_token, &job, &execution_env).await?;
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -147,16 +148,24 @@ pub async fn run(
     }
 }
 
-async fn resolve_creator_github_token(
+async fn resolve_github_token(
     client: &dyn MetisClientInterface,
     issue_id: Option<IssueId>,
     job_id: &TaskId,
+    variables: &HashMap<String, String>,
 ) -> Result<Option<String>> {
+    if let Some(token) = variables.get(ENV_METIS_GITHUB_TOKEN) {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
     let issue_id = match issue_id {
         Some(issue_id) => Some(issue_id),
         None => {
             let job = client.get_job(job_id).await.with_context(|| {
-                format!("failed to fetch job '{job_id}' to resolve creator GitHub token")
+                format!("failed to fetch job '{job_id}' to resolve GitHub token")
             })?;
             job.task.spawned_from
         }
@@ -166,9 +175,10 @@ async fn resolve_creator_github_token(
         return Ok(None);
     };
 
-    let issue = client.get_issue(&issue_id).await.with_context(|| {
-        format!("failed to fetch issue '{issue_id}' to resolve creator GitHub token")
-    })?;
+    let issue = client
+        .get_issue(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}' to resolve GitHub token"))?;
     let token = issue.issue.creator.github_token.trim();
     if token.is_empty() {
         return Ok(None);

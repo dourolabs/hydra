@@ -42,7 +42,10 @@ pub async fn get_job_context(
         .resolve_context(state.service_state.as_ref(), job_settings.as_ref())
         .await
         .map_err(ApiError::from)?;
-    let env_vars = task.resolve_env_vars(&resolved);
+    let mut env_vars = task.resolve_env_vars(&resolved);
+    state
+        .inject_github_app_token(&resolved.bundle, &mut env_vars)
+        .await;
 
     let context: v1::jobs::WorkerContext =
         WorkerContext::new(resolved.bundle, task.prompt, env_vars).into();

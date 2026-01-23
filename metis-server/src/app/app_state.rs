@@ -5,22 +5,26 @@ use crate::{
         issues::{
             Issue, IssueDependencyType, IssueStatus, IssueType, TodoItem, UpsertIssueRequest,
         },
-        jobs::CreateJobRequest,
+        jobs::{Bundle, CreateJobRequest},
         patches::{PatchStatus, UpsertPatchRequest},
     },
+    github::{parse_github_remote_url, select_github_installation},
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
 };
 use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
-    constants::ENV_METIS_ID,
+    constants::{ENV_METIS_GITHUB_TOKEN, ENV_METIS_ID},
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -195,6 +199,42 @@ pub enum UpdateTodoListError {
 }
 
 impl AppState {
+    pub(crate) async fn inject_github_app_token(
+        &self,
+        bundle: &Bundle,
+        env_vars: &mut HashMap<String, String>,
+    ) {
+        if env_vars.contains_key(ENV_METIS_GITHUB_TOKEN) {
+            return;
+        }
+
+        let Bundle::GitRepository { url, .. } = bundle else {
+            return;
+        };
+        let Some((owner, repo)) = parse_github_remote_url(url) else {
+            return;
+        };
+
+        let token = match select_github_installation(self.github_app.as_ref(), &owner, &repo).await
+        {
+            Ok(Some(installation)) => Some(installation.token),
+            Ok(None) => None,
+            Err(err) => {
+                warn!(
+                    owner = %owner,
+                    repo = %repo,
+                    error = %err,
+                    "failed to resolve GitHub App installation token"
+                );
+                None
+            }
+        };
+
+        if let Some(token) = token {
+            env_vars.insert(ENV_METIS_GITHUB_TOKEN.to_string(), token);
+        }
+    }
+
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
         let fallback_image = self.config.metis.worker_image.clone();
@@ -278,7 +318,7 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let fallback_image = self.config.metis.worker_image.clone();
-        let resolved = {
+        let mut resolved = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(task) => {
@@ -327,6 +367,9 @@ impl AppState {
                 }
             }
         };
+
+        self.inject_github_app_token(&resolved.context.bundle, &mut resolved.env_vars)
+            .await;
 
         match self
             .job_engine

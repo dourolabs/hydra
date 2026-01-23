@@ -25,7 +25,6 @@ use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
-const GH_TOKEN_ENV_VAR: &str = "GH_TOKEN";
 
 #[async_trait]
 pub trait Spawner: Send + Sync {
@@ -64,14 +63,10 @@ impl AgentQueue {
         }
     }
 
-    fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
+    fn build_task(&self, issue_id: &IssueId) -> Task {
         let mut env_vars = self.env_vars.clone();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        let github_token = issue.creator.github_token.trim();
-        if !github_token.is_empty() {
-            env_vars.insert(GH_TOKEN_ENV_VAR.to_string(), github_token.to_string());
-        }
         Task::new(
             self.prompt.clone(),
             self.context_spec.clone(),
@@ -186,7 +181,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(&issue_id, &issue);
+            let task = self.build_task(&issue_id);
             tasks.push(task);
             remaining_capacity -= 1;
         }
@@ -859,7 +854,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sets_creator_github_token_env_var() -> anyhow::Result<()> {
+    async fn omits_creator_github_token_env_var() -> anyhow::Result<()> {
         let state = test_state();
         {
             let mut store = state.store.write().await;
@@ -882,43 +877,7 @@ mod tests {
         let queue = queue("agent-a");
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            tasks[0].env_vars.get(GH_TOKEN_ENV_VAR),
-            Some(&"creator-token".to_string())
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn skips_empty_creator_github_token_env_var() -> anyhow::Result<()> {
-        let state = test_state();
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Empty token".to_string(),
-                    creator: User {
-                        username: Username::from("spawner"),
-                        github_user_id: None,
-                        github_token: "   ".to_string(),
-                    },
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: None,
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
-
-        let queue = queue("agent-a");
-        let tasks = queue.spawn(&state).await?;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].env_vars.get(GH_TOKEN_ENV_VAR), None);
+        assert_eq!(tasks[0].env_vars.get("GH_TOKEN"), None);
 
         Ok(())
     }

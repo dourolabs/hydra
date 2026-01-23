@@ -5,6 +5,7 @@ use crate::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
         UpsertPatchRequest,
     },
+    github::select_github_installation,
 };
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
@@ -174,7 +175,9 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(client) = select_github_installation_client(state, &github).await? else {
+    let Some(installation) =
+        select_github_installation(state.github_app.as_ref(), &github.owner, &github.repo).await?
+    else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -184,6 +187,7 @@ async fn sync_patch_from_github(
         );
         return Ok(());
     };
+    let client = installation.client;
 
     let pr = client
         .pulls(&github.owner, &github.repo)
@@ -393,49 +397,6 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
          Please re-merge `main`, fix CI locally, and push a new PR. Closing this PR to keep the queue clean.",
         name = failure.name,
     )
-}
-
-async fn select_github_installation_client(
-    state: &AppState,
-    github: &GithubPr,
-) -> anyhow::Result<Option<Octocrab>> {
-    let Some(app_client) = state.github_app.as_ref() else {
-        return Ok(None);
-    };
-
-    let installation = match app_client
-        .apps()
-        .get_repository_installation(&github.owner, &github.repo)
-        .await
-    {
-        Ok(installation) => installation,
-        Err(err) => {
-            warn!(
-                owner = %github.owner,
-                repo = %github.repo,
-                error = %err,
-                "failed to lookup GitHub App installation"
-            );
-            return Ok(None);
-        }
-    };
-
-    let (installation_client, _token) =
-        match app_client.installation_and_token(installation.id).await {
-            Ok(result) => result,
-            Err(err) => {
-                warn!(
-                    owner = %github.owner,
-                    repo = %github.repo,
-                    installation_id = %installation.id,
-                    error = %err,
-                    "failed to fetch GitHub App installation token"
-                );
-                return Ok(None);
-            }
-        };
-
-    Ok(Some(installation_client))
 }
 
 fn build_review_entries(
@@ -1037,10 +998,14 @@ mod tests {
             None,
         );
 
-        let client = select_github_installation_client(&state, &github)
+        let installation = select_github_installation(
+            state.github_app.as_ref(),
+            &github.owner,
+            &github.repo,
+        )
             .await
             .expect("select should not error without app");
 
-        assert!(client.is_none());
+        assert!(installation.is_none());
     }
 }

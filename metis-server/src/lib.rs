@@ -4,6 +4,7 @@ pub mod app;
 pub mod background;
 pub mod config;
 pub mod domain;
+mod github;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod routes;
