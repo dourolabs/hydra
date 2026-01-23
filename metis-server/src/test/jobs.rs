@@ -7,7 +7,7 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
-    app::{ServiceState, TaskExt},
+    app::ServiceState,
     job_engine::JobStatus,
     store::{Status, Task, TaskError},
     test_utils::{
@@ -23,8 +23,7 @@ use std::{collections::HashMap, sync::Arc};
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
     let state = test_state();
-    let default_image = state.config.job.default_image.clone();
-    let service_state = state.service_state.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -41,7 +40,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task.resolve(service_state.as_ref(), &default_image).await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     let Task {
         context, prompt, ..
     } = task;
@@ -49,7 +48,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(prompt, "0");
     assert_eq!(context, BundleSpec::None);
     assert_eq!(resolved.context.bundle, Bundle::None);
-    assert_eq!(resolved.image, default_image);
+    assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
     let status = store_read.get_status(&body.job_id).await?;
     assert_eq!(status, Status::Pending);
@@ -64,8 +63,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
         repo_name.clone(),
         repo.clone(),
     )])));
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -83,9 +81,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
-        .await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     let Task { context, .. } = task;
     assert_eq!(
         context,
@@ -109,8 +105,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 #[tokio::test]
 async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let state = test_state();
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -128,9 +123,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
-        .await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
 
@@ -145,8 +138,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
         repo_name.clone(),
         repo.clone(),
     )])));
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -165,9 +157,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
-    let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
-        .await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
     Ok(())
@@ -208,8 +198,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         repo_name.clone(),
         repo.clone(),
     )])));
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -258,9 +247,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     drop(store_read);
-    let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
-        .await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
         Bundle::GitRepository {
@@ -298,8 +285,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         repo_name.clone(),
         repo.clone(),
     )])));
-    let service_state = state.service_state.clone();
-    let fallback_image = state.config.job.default_image.clone();
+    let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
 
@@ -348,9 +334,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
     let store_read = store.read().await;
     let task = store_read.get_task(&body.job_id).await?;
     drop(store_read);
-    let resolved = task
-        .resolve(service_state.as_ref(), &fallback_image)
-        .await?;
+    let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
         Bundle::GitRepository {
