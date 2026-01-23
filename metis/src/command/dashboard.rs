@@ -240,6 +240,7 @@ struct DashboardState {
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
+    collapsed_issue_ids: HashSet<IssueId>,
     // Keep per-panel selection indices so each list preserves context across refreshes.
     user_unowned_issue_selection: IssueSelectionState,
     running_issue_selection: IssueSelectionState,
@@ -280,6 +281,7 @@ impl Default for DashboardState {
             issue_lines: IssueLines::default(),
             user_unowned_issue_lines: IssueLines::default(),
             completed_issue_lines: CompletedIssueLines::default(),
+            collapsed_issue_ids: HashSet::new(),
             user_unowned_issue_selection: IssueSelectionState::default(),
             running_issue_selection: IssueSelectionState::default(),
             completed_issue_selection: IssueSelectionState::default(),
@@ -643,6 +645,94 @@ fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
     }
 
     moved
+}
+
+// Toggle handler for issue tree expansion; invoke this when a keybinding (e.g. spacebar)
+// should expand or collapse the children of the currently selected issue.
+#[allow(dead_code)]
+fn toggle_selected_issue_children(state: &mut DashboardState) -> bool {
+    let selected_panel = state.selected_panel;
+    let Some(issue_id) = selected_issue_id(state, selected_panel) else {
+        return false;
+    };
+
+    let nodes = build_issue_nodes(&state.issues, &state.jobs);
+    let Some(node) = nodes.get(&issue_id) else {
+        return false;
+    };
+    if node.children.is_empty() {
+        return false;
+    }
+
+    if state.collapsed_issue_ids.contains(&issue_id) {
+        state.collapsed_issue_ids.remove(&issue_id);
+    } else {
+        state.collapsed_issue_ids.insert(issue_id.clone());
+    }
+
+    update_views(state);
+    if restore_issue_selection(state, selected_panel, &issue_id) {
+        scroll_selected_issue_into_view(state);
+    }
+    true
+}
+
+fn selected_issue_id(state: &DashboardState, panel: PanelFocus) -> Option<IssueId> {
+    match panel {
+        PanelFocus::Running => {
+            issue_id_for_selection(&state.issue_lines.rows, &state.running_issue_selection)
+        }
+        PanelFocus::Completed => {
+            let rows = completed_issue_rows(&state.completed_issue_lines);
+            issue_id_for_selection(&rows, &state.completed_issue_selection)
+        }
+        PanelFocus::UserOwned => None,
+        PanelFocus::NewIssue => None,
+    }
+}
+
+fn issue_id_for_selection(
+    issue_lines: &[IssueLine],
+    selection: &IssueSelectionState,
+) -> Option<IssueId> {
+    let index = selection_index(selection, issue_lines.len())?;
+    issue_lines.get(index)?.id.parse::<IssueId>().ok()
+}
+
+fn restore_issue_selection(
+    state: &mut DashboardState,
+    panel: PanelFocus,
+    issue_id: &IssueId,
+) -> bool {
+    match panel {
+        PanelFocus::Running => set_selection_for_issue(
+            &mut state.running_issue_selection,
+            &state.issue_lines.rows,
+            issue_id,
+        ),
+        PanelFocus::Completed => {
+            let rows = completed_issue_rows(&state.completed_issue_lines);
+            set_selection_for_issue(&mut state.completed_issue_selection, &rows, issue_id)
+        }
+        PanelFocus::UserOwned => false,
+        PanelFocus::NewIssue => false,
+    }
+}
+
+fn set_selection_for_issue(
+    selection: &mut IssueSelectionState,
+    issue_lines: &[IssueLine],
+    issue_id: &IssueId,
+) -> bool {
+    if let Some(index) = issue_lines
+        .iter()
+        .position(|line| line.id == issue_id.as_ref())
+    {
+        selection.index = index;
+        true
+    } else {
+        false
+    }
 }
 
 fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -1617,10 +1707,25 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
 
-    let issue_lines = build_issue_lines(&state.issues, &state.jobs, true);
+    let known_issue_ids: HashSet<IssueId> =
+        state.issues.iter().map(|issue| issue.id.clone()).collect();
+    state
+        .collapsed_issue_ids
+        .retain(|issue_id| known_issue_ids.contains(issue_id));
+
+    let issue_lines = build_issue_lines_with_collapsed(
+        &state.issues,
+        &state.jobs,
+        true,
+        &state.collapsed_issue_ids,
+    );
     let user_unowned_issue_lines =
         build_user_unowned_issue_lines(&state.username, &state.issues, &state.jobs);
-    let completed_issue_lines = build_completed_issue_lines(&state.issues, &state.jobs);
+    let completed_issue_lines = build_completed_issue_lines_with_collapsed(
+        &state.issues,
+        &state.jobs,
+        &state.collapsed_issue_ids,
+    );
     update_assignee_options(state);
 
     state.issue_lines = issue_lines;
@@ -1725,17 +1830,29 @@ fn build_user_unowned_issue_lines(
         .cloned()
         .collect();
 
-    let mut lines = build_issue_lines(&assigned, jobs, false);
+    let collapsed_issue_ids = HashSet::new();
+    let mut lines = build_issue_lines_with_collapsed(&assigned, jobs, false, &collapsed_issue_ids);
     for row in &mut lines.rows {
         row.depth = 0;
     }
     lines
 }
 
+#[cfg(test)]
 fn build_issue_lines(
     issues: &[IssueRecord],
     jobs: &[JobDetails],
     exclude_inactive_roots: bool,
+) -> IssueLines {
+    let collapsed_issue_ids = HashSet::new();
+    build_issue_lines_with_collapsed(issues, jobs, exclude_inactive_roots, &collapsed_issue_ids)
+}
+
+fn build_issue_lines_with_collapsed(
+    issues: &[IssueRecord],
+    jobs: &[JobDetails],
+    exclude_inactive_roots: bool,
+    collapsed_issue_ids: &HashSet<IssueId>,
 ) -> IssueLines {
     let nodes = build_issue_nodes(issues, jobs);
 
@@ -1759,7 +1876,14 @@ fn build_issue_lines(
                 }
             }
         }
-        append_issue(&root, 0, &mut rows, &mut visited, &nodes);
+        append_issue(
+            &root,
+            0,
+            &mut rows,
+            &mut visited,
+            &nodes,
+            collapsed_issue_ids,
+        );
     }
 
     IssueLines { rows }
@@ -1818,7 +1942,17 @@ fn build_issue_nodes(issues: &[IssueRecord], jobs: &[JobDetails]) -> HashMap<Iss
     nodes
 }
 
+#[cfg(test)]
 fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> CompletedIssueLines {
+    let collapsed_issue_ids = HashSet::new();
+    build_completed_issue_lines_with_collapsed(issues, jobs, &collapsed_issue_ids)
+}
+
+fn build_completed_issue_lines_with_collapsed(
+    issues: &[IssueRecord],
+    jobs: &[JobDetails],
+    collapsed_issue_ids: &HashSet<IssueId>,
+) -> CompletedIssueLines {
     let nodes = build_issue_nodes(issues, jobs);
     if nodes.is_empty() {
         return CompletedIssueLines::default();
@@ -1841,7 +1975,14 @@ fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> C
 
         let mut lines = Vec::new();
         let mut visited = HashSet::new();
-        collect_issue_lines(&root, 0, &mut lines, &mut visited, &nodes);
+        collect_issue_lines(
+            &root,
+            0,
+            &mut lines,
+            &mut visited,
+            &nodes,
+            collapsed_issue_ids,
+        );
         if let Some(root_line) = lines.first().cloned() {
             completed_roots.push(root_line);
         }
@@ -1864,6 +2005,7 @@ fn append_issue(
     rows: &mut Vec<IssueLine>,
     visited: &mut HashSet<IssueId>,
     nodes: &HashMap<IssueId, IssueNode>,
+    collapsed_issue_ids: &HashSet<IssueId>,
 ) {
     if !visited.insert(id.clone()) {
         return;
@@ -1886,10 +2028,14 @@ fn append_issue(
         depth,
     });
 
+    if collapsed_issue_ids.contains(id) {
+        return;
+    }
+
     let mut children = node.children.clone();
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
-        append_issue(&child, depth + 1, rows, visited, nodes);
+        append_issue(&child, depth + 1, rows, visited, nodes, collapsed_issue_ids);
     }
 }
 
@@ -1899,6 +2045,7 @@ fn collect_issue_lines(
     rows: &mut Vec<IssueLine>,
     visited: &mut HashSet<IssueId>,
     nodes: &HashMap<IssueId, IssueNode>,
+    collapsed_issue_ids: &HashSet<IssueId>,
 ) {
     if !visited.insert(id.clone()) {
         return;
@@ -1921,10 +2068,14 @@ fn collect_issue_lines(
         depth,
     });
 
+    if collapsed_issue_ids.contains(id) {
+        return;
+    }
+
     let mut children = node.children.clone();
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
-        collect_issue_lines(&child, depth + 1, rows, visited, nodes);
+        collect_issue_lines(&child, depth + 1, rows, visited, nodes, collapsed_issue_ids);
     }
 }
 
@@ -2189,7 +2340,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::{env, fs};
     use tempfile::tempdir;
 
@@ -2336,6 +2487,21 @@ mod tests {
     }
 
     #[test]
+    fn issue_lines_hide_descendants_when_collapsed() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+        let mut collapsed_issue_ids = HashSet::new();
+        collapsed_issue_ids.insert(issue_id("i-root"));
+
+        let lines = build_issue_lines_with_collapsed(&issues, &[], false, &collapsed_issue_ids);
+
+        assert_eq!(lines.rows.len(), 1);
+        assert_eq!(lines.rows[0].id, issue_id("i-root").to_string());
+    }
+
+    #[test]
     fn blocked_on_excludes_closed_dependencies() {
         let issues = vec![
             issue(
@@ -2455,6 +2621,28 @@ mod tests {
             handle_status_panel_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut state);
         assert!(!moved);
         assert_eq!(state.running_issue_selection.index, 2);
+    }
+
+    #[test]
+    fn toggle_selected_issue_children_keeps_selection() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Open, vec![]),
+            issue("i-child", IssueStatus::Open, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+        update_views(&mut state);
+        state.selected_panel = PanelFocus::Running;
+        update_panel_focus(&mut state);
+
+        let toggled = toggle_selected_issue_children(&mut state);
+
+        assert!(toggled);
+        assert_eq!(state.issue_lines.rows.len(), 1);
+        assert_eq!(state.running_issue_selection.index, 0);
+        assert_eq!(state.issue_lines.rows[0].id, issue_id("i-root").to_string());
     }
 
     #[test]
