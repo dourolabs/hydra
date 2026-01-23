@@ -243,6 +243,7 @@ struct DashboardState {
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
     collapsed_issue_ids: HashSet<IssueId>,
+    known_completed_issue_ids: HashSet<IssueId>,
     // Keep per-panel selection indices so each list preserves context across refreshes.
     user_unowned_issue_selection: IssueSelectionState,
     running_issue_selection: IssueSelectionState,
@@ -284,6 +285,7 @@ impl Default for DashboardState {
             user_unowned_issue_lines: IssueLines::default(),
             completed_issue_lines: CompletedIssueLines::default(),
             collapsed_issue_ids: HashSet::new(),
+            known_completed_issue_ids: HashSet::new(),
             user_unowned_issue_selection: IssueSelectionState::default(),
             running_issue_selection: IssueSelectionState::default(),
             completed_issue_selection: IssueSelectionState::default(),
@@ -1762,6 +1764,8 @@ fn update_views(state: &mut DashboardState) -> bool {
         .collapsed_issue_ids
         .retain(|issue_id| known_issue_ids.contains(issue_id));
 
+    seed_completed_issue_collapses(state);
+
     let issue_lines = build_issue_lines_with_collapsed(
         &state.issues,
         &state.jobs,
@@ -1789,6 +1793,28 @@ fn update_views(state: &mut DashboardState) -> bool {
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
+}
+
+fn seed_completed_issue_collapses(state: &mut DashboardState) {
+    let nodes = build_issue_nodes(&state.issues, &state.jobs);
+    if nodes.is_empty() {
+        state.known_completed_issue_ids.clear();
+        return;
+    }
+
+    let completed_issue_ids = completed_issue_tree_ids(&nodes);
+    for issue_id in &completed_issue_ids {
+        if state.known_completed_issue_ids.contains(issue_id) {
+            continue;
+        }
+        if nodes
+            .get(issue_id)
+            .is_some_and(|node| !node.children.is_empty())
+        {
+            state.collapsed_issue_ids.insert(issue_id.clone());
+        }
+    }
+    state.known_completed_issue_ids = completed_issue_ids;
 }
 
 fn clamp_issue_selections(state: &mut DashboardState) {
@@ -1989,6 +2015,43 @@ fn build_issue_nodes(issues: &[IssueRecord], jobs: &[JobDetails]) -> HashMap<Iss
     }
 
     nodes
+}
+
+fn completed_issue_tree_ids(nodes: &HashMap<IssueId, IssueNode>) -> HashSet<IssueId> {
+    let mut roots: Vec<IssueId> = nodes
+        .iter()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(id, _)| id.clone())
+        .collect();
+    roots.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
+
+    let mut completed_ids = HashSet::new();
+    for root in roots {
+        if !is_completed_tree(&root, nodes, &mut HashSet::new()) {
+            continue;
+        }
+        collect_issue_ids(&root, nodes, &mut completed_ids);
+    }
+
+    completed_ids
+}
+
+fn collect_issue_ids(
+    id: &IssueId,
+    nodes: &HashMap<IssueId, IssueNode>,
+    collected: &mut HashSet<IssueId>,
+) {
+    if !collected.insert(id.clone()) {
+        return;
+    }
+
+    let Some(node) = nodes.get(id) else {
+        return;
+    };
+
+    for child in &node.children {
+        collect_issue_ids(child, nodes, collected);
+    }
 }
 
 #[cfg(test)]
@@ -3032,6 +3095,53 @@ mod tests {
         assert_eq!(rows[0].id, issue_id("i-root").to_string());
         assert_eq!(rows[1].id, issue_id("i-child").to_string());
         assert_eq!(rows[1].depth, 1);
+    }
+
+    #[test]
+    fn completed_issue_trees_default_to_collapsed() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+
+        update_views(&mut state);
+
+        assert!(state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        let descendants = state
+            .completed_issue_lines
+            .descendants
+            .get(&issue_id("i-root"))
+            .expect("missing descendants");
+        assert!(descendants.is_empty());
+    }
+
+    #[test]
+    fn completed_issue_expansion_persists_across_refresh() {
+        let issues = vec![
+            issue("i-root", IssueStatus::Closed, vec![]),
+            issue("i-child", IssueStatus::Closed, vec![child_of("i-root")]),
+        ];
+        let mut state = DashboardState {
+            issues,
+            ..DashboardState::default()
+        };
+
+        update_views(&mut state);
+        state.selected_panel = PanelFocus::Completed;
+        update_panel_focus(&mut state);
+
+        let toggled = toggle_selected_issue_children(&mut state);
+        assert!(toggled);
+        assert!(!state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        assert_eq!(completed_issue_rows(&state.completed_issue_lines).len(), 2);
+
+        update_views(&mut state);
+        assert!(!state.collapsed_issue_ids.contains(&issue_id("i-root")));
+        assert_eq!(completed_issue_rows(&state.completed_issue_lines).len(), 2);
     }
 
     #[test]
