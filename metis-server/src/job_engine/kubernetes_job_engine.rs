@@ -74,11 +74,7 @@ fn build_image_pull_secrets(image_pull_secret: Option<&str>) -> Option<Vec<Local
                 Some(trimmed.to_string())
             }
         })
-        .map(|name| {
-            vec![LocalObjectReference {
-                name: Some(name),
-            }]
-        })
+        .map(|name| vec![LocalObjectReference { name: Some(name) }])
 }
 
 impl KubernetesJobEngine {
