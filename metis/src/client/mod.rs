@@ -23,8 +23,8 @@ use metis_common::{
         UpsertPatchResponse,
     },
     repositories::{
-        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-        UpsertRepositoryResponse,
+        CreateRepositoryRequest, ListRepositoriesResponse, RepositoryAccessTokenResponse,
+        UpdateRepositoryRequest, UpsertRepositoryResponse,
     },
     users::{
         CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
@@ -32,7 +32,7 @@ use metis_common::{
     },
     IssueId, PatchId, RepoName, TaskId,
 };
-use reqwest::{header, Client as HttpClient, Response, Url};
+use reqwest::{header, Client as HttpClient, Response, StatusCode, Url};
 use serde::Deserialize;
 use std::pin::Pin;
 
@@ -155,6 +155,7 @@ pub trait MetisClientInterface: Send + Sync {
         repo_name: &RepoName,
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
+    async fn get_repository_access_token(&self, repo_name: &RepoName) -> Result<Option<String>>;
     async fn list_users(&self) -> Result<ListUsersResponse>;
     async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse>;
     async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse>;
@@ -710,6 +711,42 @@ impl MetisClient {
             .context("failed to decode update repository response")
     }
 
+    /// Call `GET /v1/repositories/:organization/:repo/access-token` to fetch a repository access token.
+    pub async fn get_repository_access_token(
+        &self,
+        repo_name: &RepoName,
+    ) -> Result<Option<String>> {
+        let path = format!(
+            "/v1/repositories/{}/{}/access-token",
+            repo_name.organization, repo_name.repo
+        );
+        let url = self.endpoint(&path)?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to submit repository access token request")?;
+
+        let status = response.status();
+        if matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) {
+            return Ok(None);
+        }
+
+        let response = response
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching repository access token",
+            )
+            .await?;
+
+        let payload = response
+            .json::<RepositoryAccessTokenResponse>()
+            .await
+            .context("failed to decode repository access token response")?;
+
+        Ok(Some(payload.token))
+    }
+
     /// Call `GET /v1/users` to list users.
     pub async fn list_users(&self) -> Result<ListUsersResponse> {
         let url = self.endpoint("/v1/users")?;
@@ -1126,6 +1163,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::update_repository(self, repo_name, request).await
     }
 
+    async fn get_repository_access_token(&self, repo_name: &RepoName) -> Result<Option<String>> {
+        MetisClient::get_repository_access_token(self, repo_name).await
+    }
+
     async fn list_users(&self) -> Result<ListUsersResponse> {
         MetisClient::list_users(self).await
     }
@@ -1227,6 +1268,7 @@ mod tests {
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
                 Some("token-123".to_string()),
+                None,
                 Some("ghcr.io/example/new-repo:main".to_string()),
             ),
         );
@@ -1244,6 +1286,7 @@ mod tests {
                 "remote_url": "https://example.com/new-repo.git",
                 "default_branch": "main",
                 "github_token": "token-123",
+                "github_app": null,
                 "default_image": "ghcr.io/example/new-repo:main"
             }));
             then.status(200).json_body_obj(&response_body);
@@ -1273,6 +1316,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         ));
 
         let mock = server.mock(|when, then| {
@@ -1282,6 +1326,7 @@ mod tests {
                     "remote_url": "https://example.com/updated.git",
                     "default_branch": null,
                     "github_token": null,
+                    "github_app": null,
                     "default_image": null
                 }));
             then.status(404);

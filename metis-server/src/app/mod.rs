@@ -156,6 +156,19 @@ impl ServiceState {
                     .as_deref()
                     .and_then(non_empty)
                     .map(str::to_owned);
+                let github_app = repo.github_app.clone().map(|mut config| {
+                    config.private_key = config
+                        .private_key
+                        .as_deref()
+                        .and_then(non_empty)
+                        .map(str::to_owned);
+                    config.key_path = config
+                        .key_path
+                        .as_deref()
+                        .and_then(non_empty)
+                        .map(str::to_owned);
+                    config
+                });
                 let default_branch = repo
                     .default_branch
                     .as_deref()
@@ -169,6 +182,7 @@ impl ServiceState {
                         repo.remote_url.clone(),
                         default_branch,
                         github_token,
+                        github_app,
                         repo.default_image
                             .as_deref()
                             .and_then(non_empty)
@@ -277,6 +291,7 @@ impl ServiceState {
             repository.remote_url = config.remote_url;
             repository.default_branch = config.default_branch;
             repository.github_token = config.github_token;
+            repository.github_app = config.github_app;
             repository.default_image = config.default_image;
             previous
         };
@@ -554,6 +569,7 @@ mod tests {
                 .to_str()
                 .expect("tempdir path is valid utf-8")
                 .to_string(),
+            None,
             None,
             None,
             None,

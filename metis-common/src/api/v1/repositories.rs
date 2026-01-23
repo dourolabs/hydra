@@ -3,12 +3,41 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct GithubAppInstallationConfig {
+    pub app_id: u64,
+    pub installation_id: u64,
+    #[serde(default)]
+    pub private_key: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+}
+
+impl GithubAppInstallationConfig {
+    pub fn new(
+        app_id: u64,
+        installation_id: u64,
+        private_key: Option<String>,
+        key_path: Option<String>,
+    ) -> Self {
+        Self {
+            app_id,
+            installation_id,
+            private_key,
+            key_path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ServiceRepositoryConfig {
     pub remote_url: String,
     #[serde(default)]
     pub default_branch: Option<String>,
     #[serde(default)]
     pub github_token: Option<String>,
+    #[serde(default)]
+    pub github_app: Option<GithubAppInstallationConfig>,
     #[serde(default)]
     pub default_image: Option<String>,
 }
@@ -18,12 +47,14 @@ impl ServiceRepositoryConfig {
         remote_url: String,
         default_branch: Option<String>,
         github_token: Option<String>,
+        github_app: Option<GithubAppInstallationConfig>,
         default_image: Option<String>,
     ) -> Self {
         Self {
             remote_url,
             default_branch,
             github_token,
+            github_app,
             default_image,
         }
     }
@@ -38,6 +69,8 @@ pub struct ServiceRepository {
     pub default_branch: Option<String>,
     #[serde(default)]
     pub github_token: Option<String>,
+    #[serde(default)]
+    pub github_app: Option<GithubAppInstallationConfig>,
     #[serde(default)]
     pub default_image: Option<String>,
 }
@@ -62,6 +95,7 @@ impl ServiceRepository {
         remote_url: String,
         default_branch: Option<String>,
         github_token: Option<String>,
+        github_app: Option<GithubAppInstallationConfig>,
         default_image: Option<String>,
     ) -> Self {
         Self {
@@ -69,6 +103,7 @@ impl ServiceRepository {
             remote_url,
             default_branch,
             github_token,
+            github_app,
             default_image,
         }
     }
@@ -81,6 +116,7 @@ impl From<(RepoName, ServiceRepositoryConfig)> for ServiceRepository {
             remote_url: config.remote_url,
             default_branch: config.default_branch,
             github_token: config.github_token,
+            github_app: config.github_app,
             default_image: config.default_image,
         }
     }
@@ -153,6 +189,18 @@ impl UpdateRepositoryRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct RepositoryAccessTokenResponse {
+    pub token: String,
+}
+
+impl RepositoryAccessTokenResponse {
+    pub fn new(token: String) -> Self {
+        Self { token }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertRepositoryResponse {
     pub repository: ServiceRepositoryInfo,
 }
@@ -187,6 +235,7 @@ mod tests {
             remote_url: "https://example.com/repo.git".to_string(),
             default_branch: Some("main".to_string()),
             github_token: Some("token".to_string()),
+            github_app: None,
             default_image: Some("image".to_string()),
         };
 
@@ -202,6 +251,7 @@ mod tests {
             remote_url: "https://example.com/repo.git".to_string(),
             default_branch: Some("main".to_string()),
             github_token: Some("   ".to_string()),
+            github_app: None,
             default_image: None,
         };
 

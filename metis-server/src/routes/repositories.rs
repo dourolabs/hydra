@@ -11,10 +11,11 @@ use metis_common::{
     api::v1::{
         ApiError,
         repositories::{
-            CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-            UpsertRepositoryResponse,
+            CreateRepositoryRequest, ListRepositoriesResponse, RepositoryAccessTokenResponse,
+            UpdateRepositoryRequest, UpsertRepositoryResponse,
         },
     },
+    repositories::GithubAppInstallationConfig,
 };
 use tracing::{error, info};
 
@@ -71,6 +72,32 @@ pub async fn update_repository(
     )))
 }
 
+pub async fn get_repository_access_token(
+    State(state): State<AppState>,
+    Path((organization, repo)): Path<(String, String)>,
+) -> Result<Json<RepositoryAccessTokenResponse>, ApiError> {
+    let name =
+        RepoName::new(organization, repo).map_err(|err| ApiError::bad_request(err.to_string()))?;
+    info!(repository = %name, "get_repository_access_token invoked");
+
+    let Some(repository) = state.service_state.repository(&name).await else {
+        return Err(ApiError::not_found(format!(
+            "repository '{name}' not found"
+        )));
+    };
+
+    let token = crate::github_app::resolve_repository_access_token(&repository)
+        .await
+        .map_err(ApiError::internal)?;
+    let Some(token) = token else {
+        return Err(ApiError::bad_request(format!(
+            "repository '{name}' has no GitHub App installation or token configured"
+        )));
+    };
+
+    Ok(Json(RepositoryAccessTokenResponse::new(token)))
+}
+
 fn build_repository(
     name: RepoName,
     config: ServiceRepositoryConfig,
@@ -96,8 +123,50 @@ fn normalize_config(
     config.github_token = config
         .github_token
         .and_then(|value| non_empty(&value).map(str::to_owned));
+    config.github_app = normalize_github_app_config(config.github_app)?;
 
     Ok(config)
+}
+
+fn normalize_github_app_config(
+    config: Option<GithubAppInstallationConfig>,
+) -> Result<Option<GithubAppInstallationConfig>, ApiError> {
+    let mut config = match config {
+        Some(config) => config,
+        None => return Ok(None),
+    };
+
+    if config.app_id == 0 {
+        return Err(ApiError::bad_request(
+            "github_app.app_id must be a positive integer",
+        ));
+    }
+    if config.installation_id == 0 {
+        return Err(ApiError::bad_request(
+            "github_app.installation_id must be a positive integer",
+        ));
+    }
+
+    config.private_key = config
+        .private_key
+        .and_then(|value| non_empty(&value).map(str::to_owned));
+    config.key_path = config
+        .key_path
+        .and_then(|value| non_empty(&value).map(str::to_owned));
+
+    if config.private_key.is_some() && config.key_path.is_some() {
+        return Err(ApiError::bad_request(
+            "github_app.private_key and github_app.key_path cannot both be set",
+        ));
+    }
+
+    if config.private_key.is_none() && config.key_path.is_none() {
+        return Err(ApiError::bad_request(
+            "github_app.private_key or github_app.key_path must be set",
+        ));
+    }
+
+    Ok(Some(config))
 }
 
 fn map_repository_error(err: RepositoryError) -> ApiError {

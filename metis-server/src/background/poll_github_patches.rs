@@ -5,6 +5,7 @@ use crate::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
         UpsertPatchRequest,
     },
+    github_app::resolve_repository_access_token,
 };
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
@@ -174,7 +175,7 @@ async fn sync_patch_from_github(
     let Some(github) = patch.github.clone() else {
         return Ok(());
     };
-    let Some(token) = select_github_token(state, &patch.service_repo_name).await else {
+    let Some(token) = select_github_token(state, &patch.service_repo_name).await? else {
         warn!(
             patch_id = %patch_id,
             owner = %github.owner,
@@ -396,12 +397,14 @@ fn ci_failure_review_body(failure: &GithubCiFailure) -> String {
     )
 }
 
-async fn select_github_token(state: &AppState, service_repo_name: &RepoName) -> Option<String> {
-    state
-        .service_state
-        .repository(service_repo_name)
-        .await
-        .and_then(|repo| repo.github_token.clone())
+async fn select_github_token(
+    state: &AppState,
+    service_repo_name: &RepoName,
+) -> anyhow::Result<Option<String>> {
+    let Some(repo) = state.service_state.repository(service_repo_name).await else {
+        return Ok(None);
+    };
+    resolve_repository_access_token(&repo).await
 }
 
 fn build_review_entries(
@@ -997,7 +1000,12 @@ mod tests {
         let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/api").unwrap();
 
-        assert!(select_github_token(&state, &repo_name).await.is_none());
+        assert!(
+            select_github_token(&state, &repo_name)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1012,10 +1020,11 @@ mod tests {
                 None,
                 Some("svc-token".to_string()),
                 None,
+                None,
             ),
         )])));
 
-        let token = select_github_token(&state, &repo_name).await;
+        let token = select_github_token(&state, &repo_name).await.unwrap();
 
         assert_eq!(token.as_deref(), Some("svc-token"));
     }

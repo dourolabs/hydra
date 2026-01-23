@@ -30,8 +30,17 @@ idle_timeout_secs = 300
 remote_url = "https://github.com/dourolabs/metis.git"
 default_branch = "main"
 default_image = "metis-worker:latest"
-# Optional fallback token for repository access; most operations use the issue creator's token.
+# Optional fallback token for repository access; most operations use GitHub App installation tokens.
 github_token = ""
+# Optional GitHub App installation configuration for repository access.
+[service.repositories."dourolabs/metis".github_app]
+app_id = 1
+installation_id = 1
+# GitHub App private key (PEM format). Set either private_key or key_path.
+private_key = """-----BEGIN RSA PRIVATE KEY-----
+REPLACE_WITH_PRIVATE_KEY
+-----END RSA PRIVATE KEY-----"""
+#key_path = "/path/to/github-app-private-key.pem"
 
 [github_app]
 # GitHub App configuration for device flow and API access.

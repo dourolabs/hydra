@@ -6,8 +6,8 @@ use git2::{Repository, Signature};
 use metis_common::{
     RepoName,
     repositories::{
-        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-        UpsertRepositoryResponse,
+        CreateRepositoryRequest, ListRepositoriesResponse, RepositoryAccessTokenResponse,
+        UpdateRepositoryRequest, UpsertRepositoryResponse,
     },
 };
 use reqwest::StatusCode;
@@ -60,6 +60,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
             remote_url.clone(),
             Some("main".to_string()),
             Some("token-456".to_string()),
+            None,
             Some("ghcr.io/example/new-repo:main".to_string()),
         ),
     );
@@ -108,6 +109,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
         repo_url(&original_remote),
         Some("develop".to_string()),
         Some("token-123".to_string()),
+        None,
         Some("ghcr.io/example/repo:main".to_string()),
     );
     let mut state = test_state();
@@ -121,6 +123,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
 
     let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
         repo_url(&updated_remote),
+        None,
         None,
         None,
         None,
@@ -178,6 +181,7 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
         None,
         None,
         None,
+        None,
     ));
 
     let response = client
@@ -209,7 +213,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
     let bad_payload = CreateRepositoryRequest::new(
         RepoName::from_str("dourolabs/new-repo")?,
-        ServiceRepositoryConfig::new("   ".to_string(), None, None, None),
+        ServiceRepositoryConfig::new("   ".to_string(), None, None, None, None),
     );
     let bad_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
@@ -225,6 +229,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
             None,
             None,
             None,
+            None,
         ),
     );
     let duplicate_response = client
@@ -233,6 +238,75 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
         .send()
         .await?;
     assert_eq!(duplicate_response.status(), StatusCode::CONFLICT);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_repository_access_token_returns_configured_token() -> anyhow::Result<()> {
+    let repo_name = RepoName::from_str("dourolabs/metis")?;
+    let repository = ServiceRepository::new(
+        repo_name.clone(),
+        "https://example.com/metis.git".to_string(),
+        None,
+        Some("token-123".to_string()),
+        None,
+        None,
+    );
+    let mut state = test_state();
+    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        repo_name.clone(),
+        repository,
+    )])));
+    let server = spawn_test_server_with_state(state).await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/repositories/{}/{}/access-token",
+            server.base_url(),
+            repo_name.organization,
+            repo_name.repo
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: RepositoryAccessTokenResponse = response.json().await?;
+    assert_eq!(body.token, "token-123");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_repository_access_token_errors_when_missing() -> anyhow::Result<()> {
+    let repo_name = RepoName::from_str("dourolabs/metis")?;
+    let repository = ServiceRepository::new(
+        repo_name.clone(),
+        "https://example.com/metis.git".to_string(),
+        None,
+        None,
+        None,
+        None,
+    );
+    let mut state = test_state();
+    state.service_state = Arc::new(ServiceState::with_repositories(HashMap::from([(
+        repo_name.clone(),
+        repository,
+    )])));
+    let server = spawn_test_server_with_state(state).await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/repositories/{}/{}/access-token",
+            server.base_url(),
+            repo_name.organization,
+            repo_name.repo
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     Ok(())
 }

@@ -13,7 +13,8 @@ pub use api::v1::{
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
-    CreateRepositoryRequest, ListRepositoriesResponse, ServiceRepository, ServiceRepositoryConfig,
+    CreateRepositoryRequest, GithubAppInstallationConfig, ListRepositoriesResponse,
+    RepositoryAccessTokenResponse, ServiceRepository, ServiceRepositoryConfig,
     ServiceRepositoryInfo, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub use util::EnvGuard;

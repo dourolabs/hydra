@@ -46,7 +46,9 @@ pub async fn run(
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
     let issue_id_for_token = issue_id.clone();
-    let github_token = resolve_creator_github_token(client, issue_id_for_token, &job).await?;
+    let github_token =
+        resolve_repository_access_token(client, &service_repo_name, issue_id_for_token, &job)
+            .await?;
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -174,6 +176,23 @@ async fn resolve_creator_github_token(
         return Ok(None);
     }
     Ok(Some(token.to_string()))
+}
+
+async fn resolve_repository_access_token(
+    client: &dyn MetisClientInterface,
+    service_repo_name: &RepoName,
+    issue_id: Option<IssueId>,
+    job_id: &TaskId,
+) -> Result<Option<String>> {
+    if let Some(token) = client
+        .get_repository_access_token(service_repo_name)
+        .await
+        .context("failed to resolve repository access token")?
+    {
+        return Ok(Some(token));
+    }
+
+    resolve_creator_github_token(client, issue_id, job_id).await
 }
 
 fn ensure_clean_destination(dest: &Path) -> Result<()> {

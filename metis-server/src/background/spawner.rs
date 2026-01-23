@@ -796,6 +796,7 @@ mod tests {
                 "https://github.com/dourolabs/metis.git".to_string(),
                 Some("main".to_string()),
                 Some("token".to_string()),
+                None,
                 Some("repo-image".to_string()),
             ),
         )])));

@@ -2,8 +2,8 @@ use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
-    CreateRepositoryRequest, ServiceRepositoryConfig, ServiceRepositoryInfo,
-    UpdateRepositoryRequest,
+    CreateRepositoryRequest, GithubAppInstallationConfig, ServiceRepositoryConfig,
+    ServiceRepositoryInfo, UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
 use std::io::{self, Write};
@@ -63,6 +63,42 @@ pub struct UpsertRepositoryArgs {
     /// Remove any configured GitHub token.
     #[arg(long = "clear-github-token")]
     pub clear_github_token: bool,
+
+    /// GitHub App ID for repository access.
+    #[arg(
+        long = "github-app-id",
+        value_name = "APP_ID",
+        conflicts_with = "clear_github_app"
+    )]
+    pub github_app_id: Option<u64>,
+
+    /// GitHub App installation ID for repository access.
+    #[arg(
+        long = "github-installation-id",
+        value_name = "INSTALLATION_ID",
+        conflicts_with = "clear_github_app"
+    )]
+    pub github_installation_id: Option<u64>,
+
+    /// GitHub App private key (PEM).
+    #[arg(
+        long = "github-app-private-key",
+        value_name = "PEM",
+        conflicts_with_all = ["github_app_key_path", "clear_github_app"]
+    )]
+    pub github_app_private_key: Option<String>,
+
+    /// GitHub App private key file path.
+    #[arg(
+        long = "github-app-key-path",
+        value_name = "PATH",
+        conflicts_with_all = ["github_app_private_key", "clear_github_app"]
+    )]
+    pub github_app_key_path: Option<String>,
+
+    /// Remove any configured GitHub App installation config.
+    #[arg(long = "clear-github-app")]
+    pub clear_github_app: bool,
 }
 
 pub async fn run(client: &dyn MetisClientInterface, command: ReposCommand) -> Result<()> {
@@ -152,6 +188,7 @@ fn build_repository_config(args: &UpsertRepositoryArgs) -> Result<ServiceReposit
             "github token",
             "--clear-github-token",
         )?,
+        parse_github_app_config(args)?,
         parse_optional(
             &args.default_image,
             args.clear_default_image,
@@ -185,6 +222,67 @@ fn parse_optional(
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 bail!("{field} must not be empty (use {clear_arg} to clear it)");
+            }
+            Ok(Some(trimmed.to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_github_app_config(
+    args: &UpsertRepositoryArgs,
+) -> Result<Option<GithubAppInstallationConfig>> {
+    if args.clear_github_app {
+        return Ok(None);
+    }
+
+    let app_id = args.github_app_id;
+    let installation_id = args.github_installation_id;
+    let private_key = parse_optional_value(&args.github_app_private_key, "github app private key")?;
+    let key_path = parse_optional_value(&args.github_app_key_path, "github app key path")?;
+
+    if app_id.is_none() && installation_id.is_none() && private_key.is_none() && key_path.is_none()
+    {
+        return Ok(None);
+    }
+
+    let app_id = match app_id {
+        Some(app_id) => app_id,
+        None => bail!("github app id must be provided when configuring GitHub App access"),
+    };
+    if app_id == 0 {
+        bail!("github app id must be a positive integer");
+    }
+
+    let installation_id = match installation_id {
+        Some(installation_id) => installation_id,
+        None => bail!("github installation id must be provided when configuring GitHub App access"),
+    };
+    if installation_id == 0 {
+        bail!("github installation id must be a positive integer");
+    }
+
+    if private_key.is_some() && key_path.is_some() {
+        bail!("github app private key and key path cannot both be set");
+    }
+    if private_key.is_none() && key_path.is_none() {
+        bail!("github app private key or key path must be set");
+    }
+
+    Ok(Some(GithubAppInstallationConfig::new(
+        app_id,
+        installation_id,
+        private_key,
+        key_path,
+    )))
+}
+
+fn parse_optional_value(value: &Option<String>, field: &str) -> Result<Option<String>> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("{field} must not be empty");
             }
             Ok(Some(trimmed.to_string()))
         }
@@ -270,6 +368,11 @@ mod tests {
             clear_default_image: false,
             github_token: Some("token-123".to_string()),
             clear_github_token: false,
+            github_app_id: None,
+            github_installation_id: None,
+            github_app_private_key: None,
+            github_app_key_path: None,
+            clear_github_app: false,
         }
     }
 
@@ -354,7 +457,8 @@ mod tests {
                 "remote_url": "https://example.com/metis.git",
                 "default_branch": "main",
                 "default_image": "ghcr.io/dourolabs/metis:latest",
-                "github_token": "token-123"
+                "github_token": "token-123",
+                "github_app": null
             }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(repository.clone()));
@@ -403,7 +507,8 @@ mod tests {
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": null,
                     "default_image": "ghcr.io/dourolabs/metis:stable",
-                    "github_token": null
+                    "github_token": null,
+                    "github_app": null
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
@@ -438,7 +543,8 @@ mod tests {
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": "main",
                     "default_image": "ghcr.io/dourolabs/metis:latest",
-                    "github_token": "token-123"
+                    "github_token": "token-123",
+                    "github_app": null
                 }));
             then.status(404);
         });

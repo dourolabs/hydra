@@ -4,6 +4,7 @@ pub mod app;
 pub mod background;
 pub mod config;
 pub mod domain;
+mod github_app;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod routes;
@@ -95,6 +96,10 @@ pub async fn run_with_state(
         .route(
             "/v1/repositories/:organization/:repo",
             put(routes::repositories::update_repository),
+        )
+        .route(
+            "/v1/repositories/:organization/:repo/access-token",
+            get(routes::repositories::get_repository_access_token),
         )
         .route(
             "/v1/merge-queues/:organization/:repo/:branch/patches",

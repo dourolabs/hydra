@@ -290,12 +290,12 @@ async fn create_patch(
         bail!("No changes found in commit range '{commit_range}'.");
     }
 
+    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let github_token = if create_github_pr {
-        Some(resolve_creator_github_token(client, &issue_id).await?)
+        Some(resolve_repository_access_token(client, &service_repo_name, &issue_id).await?)
     } else {
         None
     };
-    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -358,6 +358,22 @@ async fn resolve_creator_github_token(
         bail!("GitHub token is missing for creator of issue '{issue_id}'");
     }
     Ok(token.to_string())
+}
+
+async fn resolve_repository_access_token(
+    client: &dyn MetisClientInterface,
+    service_repo_name: &RepoName,
+    issue_id: &IssueId,
+) -> Result<String> {
+    if let Some(token) = client
+        .get_repository_access_token(service_repo_name)
+        .await
+        .context("failed to resolve repository access token")?
+    {
+        return Ok(token);
+    }
+
+    resolve_creator_github_token(client, issue_id).await
 }
 
 fn resolve_commit_range(commit_range: Option<String>, issue_id: &IssueId) -> Result<String> {
@@ -618,7 +634,7 @@ pub async fn create_patch_artifact_from_repo(
 
     if create_github_pr {
         let github_token = github_token.ok_or_else(|| {
-            anyhow!("Creator GitHub token is required to create a GitHub pull request")
+            anyhow!("GitHub access token is required to create a GitHub pull request")
         })?;
         let github_pr = create_github_pull_request(
             repo_root,
@@ -964,7 +980,7 @@ mod tests {
         patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
         users::{User, Username},
-        RepoName,
+        RepoName, RepositoryAccessTokenResponse,
     };
     use reqwest::Client as HttpClient;
     use std::{fs, path::Path, str::FromStr};
@@ -1008,6 +1024,30 @@ mod tests {
             when.method(GET)
                 .path(format!("/v1/issues/{}", issue_record.id.as_ref()));
             then.status(200).json_body_obj(&issue_record);
+        })
+    }
+
+    fn mock_get_repository_access_token<'a>(
+        server: &'a MockServer,
+        repo_name: &RepoName,
+        token: Option<&str>,
+    ) -> Mock<'a> {
+        let path = format!(
+            "/v1/repositories/{}/{}/access-token",
+            repo_name.organization, repo_name.repo
+        );
+        let token = token.map(|value| value.to_string());
+        server.mock(move |when, then| {
+            when.method(GET).path(path.clone());
+            match token.as_deref() {
+                Some(value) => {
+                    then.status(200)
+                        .json_body_obj(&RepositoryAccessTokenResponse::new(value.to_string()));
+                }
+                None => {
+                    then.status(400);
+                }
+            }
         })
     }
 
@@ -1270,6 +1310,23 @@ mod tests {
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-gh-token");
+        let job_id = task_id("t-job-gh-token");
+        let repo_name = sample_repo_name();
+        let job_record = JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: repo_name.clone(),
+                    rev: None,
+                },
+                None,
+                None,
+                Default::default(),
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        );
         let issue_record = IssueRecord::new(
             issue_id.clone(),
             Issue::new(
@@ -1285,13 +1342,15 @@ mod tests {
                 Vec::new(),
             ),
         );
+        let job_mock = mock_get_job(&server, job_record.clone());
+        let token_mock = mock_get_repository_access_token(&server, &repo_name, None);
         let issue_mock = mock_get_issue(&server, issue_record);
 
         let result = create_patch(
             &client,
             "pr title".to_string(),
             "pr description".to_string(),
-            Some(task_id("t-job-gh-token")),
+            Some(job_id),
             true,
             None,
             issue_id,
@@ -1306,6 +1365,8 @@ mod tests {
             error.contains("GitHub token is missing for creator of issue"),
             "error should reference missing creator GitHub token: {error}"
         );
+        job_mock.assert();
+        token_mock.assert();
         issue_mock.assert();
 
         Ok(())
