@@ -569,11 +569,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
         "issue": {
             "type": "epic",
             "description": "future issue",
-            "creator": {
-                "username": "alice",
-                "github_user_id": null,
-                "github_token": "token"
-            },
+            "creator": "alice",
             "progress": "blocked",
             "status": "on-hold",
             "assignee": "robot",
