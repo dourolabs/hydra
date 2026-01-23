@@ -638,6 +638,7 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
         "remote_url": "https://example.com/repo.git",
         "default_branch": "main",
         "default_image": "ghcr.io/dourolabs/metis:main",
+        "github_token_present": true,
         "sync": "on"
     })
 }
