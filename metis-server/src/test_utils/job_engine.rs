@@ -1,4 +1,7 @@
-use crate::job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
+use crate::{
+    domain::users::User,
+    job_engine::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
@@ -67,6 +70,7 @@ impl JobEngine for MockJobEngine {
         metis_id: &TaskId,
         _image: &str,
         env_vars: &HashMap<String, String>,
+        _user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
@@ -204,7 +208,7 @@ mod tests {
         let metis_id = TaskId::new();
 
         engine
-            .create_job(&metis_id, "image", &env_vars)
+            .create_job(&metis_id, "image", &env_vars, None)
             .await
             .expect("job creation should succeed");
 

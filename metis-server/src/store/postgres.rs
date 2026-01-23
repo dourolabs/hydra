@@ -823,6 +823,12 @@ impl Store for PostgresStore {
         ensure_schema_version("user", row.schema_version, USER_SCHEMA_VERSION)?;
         serde_json::from_value(row.payload).map_err(map_serde_error("user"))
     }
+
+    async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        self.fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
 }
 
 #[cfg(test)]

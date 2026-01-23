@@ -7,6 +7,7 @@ use crate::{
         },
         jobs::CreateJobRequest,
         patches::{PatchStatus, UpsertPatchRequest},
+        users::User,
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
@@ -278,24 +279,39 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let fallback_image = self.config.metis.worker_image.clone();
-        let resolved = {
+        let (resolved, user) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(task) => {
-                    let job_settings = match task.spawned_from.as_ref() {
-                        Some(issue_id) => match store.get_issue(issue_id).await {
-                            Ok(issue) => issue.job_settings,
-                            Err(err) => {
-                                warn!(
-                                    metis_id = %task_id,
-                                    issue_id = %issue_id,
-                                    error = %err,
-                                    "failed to load job settings for spawning"
-                                );
-                                return;
+                    let (job_settings, user) = match task.spawned_from.as_ref() {
+                        Some(issue_id) => {
+                            match store.get_issue(issue_id).await {
+                                Ok(issue) => {
+                                    // Look up user by issue creator
+                                    let user: Option<User> =
+                                        store.get_user(&issue.creator).await.ok(); // Log warning but don't fail if user not found
+                                    if user.is_none() {
+                                        warn!(
+                                            metis_id = %task_id,
+                                            issue_id = %issue_id,
+                                            creator = %issue.creator,
+                                            "user not found for issue creator, job will run without GitHub token"
+                                        );
+                                    }
+                                    (issue.job_settings, user)
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        metis_id = %task_id,
+                                        issue_id = %issue_id,
+                                        error = %err,
+                                        "failed to load issue for spawning"
+                                    );
+                                    return;
+                                }
                             }
-                        },
-                        None => None,
+                        }
+                        None => (None, None),
                     };
 
                     match task
@@ -306,7 +322,7 @@ impl AppState {
                         )
                         .await
                     {
-                        Ok(resolved) => resolved,
+                        Ok(resolved) => (resolved, user),
                         Err(err) => {
                             warn!(
                                 metis_id = %task_id,
@@ -330,7 +346,7 @@ impl AppState {
 
         match self
             .job_engine
-            .create_job(&task_id, &resolved.image, &resolved.env_vars)
+            .create_job(&task_id, &resolved.image, &resolved.env_vars, user.as_ref())
             .await
         {
             Ok(()) => {

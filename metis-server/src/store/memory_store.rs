@@ -550,6 +550,13 @@ impl Store for MemoryStore {
             .cloned()
             .ok_or(StoreError::UserNotFoundForToken)
     }
+
+    async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        self.users
+            .get(username)
+            .cloned()
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
 }
 
 #[cfg(test)]
