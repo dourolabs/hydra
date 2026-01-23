@@ -1941,7 +1941,6 @@ fn truncate_message(message: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use crate::test_utils::env as test_env;
     use crate::test_utils::ids::{issue_id, task_id};
     use chrono::Duration as ChronoDuration;
     use crossterm::event::{
@@ -1955,8 +1954,6 @@ mod tests {
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::HashMap;
-    use std::fs;
-    use tempfile::tempdir;
 
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);

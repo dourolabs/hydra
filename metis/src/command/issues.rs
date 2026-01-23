@@ -1456,13 +1456,11 @@ mod tests {
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::{ResolveUserRequest, ResolveUserResponse, UserSummary, Username},
+        users::Username,
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
-    use std::fs;
     use std::str::FromStr;
-    use tempfile::tempdir;
 
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()

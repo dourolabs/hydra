@@ -34,6 +34,7 @@ fn read_auth_token_state(token_path: &PathBuf) -> Result<AuthTokenState> {
     Ok(AuthTokenState::Present(trimmed.to_string()))
 }
 
+#[allow(dead_code)]
 pub(crate) fn read_auth_token(token_path: &PathBuf) -> Result<String> {
     match read_auth_token_state(token_path)? {
         AuthTokenState::Missing(path) => Err(anyhow!(

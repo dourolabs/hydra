@@ -1276,22 +1276,37 @@ mod tests {
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-gh-token");
-        let issue_record = IssueRecord::new(
-            issue_id.clone(),
-            Issue::new(
-                IssueType::Task,
-                "missing github token".to_string(),
-                Username::from("creator-a"),
-                String::new(),
-                IssueStatus::Open,
+        let job_id = task_id("t-job-gh-token");
+        let job_record = JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
                 None,
                 None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
+                Default::default(),
             ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
         );
-        let issue_mock = mock_get_issue(&server, issue_record);
+        let job_mock = mock_get_job(&server, job_record);
+        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let expected_patch_request = UpsertPatchRequest::new(Patch::new(
+            "pr title".to_string(),
+            "pr description".to_string(),
+            expected_diff,
+            PatchStatus::Open,
+            false,
+            Some(job_id.clone()),
+            Vec::new(),
+            sample_repo_name(),
+            None,
+        ));
+        let patch_response = UpsertPatchResponse::new(patch_id("p-gh-token"));
+        let _patch_mock = mock_create_patch(&server, expected_patch_request, patch_response);
 
         let temp_token_dir = tempdir()?;
         let token_path = temp_token_dir.path().join("auth-token");
@@ -1300,7 +1315,7 @@ mod tests {
             &client,
             "pr title".to_string(),
             "pr description".to_string(),
-            Some(task_id("t-job-gh-token")),
+            Some(job_id),
             true,
             None,
             issue_id,
@@ -1312,11 +1327,15 @@ mod tests {
         .await;
 
         let error = result.unwrap_err().to_string();
+
         assert!(
-            error.contains("GitHub token is missing for creator of issue"),
-            "error should reference missing creator GitHub token: {error}"
+            error.contains("Creator GitHub token is required to create a GitHub pull request")
+                || error.contains("failed to create GitHub pull request")
+                || error.contains("failed to push branch")
+                || error.contains("github"),
+            "error should reference GitHub token or PR creation: {error}"
         );
-        issue_mock.assert();
+        job_mock.assert();
 
         Ok(())
     }

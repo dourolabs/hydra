@@ -148,7 +148,6 @@ pub async fn run(
     }
 }
 
-
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
     if dest.exists() {
         let mut entries =
