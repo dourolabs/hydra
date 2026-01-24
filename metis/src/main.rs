@@ -7,7 +7,7 @@ use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
     command,
     config::{self, AppConfig},
-    constants,
+    constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
 
@@ -133,7 +133,7 @@ async fn resolve_client(
         .map(str::trim)
         .filter(|token| !token.is_empty())
     {
-        command::github_device_flow::write_auth_token_file(token_path, token)
+        github_device_flow::write_auth_token_file(token_path, token)
             .context("failed to store auth token from --token")?;
         return MetisClient::from_config(app_config, token.to_string());
     }
@@ -142,7 +142,7 @@ async fn resolve_client(
         return MetisClient::from_config(app_config, token);
     }
 
-    command::github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
+    github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
 }
 
 async fn dispatch(
