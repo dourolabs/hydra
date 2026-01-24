@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Context, Result};
-use metis_common::{jobs::SearchJobsQuery, patches::SearchPatchesQuery, task_status::Status};
+use metis_common::{
+    constants::ENV_METIS_TOKEN, jobs::SearchJobsQuery, patches::SearchPatchesQuery,
+    task_status::Status,
+};
 
 mod common;
 
@@ -13,8 +16,8 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     let server_url = env.server.base_url();
 
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID=i-work --var METIS_TOKEN=test-metis-token {}",
-        repo_arg, server_url, prompt
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID=i-work --var {}=test-metis-token {}",
+        repo_arg, server_url, ENV_METIS_TOKEN, prompt
     )])
     .await?;
 

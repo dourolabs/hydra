@@ -4,7 +4,7 @@ use metis::{
     config::{AppConfig, ServerSection},
 };
 use metis_common::{
-    constants::ENV_METIS_SERVER_URL,
+    constants::{ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
     issues::{IssueStatus, SearchIssuesQuery},
     users::{User, Username},
 };
@@ -64,7 +64,7 @@ async fn run_metis_command(args: &[&str], app_config: &AppConfig, home_dir: &Pat
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
-        .env("METIS_TOKEN", TEST_METIS_TOKEN)
+        .env(ENV_METIS_TOKEN, TEST_METIS_TOKEN)
         .env("HOME", home_dir)
         .output()
         .await

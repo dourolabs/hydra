@@ -9,7 +9,7 @@ use metis::{
     config::{self, AppConfig},
     constants, github_device_flow,
 };
-use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
+use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 
 #[derive(Parser)]
 #[command(
@@ -40,10 +40,10 @@ struct Cli {
     )]
     token_path: String,
 
-    /// Auth token value (also via METIS_TOKEN).
+    /// Auth token value (also via env var).
     #[arg(
         long = "token",
-        env = "METIS_TOKEN",
+        env = ENV_METIS_TOKEN,
         value_name = "TOKEN",
         global = true
     )]
