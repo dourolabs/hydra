@@ -1,2 +1,3 @@
 - Every CLI command should be implemented in its own file under the command/ module.
+- Define all CLI constants in `constants.rs` to keep them centralized.
 - When adding new methods to `MetisClient`, include forward-compatibility coverage in `tests/metis_client_forward_compat.rs` to ensure responses tolerate new enum variants and extra fields.

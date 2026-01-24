@@ -1,11 +1,12 @@
+use crate::constants::DEFAULT_SERVER_URL;
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AppConfig {
     pub server: ServerSection,
 }
@@ -24,7 +25,7 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ServerSection {
     pub url: String,
 }
@@ -36,6 +37,36 @@ pub fn expand_path<P: AsRef<Path>>(path: P) -> PathBuf {
         Some(raw) if raw.starts_with('~') => PathBuf::from(shellexpand::tilde(raw).into_owned()),
         _ => path.to_path_buf(),
     }
+}
+
+pub fn default_app_config() -> AppConfig {
+    AppConfig {
+        server: ServerSection {
+            url: DEFAULT_SERVER_URL.to_string(),
+        },
+    }
+}
+
+pub fn create_default_config(resolved_path: &Path) -> Result<()> {
+    if let Some(dir) = resolved_path.parent() {
+        fs::create_dir_all(dir).with_context(|| {
+            format!(
+                "failed to create configuration directory '{}'",
+                dir.display()
+            )
+        })?;
+    }
+
+    let default_contents = toml::to_string_pretty(&default_app_config())
+        .context("failed to serialize default configuration")?;
+    fs::write(resolved_path, default_contents).with_context(|| {
+        format!(
+            "failed to write default configuration to '{}'",
+            resolved_path.display()
+        )
+    })?;
+
+    Ok(())
 }
 
 #[cfg(test)]
