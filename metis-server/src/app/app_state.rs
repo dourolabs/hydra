@@ -9,7 +9,7 @@ use crate::{
         jobs::CreateJobRequest,
         login::LoginResponse,
         patches::{Patch, PatchStatus, UpsertPatchRequest},
-        users::User,
+        users::{User, UserSummary},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
@@ -212,8 +212,7 @@ pub enum LoginError {
 }
 
 impl AppState {
-  
-  pub async fn login_with_github_token(
+    pub async fn login_with_github_token(
         &self,
         github_token: String,
     ) -> Result<LoginResponse, LoginError> {
