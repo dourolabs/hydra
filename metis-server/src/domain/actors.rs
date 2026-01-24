@@ -18,7 +18,6 @@ pub enum ActorError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
     pub auth_token_hash: String,
-    #[serde(default = "default_auth_token_salt")]
     pub auth_token_salt: String,
     pub user_or_worker: UserOrWorker,
 }
@@ -118,10 +117,6 @@ impl Actor {
 
         Err(ActorError::InvalidActorName(name.to_string()))
     }
-}
-
-fn default_auth_token_salt() -> String {
-    Uuid::new_v4().to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
