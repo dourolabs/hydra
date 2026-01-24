@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::domain::users::User;
+use crate::{domain::users::User, store::StoreError};
 
 mod kubernetes_job_engine;
 
@@ -63,6 +63,8 @@ pub enum JobEngineError {
     Kubernetes(#[from] kube::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Store error: {0}")]
+    Store(#[from] StoreError),
     #[error("Internal error: {0}")]
     Internal(String),
 }

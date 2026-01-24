@@ -156,6 +156,20 @@ pub async fn run() -> anyhow::Result<()> {
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
 
+    let postgres_pool = postgres::init_pool(&app_config.database).await?;
+    if let Some(pool) = &postgres_pool {
+        postgres::run_migrations(pool).await?;
+        postgres::migrate_payloads(pool).await?;
+        info!("connected to Postgres, applied migrations, and migrated payloads");
+    } else {
+        info!("no Postgres database configured; using in-memory store");
+    }
+
+    let store: Arc<RwLock<Box<dyn Store>>> = match postgres_pool.clone() {
+        Some(pool) => Arc::new(RwLock::new(Box::new(PostgresStore::new(pool)))),
+        None => Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+    };
+
     // Create job engine
     let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
@@ -174,20 +188,7 @@ pub async fn run() -> anyhow::Result<()> {
                     Some(trimmed.to_string())
                 }
             }),
-    };
-
-    let postgres_pool = postgres::init_pool(&app_config.database).await?;
-    if let Some(pool) = &postgres_pool {
-        postgres::run_migrations(pool).await?;
-        postgres::migrate_payloads(pool).await?;
-        info!("connected to Postgres, applied migrations, and migrated payloads");
-    } else {
-        info!("no Postgres database configured; using in-memory store");
-    }
-
-    let store: Arc<RwLock<Box<dyn Store>>> = match postgres_pool.clone() {
-        Some(pool) => Arc::new(RwLock::new(Box::new(PostgresStore::new(pool)))),
-        None => Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        store: store.clone(),
     };
 
     let spawners = build_spawners(&app_config);
