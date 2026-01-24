@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use metis_common::{
     issues::{IssueStatus, SearchIssuesQuery},
     task_status::Status,
-    users::{CreateUserRequest, Username},
 };
 use std::fs;
 use tempfile::tempdir;
@@ -23,12 +22,6 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, "token-123").context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            "token-123".to_string(),
-        ))
-        .await?;
 
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
@@ -46,8 +39,8 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
 
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env.run_as_worker(
         vec![
-            "metis issues create \"parent issue\" | tee parent_id.txt".to_string(),
-            "metis issues create --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
+            "metis issues create --creator worker \"parent issue\" | tee parent_id.txt".to_string(),
+            "metis issues create --creator worker --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
                 .to_string(),
             "metis issues update $(cat parent_id.txt) --status closed".to_string(),
         ],
@@ -94,12 +87,6 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, "token-123").context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            "token-123".to_string(),
-        ))
-        .await?;
 
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
@@ -118,7 +105,8 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env
         .run_as_worker(
             vec![
-                "metis issues create \"issue with todos\" | tee issue_id.txt".to_string(),
+                "metis issues create --creator worker \"issue with todos\" | tee issue_id.txt"
+                    .to_string(),
                 "metis issues todo $(cat issue_id.txt) --add \"write more tests\"".to_string(),
                 "metis issues update $(cat issue_id.txt) --status closed".to_string(),
             ],

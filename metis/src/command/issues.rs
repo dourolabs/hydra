@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -8,10 +7,9 @@ use metis_common::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
         IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
         JobSettings, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
-        UpsertIssueRequest,
+        UpsertIssueRequest, Username,
     },
     patches::{PatchRecord, Review},
-    users::{ResolveUserRequest, User, Username},
     PatchId, RepoName,
 };
 use serde::Serialize;
@@ -79,6 +77,10 @@ pub enum IssueCommands {
         /// Assignee for the issue.
         #[arg(long, value_name = "ASSIGNEE")]
         assignee: Option<String>,
+
+        /// Creator for the issue (defaults to the parent issue's creator when present).
+        #[arg(long, value_name = "CREATOR", env = "METIS_CREATOR")]
+        creator: Option<String>,
 
         /// Description for the issue.
         #[arg(value_name = "DESCRIPTION")]
@@ -249,11 +251,7 @@ pub enum IssueCommands {
     },
 }
 
-pub async fn run(
-    client: &dyn MetisClientInterface,
-    command: IssueCommands,
-    token_path: &std::path::PathBuf,
-) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
@@ -282,6 +280,7 @@ pub async fn run(
             dependencies,
             patches,
             assignee,
+            creator,
             description,
             progress,
             repo_name,
@@ -290,7 +289,7 @@ pub async fn run(
             branch,
             max_retries,
         } => {
-            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
+            let creator = resolve_creator_username(client, &dependencies, creator).await?;
             create_issue(
                 client,
                 r#type,
@@ -329,7 +328,6 @@ pub async fn run(
             max_retries,
             clear_job_settings,
         } => {
-            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
             update_issue(
                 client,
                 id,
@@ -337,7 +335,6 @@ pub async fn run(
                 status,
                 assignee,
                 clear_assignee,
-                creator,
                 description,
                 dependencies,
                 clear_dependencies,
@@ -749,7 +746,6 @@ async fn update_issue(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
-    creator: Username,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
@@ -853,7 +849,7 @@ async fn update_issue(
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
-        creator,
+        current.issue.creator,
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
@@ -872,44 +868,31 @@ async fn update_issue(
     Ok(())
 }
 
-async fn resolve_authenticated_user(
-    client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
-) -> Result<User> {
-    let token = auth::ensure_auth_token(client, token_path).await?;
-    let response = client
-        .resolve_user(&ResolveUserRequest::new(token.clone()))
-        .await
-        .context("failed to resolve user from auth token")?;
-    let mut user = User::new(response.user.username, token);
-    user.github_user_id = response.user.github_user_id;
-    Ok(user)
-}
-
 async fn resolve_creator_username(
     client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
     dependencies: &[IssueDependency],
+    creator: Option<String>,
 ) -> Result<Username> {
-    // First try to resolve the authenticated user
-    match resolve_authenticated_user(client, token_path).await {
-        Ok(user) => Ok(user.username),
-        Err(_) => {
-            // If that fails, try to get the creator from the parent issue
-            if let Some(parent_id) = dependencies
-                .iter()
-                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-                .map(|dependency| dependency.issue_id.clone())
-            {
-                let parent = client
-                    .get_issue(&parent_id)
-                    .await
-                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
-                Ok(parent.issue.creator)
-            } else {
-                bail!("Failed to resolve authenticated user and no parent issue found");
-            }
+    if let Some(creator) = creator {
+        let trimmed = creator.trim();
+        if trimmed.is_empty() {
+            bail!("Issue creator must not be empty.");
         }
+        return Ok(Username::from(trimmed));
+    }
+
+    if let Some(parent_id) = dependencies
+        .iter()
+        .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+        .map(|dependency| dependency.issue_id.clone())
+    {
+        let parent = client
+            .get_issue(&parent_id)
+            .await
+            .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
+        Ok(parent.issue.creator)
+    } else {
+        bail!("Issue creator must be set. Provide --creator or add a parent dependency.");
     }
 }
 
@@ -1458,11 +1441,10 @@ mod tests {
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
         JobSettings, ListIssuesResponse, ReplaceTodoListRequest, SetTodoItemStatusRequest,
-        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse, Username,
     };
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
-        users::Username,
         PatchId, RepoName,
     };
     use reqwest::Client as HttpClient;
@@ -2100,7 +2082,6 @@ mod tests {
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
-            empty_user(),
             Some("Updated issue description".into()),
             vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
@@ -2185,7 +2166,6 @@ mod tests {
             None,
             None,
             true,
-            empty_user(),
             None,
             vec![],
             true,
@@ -2271,7 +2251,6 @@ mod tests {
             None,
             None,
             false,
-            empty_user(),
             None,
             vec![],
             false,

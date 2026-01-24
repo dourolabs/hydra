@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use metis_common::users::{ResolveUserRequest, Username};
 use std::{fs, future::Future, io::ErrorKind, path::PathBuf, pin::Pin};
 
 use crate::{
@@ -93,19 +92,6 @@ where
             }
         }
     }
-}
-
-#[allow(dead_code)]
-pub(crate) async fn resolve_auth_user(
-    client: &dyn MetisClientInterface,
-    token_path: &PathBuf,
-) -> Result<Username> {
-    let token = ensure_auth_token(client, token_path).await?;
-    let response = client
-        .resolve_user(&ResolveUserRequest::new(token))
-        .await
-        .context("failed to resolve user from auth token")?;
-    Ok(response.user.username)
 }
 
 #[cfg(test)]

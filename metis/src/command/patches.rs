@@ -950,13 +950,12 @@ mod tests {
     use metis_common::{
         issues::{
             Issue, IssueDependency, IssueDependencyType, IssueRecord, IssueStatus, IssueType,
-            UpsertIssueRequest, UpsertIssueResponse,
+            UpsertIssueRequest, UpsertIssueResponse, Username,
         },
         jobs::{BundleSpec, JobRecord, Task},
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
         patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
         task_status::TaskStatusLog,
-        users::Username,
         RepoName,
     };
     use reqwest::Client as HttpClient;

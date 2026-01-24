@@ -1,4 +1,4 @@
-use crate::domain::users::UserSummary;
+use crate::domain::users::{UserSummary, Username};
 use metis_common::api::v1 as api;
 use serde::{Deserialize, Serialize};
 
@@ -51,5 +51,23 @@ impl From<api::login::LoginResponse> for LoginResponse {
 impl From<LoginResponse> for api::login::LoginResponse {
     fn from(value: LoginResponse) -> Self {
         api::login::LoginResponse::new(value.login_token, value.user.into())
+    }
+}
+
+impl From<api::login::LoginUserSummary> for UserSummary {
+    fn from(value: api::login::LoginUserSummary) -> Self {
+        let mut summary = UserSummary::new(Username::from(value.username.as_str()));
+        summary.github_user_id = value.github_user_id;
+        summary
+    }
+}
+
+impl From<UserSummary> for api::login::LoginUserSummary {
+    fn from(value: UserSummary) -> Self {
+        let mut summary = api::login::LoginUserSummary::new(api::identity::Username::from(
+            value.username.as_str(),
+        ));
+        summary.github_user_id = value.github_user_id;
+        summary
     }
 }

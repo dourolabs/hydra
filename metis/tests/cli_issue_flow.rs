@@ -6,7 +6,6 @@ use metis::{
 use metis_common::{
     constants::ENV_METIS_SERVER_URL,
     issues::{IssueStatus, SearchIssuesQuery},
-    users::{User, Username},
 };
 use metis_server::test_utils;
 use std::{fs, path::Path};
@@ -17,11 +16,6 @@ const TEST_METIS_TOKEN: &str = "token-123";
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
-    {
-        let mut store = state.store.write().await;
-        let user = User::new(Username::from("test-user"), TEST_METIS_TOKEN.to_string());
-        store.add_user(user.into()).await?;
-    }
     let server = test_utils::spawn_test_server_with_state(state).await?;
     let app_config = AppConfig {
         server: ServerSection {
@@ -38,7 +32,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let description = "integration flow issue";
 
     run_metis_command(
-        &["issues", "create", description],
+        &["issues", "create", "--creator", "test-user", description],
         &app_config,
         temp_home.path(),
     )

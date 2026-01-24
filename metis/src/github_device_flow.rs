@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use metis_common::{api::v1::login::LoginRequest, users::ResolveUserRequest};
+use metis_common::api::v1::login::{LoginRequest, LoginResponse};
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::{
@@ -57,17 +57,16 @@ pub async fn login_with_github_device_flow(
     println!("Waiting for authorization...");
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let auth_token = exchange_and_store_token(client, token_path, &token).await?;
-    let auth_client = MetisClient::new(client.base_url().as_str(), auth_token.clone())
-        .context("failed to create authenticated client")?;
-    let resolved_user = auth_client
-        .resolve_user(&ResolveUserRequest::new(auth_token))
-        .await
-        .context("failed to resolve user from auth token")?;
+    let login_response = exchange_and_store_token(client, token_path, &token).await?;
+    let auth_client = MetisClient::new(
+        client.base_url().as_str(),
+        login_response.login_token.clone(),
+    )
+    .context("failed to create authenticated client")?;
 
     println!(
         "Logged in as {}. Stored token at {}.",
-        resolved_user.user.username,
+        login_response.user.username,
         token_path.display()
     );
 
@@ -171,23 +170,23 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
 async fn login_with_github_token(
     client: &MetisClientUnauthenticated,
     token: &str,
-) -> Result<String> {
+) -> Result<LoginResponse> {
     let request = LoginRequest::new(token.to_string());
-    let (auth_token, _client) = client
+    let (login_response, _client) = client
         .login(&request)
         .await
         .context("failed to exchange GitHub token for Metis login token")?;
-    Ok(auth_token)
+    Ok(login_response)
 }
 
 async fn exchange_and_store_token(
     client: &MetisClientUnauthenticated,
     token_path: &Path,
     github_token: &str,
-) -> Result<String> {
-    let auth_token = login_with_github_token(client, github_token).await?;
-    write_auth_token_file(token_path, &auth_token)?;
-    Ok(auth_token)
+) -> Result<LoginResponse> {
+    let login_response = login_with_github_token(client, github_token).await?;
+    write_auth_token_file(token_path, &login_response.login_token)?;
+    Ok(login_response)
 }
 
 pub fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
@@ -283,13 +282,14 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
 
-        let auth_token = exchange_and_store_token(&client, &token_path, "gh-token")
+        let login_response = exchange_and_store_token(&client, &token_path, "gh-token")
             .await
             .expect("exchange");
 
         login_mock.assert();
         let contents = fs::read_to_string(&token_path).expect("read token");
         assert_eq!(contents, "api-token");
-        assert_eq!(auth_token, "api-token");
+        assert_eq!(login_response.login_token, "api-token");
+        assert_eq!(login_response.user.username.as_str(), "octo");
     }
 }

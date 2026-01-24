@@ -1,4 +1,4 @@
-use super::users::Username;
+pub use super::identity::Username;
 pub use crate::IssueId;
 use crate::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -622,7 +622,6 @@ impl ListIssuesResponse {
 mod tests {
     use super::*;
     use crate::test_helpers::serialize_query_params;
-    use crate::users::Username;
     use serde_json::json;
     use std::{collections::HashMap, str::FromStr};
 

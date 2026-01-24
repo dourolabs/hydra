@@ -27,10 +27,6 @@ use metis_common::{
         CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
-    users::{
-        CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
-        ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, Username,
-    },
     IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, Response, Url};
@@ -166,15 +162,6 @@ pub trait MetisClientInterface: Send + Sync {
         repo_name: &RepoName,
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
-    async fn list_users(&self) -> Result<ListUsersResponse>;
-    async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse>;
-    async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse>;
-    async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse>;
-    async fn set_user_github_token(
-        &self,
-        username: &Username,
-        request: &UpdateGithubTokenRequest,
-    ) -> Result<UpsertUserResponse>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -219,7 +206,7 @@ impl MetisClientUnauthenticated {
     }
 
     /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
-    pub async fn login(&self, request: &LoginRequest) -> Result<(String, MetisClient)> {
+    pub async fn login(&self, request: &LoginRequest) -> Result<(LoginResponse, MetisClient)> {
         self.login_with_http_client(self.http.clone(), request)
             .await
     }
@@ -229,7 +216,7 @@ impl MetisClientUnauthenticated {
         &self,
         http: HttpClient,
         request: &LoginRequest,
-    ) -> Result<(String, MetisClient)> {
+    ) -> Result<(LoginResponse, MetisClient)> {
         let url = self
             .endpoint("/v1/login")
             .with_context(|| "failed to construct login endpoint URL")?;
@@ -250,7 +237,7 @@ impl MetisClientUnauthenticated {
         let client =
             MetisClient::with_http_client(self.base_url.as_str(), auth_token.clone(), http)?;
 
-        Ok((auth_token, client))
+        Ok((login_response, client))
     }
 
     /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.
@@ -825,103 +812,6 @@ impl MetisClient {
             .context("failed to decode update repository response")
     }
 
-    /// Call `GET /v1/users` to list users.
-    pub async fn list_users(&self) -> Result<ListUsersResponse> {
-        let url = self.endpoint("/v1/users")?;
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .context("failed to fetch users list")?
-            .error_for_status_with_body("metis-server returned an error while listing users")
-            .await?;
-
-        response
-            .json::<ListUsersResponse>()
-            .await
-            .context("failed to decode list users response")
-    }
-
-    /// Call `POST /v1/users/resolve` to resolve a user by GitHub token.
-    pub async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
-        let url = self.endpoint("/v1/users/resolve")?;
-        let response = self
-            .http
-            .post(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit resolve user request")?
-            .error_for_status_with_body("metis-server rejected resolve user request")
-            .await?;
-
-        response
-            .json::<ResolveUserResponse>()
-            .await
-            .context("failed to decode resolve user response")
-    }
-
-    /// Call `POST /v1/users` to create a new user.
-    pub async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {
-        let url = self.endpoint("/v1/users")?;
-        let response = self
-            .http
-            .post(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit create user request")?
-            .error_for_status_with_body("metis-server rejected create user request")
-            .await?;
-
-        response
-            .json::<UpsertUserResponse>()
-            .await
-            .context("failed to decode create user response")
-    }
-
-    /// Call `DELETE /v1/users/:username` to remove a user.
-    pub async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
-        let url = self.endpoint(&format!("/v1/users/{username}"))?;
-        let response = self
-            .http
-            .delete(url)
-            .send()
-            .await
-            .context("failed to submit delete user request")?
-            .error_for_status_with_body("metis-server rejected delete user request")
-            .await?;
-
-        response
-            .json::<DeleteUserResponse>()
-            .await
-            .context("failed to decode delete user response")
-    }
-
-    /// Call `PUT /v1/users/:username/github-token` to update a user's GitHub token.
-    pub async fn set_user_github_token(
-        &self,
-        username: &Username,
-        request: &UpdateGithubTokenRequest,
-    ) -> Result<UpsertUserResponse> {
-        let url = self.endpoint(&format!("/v1/users/{username}/github-token"))?;
-        let response = self
-            .http
-            .put(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit update github token request")?
-            .error_for_status_with_body("metis-server rejected update github token request")
-            .await?;
-
-        response
-            .json::<UpsertUserResponse>()
-            .await
-            .context("failed to decode update github token response")
-    }
-
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -1223,30 +1113,6 @@ impl MetisClientInterface for MetisClient {
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse> {
         MetisClient::update_repository(self, repo_name, request).await
-    }
-
-    async fn list_users(&self) -> Result<ListUsersResponse> {
-        MetisClient::list_users(self).await
-    }
-
-    async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
-        MetisClient::resolve_user(self, request).await
-    }
-
-    async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {
-        MetisClient::create_user(self, request).await
-    }
-
-    async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
-        MetisClient::delete_user(self, username).await
-    }
-
-    async fn set_user_github_token(
-        &self,
-        username: &Username,
-        request: &UpdateGithubTokenRequest,
-    ) -> Result<UpsertUserResponse> {
-        MetisClient::set_user_github_token(self, username, request).await
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {

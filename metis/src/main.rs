@@ -87,11 +87,6 @@ enum Commands {
         #[command(subcommand)]
         command: command::repos::ReposCommand,
     },
-    /// Manage users.
-    Users {
-        #[command(subcommand)]
-        command: command::users::UsersCommand,
-    },
     /// Log in with GitHub device flow.
     Login,
     /// Chat with a Codex agent that can call the metis CLI.
@@ -155,17 +150,10 @@ async fn dispatch(
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command, token_path).await?,
         Commands::Dashboard => {
-            command::dashboard::run(
-                client,
-                &app_config.server.url,
-                token_path,
-                cli.browser.as_deref(),
-            )
-            .await?
+            command::dashboard::run(client, &app_config.server.url, cli.browser.as_deref()).await?
         }
-        Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
+        Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
-        Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Login => command::login::run(unauth_client, token_path).await?,
         Commands::Chat {
             prompt,

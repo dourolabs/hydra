@@ -8,8 +8,8 @@ pub mod repo_name;
 pub mod util;
 
 pub use api::v1::{
-    agents, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
-    task_status, users,
+    agents, identity, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
+    task_status,
 };
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use repo_name::{RepoName, RepoNameError};

@@ -14,12 +14,11 @@ use futures::StreamExt;
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
-        IssueType, SearchIssuesQuery, UpsertIssueRequest,
+        IssueType, SearchIssuesQuery, UpsertIssueRequest, Username,
     },
     jobs::{JobRecord, SearchJobsQuery},
     patches::{GithubPr, PatchRecord},
     task_status::{Status, TaskError, TaskStatusLog},
-    users::Username,
     IssueId, PatchId, TaskId,
 };
 use ratatui::{
@@ -33,7 +32,7 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
-use crate::{auth, client::MetisClientInterface, command::jobs};
+use crate::{client::MetisClientInterface, command::jobs};
 
 pub mod panel;
 
@@ -362,11 +361,9 @@ struct EventOutcome {
 pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
-    token_path: &std::path::Path,
     browser_command: Option<&str>,
 ) -> Result<()> {
-    let token_path_buf = token_path.to_path_buf();
-    let username = auth::resolve_auth_user(client, &token_path_buf).await?;
+    let username = Username::from("");
     let mut terminal = ratatui::init();
     let result =
         run_dashboard_loop(client, &mut terminal, username, server_url, browser_command).await;
