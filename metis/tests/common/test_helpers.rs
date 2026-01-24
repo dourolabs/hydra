@@ -21,6 +21,8 @@ pub struct TestEnvironment {
     pub service_repo_name: RepoName,
 }
 
+const DUMMY_METIS_TOKEN: &str = "test-metis-token";
+
 pub fn metis_bin() -> std::path::PathBuf {
     // Cargo exposes the compiled binary location to integration tests via CARGO_BIN_EXE_<binname>
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_metis"))
@@ -46,6 +48,8 @@ impl TestEnvironment {
                 .arg("-c")
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
+                .env("METIS_TOKEN", DUMMY_METIS_TOKEN)
+                .env("HOME", self._tempdir.path())
                 .env_remove("METIS_ISSUE_ID")
                 .output()
                 .await
@@ -143,7 +147,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
             url: server_url.clone(),
         },
     };
-    let client = MetisClient::from_config(&app_config, String::new())?;
+    let client = MetisClient::from_config(&app_config, DUMMY_METIS_TOKEN)?;
 
     Ok(TestEnvironment {
         server,
