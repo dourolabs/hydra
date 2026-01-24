@@ -10,32 +10,14 @@ use crate::{
     job_engine::JobStatus,
     store::{Status, Task, TaskError},
     test_utils::{
-        MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client, test_state,
-        test_state_with_engine,
+        MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
+        test_client, test_state, test_state_with_engine,
     },
 };
 use chrono::{Duration, Utc};
 use metis_common::{TaskId, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
-
-async fn add_repository(
-    state: &crate::app::AppState,
-    repository: &crate::app::ServiceRepository,
-) -> anyhow::Result<()> {
-    let mut store = state.store.write().await;
-    store
-        .add_repository(
-            repository.name.clone(),
-            crate::app::ServiceRepositoryConfig::new(
-                repository.remote_url.clone(),
-                repository.default_branch.clone(),
-                repository.default_image.clone(),
-            ),
-        )
-        .await?;
-    Ok(())
-}
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {

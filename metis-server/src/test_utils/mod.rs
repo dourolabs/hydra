@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ServiceState},
+    app::{AppState, ServiceRepository, ServiceRepositoryConfig, ServiceState},
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection,
@@ -8,6 +8,7 @@ use crate::{
     run_with_state,
     store::MemoryStore,
 };
+use anyhow::Context;
 use octocrab::Octocrab;
 use reqwest::Client;
 use std::{
@@ -72,6 +73,30 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
 
 pub fn test_state() -> AppState {
     test_state_with_engine(Arc::new(MockJobEngine::new()))
+}
+
+pub async fn add_repository(
+    state: &AppState,
+    repository: &ServiceRepository,
+) -> anyhow::Result<()> {
+    let mut store = state.store.write().await;
+    store
+        .add_repository(
+            repository.name.clone(),
+            ServiceRepositoryConfig::new(
+                repository.remote_url.clone(),
+                repository.default_branch.clone(),
+                repository.default_image.clone(),
+            ),
+        )
+        .await
+        .context("failed to add repository to test state")
+}
+
+pub async fn test_state_with_repo(repository: ServiceRepository) -> anyhow::Result<AppState> {
+    let state = test_state();
+    add_repository(&state, &repository).await?;
+    Ok(state)
 }
 
 pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
