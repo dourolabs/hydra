@@ -3,9 +3,9 @@ use crate::{
     domain::{
         issues::{
             AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord,
-            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest,
-            SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
-            UpsertIssueRequest, UpsertIssueResponse,
+            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
+            SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
+            UpsertIssueResponse,
         },
         jobs::BundleSpec,
         users::Username,

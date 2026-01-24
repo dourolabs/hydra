@@ -2,8 +2,7 @@ use super::common::{default_image, patch_diff, service_repo_name};
 use crate::{
     domain::{
         issues::{
-            Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest,
-            UpsertIssueResponse,
+            Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest, UpsertIssueResponse,
         },
         jobs::BundleSpec,
         patches::{
