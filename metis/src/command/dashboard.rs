@@ -26,7 +26,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     DefaultTerminal, Frame,
 };
 use tui_textarea::TextArea;
@@ -239,6 +241,13 @@ struct IssueSelectionState {
     index: usize,
 }
 
+#[derive(Default, Clone, PartialEq)]
+struct IssueDetailsState {
+    is_open: bool,
+    issue_id: Option<IssueId>,
+    scroll: ListScrollState,
+}
+
 #[derive(Clone)]
 struct DashboardState {
     jobs: Vec<JobDetails>,
@@ -257,6 +266,7 @@ struct DashboardState {
     completed_issue_panel: PanelState,
     issue_creator_panel: PanelState,
     issue_draft_scroll: ListScrollState,
+    issue_details: IssueDetailsState,
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: Username,
@@ -278,13 +288,21 @@ impl Default for DashboardState {
 
         let mut running_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut running_issue_panel);
-        running_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
+        running_issue_panel.register_keybinding(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            "Open details/PR",
+        );
         let mut user_unowned_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut user_unowned_issue_panel);
         user_unowned_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
         let mut completed_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut completed_issue_panel);
-        completed_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
+        completed_issue_panel.register_keybinding(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            "Open details/PR",
+        );
 
         let mut state = Self {
             jobs: Vec::new(),
@@ -302,6 +320,7 @@ impl Default for DashboardState {
             completed_issue_panel,
             issue_creator_panel,
             issue_draft_scroll: ListScrollState::default(),
+            issue_details: IssueDetailsState::default(),
             jobs_error: None,
             records_error: None,
             username: Username::from(""),
@@ -483,6 +502,15 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if state.issue_details.is_open {
+                handle_issue_details_key(key, state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: None,
+                };
+            }
+
             if is_panel_focus_key(key) {
                 handle_panel_focus_key(key, state);
                 return EventOutcome {
@@ -517,6 +545,15 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if let Some(issue_id) = issue_details_open_id(key, state) {
+                open_issue_details(state, issue_id);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: None,
+                };
+            }
+
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
                 PanelFocus::UserOwned | PanelFocus::Running | PanelFocus::Completed => {
@@ -531,6 +568,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             }
         }
         Event::Paste(text) => {
+            if state.issue_details.is_open {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: None,
+                };
+            }
             if state.issue_draft.is_submitting {
                 return EventOutcome {
                     should_quit: false,
@@ -562,6 +606,13 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             }
         }
         Event::Mouse(mouse) => {
+            if state.issue_details.is_open {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: None,
+                };
+            }
             handle_mouse_scroll(mouse, state);
             handle_mouse_click(mouse, state);
             EventOutcome {
@@ -638,6 +689,25 @@ fn merge_request_pr_open_id(key: KeyEvent, state: &DashboardState) -> Option<Iss
         Some(issue.id.clone())
     } else {
         None
+    }
+}
+
+fn issue_details_open_id(key: KeyEvent, state: &DashboardState) -> Option<IssueId> {
+    if key.code != KeyCode::Enter || !key.modifiers.is_empty() {
+        return None;
+    }
+
+    match state.selected_panel {
+        PanelFocus::Running | PanelFocus::Completed => {}
+        _ => return None,
+    }
+
+    let issue_id = selected_issue_id(state, state.selected_panel)?;
+    let issue = state.issues.iter().find(|issue| issue.id == issue_id)?;
+    if issue.issue_type == IssueType::MergeRequest {
+        None
+    } else {
+        Some(issue.id.clone())
     }
 }
 
@@ -725,6 +795,19 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     }
 
     None
+}
+
+fn handle_issue_details_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+    if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+        close_issue_details(state);
+        return true;
+    }
+
+    let Some(delta) = selection_key_delta(key) else {
+        return false;
+    };
+
+    scroll_issue_details(state, delta)
 }
 
 fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
@@ -1021,6 +1104,9 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
     );
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
+    if state.issue_details.is_open {
+        render_issue_details(frame, state);
+    }
 }
 
 fn render_dashboard_header(
@@ -1185,6 +1271,28 @@ fn render_issue_creator(
         Paragraph::new(footer).alignment(Alignment::Right),
         footer_columns[1],
     );
+}
+
+fn render_issue_details(frame: &mut Frame, state: &mut DashboardState) {
+    let Some(view) = issue_details_view(state) else {
+        return;
+    };
+
+    frame.render_widget(Clear, view.layout.area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White))
+        .title(view.title);
+    frame.render_widget(block, view.layout.area);
+
+    let content = Paragraph::new(view.lines)
+        .scroll((view.scroll_offset, 0))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(content, view.layout.content);
+
+    if view.content_len > view.view_height {
+        render_panel_scrollbar(frame, view.layout.content, view.scrollbar_state);
+    }
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
@@ -1467,6 +1575,10 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
         prompt_view_height,
         state.issue_draft_scroll.offset,
     );
+
+    if state.issue_details.is_open {
+        issue_details_view(state);
+    }
 }
 
 fn scroll_selected_issue_into_view(state: &mut DashboardState) -> bool {
@@ -1792,6 +1904,139 @@ fn render_panel_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: Scroll
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
+struct IssueDetailsLayout {
+    area: Rect,
+    content: Rect,
+}
+
+struct IssueDetailsView<'a> {
+    layout: IssueDetailsLayout,
+    lines: Vec<Line<'static>>,
+    title: Line<'a>,
+    content_len: usize,
+    view_height: usize,
+    scroll_offset: u16,
+    scrollbar_state: ScrollbarState,
+}
+
+fn issue_details_view(state: &mut DashboardState) -> Option<IssueDetailsView<'static>> {
+    let issue_id = state.issue_details.issue_id.clone()?;
+    let issue = state.issues.iter().find(|issue| issue.id == issue_id)?;
+    let size = state.last_frame_size?;
+    let layout = issue_details_layout(size);
+    if layout.area.width == 0 || layout.area.height == 0 {
+        return None;
+    }
+
+    let lines = issue_detail_lines(issue);
+    let view_height = layout.content.height as usize;
+    let content_len = wrapped_content_len(&lines, layout.content.width);
+    let max_offset = max_scroll_offset(content_len, view_height);
+    let scroll_offset = state.issue_details.scroll.offset.min(max_offset);
+    state.issue_details.scroll.offset = scroll_offset;
+    state.issue_details.scroll.scrollbar_state =
+        list_scrollbar_state(content_len, view_height, scroll_offset);
+    let title = issue_detail_title(issue);
+    Some(IssueDetailsView {
+        layout,
+        lines,
+        title,
+        content_len,
+        view_height,
+        scroll_offset: scroll_offset.min(u16::MAX as usize) as u16,
+        scrollbar_state: state.issue_details.scroll.scrollbar_state,
+    })
+}
+
+fn issue_details_layout(area: Rect) -> IssueDetailsLayout {
+    let width = (area.width.saturating_mul(80) / 100)
+        .max(40)
+        .min(area.width);
+    let height = (area.height.saturating_mul(70) / 100)
+        .max(10)
+        .min(area.height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup = Rect::new(x, y, width, height);
+    let content = popup.inner(Margin {
+        vertical: 2,
+        horizontal: 2,
+    });
+    IssueDetailsLayout {
+        area: popup,
+        content,
+    }
+}
+
+fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
+    let close_hint = "Esc/Enter to close";
+    Line::from(vec![
+        Span::styled(
+            format!("Issue {}", issue.id),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {close_hint}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+fn issue_detail_lines(issue: &IssueRecord) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            issue_status_label(issue.status),
+            issue_status_style(issue.status),
+        ),
+    ]));
+    if let Some(assignee) = issue
+        .assignee
+        .as_deref()
+        .filter(|assignee| !assignee.is_empty())
+    {
+        lines.push(Line::from(vec![
+            Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!("@{assignee}")),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Prompt",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    append_issue_detail_text(
+        &mut lines,
+        issue.description.trim(),
+        "No description provided.",
+    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Issue log",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    append_issue_detail_text(
+        &mut lines,
+        issue.progress.trim(),
+        "No progress updates yet.",
+    );
+    lines
+}
+
+fn append_issue_detail_text(lines: &mut Vec<Line<'static>>, text: &str, empty_label: &str) {
+    if text.is_empty() {
+        lines.push(Line::from(Span::styled(
+            empty_label.to_string(),
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for line in text.lines() {
+            lines.push(Line::from(Span::raw(line.to_string())));
+        }
+    }
+}
+
 fn issue_prefix(depth: usize, has_children: bool, collapsed: bool) -> String {
     let base = if depth == 0 {
         "|".to_string()
@@ -1914,6 +2159,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_completed_issue_lines = state.completed_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
+    let issue_details_open = state.issue_details.is_open;
 
     let known_issue_ids: HashSet<IssueId> =
         state.issues.iter().map(|issue| issue.id.clone()).collect();
@@ -1944,12 +2190,29 @@ fn update_views(state: &mut DashboardState) -> bool {
     clamp_issue_selections(state);
     update_panel_focus(state);
     clamp_issue_scrolls(state);
+    reconcile_issue_details(state);
 
     previous_issue_lines != state.issue_lines
         || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
+        || issue_details_open != state.issue_details.is_open
+}
+
+fn reconcile_issue_details(state: &mut DashboardState) {
+    if !state.issue_details.is_open {
+        return;
+    }
+
+    let Some(issue_id) = state.issue_details.issue_id.clone() else {
+        close_issue_details(state);
+        return;
+    };
+
+    if state.issues.iter().all(|issue| issue.id != issue_id) {
+        close_issue_details(state);
+    }
 }
 
 fn seed_completed_issue_collapses(state: &mut DashboardState) {
@@ -2560,6 +2823,16 @@ fn issue_status_style(status: IssueStatus) -> Style {
     }
 }
 
+fn issue_status_label(status: IssueStatus) -> &'static str {
+    match status {
+        IssueStatus::Open => "open",
+        IssueStatus::InProgress => "in-progress",
+        IssueStatus::Closed => "closed",
+        IssueStatus::Dropped => "dropped",
+        _ => "unknown",
+    }
+}
+
 fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (String, Style) {
     match (status, readiness) {
         (IssueStatus::Dropped, _) => (
@@ -2581,6 +2854,50 @@ fn issue_status_display(status: IssueStatus, readiness: &IssueReadiness) -> (Str
         (IssueStatus::Open, _) => ("open".to_string(), issue_status_style(IssueStatus::Open)),
         _ => ("unknown".to_string(), Style::default()),
     }
+}
+
+fn open_issue_details(state: &mut DashboardState, issue_id: IssueId) {
+    state.issue_details.is_open = true;
+    state.issue_details.issue_id = Some(issue_id);
+    state.issue_details.scroll = ListScrollState::default();
+}
+
+fn close_issue_details(state: &mut DashboardState) {
+    state.issue_details.is_open = false;
+    state.issue_details.issue_id = None;
+    state.issue_details.scroll = ListScrollState::default();
+}
+
+fn scroll_issue_details(state: &mut DashboardState, delta: i32) -> bool {
+    let Some(issue_id) = state.issue_details.issue_id.clone() else {
+        return false;
+    };
+    let Some(issue) = state.issues.iter().find(|issue| issue.id == issue_id) else {
+        return false;
+    };
+    let Some(size) = state.last_frame_size else {
+        return false;
+    };
+    let layout = issue_details_layout(size);
+    let lines = issue_detail_lines(issue);
+    let view_height = layout.content.height as usize;
+    let content_len = wrapped_content_len(&lines, layout.content.width);
+    let max_offset = max_scroll_offset(content_len, view_height);
+    let current = state.issue_details.scroll.offset;
+    let next = if delta < 0 {
+        current.saturating_sub(delta.unsigned_abs() as usize)
+    } else {
+        current.saturating_add(delta as usize)
+    }
+    .min(max_offset);
+    if next == current {
+        return false;
+    }
+
+    state.issue_details.scroll.offset = next;
+    state.issue_details.scroll.scrollbar_state =
+        list_scrollbar_state(content_len, view_height, next);
+    true
 }
 
 fn truncate_message(message: &str, max_chars: usize) -> String {
@@ -2939,6 +3256,32 @@ mod tests {
         assert_eq!(line.progress.as_deref(), Some("drafting tests"));
     }
 
+    #[test]
+    fn issue_detail_lines_include_status_and_log() {
+        let issue = IssueRecord {
+            id: issue_id("i-detail"),
+            issue_type: IssueType::Task,
+            description: "Investigate memory spike".into(),
+            progress: "Noted repro steps".into(),
+            status: IssueStatus::InProgress,
+            assignee: Some("alice".to_string()),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        };
+
+        let lines = issue_detail_lines(&issue);
+        let text: String = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(text.contains("Status:"));
+        assert!(text.contains("in-progress"));
+        assert!(text.contains("Assignee:"));
+        assert!(text.contains("@alice"));
+        assert!(text.contains("Prompt"));
+        assert!(text.contains("Investigate memory spike"));
+        assert!(text.contains("Issue log"));
+        assert!(text.contains("Noted repro steps"));
+    }
+
     fn dashboard_state_with_issues(issue_count: usize) -> DashboardState {
         let issues: Vec<IssueRecord> = (0..issue_count)
             .map(|index| issue(&format!("i-{index}"), IssueStatus::Open, Vec::new()))
@@ -3039,7 +3382,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_running_non_merge_request_does_not_open_pr() {
+    fn enter_on_running_non_merge_request_opens_details() {
         let issue = issue("i-0", IssueStatus::Open, Vec::new());
         let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
         let mut state = DashboardState {
@@ -3055,6 +3398,51 @@ mod tests {
         );
 
         assert!(outcome.open_issue_pr.is_none());
+        assert!(state.issue_details.is_open);
+        assert_eq!(state.issue_details.issue_id, Some(issue_id("i-0")));
+    }
+
+    #[test]
+    fn enter_on_completed_non_merge_request_opens_details() {
+        let issue = issue("i-closed", IssueStatus::Closed, Vec::new());
+        let completed_issue_lines = build_completed_issue_lines(&[issue.clone()], &[]);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            completed_issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Completed;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(outcome.open_issue_pr.is_none());
+        assert!(state.issue_details.is_open);
+        assert_eq!(state.issue_details.issue_id, Some(issue_id("i-closed")));
+    }
+
+    #[test]
+    fn escape_closes_issue_details() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        open_issue_details(&mut state, issue_id("i-0"));
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(state.issue_details.issue_id.is_none());
+        assert!(!state.issue_details.is_open);
     }
 
     #[test]
