@@ -9,7 +9,7 @@ use crate::{
         jobs::CreateJobRequest,
         login::LoginResponse,
         patches::{Patch, PatchStatus, UpsertPatchRequest},
-        users::{User, UserSummary},
+        users::UserSummary,
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
@@ -373,39 +373,24 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
-        let (resolved, user, job_settings) = {
+        let (resolved, job_settings) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
                 Ok(mut task) => {
-                    let (job_settings, user) = match task.spawned_from.as_ref() {
-                        Some(issue_id) => {
-                            match store.get_issue(issue_id).await {
-                                Ok(issue) => {
-                                    // Look up user by issue creator
-                                    let user: Option<User> =
-                                        store.get_user(&issue.creator).await.ok(); // Log warning but don't fail if user not found
-                                    if user.is_none() {
-                                        warn!(
-                                            metis_id = %task_id,
-                                            issue_id = %issue_id,
-                                            creator = %issue.creator,
-                                            "user not found for issue creator, job will run without GitHub token"
-                                        );
-                                    }
-                                    (issue.job_settings, user)
-                                }
-                                Err(err) => {
-                                    warn!(
-                                        metis_id = %task_id,
-                                        issue_id = %issue_id,
-                                        error = %err,
-                                        "failed to load issue for spawning"
-                                    );
-                                    return;
-                                }
+                    let job_settings = match task.spawned_from.as_ref() {
+                        Some(issue_id) => match store.get_issue(issue_id).await {
+                            Ok(issue) => issue.job_settings,
+                            Err(err) => {
+                                warn!(
+                                    metis_id = %task_id,
+                                    issue_id = %issue_id,
+                                    error = %err,
+                                    "failed to load issue for spawning"
+                                );
+                                return;
                             }
-                        }
-                        None => (JobSettings::default(), None),
+                        },
+                        None => JobSettings::default(),
                     };
 
                     let merged = JobSettings::merge(task.job_settings.clone(), job_settings);
@@ -413,7 +398,7 @@ impl AppState {
                     let merged_job_settings = task.job_settings.clone();
 
                     match self.resolve_task(&task).await {
-                        Ok(resolved) => (resolved, user, merged_job_settings),
+                        Ok(resolved) => (resolved, merged_job_settings),
                         Err(err) => {
                             warn!(
                                 metis_id = %task_id,
@@ -458,7 +443,6 @@ impl AppState {
                 &resolved.env_vars,
                 cpu_limit,
                 memory_limit,
-                user.as_ref(),
             )
             .await
         {

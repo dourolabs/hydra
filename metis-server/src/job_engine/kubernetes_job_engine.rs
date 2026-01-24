@@ -31,7 +31,7 @@ use tokio::{
 use tracing::{error, info};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
-use crate::{domain::users::User, store::Store};
+use crate::store::Store;
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -488,7 +488,6 @@ impl JobEngine for KubernetesJobEngine {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
-        _user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
