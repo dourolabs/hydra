@@ -1,15 +1,20 @@
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use metis::{
-    auth,
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
     command,
     config::{self, AppConfig},
     constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
+
+const DEFAULT_SERVER_URL: &str = "http://metis-staging.monster-vibes.ts.net";
 
 #[derive(Parser)]
 #[command(
@@ -36,7 +41,7 @@ struct Cli {
         long = "token-path",
         value_name = "PATH",
         global = true,
-        default_value = auth::DEFAULT_AUTH_TOKEN_PATH
+        default_value = constants::DEFAULT_AUTH_TOKEN_PATH
     )]
     token_path: String,
 
@@ -200,13 +205,31 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
         .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
     let resolved_path = config::expand_path(&config_path);
     if !resolved_path.exists() {
-        return Err(anyhow!(
-            "No server URL provided and configuration file '{}' was not found. Use --server-url or --config.",
-            resolved_path.display()
-        ));
+        create_default_config(&resolved_path)?;
     }
 
     AppConfig::load(&config_path)
+}
+
+fn create_default_config(resolved_path: &Path) -> Result<()> {
+    if let Some(dir) = resolved_path.parent() {
+        fs::create_dir_all(dir).with_context(|| {
+            format!(
+                "failed to create configuration directory '{}'",
+                dir.display()
+            )
+        })?;
+    }
+
+    let default_contents = format!("[server]\nurl = \"{DEFAULT_SERVER_URL}\"\n");
+    fs::write(resolved_path, default_contents).with_context(|| {
+        format!(
+            "failed to write default configuration to '{}'",
+            resolved_path.display()
+        )
+    })?;
+
+    Ok(())
 }
 
 fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
@@ -229,8 +252,10 @@ fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_app_config, read_token_from_path, resolve_command, Cli, Commands};
-    use crate::{auth, constants::DEFAULT_CONFIG_FILE};
+    use super::{
+        load_app_config, read_token_from_path, resolve_command, Cli, Commands, DEFAULT_SERVER_URL,
+    };
+    use crate::constants::DEFAULT_AUTH_TOKEN_PATH;
     use clap::Parser;
     use std::fs;
     use std::path::PathBuf;
@@ -240,7 +265,7 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
-            token_path: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            token_path: DEFAULT_AUTH_TOKEN_PATH.to_string(),
             token: None,
             browser: None,
             command: Some(super::Commands::Agents { pretty: false }),
@@ -259,25 +284,28 @@ mod tests {
     }
 
     #[test]
-    fn load_config_missing_without_server_url_errors() {
+    fn load_config_missing_without_server_url_creates_default() {
         let temp = tempdir().expect("tempdir");
         let missing_path = temp.path().join("missing.toml");
         let cli = Cli {
-            config: Some(missing_path),
+            config: Some(missing_path.clone()),
             ..base_cli()
         };
 
-        let err = load_app_config(&cli).expect_err("missing config should error");
+        let config = load_app_config(&cli).expect("default config should be created");
+        assert_eq!(config.server.url, DEFAULT_SERVER_URL);
+
+        let contents = fs::read_to_string(missing_path).expect("read default config");
         assert!(
-            err.to_string().contains("No server URL provided"),
-            "unexpected error: {err}"
+            contents.contains(DEFAULT_SERVER_URL),
+            "default config missing server url"
         );
     }
 
     #[test]
     fn load_config_present_without_server_url_uses_config() {
         let temp = tempdir().expect("tempdir");
-        let config_path = temp.path().join(DEFAULT_CONFIG_FILE);
+        let config_path = temp.path().join("config.toml");
         std::fs::write(&config_path, "[server]\nurl = \"http://127.0.0.1:8080\"\n")
             .expect("write config");
 

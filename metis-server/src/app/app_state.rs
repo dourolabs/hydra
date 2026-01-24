@@ -1,5 +1,5 @@
 use crate::{
-    background::Spawner,
+    background::AgentQueue,
     config::AppConfig,
     domain::{
         issues::{
@@ -41,7 +41,7 @@ pub struct AppState {
     pub service_state: Arc<ServiceState>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
-    pub spawners: Vec<Arc<dyn Spawner>>,
+    pub agents: Vec<Arc<AgentQueue>>,
 }
 
 #[derive(Debug, Error)]

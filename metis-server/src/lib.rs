@@ -16,7 +16,7 @@ pub mod test_utils;
 mod test;
 
 use crate::app::{AppState, ServiceState};
-use crate::background::{AgentQueue, Spawner, start_background_scheduler};
+use crate::background::{AgentQueue, start_background_scheduler};
 use crate::config::{AppConfig, GithubAppSection, build_kube_client};
 use crate::job_engine::KubernetesJobEngine;
 use crate::store::{
@@ -40,7 +40,7 @@ pub async fn run_with_state(
     state: AppState,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
-    // Run scheduler-backed workers for background processing (jobs, spawners, GitHub poller)
+    // Run scheduler-backed workers for background processing (jobs, agents, GitHub poller)
     let scheduler = start_background_scheduler(state.clone());
 
     let public_routes = Router::new()
@@ -201,7 +201,7 @@ pub async fn run() -> anyhow::Result<()> {
         store: store.clone(),
     };
 
-    let spawners = build_spawners(&app_config);
+    let agents = build_agents(&app_config);
 
     let state = AppState {
         config: Arc::new(app_config),
@@ -209,7 +209,7 @@ pub async fn run() -> anyhow::Result<()> {
         service_state: Arc::new(service_state),
         store,
         job_engine: Arc::new(job_engine),
-        spawners,
+        agents,
     };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
@@ -228,12 +228,12 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
 }
 
-fn build_spawners(config: &AppConfig) -> Vec<Arc<dyn Spawner>> {
+fn build_agents(config: &AppConfig) -> Vec<Arc<AgentQueue>> {
     config
         .background
         .agent_queues
         .iter()
-        .map(|queue| Arc::new(AgentQueue::from_config(queue)) as Arc<dyn Spawner>)
+        .map(|queue| Arc::new(AgentQueue::from_config(queue)))
         .collect()
 }
 

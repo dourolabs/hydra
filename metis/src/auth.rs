@@ -7,8 +7,6 @@ use crate::{
     github_device_flow,
 };
 
-pub const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
-
 enum AuthTokenState {
     Missing(PathBuf),
     Empty(PathBuf),

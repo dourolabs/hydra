@@ -1,5 +1,6 @@
 use crate::{
     app::{AppState, ServiceState},
+    background::AgentQueue,
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
     store::MemoryStore,
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
@@ -10,7 +11,7 @@ use tokio::sync::RwLock;
 
 fn test_state_with_agents(agent_names: &[&str]) -> AppState {
     let mut config = test_app_config();
-    config.background.agent_queues = agent_names
+    let agents: Vec<AgentQueueConfig> = agent_names
         .iter()
         .map(|name| AgentQueueConfig {
             name: (*name).to_string(),
@@ -19,6 +20,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
         })
         .collect();
+    config.background.agent_queues = agents.clone();
 
     AppState {
         config: Arc::new(config),
@@ -26,7 +28,10 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
-        spawners: Vec::new(),
+        agents: agents
+            .iter()
+            .map(|queue| Arc::new(AgentQueue::from_config(queue)))
+            .collect(),
     }
 }
 
