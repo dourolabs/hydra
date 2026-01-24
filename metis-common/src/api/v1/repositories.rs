@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct ServiceRepositoryConfig {
+pub struct Repository {
     pub remote_url: String,
     #[serde(default)]
     pub default_branch: Option<String>,
@@ -11,7 +11,7 @@ pub struct ServiceRepositoryConfig {
     pub default_image: Option<String>,
 }
 
-impl ServiceRepositoryConfig {
+impl Repository {
     pub fn new(
         remote_url: String,
         default_branch: Option<String>,
@@ -27,39 +27,20 @@ impl ServiceRepositoryConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct ServiceRepositoryInfo {
+pub struct RepositoryRecord {
     pub name: RepoName,
-    pub remote_url: String,
-    #[serde(default)]
-    pub default_branch: Option<String>,
-    #[serde(default)]
-    pub default_image: Option<String>,
+    pub repository: Repository,
 }
 
-impl ServiceRepositoryInfo {
-    pub fn new(
-        name: RepoName,
-        remote_url: String,
-        default_branch: Option<String>,
-        default_image: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            remote_url,
-            default_branch,
-            default_image,
-        }
+impl RepositoryRecord {
+    pub fn new(name: RepoName, repository: Repository) -> Self {
+        Self { name, repository }
     }
 }
 
-impl From<(RepoName, ServiceRepositoryConfig)> for ServiceRepositoryInfo {
-    fn from((name, config): (RepoName, ServiceRepositoryConfig)) -> Self {
-        Self::new(
-            name,
-            config.remote_url,
-            config.default_branch,
-            config.default_image,
-        )
+impl From<(RepoName, Repository)> for RepositoryRecord {
+    fn from((name, repository): (RepoName, Repository)) -> Self {
+        Self::new(name, repository)
     }
 }
 
@@ -68,11 +49,11 @@ impl From<(RepoName, ServiceRepositoryConfig)> for ServiceRepositoryInfo {
 pub struct CreateRepositoryRequest {
     pub name: RepoName,
     #[serde(flatten)]
-    pub repository: ServiceRepositoryConfig,
+    pub repository: Repository,
 }
 
 impl CreateRepositoryRequest {
-    pub fn new(name: RepoName, repository: ServiceRepositoryConfig) -> Self {
+    pub fn new(name: RepoName, repository: Repository) -> Self {
         Self { name, repository }
     }
 }
@@ -81,11 +62,11 @@ impl CreateRepositoryRequest {
 #[non_exhaustive]
 pub struct UpdateRepositoryRequest {
     #[serde(flatten)]
-    pub repository: ServiceRepositoryConfig,
+    pub repository: Repository,
 }
 
 impl UpdateRepositoryRequest {
-    pub fn new(repository: ServiceRepositoryConfig) -> Self {
+    pub fn new(repository: Repository) -> Self {
         Self { repository }
     }
 }
@@ -93,11 +74,11 @@ impl UpdateRepositoryRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct UpsertRepositoryResponse {
-    pub repository: ServiceRepositoryInfo,
+    pub repository: RepositoryRecord,
 }
 
 impl UpsertRepositoryResponse {
-    pub fn new(repository: ServiceRepositoryInfo) -> Self {
+    pub fn new(repository: RepositoryRecord) -> Self {
         Self { repository }
     }
 }
@@ -105,11 +86,11 @@ impl UpsertRepositoryResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListRepositoriesResponse {
-    pub repositories: Vec<ServiceRepositoryInfo>,
+    pub repositories: Vec<RepositoryRecord>,
 }
 
 impl ListRepositoriesResponse {
-    pub fn new(repositories: Vec<ServiceRepositoryInfo>) -> Self {
+    pub fn new(repositories: Vec<RepositoryRecord>) -> Self {
         Self { repositories }
     }
 }

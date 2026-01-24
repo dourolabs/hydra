@@ -1,9 +1,9 @@
 use crate::{
-    app::ServiceRepositoryConfig,
+    app::Repository as RepositoryConfig,
     domain::patches::{Patch, PatchStatus},
     test::{spawn_test_server_with_state, test_client, test_state},
 };
-use git2::{Repository, Signature, build::CheckoutBuilder};
+use git2::{Repository as GitRepository, Signature, build::CheckoutBuilder};
 use metis_common::{
     PatchId, RepoName,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
@@ -15,7 +15,7 @@ use tempfile::TempDir;
 async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppState, TempDir)> {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let remote_dir = TempDir::new()?;
-    let repository = Repository::init(remote_dir.path())?;
+    let repository = GitRepository::init(remote_dir.path())?;
     let signature = Signature::now("Tester", "tester@example.com")?;
     commit_file(&repository, "README.md", "base\n", "base", &signature)?;
 
@@ -25,7 +25,7 @@ async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppStat
         store
             .add_repository(
                 repo.clone(),
-                ServiceRepositoryConfig::new(
+                RepositoryConfig::new(
                     remote_dir
                         .path()
                         .to_str()
@@ -53,7 +53,7 @@ async fn state_with_repo_and_patch(
         store
             .add_repository(
                 repo.clone(),
-                ServiceRepositoryConfig::new(
+                RepositoryConfig::new(
                     remote_dir
                         .path()
                         .to_str()
@@ -88,7 +88,7 @@ async fn state_with_repo_and_patch(
 
 fn create_repository_with_patch() -> anyhow::Result<(TempDir, String)> {
     let remote_dir = TempDir::new()?;
-    let repository = Repository::init(remote_dir.path())?;
+    let repository = GitRepository::init(remote_dir.path())?;
     let signature = Signature::now("Tester", "tester@example.com")?;
 
     let base_commit = commit_file(&repository, "README.md", "base\n", "base", &signature)?;
@@ -116,7 +116,7 @@ fn create_repository_with_patch() -> anyhow::Result<(TempDir, String)> {
 }
 
 fn commit_file(
-    repo: &Repository,
+    repo: &GitRepository,
     name: &str,
     contents: &str,
     message: &str,

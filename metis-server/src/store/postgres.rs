@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -398,7 +398,7 @@ impl Store for PostgresStore {
     async fn add_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError> {
         let name_str = name.as_str();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -423,7 +423,7 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError> {
+    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let name_str = name.as_str();
         self.fetch_payload(
             TABLE_REPOSITORIES,
@@ -438,7 +438,7 @@ impl Store for PostgresStore {
     async fn update_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError> {
         let name_str = name.as_str();
         self.ensure_repository_exists(&name).await?;
@@ -453,11 +453,9 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_repositories(
-        &self,
-    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError> {
+    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError> {
         let mut rows = self
-            .fetch_payloads_with_ids::<ServiceRepositoryConfig>(
+            .fetch_payloads_with_ids::<Repository>(
                 TABLE_REPOSITORIES,
                 "repository",
                 REPOSITORY_SCHEMA_VERSION,
@@ -1034,7 +1032,7 @@ mod tests {
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
-    use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
+    use metis_common::{RepoName, repositories::Repository};
     use std::{collections::HashSet, str::FromStr};
 
     #[allow(dead_code)]
@@ -1082,8 +1080,8 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn sample_repository_config() -> ServiceRepositoryConfig {
-        ServiceRepositoryConfig::new(
+    fn sample_repository_config() -> Repository {
+        Repository::new(
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),

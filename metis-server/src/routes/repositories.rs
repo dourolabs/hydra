@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, RepositoryError, ServiceRepositoryConfig},
+    app::{AppState, Repository, RepositoryError},
     config::non_empty,
 };
 use axum::{
@@ -68,9 +68,7 @@ pub async fn update_repository(
     Ok(Json(UpsertRepositoryResponse::new(updated)))
 }
 
-fn normalize_config(
-    mut config: ServiceRepositoryConfig,
-) -> Result<ServiceRepositoryConfig, ApiError> {
+fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {
     config.remote_url = config.remote_url.trim().to_string();
     if config.remote_url.is_empty() {
         return Err(ApiError::bad_request("remote_url must not be empty"));
