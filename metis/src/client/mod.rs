@@ -33,7 +33,7 @@ use metis_common::{
     },
     IssueId, PatchId, RepoName, TaskId,
 };
-use reqwest::{header, Client as HttpClient, Response, Url};
+use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use serde::Deserialize;
 use std::pin::Pin;
 
@@ -324,6 +324,10 @@ impl MetisClient {
         &self.auth_token
     }
 
+    fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
+        builder.bearer_auth(&self.auth_token)
+    }
+
     /// Call the `/health` endpoint and return the reported status string.
     #[allow(dead_code)]
     pub async fn health(&self) -> Result<String> {
@@ -336,8 +340,7 @@ impl MetisClient {
 
         let url = self.endpoint("/health")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to contact metis-server health endpoint")?
@@ -356,8 +359,7 @@ impl MetisClient {
     pub async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
         let url = self.endpoint("/v1/jobs")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -375,8 +377,7 @@ impl MetisClient {
     pub async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse> {
         let url = self.endpoint("/v1/jobs/")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .query(query)
             .send()
             .await
@@ -395,8 +396,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch job")?
@@ -414,8 +414,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .delete(url)
+            .authed(self.http.delete(url))
             .send()
             .await
             .context("failed to submit kill job request")?
@@ -436,8 +435,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}/logs");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .query(query)
             .send()
             .await
@@ -469,8 +467,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(status)
             .send()
             .await
@@ -489,8 +486,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}/status");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to request job status")?
@@ -508,8 +504,7 @@ impl MetisClient {
         let path = format!("/v1/jobs/{job_id}/context");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to request job context")?
@@ -525,8 +520,7 @@ impl MetisClient {
     pub async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
         let url = self.endpoint("/v1/issues")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -549,8 +543,7 @@ impl MetisClient {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .put(url)
+            .authed(self.http.put(url))
             .json(request)
             .send()
             .await
@@ -569,8 +562,7 @@ impl MetisClient {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch issue")?
@@ -587,8 +579,7 @@ impl MetisClient {
     pub async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse> {
         let url = self.endpoint("/v1/issues")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .query(query)
             .send()
             .await
@@ -611,8 +602,7 @@ impl MetisClient {
         let path = format!("/v1/issues/{issue_id}/todo-items");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -635,8 +625,7 @@ impl MetisClient {
         let path = format!("/v1/issues/{issue_id}/todo-items");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .put(url)
+            .authed(self.http.put(url))
             .json(request)
             .send()
             .await
@@ -660,8 +649,7 @@ impl MetisClient {
         let path = format!("/v1/issues/{issue_id}/todo-items/{item_number}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -681,8 +669,7 @@ impl MetisClient {
     pub async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse> {
         let url = self.endpoint("/v1/patches")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -705,8 +692,7 @@ impl MetisClient {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .put(url)
+            .authed(self.http.put(url))
             .json(request)
             .send()
             .await
@@ -725,8 +711,7 @@ impl MetisClient {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch patch")?
@@ -743,8 +728,7 @@ impl MetisClient {
     pub async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
         let url = self.endpoint("/v1/patches")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .query(query)
             .send()
             .await
@@ -762,8 +746,7 @@ impl MetisClient {
     pub async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
         let url = self.endpoint("/v1/repositories")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch repositories list")?
@@ -783,8 +766,7 @@ impl MetisClient {
     ) -> Result<UpsertRepositoryResponse> {
         let url = self.endpoint("/v1/repositories")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -810,8 +792,7 @@ impl MetisClient {
         );
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .put(url)
+            .authed(self.http.put(url))
             .json(request)
             .send()
             .await
@@ -829,8 +810,7 @@ impl MetisClient {
     pub async fn list_users(&self) -> Result<ListUsersResponse> {
         let url = self.endpoint("/v1/users")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch users list")?
@@ -847,8 +827,7 @@ impl MetisClient {
     pub async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
         let url = self.endpoint("/v1/users/resolve")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -866,8 +845,7 @@ impl MetisClient {
     pub async fn create_user(&self, request: &CreateUserRequest) -> Result<UpsertUserResponse> {
         let url = self.endpoint("/v1/users")?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(request)
             .send()
             .await
@@ -885,8 +863,7 @@ impl MetisClient {
     pub async fn delete_user(&self, username: &Username) -> Result<DeleteUserResponse> {
         let url = self.endpoint(&format!("/v1/users/{username}"))?;
         let response = self
-            .http
-            .delete(url)
+            .authed(self.http.delete(url))
             .send()
             .await
             .context("failed to submit delete user request")?
@@ -907,8 +884,7 @@ impl MetisClient {
     ) -> Result<UpsertUserResponse> {
         let url = self.endpoint(&format!("/v1/users/{username}/github-token"))?;
         let response = self
-            .http
-            .put(url)
+            .authed(self.http.put(url))
             .json(request)
             .send()
             .await
@@ -930,8 +906,7 @@ impl MetisClient {
         );
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch merge queue")?
@@ -957,8 +932,7 @@ impl MetisClient {
         );
         let url = self.endpoint(&path)?;
         let response = self
-            .http
-            .post(url)
+            .authed(self.http.post(url))
             .json(&EnqueueMergePatchRequest::new(patch_id.clone()))
             .send()
             .await
@@ -978,8 +952,7 @@ impl MetisClient {
     pub async fn list_agents(&self) -> Result<ListAgentsResponse> {
         let url = self.endpoint("/v1/agents")?;
         let response = self
-            .http
-            .get(url)
+            .authed(self.http.get(url))
             .send()
             .await
             .context("failed to fetch agents list")?

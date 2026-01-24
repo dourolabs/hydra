@@ -25,7 +25,7 @@ use crate::store::{
 };
 use anyhow::Context;
 use axum::{
-    Json, Router,
+    Json, Router, middleware,
     routing::{delete, get, post, put},
 };
 use jsonwebtoken::EncodingKey;
@@ -43,8 +43,15 @@ pub async fn run_with_state(
     // Run scheduler-backed workers for background processing (jobs, spawners, GitHub poller)
     let scheduler = start_background_scheduler(state.clone());
 
-    let app = Router::new()
+    let public_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/v1/login", post(routes::login::login))
+        .route(
+            "/v1/github/app/client-id",
+            get(routes::github::get_github_app_client_id),
+        );
+
+    let protected_routes = Router::new()
         .route(
             "/v1/issues",
             get(routes::issues::list_issues).post(routes::issues::create_issue),
@@ -82,16 +89,11 @@ pub async fn run_with_state(
             "/v1/users",
             get(routes::users::list_users).post(routes::users::create_user),
         )
-        .route("/v1/login", post(routes::login::login))
         .route("/v1/users/resolve", post(routes::users::resolve_user))
         .route("/v1/users/:username", delete(routes::users::delete_user))
         .route(
             "/v1/users/:username/github-token",
             put(routes::users::set_github_token),
-        )
-        .route(
-            "/v1/github/app/client-id",
-            get(routes::github::get_github_app_client_id),
         )
         .route(
             "/v1/repositories/:organization/:repo",
@@ -120,6 +122,14 @@ pub async fn run_with_state(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            routes::auth::require_auth,
+        ));
+
+    let app = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(state);
 
     let addr = listener.local_addr()?;

@@ -4,15 +4,18 @@ use crate::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection,
     },
+    domain::actors::Actor,
     job_engine::JobEngine,
     run_with_state,
-    store::MemoryStore,
+    store::{MemoryStore, StoreError},
 };
 use anyhow::Context;
+use metis_common::TaskId;
 use octocrab::Octocrab;
 use reqwest::{Client, header};
 use std::{
     sync::Arc,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
@@ -112,10 +115,21 @@ pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
     }
 }
 
+fn test_auth() -> (Actor, String) {
+    static TEST_AUTH: OnceLock<(Actor, String)> = OnceLock::new();
+    TEST_AUTH
+        .get_or_init(|| Actor::new_for_task(TaskId::new()))
+        .clone()
+}
+
+pub fn test_auth_token() -> String {
+    let (_, token) = test_auth();
+    token
+}
+
 pub fn test_client() -> Client {
     let mut headers = header::HeaderMap::new();
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
-    let auth_value = format!("Bearer {TEST_METIS_TOKEN}");
+    let auth_value = format!("Bearer {}", test_auth_token());
     headers.insert(
         header::AUTHORIZATION,
         header::HeaderValue::from_str(&auth_value).expect("valid test auth header"),
@@ -127,11 +141,16 @@ pub fn test_client() -> Client {
         .expect("failed to build test client")
 }
 
+pub fn test_client_without_auth() -> Client {
+    Client::new()
+}
+
 pub async fn spawn_test_server() -> anyhow::Result<TestServer> {
     spawn_test_server_with_state(test_state()).await
 }
 
 pub async fn spawn_test_server_with_state(state: AppState) -> anyhow::Result<TestServer> {
+    seed_test_actor(&state).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let server_state = state.clone();
@@ -143,6 +162,16 @@ pub async fn spawn_test_server_with_state(state: AppState) -> anyhow::Result<Tes
 
     wait_for_server_ready(&server.base_url()).await?;
     Ok(server)
+}
+
+async fn seed_test_actor(state: &AppState) -> anyhow::Result<()> {
+    let (actor, _) = test_auth();
+    let mut store = state.store.write().await;
+    match store.add_actor(actor).await {
+        Ok(_) => Ok(()),
+        Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
+        Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),
+    }
 }
 
 async fn wait_for_server_ready(base_url: &str) -> anyhow::Result<()> {

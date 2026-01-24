@@ -62,6 +62,8 @@ pub enum StoreError {
     GithubTokenInvalid(String),
     #[error("Invalid actor name: {0}")]
     InvalidActorName(String),
+    #[error("Invalid auth token")]
+    InvalidAuthToken,
 }
 
 fn map_actor_error(error: ActorError) -> StoreError {
@@ -319,6 +321,20 @@ pub trait Store: Send + Sync {
 
     /// Lists all actors with their canonical names.
     async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError>;
+
+    /// Validates an auth token and returns the associated actor.
+    async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
+        let (actor_name, _raw_token) = token
+            .split_once(':')
+            .filter(|(name, token)| !name.is_empty() && !token.is_empty())
+            .ok_or(StoreError::InvalidAuthToken)?;
+        let actor = self.get_actor(actor_name).await?;
+        if actor.verify_auth_token(token) {
+            Ok(actor)
+        } else {
+            Err(StoreError::InvalidAuthToken)
+        }
+    }
 
     /// Adds a new user to the store.
     async fn add_user(&mut self, user: User) -> Result<(), StoreError>;

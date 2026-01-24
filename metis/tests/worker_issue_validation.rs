@@ -22,11 +22,11 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
-    fs::write(&auth_token_path, "token-123").context("write auth token")?;
+    fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
     env.client
         .create_user(&CreateUserRequest::new(
             Username::from("worker"),
-            "token-123".to_string(),
+            env.auth_token.clone(),
         ))
         .await?;
 
@@ -93,11 +93,11 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
-    fs::write(&auth_token_path, "token-123").context("write auth token")?;
+    fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
     env.client
         .create_user(&CreateUserRequest::new(
             Username::from("worker"),
-            "token-123".to_string(),
+            env.auth_token.clone(),
         ))
         .await?;
 

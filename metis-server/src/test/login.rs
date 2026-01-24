@@ -79,8 +79,10 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     assert_eq!(users[0].username.as_str(), "octo");
 
     let actors = store_read.list_actors().await?;
-    assert_eq!(actors.len(), 1);
-    assert_eq!(actors[0].0, "u-octo");
+    assert!(
+        actors.iter().any(|(name, _)| name == "u-octo"),
+        "expected login actor to be created"
+    );
 
     Ok(())
 }
