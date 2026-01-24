@@ -137,13 +137,13 @@ mod tests {
                     login_calls.fetch_add(1, Ordering::SeqCst);
                     fs::create_dir_all(token_path.parent().expect("auth parent"))
                         .expect("create auth dir");
-                    fs::write(token_path, "token-abc").expect("write auth token");
+                    fs::write(token_path, "octo:token-abc").expect("write auth token");
                     Box::pin(async { Ok(()) })
                 },
             ))
             .expect("ensure auth token");
 
-        assert_eq!(token, "token-abc");
+        assert_eq!(token, "octo:token-abc");
         assert_eq!(login_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -167,13 +167,13 @@ mod tests {
                 &token_path,
                 |_client, token_path| {
                     login_calls.fetch_add(1, Ordering::SeqCst);
-                    fs::write(token_path, "token-empty").expect("write auth token");
+                    fs::write(token_path, "octo:token-empty").expect("write auth token");
                     Box::pin(async { Ok(()) })
                 },
             ))
             .expect("ensure auth token");
 
-        assert_eq!(token, "token-empty");
+        assert_eq!(token, "octo:token-empty");
         assert_eq!(login_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -182,7 +182,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
         fs::create_dir_all(token_path.parent().expect("auth parent")).expect("create auth dir");
-        fs::write(&token_path, "  token-123 \n").expect("write auth token");
+        fs::write(&token_path, "  octo:token-123 \n").expect("write auth token");
 
         let login_calls = AtomicUsize::new(0);
         let client = MetisClientUnauthenticated::new("http://localhost").expect("client");
@@ -202,7 +202,7 @@ mod tests {
             ))
             .expect("ensure auth token");
 
-        assert_eq!(token, "token-123");
+        assert_eq!(token, "octo:token-123");
         assert_eq!(login_calls.load(Ordering::SeqCst), 0);
     }
 }

@@ -12,7 +12,7 @@ use metis_server::test_utils;
 use std::{fs, path::Path};
 use tempfile::tempdir;
 
-const TEST_METIS_TOKEN: &str = "token-123";
+const TEST_METIS_TOKEN: &str = "test-user:token-123";
 
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {

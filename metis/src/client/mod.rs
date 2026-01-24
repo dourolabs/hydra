@@ -219,7 +219,7 @@ impl MetisClientUnauthenticated {
     }
 
     /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
-    pub async fn login(&self, request: &LoginRequest) -> Result<(String, MetisClient)> {
+    pub async fn login(&self, request: &LoginRequest) -> Result<(LoginResponse, MetisClient)> {
         self.login_with_http_client(self.http.clone(), request)
             .await
     }
@@ -229,7 +229,7 @@ impl MetisClientUnauthenticated {
         &self,
         http: HttpClient,
         request: &LoginRequest,
-    ) -> Result<(String, MetisClient)> {
+    ) -> Result<(LoginResponse, MetisClient)> {
         let url = self
             .endpoint("/v1/login")
             .with_context(|| "failed to construct login endpoint URL")?;
@@ -250,7 +250,7 @@ impl MetisClientUnauthenticated {
         let client =
             MetisClient::with_http_client(self.base_url.as_str(), auth_token.clone(), http)?;
 
-        Ok((auth_token, client))
+        Ok((login_response, client))
     }
 
     /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.

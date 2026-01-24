@@ -23,7 +23,7 @@ pub struct TestEnvironment {
     pub service_repo_name: RepoName,
 }
 
-const TEST_METIS_TOKEN: &str = "test-metis-token";
+const TEST_METIS_TOKEN: &str = "test-user:test-metis-token";
 
 pub fn metis_bin() -> std::path::PathBuf {
     // Cargo exposes the compiled binary location to integration tests via CARGO_BIN_EXE_<binname>
