@@ -61,42 +61,60 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<Task>> {
-        let repo_name = match issue.job_settings.repo_name.clone() {
-            Some(repo_name) => repo_name,
-            None => return Ok(None),
-        };
+        let bundle = match (
+            issue.job_settings.remote_url.as_ref(),
+            issue.job_settings.repo_name.as_ref(),
+        ) {
+            (Some(remote_url), _) if !remote_url.trim().is_empty() => {
+                let rev = issue
+                    .job_settings
+                    .branch
+                    .clone()
+                    .unwrap_or_else(|| "main".to_string());
+                BundleSpec::GitRepository {
+                    url: remote_url.trim().to_string(),
+                    rev,
+                }
+            }
+            (_, Some(repo_name)) => {
+                let repository = state
+                    .repository_from_store(repo_name)
+                    .await
+                    .context("failed to load repository for issue task")?;
+                let rev = issue
+                    .job_settings
+                    .branch
+                    .clone()
+                    .or_else(|| repository.default_branch.clone());
 
-        let image = match issue.job_settings.image.as_ref() {
-            Some(image) if !image.trim().is_empty() => image.trim().to_string(),
+                BundleSpec::ServiceRepository {
+                    name: repo_name.clone(),
+                    rev,
+                }
+            }
             _ => return Ok(None),
         };
 
-        let repository = state
-            .repository_from_store(&repo_name)
-            .await
-            .context("failed to load repository for issue task")?;
-        let rev = issue
+        let image = issue
             .job_settings
-            .branch
-            .clone()
-            .or_else(|| repository.default_branch.clone());
+            .image
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
 
         let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        let mut job_settings = issue.job_settings.clone();
-        job_settings.image = Some(image);
 
         Ok(Some(Task::new(
             self.prompt.clone(),
-            BundleSpec::ServiceRepository {
-                name: repo_name,
-                rev,
-            },
+            bundle,
             Some(issue_id.clone()),
-            None,
+            image,
             env_vars,
-            Some(job_settings),
+            issue.job_settings.cpu_limit.clone(),
+            issue.job_settings.memory_limit.clone(),
         )))
     }
 
@@ -373,6 +391,7 @@ mod tests {
             image.map(str::to_string),
             env_vars,
             None,
+            None,
         )
     }
 
@@ -602,7 +621,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_spawn_when_repo_or_image_missing() -> anyhow::Result<()> {
+    async fn skips_when_repo_missing_but_allows_missing_image() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
         {
             let mut store = state.store.write().await;
@@ -638,7 +657,7 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     job_settings: JobSettings {
-                        repo_name: Some(repo_name),
+                        repo_name: Some(repo_name.clone()),
                         remote_url: None,
                         image: None,
                         branch: None,
@@ -654,7 +673,13 @@ mod tests {
         }
 
         let tasks = queue("agent-a").spawn(&state).await?;
-        assert!(tasks.is_empty());
+        assert_eq!(tasks.len(), 1);
+        let task = tasks.first().expect("task should exist");
+        assert!(matches!(
+            task.context,
+            BundleSpec::ServiceRepository { ref name, .. } if name == &repo_name
+        ));
+        assert!(task.image.is_none());
 
         Ok(())
     }
@@ -738,7 +763,8 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: JobSettings::default(),
+                        cpu_limit: None,
+                        memory_limit: None,
                     },
                     Utc::now(),
                 )
@@ -806,7 +832,8 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: JobSettings::default(),
+                        cpu_limit: None,
+                        memory_limit: None,
                     },
                     Utc::now(),
                 )

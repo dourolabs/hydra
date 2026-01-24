@@ -1,4 +1,4 @@
-use crate::{IssueId, RepoName, TaskId, api::v1::issues::JobSettings, task_status::TaskStatusLog};
+use crate::{IssueId, RepoName, TaskId, task_status::TaskStatusLog};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -14,8 +14,10 @@ pub struct Task {
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env_vars: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
-    pub job_settings: JobSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<String>,
 }
 
 impl Task {
@@ -25,7 +27,8 @@ impl Task {
         spawned_from: Option<IssueId>,
         image: Option<String>,
         env_vars: HashMap<String, String>,
-        job_settings: Option<JobSettings>,
+        cpu_limit: Option<String>,
+        memory_limit: Option<String>,
     ) -> Self {
         Self {
             prompt,
@@ -33,7 +36,8 @@ impl Task {
             spawned_from,
             image,
             env_vars,
-            job_settings: job_settings.unwrap_or_default(),
+            cpu_limit,
+            memory_limit,
         }
     }
 }

@@ -1,10 +1,6 @@
-use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::{fs, io::ErrorKind, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
@@ -13,8 +9,6 @@ use metis::{
     constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
-
-const DEFAULT_SERVER_URL: &str = "http://metis-staging.monster-vibes.ts.net";
 
 #[derive(Parser)]
 #[command(
@@ -205,31 +199,10 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
         .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
     let resolved_path = config::expand_path(&config_path);
     if !resolved_path.exists() {
-        create_default_config(&resolved_path)?;
+        config::create_default_config(&resolved_path)?;
     }
 
     AppConfig::load(&config_path)
-}
-
-fn create_default_config(resolved_path: &Path) -> Result<()> {
-    if let Some(dir) = resolved_path.parent() {
-        fs::create_dir_all(dir).with_context(|| {
-            format!(
-                "failed to create configuration directory '{}'",
-                dir.display()
-            )
-        })?;
-    }
-
-    let default_contents = format!("[server]\nurl = \"{DEFAULT_SERVER_URL}\"\n");
-    fs::write(resolved_path, default_contents).with_context(|| {
-        format!(
-            "failed to write default configuration to '{}'",
-            resolved_path.display()
-        )
-    })?;
-
-    Ok(())
 }
 
 fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
@@ -252,10 +225,8 @@ fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        load_app_config, read_token_from_path, resolve_command, Cli, Commands, DEFAULT_SERVER_URL,
-    };
-    use crate::constants::DEFAULT_AUTH_TOKEN_PATH;
+    use super::{load_app_config, read_token_from_path, resolve_command, Cli, Commands};
+    use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
     use clap::Parser;
     use std::fs;
     use std::path::PathBuf;
