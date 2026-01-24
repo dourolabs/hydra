@@ -2,7 +2,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
-    constants::ENV_METIS_TOKEN, jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId,
+    constants::ENV_METIS_TOKEN,
+    jobs::SearchJobsQuery,
+    task_status::Status,
+    users::{User, Username},
+    RepoName, TaskId,
 };
 use metis_server::{
     app::{AppState, ServiceState},
@@ -21,9 +25,8 @@ pub struct TestEnvironment {
     pub client: MetisClient,
     pub _tempdir: TempDir,
     pub service_repo_name: RepoName,
+    pub auth_token: String,
 }
-
-const TEST_METIS_TOKEN: &str = "test-metis-token";
 
 pub fn metis_bin() -> std::path::PathBuf {
     // Cargo exposes the compiled binary location to integration tests via CARGO_BIN_EXE_<binname>
@@ -50,7 +53,7 @@ impl TestEnvironment {
                 .arg("-c")
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
-                .env(ENV_METIS_TOKEN, TEST_METIS_TOKEN)
+                .env(ENV_METIS_TOKEN, &self.auth_token)
                 .env_remove("METIS_ISSUE_ID")
                 .output()
                 .await
@@ -137,7 +140,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let state = app_state_with_repo(&remote_url, &service_repo_name).await?;
+    let (state, auth_token) = app_state_with_repo(&remote_url, &service_repo_name).await?;
     let server = spawn_test_server_with_state(state)
         .await
         .context("failed to start test server")?;
@@ -148,7 +151,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
             url: server_url.clone(),
         },
     };
-    let client = MetisClient::from_config(&app_config, TEST_METIS_TOKEN)?;
+    let client = MetisClient::from_config(&app_config, auth_token.clone())?;
 
     Ok(TestEnvironment {
         server,
@@ -156,6 +159,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         client,
         _tempdir: tempdir,
         service_repo_name,
+        auth_token,
     })
 }
 
@@ -294,7 +298,7 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
     Ok(remote_dir_str.to_string())
 }
 
-async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<AppState> {
+async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(AppState, String)> {
     let server_config = test_app_config();
     let mut store: Box<dyn Store> = Box::new(MemoryStore::new());
     store
@@ -308,12 +312,19 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<A
         )
         .await?;
 
-    Ok(AppState {
-        config: Arc::new(server_config),
-        github_app: None,
-        service_state: Arc::new(ServiceState::default()),
-        store: Arc::new(RwLock::new(store)),
-        job_engine: Arc::new(MockJobEngine::new()),
-        spawners: Vec::new(),
-    })
+    let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
+    let user = User::new(Username::from("test-user"), auth_token.clone());
+    store.add_user(user.into()).await?;
+
+    Ok((
+        AppState {
+            config: Arc::new(server_config),
+            github_app: None,
+            service_state: Arc::new(ServiceState::default()),
+            store: Arc::new(RwLock::new(store)),
+            job_engine: Arc::new(MockJobEngine::new()),
+            spawners: Vec::new(),
+        },
+        auth_token,
+    ))
 }

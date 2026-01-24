@@ -1,4 +1,5 @@
 pub(crate) mod agents;
+mod auth;
 pub(crate) mod common;
 mod github_app;
 mod health;
