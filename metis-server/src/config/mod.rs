@@ -7,7 +7,6 @@ use anyhow::{Context, Result, ensure};
 use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -215,8 +214,6 @@ pub struct AgentQueueConfig {
     pub max_tries: u32,
     #[serde(default = "default_agent_max_simultaneous")]
     pub max_simultaneous: u32,
-    #[serde(default)]
-    pub env_vars: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

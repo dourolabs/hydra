@@ -6,7 +6,7 @@ use crate::{
     test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
 };
 use metis_common::agents::ListAgentsResponse;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 fn test_state_with_agents(agent_names: &[&str]) -> AppState {
@@ -20,7 +20,6 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
             image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            env_vars: HashMap::new(),
         })
         .collect();
 

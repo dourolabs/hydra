@@ -41,7 +41,6 @@ pub struct AgentQueue {
     pub prompt: String,
     pub context_spec: BundleSpec,
     pub image: Option<String>,
-    pub env_vars: HashMap<String, String>,
     pub max_tries: u32,
     pub max_simultaneous: u32,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
@@ -54,7 +53,6 @@ impl AgentQueue {
             prompt: config.prompt.clone(),
             context_spec: config.context.clone(),
             image: config.image.clone(),
-            env_vars: config.env_vars.clone(),
             max_tries: config.max_tries,
             max_simultaneous: config.max_simultaneous,
             spawn_attempts: RwLock::new(HashMap::new()),
@@ -62,7 +60,7 @@ impl AgentQueue {
     }
 
     fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
-        let mut env_vars = self.env_vars.clone();
+        let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
         Task::new(
@@ -270,7 +268,6 @@ mod tests {
             prompt: "Fix the issue".to_string(),
             context_spec: BundleSpec::None,
             image: None,
-            env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
@@ -769,7 +766,6 @@ mod tests {
             image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            env_vars: HashMap::from([("CUSTOM".to_string(), "1".to_string())]),
         };
 
         let queue = AgentQueue::from_config(&config);
@@ -777,7 +773,6 @@ mod tests {
         assert_eq!(queue.name, "agent-config");
         assert_eq!(queue.prompt, "Handle issues");
         assert_eq!(queue.image, None);
-        assert_eq!(queue.env_vars.get("CUSTOM"), Some(&"1".to_string()));
     }
 
     #[tokio::test]
@@ -812,7 +807,6 @@ mod tests {
                 rev: None,
             },
             image: None,
-            env_vars: HashMap::new(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
