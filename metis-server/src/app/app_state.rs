@@ -321,10 +321,15 @@ impl AppState {
             request.issue_id.clone(),
             request.image,
             env_vars,
-            job_settings.clone(),
+            job_settings
+                .as_ref()
+                .and_then(|settings| settings.cpu_limit.clone()),
+            job_settings
+                .as_ref()
+                .and_then(|settings| settings.memory_limit.clone()),
         );
 
-        self.resolve_task(&task).await?;
+        self.resolve_task(&task, job_settings.as_ref()).await?;
 
         let mut store = self.store.write().await;
         store
@@ -373,10 +378,10 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
-        let (resolved, user, job_settings) = {
+        let (resolved, user, job_settings, task) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(mut task) => {
+                Ok(task) => {
                     let (job_settings, user) = match task.spawned_from.as_ref() {
                         Some(issue_id) => {
                             match store.get_issue(issue_id).await {
@@ -392,7 +397,7 @@ impl AppState {
                                             "user not found for issue creator, job will run without GitHub token"
                                         );
                                     }
-                                    (issue.job_settings, user)
+                                    (Some(issue.job_settings), user)
                                 }
                                 Err(err) => {
                                     warn!(
@@ -405,15 +410,11 @@ impl AppState {
                                 }
                             }
                         }
-                        None => (JobSettings::default(), None),
+                        None => (None, None),
                     };
 
-                    let merged = JobSettings::merge(task.job_settings.clone(), job_settings);
-                    task.job_settings = merged;
-                    let merged_job_settings = task.job_settings.clone();
-
-                    match self.resolve_task(&task).await {
-                        Ok(resolved) => (resolved, user, merged_job_settings),
+                    match self.resolve_task(&task, job_settings.as_ref()).await {
+                        Ok(resolved) => (resolved, user, job_settings, task),
                         Err(err) => {
                             warn!(
                                 metis_id = %task_id,
@@ -435,20 +436,44 @@ impl AppState {
             }
         };
 
-        let cpu_limit = job_settings
-            .cpu_limit
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| job_config.cpu_limit.clone());
-        let memory_limit = job_settings
-            .memory_limit
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| job_config.memory_limit.clone());
+        let resolve_limit =
+            |task_limit: Option<&String>, issue_limit: Option<&String>, default: &str| {
+                task_limit
+                    .and_then(|value| {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    })
+                    .or_else(|| {
+                        issue_limit.and_then(|value| {
+                            let trimmed = value.trim();
+                            if trimmed.is_empty() {
+                                None
+                            } else {
+                                Some(trimmed.to_string())
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| default.to_string())
+            };
+
+        let cpu_limit = resolve_limit(
+            task.cpu_limit.as_ref(),
+            job_settings
+                .as_ref()
+                .and_then(|settings| settings.cpu_limit.as_ref()),
+            &job_config.cpu_limit,
+        );
+        let memory_limit = resolve_limit(
+            task.memory_limit.as_ref(),
+            job_settings
+                .as_ref()
+                .and_then(|settings| settings.memory_limit.as_ref()),
+            &job_config.memory_limit,
+        );
 
         match self
             .job_engine
@@ -1378,6 +1403,7 @@ mod tests {
             Some("worker:latest".to_string()),
             HashMap::new(),
             None,
+            None,
         )
     }
 
@@ -1388,6 +1414,7 @@ mod tests {
             Some(issue_id.clone()),
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
             None,
         )
     }

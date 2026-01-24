@@ -231,6 +231,7 @@ mod tests {
                 None,
                 HashMap::new(),
                 None,
+                None,
             ),
             None,
             status_log,

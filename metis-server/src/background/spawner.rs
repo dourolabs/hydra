@@ -1,6 +1,4 @@
 #[cfg(test)]
-use crate::domain::issues::{IssueDependency, IssueType};
-#[cfg(test)]
 use crate::domain::users::Username;
 use crate::{
     app::AppState,
@@ -61,15 +59,20 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<Task>> {
-        let repo_name = match issue.job_settings.repo_name.clone() {
-            Some(repo_name) => repo_name,
-            None => return Ok(None),
-        };
+        let repo_name = issue
+            .job_settings
+            .repo_name
+            .clone()
+            .context("issue is missing required repo_name for task build")?;
 
-        let image = match issue.job_settings.image.as_ref() {
-            Some(image) if !image.trim().is_empty() => image.trim().to_string(),
-            _ => return Ok(None),
-        };
+        let image = issue
+            .job_settings
+            .image
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .context("issue is missing required image for task build")?;
 
         let repository = state
             .repository_from_store(&repo_name)
@@ -84,8 +87,6 @@ impl AgentQueue {
         let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        let mut job_settings = issue.job_settings.clone();
-        job_settings.image = Some(image);
 
         Ok(Some(Task::new(
             self.prompt.clone(),
@@ -94,9 +95,10 @@ impl AgentQueue {
                 rev,
             },
             Some(issue_id.clone()),
-            None,
+            Some(image),
             env_vars,
-            Some(job_settings),
+            issue.job_settings.cpu_limit.clone(),
+            issue.job_settings.memory_limit.clone(),
         )))
     }
 
@@ -280,7 +282,7 @@ async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<boo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::issues::JobSettings;
+    use crate::domain::issues::{IssueDependency, IssueType, JobSettings};
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
         app::ServiceRepository,
@@ -373,6 +375,7 @@ mod tests {
             spawned_from,
             image.map(str::to_string),
             env_vars,
+            None,
             None,
         )
     }
@@ -654,8 +657,11 @@ mod tests {
                 .await?;
         }
 
-        let tasks = queue("agent-a").spawn(&state).await?;
-        assert!(tasks.is_empty());
+        let err = queue("agent-a").spawn(&state).await.unwrap_err();
+        assert!(
+            err.to_string().contains("required repo_name")
+                || err.to_string().contains("required image")
+        );
 
         Ok(())
     }
@@ -739,7 +745,8 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: JobSettings::default(),
+                        cpu_limit: None,
+                        memory_limit: None,
                     },
                     Utc::now(),
                 )
@@ -807,7 +814,8 @@ mod tests {
                             (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
                             (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
                         ]),
-                        job_settings: JobSettings::default(),
+                        cpu_limit: None,
+                        memory_limit: None,
                     },
                     Utc::now(),
                 )
@@ -949,7 +957,12 @@ mod tests {
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
 
-        let resolved = state.resolve_task(&tasks[0]).await?;
+        let job_settings = {
+            let store = state.store.read().await;
+            store.get_issue(&issue_id).await?.job_settings
+        };
+
+        let resolved = state.resolve_task(&tasks[0], Some(&job_settings)).await?;
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {

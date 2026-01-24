@@ -10,7 +10,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use metis_common::{IssueId, TaskId, api::v1};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub use metis_common::api::v1::ApiError;
 
@@ -87,11 +87,16 @@ pub async fn list_jobs(
     let mut summaries_with_times: Vec<(JobRecord, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
         match job_record_with_time(&task_id, store).await {
-            Ok(summary) => {
-                if spawned_from_matches(spawned_from_filter, &summary.0)
-                    && job_matches(search_term.as_deref(), &summary.0)
+            Ok((record, reference_time)) => {
+                if spawned_from_matches(spawned_from_filter, &record)
+                    && job_matches(search_term.as_deref(), &record)
                 {
-                    summaries_with_times.push(summary);
+                    debug!(
+                        job_id = %record.id,
+                        ?reference_time,
+                        "including job in list response"
+                    );
+                    summaries_with_times.push((record, reference_time));
                 }
             }
             Err(err) => {

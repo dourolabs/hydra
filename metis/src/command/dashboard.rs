@@ -2965,6 +2965,7 @@ mod tests {
                 None,
                 HashMap::new(),
                 None,
+                None,
             ),
             None,
             log,

@@ -1,6 +1,6 @@
 use crate::{
     app::AppState,
-    domain::{issues::JobSettings, jobs::WorkerContext},
+    domain::jobs::WorkerContext,
     routes::jobs::{ApiError, JobIdPath},
     store::StoreError,
 };
@@ -14,7 +14,7 @@ pub async fn get_job_context(
 ) -> Result<Json<v1::jobs::WorkerContext>, ApiError> {
     info!(job_id = %job_id, "get_job_context invoked");
 
-    let (mut task, issue_job_settings) = {
+    let (task, issue_job_settings) = {
         let store = state.store.read().await;
         let task = store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task");
@@ -38,12 +38,10 @@ pub async fn get_job_context(
         (task, issue_job_settings)
     };
 
-    if let Some(settings) = issue_job_settings {
-        let merged = JobSettings::merge(task.job_settings.clone(), settings);
-        task.job_settings = merged;
-    }
-
-    let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
+    let resolved = state
+        .resolve_task(&task, issue_job_settings.as_ref())
+        .await
+        .map_err(ApiError::from)?;
 
     let context: v1::jobs::WorkerContext =
         WorkerContext::new(resolved.context.bundle, task.prompt, resolved.env_vars).into();

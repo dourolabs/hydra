@@ -1,5 +1,8 @@
 use super::{AppState, BundleResolutionError, ResolvedBundle};
-use crate::domain::jobs::{Bundle, BundleSpec, Task};
+use crate::domain::{
+    issues::JobSettings,
+    jobs::{Bundle, BundleSpec, Task},
+};
 use crate::store::StoreError;
 use std::collections::HashMap;
 
@@ -22,9 +25,23 @@ pub enum TaskResolutionError {
 }
 
 impl AppState {
-    pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = self.resolve_context(task).await?;
-        let image = Self::resolve_image(task, &context, &self.config.job.default_image)?;
+    pub async fn resolve_task(
+        &self,
+        task: &Task,
+        job_settings: Option<&JobSettings>,
+    ) -> Result<ResolvedTask, TaskResolutionError> {
+        let default_job_settings;
+        let job_settings = match job_settings {
+            Some(settings) => settings,
+            None => {
+                default_job_settings = JobSettings::default();
+                &default_job_settings
+            }
+        };
+
+        let context = self.resolve_context(task, job_settings).await?;
+        let image =
+            Self::resolve_image(task, job_settings, &context, &self.config.job.default_image)?;
 
         Ok(ResolvedTask {
             context,
@@ -33,27 +50,30 @@ impl AppState {
         })
     }
 
-    async fn resolve_context(&self, task: &Task) -> Result<ResolvedBundle, BundleResolutionError> {
+    async fn resolve_context(
+        &self,
+        task: &Task,
+        job_settings: &JobSettings,
+    ) -> Result<ResolvedBundle, BundleResolutionError> {
         let mut resolved = self.resolve_bundle_spec(task.context.clone()).await?;
-        let settings = &task.job_settings;
 
-        if let Some(repo_name) = &settings.repo_name {
+        if let Some(repo_name) = &job_settings.repo_name {
             resolved = self
                 .resolve_bundle_spec(BundleSpec::ServiceRepository {
                     name: repo_name.clone(),
-                    rev: settings.branch.clone(),
+                    rev: job_settings.branch.clone(),
                 })
                 .await?;
         }
 
-        let remote_url = settings
+        let remote_url = job_settings
             .remote_url
             .clone()
             .or_else(|| match &resolved.bundle {
                 Bundle::GitRepository { url, .. } => Some(url.clone()),
                 Bundle::None => None,
             });
-        let rev = settings
+        let rev = job_settings
             .branch
             .clone()
             .or_else(|| match &resolved.bundle {
@@ -71,6 +91,7 @@ impl AppState {
 
     fn resolve_image(
         task: &Task,
+        job_settings: &JobSettings,
         resolved: &ResolvedBundle,
         fallback_image: &str,
     ) -> Result<String, TaskResolutionError> {
@@ -88,7 +109,7 @@ impl AppState {
             }
         };
 
-        if let Some(image) = image_from(task.job_settings.image.as_ref())? {
+        if let Some(image) = image_from(job_settings.image.as_ref())? {
             return Ok(image);
         }
 
