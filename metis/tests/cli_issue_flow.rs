@@ -26,7 +26,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             url: server.base_url(),
         },
     };
-    let client = MetisClient::from_config(&app_config)?;
+    let client = MetisClient::from_config(&app_config, "token-123")?;
     let temp_home = tempdir().context("create temp home")?;
     let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))

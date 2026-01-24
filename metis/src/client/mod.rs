@@ -44,6 +44,7 @@ use crate::config::AppConfig;
 pub struct MetisClient {
     base_url: Url,
     http: HttpClient,
+    auth_token: String,
 }
 
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
@@ -97,6 +98,8 @@ impl ResponseExt for Response {
 
 #[async_trait]
 pub trait MetisClientInterface: Send + Sync {
+    fn base_url(&self) -> &Url;
+
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse>;
     async fn list_jobs(&self, query: &SearchJobsQuery) -> Result<ListJobsResponse>;
     #[allow(dead_code)]
@@ -174,29 +177,71 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
     async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse>;
-    async fn login(&self, request: &LoginRequest) -> Result<LoginResponse>;
 }
 
 impl MetisClient {
     /// Construct a new client using the server URL from the CLI configuration.
-    pub fn from_config(config: &AppConfig) -> Result<Self> {
-        Self::new(&config.server.url)
+    pub fn from_config(config: &AppConfig, auth_token: impl Into<String>) -> Result<Self> {
+        Self::new(&config.server.url, auth_token)
     }
 
     /// Construct a new client with the default reqwest HTTP client.
-    pub fn new(base_url: impl AsRef<str>) -> Result<Self> {
-        Self::with_http_client(base_url, HttpClient::new())
+    pub fn new(base_url: impl AsRef<str>, auth_token: impl Into<String>) -> Result<Self> {
+        Self::with_http_client(base_url, auth_token, HttpClient::new())
     }
 
     /// Construct a new client with a custom `reqwest::Client`.
-    pub fn with_http_client(base_url: impl AsRef<str>, http: HttpClient) -> Result<Self> {
+    pub fn with_http_client(
+        base_url: impl AsRef<str>,
+        auth_token: impl Into<String>,
+        http: HttpClient,
+    ) -> Result<Self> {
         let url = Url::parse(base_url.as_ref())
             .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
 
         Ok(Self {
             base_url: url,
             http,
+            auth_token: auth_token.into(),
         })
+    }
+
+    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
+    pub async fn login(
+        base_url: impl AsRef<str>,
+        request: &LoginRequest,
+    ) -> Result<(String, Self)> {
+        Self::login_with_http_client(base_url, HttpClient::new(), request).await
+    }
+
+    /// Call `POST /v1/login` using a custom `reqwest::Client`.
+    pub async fn login_with_http_client(
+        base_url: impl AsRef<str>,
+        http: HttpClient,
+        request: &LoginRequest,
+    ) -> Result<(String, Self)> {
+        let url = Url::parse(base_url.as_ref())
+            .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
+        let url = url
+            .join("/v1/login")
+            .with_context(|| "failed to construct login endpoint URL")?;
+        let response = http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit login request")?
+            .error_for_status_with_body("metis-server rejected login request")
+            .await?;
+
+        let login_response = response
+            .json::<LoginResponse>()
+            .await
+            .context("failed to decode login response")?;
+        let auth_token = login_response.login_token.clone();
+        let client = Self::with_http_client(base_url, auth_token.clone(), http)?;
+
+        Ok((auth_token, client))
     }
 
     /// Expose the underlying HTTP client for advanced operations.
@@ -206,9 +251,14 @@ impl MetisClient {
     }
 
     /// Expose the resolved base URL used for requests.
-    #[allow(dead_code)]
     pub fn base_url(&self) -> &Url {
         &self.base_url
+    }
+
+    /// Expose the auth token used for requests.
+    #[allow(dead_code)]
+    pub fn auth_token(&self) -> &str {
+        &self.auth_token
     }
 
     /// Call the `/health` endpoint and return the reported status string.
@@ -730,25 +780,6 @@ impl MetisClient {
             .context("failed to decode list users response")
     }
 
-    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
-    pub async fn login(&self, request: &LoginRequest) -> Result<LoginResponse> {
-        let url = self.endpoint("/v1/login")?;
-        let response = self
-            .http
-            .post(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit login request")?
-            .error_for_status_with_body("metis-server rejected login request")
-            .await?;
-
-        response
-            .json::<LoginResponse>()
-            .await
-            .context("failed to decode login response")
-    }
-
     /// Call `POST /v1/users/resolve` to resolve a user by GitHub token.
     pub async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
         let url = self.endpoint("/v1/users/resolve")?;
@@ -1027,6 +1058,10 @@ fn parse_sse_event(block: &str) -> Option<(Option<String>, String)> {
 
 #[async_trait]
 impl MetisClientInterface for MetisClient {
+    fn base_url(&self) -> &Url {
+        self.base_url()
+    }
+
     async fn create_job(&self, request: &CreateJobRequest) -> Result<CreateJobResponse> {
         MetisClient::create_job(self, request).await
     }
@@ -1191,10 +1226,6 @@ impl MetisClientInterface for MetisClient {
     async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
         MetisClient::get_github_app_client_id(self).await
     }
-
-    async fn login(&self, request: &LoginRequest) -> Result<LoginResponse> {
-        MetisClient::login(self, request).await
-    }
 }
 
 #[cfg(test)]
@@ -1224,7 +1255,8 @@ mod tests {
             then.status(200).json_body_obj(&payload);
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
 
         let response = client.list_repositories().await?;
 
@@ -1263,7 +1295,8 @@ mod tests {
             then.status(200).json_body_obj(&response_body);
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
 
         let response = client.create_repository(&request).await?;
 
@@ -1298,7 +1331,8 @@ mod tests {
             then.status(404);
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
 
         let error = client
             .update_repository(&repo_name, &request)

@@ -4276,7 +4276,8 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
         });
 
-        let client = MetisClient::new(server.base_url()).expect("failed to create client");
+        let client =
+            MetisClient::new(server.base_url(), String::new()).expect("failed to create client");
 
         let submission = IssueSubmission {
             prompt: "Draft release notes".to_string(),

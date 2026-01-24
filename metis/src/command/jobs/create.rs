@@ -241,7 +241,8 @@ mod tests {
     async fn spawn_uses_injected_client_and_waits_for_completion() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let job_id = task_id("t-job-123");
 
         let mut variables = HashMap::new();
@@ -310,7 +311,8 @@ mod tests {
     async fn spawn_accepts_service_repository_context() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateJobRequest::new(
@@ -348,7 +350,8 @@ mod tests {
     async fn spawn_defaults_rev_to_main_for_service_repositories() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateJobRequest::new(
@@ -388,7 +391,8 @@ mod tests {
     async fn spawn_accepts_git_repository_context_when_repo_looks_like_url() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateJobRequest::new(
@@ -426,7 +430,8 @@ mod tests {
     async fn spawn_defaults_rev_to_main_for_git_urls() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "test prompt".to_string());
         let request = CreateJobRequest::new(
@@ -464,7 +469,8 @@ mod tests {
     async fn spawn_allows_overriding_image() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let mut variables = HashMap::new();
         variables.insert("PROMPT".to_string(), "custom image".to_string());
         let request = CreateJobRequest::new(
@@ -499,7 +505,8 @@ mod tests {
     async fn spawn_forwards_cli_variables_into_job_request() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let request = CreateJobRequest::new(
             "variable prompt".to_string(),
             None,
@@ -535,7 +542,8 @@ mod tests {
     async fn spawn_requires_prompt() {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), HttpClient::new()).expect("client");
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+                .expect("client");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs");
             then.status(200)

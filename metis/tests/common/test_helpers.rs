@@ -143,7 +143,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
             url: server_url.clone(),
         },
     };
-    let client = MetisClient::from_config(&app_config)?;
+    let client = MetisClient::from_config(&app_config, String::new())?;
 
     Ok(TestEnvironment {
         server,

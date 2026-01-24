@@ -254,7 +254,7 @@ mod tests {
     }
 
     fn mock_client(server: &MockServer) -> MetisClient {
-        MetisClient::with_http_client(server.base_url(), HttpClient::new())
+        MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
             .expect("mock client creation should not fail")
     }
 

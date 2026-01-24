@@ -170,7 +170,7 @@ mod tests {
             then.status(200).json_body_obj(&payload);
         });
 
-        let client = MetisClient::new(server.base_url()).unwrap();
+        let client = MetisClient::new(server.base_url(), String::new()).unwrap();
 
         let users = fetch_users(&client).await.unwrap();
         mock.assert();
@@ -186,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn add_user_sends_request_and_prints_result() {
         let server = MockServer::start();
-        let client = MetisClient::new(server.base_url()).unwrap();
+        let client = MetisClient::new(server.base_url(), String::new()).unwrap();
         let args = UserCredentialsArgs {
             username: "alice".to_string(),
             github_token: "token-123".to_string(),
@@ -212,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn delete_user_trims_username() {
         let server = MockServer::start();
-        let client = MetisClient::new(server.base_url()).unwrap();
+        let client = MetisClient::new(server.base_url(), String::new()).unwrap();
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/users/alice");
             then.status(200)
@@ -227,7 +227,7 @@ mod tests {
     #[tokio::test]
     async fn set_github_token_rejects_empty_token() {
         let server = MockServer::start();
-        let client = MetisClient::new(server.base_url()).unwrap();
+        let client = MetisClient::new(server.base_url(), String::new()).unwrap();
         let args = UserCredentialsArgs {
             username: "alice".to_string(),
             github_token: "   ".to_string(),

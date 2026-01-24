@@ -100,7 +100,7 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let app_config = load_app_config(&cli)?;
-    let client = MetisClient::from_config(&app_config)?;
+    let client = MetisClient::from_config(&app_config, String::new())?;
     let token_path = config::expand_path(PathBuf::from(&cli.token));
 
     dispatch(cli, &client, &app_config, &token_path).await
