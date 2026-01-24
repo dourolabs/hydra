@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::Context;
 use octocrab::Octocrab;
-use reqwest::Client;
+use reqwest::{Client, header};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -113,7 +113,18 @@ pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
 }
 
 pub fn test_client() -> Client {
-    Client::new()
+    let mut headers = header::HeaderMap::new();
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    let auth_value = format!("Bearer {TEST_METIS_TOKEN}");
+    headers.insert(
+        header::AUTHORIZATION,
+        header::HeaderValue::from_str(&auth_value).expect("valid test auth header"),
+    );
+
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build test client")
 }
 
 pub async fn spawn_test_server() -> anyhow::Result<TestServer> {
