@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, RepositoryError, ServiceRepository, ServiceRepositoryConfig},
+    app::{AppState, RepositoryError, ServiceRepositoryConfig},
     config::non_empty,
 };
 use axum::{
@@ -39,16 +39,14 @@ pub async fn create_repository(
     Json(payload): Json<CreateRepositoryRequest>,
 ) -> Result<Json<UpsertRepositoryResponse>, ApiError> {
     info!(repository = %payload.name, "create_repository invoked");
-    let repository = build_repository(payload.name, payload.repository)?;
+    let config = normalize_config(payload.repository)?;
     let created = state
-        .create_repository(repository)
+        .create_repository(payload.name, config)
         .await
         .map_err(map_repository_error)?;
 
     info!(repository = %created.name, "create_repository completed");
-    Ok(Json(UpsertRepositoryResponse::new(
-        created.without_secret(),
-    )))
+    Ok(Json(UpsertRepositoryResponse::new(created)))
 }
 
 pub async fn update_repository(
@@ -67,17 +65,7 @@ pub async fn update_repository(
         .map_err(map_repository_error)?;
 
     info!(repository = %name, "update_repository completed");
-    Ok(Json(UpsertRepositoryResponse::new(
-        updated.without_secret(),
-    )))
-}
-
-fn build_repository(
-    name: RepoName,
-    config: ServiceRepositoryConfig,
-) -> Result<ServiceRepository, ApiError> {
-    let normalized = normalize_config(config)?;
-    Ok(ServiceRepository::from((name, normalized)))
+    Ok(Json(UpsertRepositoryResponse::new(updated)))
 }
 
 fn normalize_config(

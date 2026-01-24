@@ -1,5 +1,5 @@
 use crate::{
-    app::{ServiceRepository, ServiceRepositoryConfig},
+    app::ServiceRepositoryConfig,
     test::{spawn_test_server_with_state, test_client, test_state},
 };
 use git2::{Repository, Signature};
@@ -21,14 +21,7 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
     {
         let mut store = state.store.write().await;
         store
-            .add_repository(
-                name.clone(),
-                ServiceRepositoryConfig::new(
-                    repository.remote_url.clone(),
-                    repository.default_branch.clone(),
-                    repository.default_image.clone(),
-                ),
-            )
+            .add_repository(name.clone(), repository.clone())
             .await?;
     }
     let server = spawn_test_server_with_state(state).await?;
@@ -102,8 +95,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
     assert!(!cache_paths.contains_key(&name));
 
     drop(server);
-    let repository = ServiceRepository::from((name.clone(), stored));
-    service_state.ensure_cached(&repository).await?;
+    service_state.ensure_cached(&name, &stored).await?;
 
     let merge_queues = service_state.merge_queues.read().await;
     assert!(merge_queues.contains_key(&name));
@@ -123,8 +115,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let state = test_state();
     let store = state.store.clone();
     let service_state = state.service_state.clone();
-    let repository = ServiceRepository::new(
-        name.clone(),
+    let repository = ServiceRepositoryConfig::new(
         repo_url(&original_remote),
         Some("develop".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
@@ -132,17 +123,10 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     {
         let mut store = state.store.write().await;
         store
-            .add_repository(
-                name.clone(),
-                ServiceRepositoryConfig::new(
-                    repository.remote_url.clone(),
-                    repository.default_branch.clone(),
-                    repository.default_image.clone(),
-                ),
-            )
+            .add_repository(name.clone(), repository.clone())
             .await?;
     }
-    service_state.ensure_cached(&repository).await?;
+    service_state.ensure_cached(&name, &repository).await?;
     let service_state = state.service_state.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
