@@ -1,6 +1,9 @@
 use crate::{
     app::AppState,
-    background::scheduler::{ScheduledWorker, WorkerOutcome},
+    background::{
+        Spawner,
+        scheduler::{ScheduledWorker, WorkerOutcome},
+    },
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -8,7 +11,7 @@ use tracing::{info, warn};
 
 const WORKER_NAME: &str = "run_spawners";
 
-/// Scheduled worker that runs configured spawners once per iteration.
+/// Scheduled worker that runs configured agents once per iteration.
 #[derive(Clone)]
 pub struct RunSpawnersWorker {
     state: AppState,
@@ -24,16 +27,16 @@ impl RunSpawnersWorker {
 impl ScheduledWorker for RunSpawnersWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        if self.state.spawners.is_empty() {
-            info!(worker = WORKER_NAME, "no spawners configured; worker idle");
+        if self.state.agents.is_empty() {
+            info!(worker = WORKER_NAME, "no agents configured; worker idle");
             return WorkerOutcome::Idle;
         }
 
         let mut processed = 0usize;
         let mut failure_reason: Option<String> = None;
 
-        for spawner in &self.state.spawners {
-            match spawner.spawn(&self.state).await {
+        for agent in &self.state.agents {
+            match agent.spawn(&self.state).await {
                 Ok(tasks) => {
                     if tasks.is_empty() {
                         continue;
@@ -41,9 +44,9 @@ impl ScheduledWorker for RunSpawnersWorker {
 
                     info!(
                         worker = WORKER_NAME,
-                        spawner = spawner.name(),
+                        agent = agent.name(),
                         count = tasks.len(),
-                        "spawner produced tasks"
+                        "agent produced tasks"
                     );
 
                     let mut store = self.state.store.write().await;
@@ -53,9 +56,9 @@ impl ScheduledWorker for RunSpawnersWorker {
                                 processed += 1;
                                 info!(
                                     worker = WORKER_NAME,
-                                    spawner = spawner.name(),
+                                    agent = agent.name(),
                                     metis_id = %metis_id,
-                                    "added task produced by spawner"
+                                    "added task produced by agent"
                                 );
                             }
                             Err(err) => {
@@ -63,10 +66,10 @@ impl ScheduledWorker for RunSpawnersWorker {
                                     failure_reason = Some(err.to_string());
                                 }
                                 warn!(
-                                    spawner = spawner.name(),
+                                    agent = agent.name(),
                                     worker = WORKER_NAME,
                                     error = %err,
-                                    "failed to add task from spawner"
+                                    "failed to add task from agent"
                                 );
                             }
                         }
@@ -78,9 +81,9 @@ impl ScheduledWorker for RunSpawnersWorker {
                     }
                     warn!(
                         worker = WORKER_NAME,
-                        spawner = spawner.name(),
+                        agent = agent.name(),
                         error = %err,
-                        "spawner run failed"
+                        "agent run failed"
                     );
                 }
             }
@@ -97,7 +100,7 @@ impl ScheduledWorker for RunSpawnersWorker {
         if processed == 0 {
             info!(
                 worker = WORKER_NAME,
-                "spawners produced no tasks; worker idle"
+                "agents produced no tasks; worker idle"
             );
             WorkerOutcome::Idle
         } else {
@@ -116,62 +119,81 @@ impl ScheduledWorker for RunSpawnersWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::jobs::BundleSpec;
-    use crate::{background::spawner::Spawner, test::test_state};
-    use anyhow::anyhow;
-    use std::{collections::HashMap, sync::Arc};
+    use crate::{
+        app::ServiceRepository,
+        background::AgentQueue,
+        config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
+        domain::{
+            issues::{Issue, IssueStatus, IssueType, JobSettings},
+            users::Username,
+        },
+        test::{add_repository, test_state},
+    };
+    use metis_common::RepoName;
+    use std::{str::FromStr, sync::Arc};
 
-    #[derive(Clone)]
-    enum SpawnOutcome {
-        Tasks(Vec<crate::store::Task>),
-        Error(String),
-    }
-
-    #[derive(Clone)]
-    struct TestSpawner {
-        name: &'static str,
-        outcome: SpawnOutcome,
-    }
-
-    #[async_trait]
-    impl Spawner for TestSpawner {
-        fn name(&self) -> &str {
-            self.name
-        }
-
-        async fn spawn(&self, _state: &AppState) -> anyhow::Result<Vec<crate::store::Task>> {
-            match &self.outcome {
-                SpawnOutcome::Tasks(tasks) => Ok(tasks.clone()),
-                SpawnOutcome::Error(err) => Err(anyhow!(err.clone())),
-            }
+    fn agent_queue_config(name: &str) -> AgentQueueConfig {
+        AgentQueueConfig {
+            name: name.to_string(),
+            prompt: format!("prompt for {name}"),
+            max_tries: DEFAULT_AGENT_MAX_TRIES,
+            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
         }
     }
 
-    fn make_task(prompt: &str) -> crate::store::Task {
-        crate::store::Task::new(
-            prompt.to_string(),
-            BundleSpec::None,
-            None,
-            None,
-            HashMap::new(),
-            None,
+    fn issue_for_agent(agent: &str, repo_name: &RepoName) -> Issue {
+        Issue::new(
+            IssueType::Task,
+            "Run agent".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            Some(agent.to_string()),
+            Some(JobSettings {
+                repo_name: Some(repo_name.clone()),
+                image: Some("agent-image".to_string()),
+                ..JobSettings::default()
+            }),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn repository(repo_name: &RepoName) -> ServiceRepository {
+        ServiceRepository::new(
+            repo_name.clone(),
+            "https://example.com/repo.git".to_string(),
+            Some("main".to_string()),
+            Some("agent-image".to_string()),
         )
     }
 
     #[tokio::test]
-    async fn returns_idle_when_no_spawners_configured() {
+    async fn returns_idle_when_no_agents_configured() {
         let worker = RunSpawnersWorker::new(test_state());
 
         assert_eq!(worker.run_iteration().await, WorkerOutcome::Idle);
     }
 
     #[tokio::test]
-    async fn enqueues_tasks_and_reports_progress() {
+    async fn enqueues_tasks_and_reports_progress() -> anyhow::Result<()> {
         let mut state = test_state();
-        state.spawners = vec![Arc::new(TestSpawner {
-            name: "static",
-            outcome: SpawnOutcome::Tasks(vec![make_task("spawn me")]),
-        })];
+        let agent_name = "static";
+        let repo_name = RepoName::from_str("dourolabs/metis")?;
+
+        state.agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
+            agent_name,
+        )))];
+
+        add_repository(&state, &repository(&repo_name)).await?;
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(issue_for_agent(agent_name, &repo_name))
+                .await?;
+        }
+
         let worker = RunSpawnersWorker::new(state.clone());
 
         let outcome = worker.run_iteration().await;
@@ -185,24 +207,33 @@ mod tests {
         );
 
         let store = state.store.read().await;
-        let tasks = store
-            .list_tasks()
-            .await
-            .expect("tasks should be listed without error");
+        let tasks = store.list_tasks().await?;
         assert_eq!(tasks.len(), 1);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn surfaces_errors_from_spawners() {
+    async fn surfaces_errors_from_agents() -> anyhow::Result<()> {
         let mut state = test_state();
-        state.spawners = vec![Arc::new(TestSpawner {
-            name: "failing",
-            outcome: SpawnOutcome::Error("spawn failed".to_string()),
-        })];
+        let agent_name = "failing";
+        let repo_name = RepoName::from_str("missing/repo")?;
+
+        state.agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
+            agent_name,
+        )))];
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(issue_for_agent(agent_name, &repo_name))
+                .await?;
+        }
         let worker = RunSpawnersWorker::new(state);
 
         let outcome = worker.run_iteration().await;
 
         assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
+
+        Ok(())
     }
 }
