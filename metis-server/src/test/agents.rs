@@ -1,4 +1,3 @@
-use crate::domain::jobs::BundleSpec;
 use crate::{
     app::{AppState, ServiceState},
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
@@ -16,8 +15,6 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
         .map(|name| AgentQueueConfig {
             name: (*name).to_string(),
             prompt: format!("prompt for {name}"),
-            context: BundleSpec::None,
-            image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
         })

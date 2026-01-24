@@ -159,10 +159,6 @@ Update the issue tracker to mark the task as closed: "metis issues update \$METI
 
 """
 
-[background.agent_queues.context]
-type = "service_repository"
-name = "dourolabs/metis"
-
 [[background.agent_queues]]
 name = "pm"
 prompt = """You are a product manager specifying the engineering tasks required to implement a larger issue.
@@ -198,10 +194,6 @@ Otherwise, if the issue has not been resolved:
    Make sure to provide enough context in the task description for an agent to implement a PR for the task without consulting other resources.
    Set the assignee of each task to "swe" unless an assignee is otherwise specified in the issue.
 """
-
-[background.agent_queues.context]
-type = "service_repository"
-name = "dourolabs/metis"
 
 [kubernetes]
 in_cluster = ${SERVER_KUBERNETES_IN_CLUSTER}
