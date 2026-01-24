@@ -1,7 +1,6 @@
 pub mod agents;
 pub mod chat;
 pub mod dashboard;
-pub mod github_device_flow;
 pub mod issues;
 pub mod jobs;
 pub mod login;

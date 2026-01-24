@@ -8,6 +8,7 @@ use metis::{
     command,
     config::{self, AppConfig},
     constants,
+    github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
 
@@ -140,7 +141,7 @@ async fn resolve_client(
         return MetisClient::from_config(app_config, token);
     }
 
-    command::github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
+    github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
 }
 
 async fn dispatch(
