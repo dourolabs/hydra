@@ -11,7 +11,7 @@ use k8s_openapi::{
         batch::v1::{Job, JobSpec, JobStatus as KubeJobStatus},
         core::v1::{
             Container, EnvVar, LocalObjectReference, Pod, PodSpec, PodTemplateSpec,
-            ResourceRequirements, Secret, Volume, VolumeMount,
+            ResourceRequirements,
         },
     },
     apimachinery::pkg::api::resource::Quantity,
@@ -481,13 +481,6 @@ async fn resolve_pod_name_impl(
     }
 }
 
-// Default path for auth token in containers (expanded from ~/.local/share/metis/auth-token)
-// The file will be mounted at this path via a secret volume
-#[allow(dead_code)]
-const AUTH_TOKEN_PATH: &str = "/home/worker/.local/share/metis/auth-token";
-const AUTH_TOKEN_MOUNT_DIR: &str = "/home/worker/.local/share/metis";
-const AUTH_TOKEN_SECRET_NAME_PREFIX: &str = "metis-auth-token-";
-
 #[async_trait]
 impl JobEngine for KubernetesJobEngine {
     async fn create_job(
@@ -497,7 +490,7 @@ impl JobEngine for KubernetesJobEngine {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
-        user: Option<&User>,
+        _user: Option<&User>,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
@@ -517,40 +510,6 @@ impl JobEngine for KubernetesJobEngine {
             "created actor for job"
         );
 
-        // Create secret for GitHub token if user is provided
-        let secret_name = user.map(|_| format!("{AUTH_TOKEN_SECRET_NAME_PREFIX}{metis_id}"));
-        if let Some(user) = user {
-            let secret_name = secret_name.as_ref().unwrap();
-            let secrets: Api<Secret> = Api::namespaced(self.client.clone(), &self.namespace);
-            let secret = Secret {
-                metadata: ObjectMeta {
-                    name: Some(secret_name.clone()),
-                    labels: Some(metadata_labels.clone()),
-                    ..Default::default()
-                },
-                string_data: Some({
-                    let mut data = std::collections::BTreeMap::new();
-                    data.insert("auth-token".to_string(), user.github_token.clone());
-                    data
-                }),
-                ..Default::default()
-            };
-
-            let pp = PostParams::default();
-            if let Err(err) = secrets.create(&pp, &secret).await {
-                // If secret already exists, that's okay (idempotent)
-                if !matches!(err, kube::Error::Api(ref api_err) if api_err.code == 409) {
-                    error!(
-                        secret_name = %secret_name,
-                        error = ?err,
-                        "failed to create auth token secret"
-                    );
-                    return Err(JobEngineError::Kubernetes(err));
-                }
-            }
-        }
-
-        // Build container with optional volume mount for auth token
         let mut container = Container {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
@@ -572,35 +531,6 @@ impl JobEngine for KubernetesJobEngine {
             ..Default::default()
         });
 
-        let mut volumes = Vec::new();
-        if let Some(secret_name) = &secret_name {
-            // Add volume mount for auth token
-            // Mount to the parent directory so the file appears at AUTH_TOKEN_PATH
-            container.volume_mounts = Some(vec![VolumeMount {
-                name: "auth-token".to_string(),
-                mount_path: AUTH_TOKEN_MOUNT_DIR.to_string(),
-                read_only: Some(true),
-                ..Default::default()
-            }]);
-
-            // Add volume referencing the secret
-            // Use items to map the secret key to the exact file path
-            volumes.push(Volume {
-                name: "auth-token".to_string(),
-                secret: Some(k8s_openapi::api::core::v1::SecretVolumeSource {
-                    secret_name: Some(secret_name.clone()),
-                    default_mode: Some(0o600),
-                    items: Some(vec![k8s_openapi::api::core::v1::KeyToPath {
-                        key: "auth-token".to_string(),
-                        path: "auth-token".to_string(), // This will be at <mount_path>/auth-token
-                        mode: Some(0o666),
-                    }]),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            });
-        }
-
         let image_pull_secrets = build_image_pull_secrets(self.image_pull_secret.as_deref());
 
         let job = Job {
@@ -617,11 +547,6 @@ impl JobEngine for KubernetesJobEngine {
                     }),
                     spec: Some(PodSpec {
                         containers: vec![container],
-                        volumes: if volumes.is_empty() {
-                            None
-                        } else {
-                            Some(volumes)
-                        },
                         restart_policy: Some("Never".into()),
                         image_pull_secrets,
                         ..Default::default()
