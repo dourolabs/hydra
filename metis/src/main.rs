@@ -113,12 +113,15 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Commands::Login)) {
+        return Ok(());
+    }
     let app_config = load_app_config(&cli)?;
     let unauth_client = MetisClientUnauthenticated::from_config(&app_config)?;
     let token_path = config::expand_path(PathBuf::from(&cli.token_path));
     let client = resolve_client(&cli, &app_config, &unauth_client, &token_path).await?;
 
-    dispatch(cli, &client, &unauth_client, &app_config, &token_path).await
+    dispatch(cli, &client, &app_config, &token_path).await
 }
 
 async fn resolve_client(
@@ -146,7 +149,6 @@ async fn resolve_client(
 async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
-    unauth_client: &MetisClientUnauthenticated,
     app_config: &AppConfig,
     token_path: &PathBuf,
 ) -> Result<()> {
@@ -166,7 +168,7 @@ async fn dispatch(
         Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
-        Commands::Login => command::login::run(unauth_client, token_path).await?,
+        Commands::Login => {}
         Commands::Chat {
             prompt,
             model,

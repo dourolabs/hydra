@@ -4,7 +4,7 @@ use std::{fs, future::Future, io::ErrorKind, path::PathBuf, pin::Pin};
 
 use crate::{
     client::{MetisClientInterface, MetisClientUnauthenticated},
-    command::login,
+    github_device_flow,
 };
 
 pub const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
@@ -58,7 +58,11 @@ pub(crate) async fn ensure_auth_token(
 ) -> Result<String> {
     let unauth_client = MetisClientUnauthenticated::new(client.base_url().as_str())?;
     ensure_auth_token_with_login(&unauth_client, token_path, |client, token_path| {
-        Box::pin(login::run(client, token_path))
+        Box::pin(async move {
+            github_device_flow::login_with_github_device_flow(client, token_path)
+                .await
+                .map(|_| ())
+        })
     })
     .await
 }
