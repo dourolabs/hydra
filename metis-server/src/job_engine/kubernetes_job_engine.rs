@@ -507,12 +507,13 @@ impl JobEngine for KubernetesJobEngine {
             "created actor for job"
         );
 
+        let formatted_auth_token = format!("{}:{}", actor.name(), auth_token);
         let mut container = Container {
             name: "metis-worker".to_string(),
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
             args: None,
-            env: Some(self.build_env_vars(metis_id, env_vars, &auth_token)),
+            env: Some(self.build_env_vars(metis_id, env_vars, &formatted_auth_token)),
             ..Default::default()
         };
 
@@ -815,7 +816,7 @@ mod tests {
             &task_env,
             "openai-key",
             "metis.example.com",
-            "auth-token",
+            "actor-name:auth-token",
         );
 
         let merged_map: HashMap<_, _> = merged
@@ -835,7 +836,7 @@ mod tests {
         );
         assert_eq!(
             merged_map.get(ENV_METIS_TOKEN),
-            Some(&"auth-token".to_string())
+            Some(&"actor-name:auth-token".to_string())
         );
     }
 
