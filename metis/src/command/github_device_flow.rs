@@ -190,7 +190,7 @@ async fn exchange_and_store_token(
     Ok(auth_token)
 }
 
-fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
+pub fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
     let parent = token_path
         .parent()
         .ok_or_else(|| anyhow!("auth token path missing parent directory"))?;
