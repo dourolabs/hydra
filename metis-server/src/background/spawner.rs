@@ -71,10 +71,11 @@ impl AgentQueue {
             _ => return Ok(None),
         };
 
-        let repository = state
-            .repository_from_store(&repo_name)
-            .await
-            .context("failed to load repository for issue task")?;
+        let repository = match state.repository_from_store(&repo_name).await {
+            Ok(repository) => repository,
+            Err(StoreError::RepositoryNotFound(_)) => return Ok(None),
+            Err(err) => return Err(err).context("failed to load repository for issue task"),
+        };
         let rev = issue
             .job_settings
             .branch
@@ -285,7 +286,7 @@ mod tests {
     use crate::{
         app::ServiceRepository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::test_state_with_repo,
+        test::{test_state, test_state_with_repo},
     };
     use chrono::Utc;
 
@@ -647,6 +648,35 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                     },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let tasks = queue("agent-a").spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_when_repository_missing_from_store() -> anyhow::Result<()> {
+        let state = test_state();
+        let (repo_name, _) = repository();
+
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Unknown repo".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
