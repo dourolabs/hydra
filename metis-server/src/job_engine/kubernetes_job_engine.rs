@@ -47,7 +47,7 @@ fn merge_env_vars(
     env_vars: &HashMap<String, String>,
     openai_api_key: &str,
     server_hostname: &str,
-    auth_token: Option<&str>,
+    auth_token: &str,
 ) -> Vec<EnvVar> {
     let mut merged_vars: BTreeMap<String, String> = env_vars
         .iter()
@@ -56,9 +56,7 @@ fn merge_env_vars(
 
     merged_vars.insert(ENV_OPENAI_API_KEY.to_string(), openai_api_key.to_string());
     merged_vars.insert(ENV_METIS_ID.to_string(), job_uuid.to_string());
-    if let Some(token) = auth_token {
-        merged_vars.insert(ENV_METIS_TOKEN.to_string(), token.to_string());
-    }
+    merged_vars.insert(ENV_METIS_TOKEN.to_string(), auth_token.to_string());
 
     let hostname = server_hostname.trim();
     if !hostname.is_empty() {
@@ -102,7 +100,7 @@ impl KubernetesJobEngine {
         &self,
         job_uuid: &TaskId,
         env_vars: &HashMap<String, String>,
-        auth_token: Option<&str>,
+        auth_token: &str,
     ) -> Vec<EnvVar> {
         merge_env_vars(
             job_uuid,
@@ -515,7 +513,7 @@ impl JobEngine for KubernetesJobEngine {
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
             args: None,
-            env: Some(self.build_env_vars(metis_id, env_vars, Some(&auth_token))),
+            env: Some(self.build_env_vars(metis_id, env_vars, &auth_token)),
             ..Default::default()
         };
 
@@ -818,7 +816,7 @@ mod tests {
             &task_env,
             "openai-key",
             "metis.example.com",
-            Some("auth-token"),
+            "auth-token",
         );
 
         let merged_map: HashMap<_, _> = merged
@@ -845,7 +843,7 @@ mod tests {
     #[test]
     fn merge_env_vars_skips_empty_server_hostname() {
         let job_id: TaskId = "t-abcd".parse().unwrap();
-        let merged = merge_env_vars(&job_id, &HashMap::new(), "openai-key", "   ", None);
+        let merged = merge_env_vars(&job_id, &HashMap::new(), "openai-key", "   ", "auth-token");
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
