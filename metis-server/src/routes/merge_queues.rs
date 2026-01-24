@@ -94,6 +94,16 @@ fn map_merge_queue_error(err: MergeQueueError) -> ApiError {
             error!(patch_id = %patch_id, error = %source, "failed to load patch");
             ApiError::internal(anyhow::anyhow!("failed to load patch '{patch_id}'"))
         }
+        MergeQueueError::RepositoryLookup { repo_name, source } => {
+            error!(
+                service_repo = %repo_name,
+                error = %source,
+                "failed to load repository for merge queue"
+            );
+            ApiError::internal(anyhow::anyhow!(
+                "failed to load repository '{repo_name}' for merge queue"
+            ))
+        }
         MergeQueueError::Git { repo_name, source } => {
             error!(service_repo = %repo_name, error = %source, "git error while updating merge queue");
             ApiError::internal(anyhow::anyhow!(

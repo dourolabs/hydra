@@ -4,7 +4,6 @@ pub use kube::build_kube_client;
 
 use crate::domain::jobs::BundleSpec;
 use anyhow::{Context, Result, ensure};
-use metis_common::{RepoName, repositories::ServiceRepositoryConfig};
 use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
@@ -22,8 +21,6 @@ pub struct AppConfig {
     pub kubernetes: KubernetesSection,
     #[serde(default)]
     pub database: DatabaseSection,
-    #[serde(default)]
-    pub service: ServiceSection,
     pub github_app: GithubAppSection,
     #[serde(default)]
     pub background: BackgroundSection,
@@ -148,12 +145,6 @@ impl Default for KubernetesSection {
             image_pull_secret: None,
         }
     }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct ServiceSection {
-    #[serde(default)]
-    pub repositories: HashMap<RepoName, ServiceRepositoryConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

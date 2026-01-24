@@ -139,7 +139,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let config_path = config_path();
     let app_config = AppConfig::load(&config_path)?;
-    let service_state = ServiceState::from_config(&app_config.service);
+    let service_state = ServiceState::default();
     let github_app = build_github_app_client(&app_config.github_app)?;
 
     // Resolve OpenAI API key

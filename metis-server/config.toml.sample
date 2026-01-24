@@ -29,13 +29,6 @@ connect_timeout_secs = 5
 # Idle timeout (seconds) before reclaiming a connection; set to 0 to disable.
 idle_timeout_secs = 300
 
-[service.repositories]
-# Example repository configuration; add additional tables per organization/repo name.
-[service.repositories."dourolabs/metis"]
-remote_url = "https://github.com/dourolabs/metis.git"
-default_branch = "main"
-default_image = "metis-worker:latest"
-
 [github_app]
 # GitHub App configuration for device flow and API access.
 # All fields are required; use the values from your GitHub App settings.

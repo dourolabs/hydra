@@ -2,7 +2,7 @@ use crate::{
     app::{AppState, ServiceState},
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
-        KubernetesSection, MetisSection, ServiceSection,
+        KubernetesSection, MetisSection,
     },
     job_engine::JobEngine,
     run_with_state,
@@ -49,7 +49,6 @@ pub fn test_app_config() -> AppConfig {
             memory_limit: "1Gi".to_string(),
         },
         database: DatabaseSection::default(),
-        service: ServiceSection::default(),
         github_app: GithubAppSection {
             app_id: 1,
             client_id: "client-id".to_string(),

@@ -161,6 +161,7 @@ impl From<BundleResolutionError> for ApiError {
             | BundleResolutionError::UnsupportedBundleSpec => {
                 ApiError::bad_request(error.to_string())
             }
+            BundleResolutionError::RepositoryLookup { .. } => ApiError::internal(error.to_string()),
         }
     }
 }

@@ -1,5 +1,6 @@
-use super::{AppState, BundleResolutionError, ResolvedBundle, ServiceState};
+use super::{AppState, BundleResolutionError, ResolvedBundle};
 use crate::domain::jobs::{Bundle, BundleSpec, Task};
+use crate::store::StoreError;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -22,15 +23,13 @@ pub enum TaskResolutionError {
 
 async fn resolve_context(
     task: &Task,
-    service_state: &ServiceState,
+    app_state: &AppState,
 ) -> Result<ResolvedBundle, BundleResolutionError> {
-    let mut resolved = service_state
-        .resolve_bundle_spec(task.context.clone())
-        .await?;
+    let mut resolved = app_state.resolve_bundle_spec(task.context.clone()).await?;
 
     let settings = &task.job_settings;
     if let Some(repo_name) = &settings.repo_name {
-        resolved = service_state
+        resolved = app_state
             .resolve_bundle_spec(BundleSpec::ServiceRepository {
                 name: repo_name.clone(),
                 rev: settings.branch.clone(),
@@ -105,10 +104,10 @@ fn resolve_env_vars(task: &Task, _resolved: &ResolvedBundle) -> HashMap<String, 
 
 async fn resolve_task(
     task: &Task,
-    service_state: &ServiceState,
+    app_state: &AppState,
     fallback_image: &str,
 ) -> Result<ResolvedTask, TaskResolutionError> {
-    let context = resolve_context(task, service_state).await?;
+    let context = resolve_context(task, app_state).await?;
     let image = resolve_image(task, &context, fallback_image)?;
     let env_vars = resolve_env_vars(task, &context);
 
@@ -122,6 +121,48 @@ async fn resolve_task(
 impl AppState {
     pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
         let fallback_image = &self.config.job.default_image;
-        resolve_task(task, self.service_state.as_ref(), fallback_image).await
+        resolve_task(task, self, fallback_image).await
+    }
+
+    pub async fn resolve_bundle_spec(
+        &self,
+        spec: BundleSpec,
+    ) -> Result<ResolvedBundle, BundleResolutionError> {
+        match spec {
+            BundleSpec::None => Ok(ResolvedBundle {
+                bundle: Bundle::None,
+                default_image: None,
+            }),
+            BundleSpec::GitRepository { url, rev } => Ok(ResolvedBundle {
+                bundle: Bundle::GitRepository { url, rev },
+                default_image: None,
+            }),
+            BundleSpec::ServiceRepository { name, rev } => {
+                let repository =
+                    self.repository_from_store(&name)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::RepositoryNotFound(_) => {
+                                BundleResolutionError::UnknownRepository(name.clone())
+                            }
+                            other => BundleResolutionError::RepositoryLookup {
+                                repo_name: name.clone(),
+                                source: other,
+                            },
+                        })?;
+
+                let resolved_rev = rev
+                    .or_else(|| repository.default_branch.clone())
+                    .unwrap_or_else(|| "main".to_string());
+
+                Ok(ResolvedBundle {
+                    bundle: Bundle::GitRepository {
+                        url: repository.remote_url.clone(),
+                        rev: resolved_rev,
+                    },
+                    default_image: repository.default_image.clone(),
+                })
+            }
+        }
     }
 }
