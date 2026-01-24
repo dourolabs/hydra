@@ -56,11 +56,6 @@ max_simultaneous = 1
 # Optional: override the worker image for this queue (falls back to job.default_image)
 image = "metis-worker:latest"
 
-# Optional environment variables that will be injected into the job alongside
-# METIS_ISSUE_ID and METIS_AGENT_NAME.
-[background.agent_queues.env_vars]
-#EXAMPLE_TOKEN = "secret"
-
 # Optional context bundle (defaults to none)
 #[background.agent_queues.context]
 #type = "git_repository"
