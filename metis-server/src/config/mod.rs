@@ -2,7 +2,6 @@ pub mod kube;
 
 pub use kube::build_kube_client;
 
-use crate::domain::jobs::BundleSpec;
 use anyhow::{Context, Result, ensure};
 use octocrab::models::AppId;
 use serde::Deserialize;
@@ -206,10 +205,6 @@ pub struct BackgroundSection {
 pub struct AgentQueueConfig {
     pub name: String,
     pub prompt: String,
-    #[serde(default = "default_bundle_spec")]
-    pub context: BundleSpec,
-    #[serde(default)]
-    pub image: Option<String>,
     #[serde(default = "default_agent_max_tries")]
     pub max_tries: u32,
     #[serde(default = "default_agent_max_simultaneous")]
@@ -313,10 +308,6 @@ const fn default_idle_timeout_secs() -> u64 {
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
-}
-
-fn default_bundle_spec() -> BundleSpec {
-    BundleSpec::None
 }
 
 const fn default_agent_max_tries() -> u32 {

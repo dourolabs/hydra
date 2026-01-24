@@ -53,14 +53,6 @@ prompt = "You are agent-a working on assigned issues."
 max_tries = 3
 # Maximum number of simultaneously running jobs for this queue (defaults to unlimited).
 max_simultaneous = 1
-# Optional: override the worker image for this queue (falls back to job.default_image)
-image = "metis-worker:latest"
-
-# Optional context bundle (defaults to none)
-#[background.agent_queues.context]
-#type = "git_repository"
-#url = "https://github.com/example/repo.git"
-#rev = "main"
 
 [background.github_poller]
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.

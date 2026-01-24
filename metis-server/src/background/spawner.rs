@@ -39,8 +39,6 @@ struct SpawnAttempt {
 pub struct AgentQueue {
     pub name: String,
     pub prompt: String,
-    pub context_spec: BundleSpec,
-    pub image: Option<String>,
     pub max_tries: u32,
     pub max_simultaneous: u32,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
@@ -51,26 +49,55 @@ impl AgentQueue {
         Self {
             name: config.name.clone(),
             prompt: config.prompt.clone(),
-            context_spec: config.context.clone(),
-            image: config.image.clone(),
             max_tries: config.max_tries,
             max_simultaneous: config.max_simultaneous,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
 
-    fn build_task(&self, issue_id: &IssueId, issue: &Issue) -> Task {
+    async fn build_task(
+        &self,
+        state: &AppState,
+        issue_id: &IssueId,
+        issue: &Issue,
+    ) -> anyhow::Result<Option<Task>> {
+        let repo_name = match issue.job_settings.repo_name.clone() {
+            Some(repo_name) => repo_name,
+            None => return Ok(None),
+        };
+
+        let image = match issue.job_settings.image.as_ref() {
+            Some(image) if !image.trim().is_empty() => image.trim().to_string(),
+            _ => return Ok(None),
+        };
+
+        let repository = state
+            .repository_from_store(&repo_name)
+            .await
+            .context("failed to load repository for issue task")?;
+        let rev = issue
+            .job_settings
+            .branch
+            .clone()
+            .or_else(|| repository.default_branch.clone());
+
         let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
-        Task::new(
+        let mut job_settings = issue.job_settings.clone();
+        job_settings.image = Some(image);
+
+        Ok(Some(Task::new(
             self.prompt.clone(),
-            self.context_spec.clone(),
+            BundleSpec::ServiceRepository {
+                name: repo_name,
+                rev,
+            },
             Some(issue_id.clone()),
-            self.image.clone(),
+            None,
             env_vars,
-            Some(issue.job_settings.clone()),
-        )
+            Some(job_settings),
+        )))
     }
 
     async fn register_spawn_attempt(
@@ -166,6 +193,11 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
+            let maybe_task = self.build_task(state, &issue_id, &issue).await?;
+            let Some(task) = maybe_task else {
+                continue;
+            };
+
             let max_tries = self.max_tries_for_issue(&issue);
             if !self
                 .register_spawn_attempt(&issue_id, issue.status, max_tries)
@@ -174,7 +206,6 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let task = self.build_task(&issue_id, &issue);
             tasks.push(task);
             remaining_capacity -= 1;
         }
@@ -254,7 +285,7 @@ mod tests {
     use crate::{
         app::ServiceRepository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::{test_state, test_state_with_repo},
+        test::test_state_with_repo,
     };
     use chrono::Utc;
 
@@ -266,12 +297,36 @@ mod tests {
         AgentQueue {
             name: agent_name.to_string(),
             prompt: "Fix the issue".to_string(),
-            context_spec: BundleSpec::None,
-            image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
+    }
+
+    fn repository() -> (RepoName, ServiceRepository) {
+        let repo_name = RepoName::from_str("dourolabs/metis").expect("repo name should parse");
+        let repository = ServiceRepository::new(
+            repo_name.clone(),
+            "https://github.com/dourolabs/metis.git".to_string(),
+            Some("main".to_string()),
+            Some("repo-image".to_string()),
+        );
+
+        (repo_name, repository)
+    }
+
+    fn job_settings(repo_name: &RepoName) -> JobSettings {
+        JobSettings {
+            repo_name: Some(repo_name.clone()),
+            image: Some("repo-image".to_string()),
+            ..JobSettings::default()
+        }
+    }
+
+    async fn state_with_repository() -> anyhow::Result<(AppState, RepoName)> {
+        let (repo_name, repository) = repository();
+        let state = test_state_with_repo(repository).await?;
+        Ok((state, repo_name))
     }
 
     async fn record_completed_task(state: &AppState, task: Task) -> anyhow::Result<()> {
@@ -289,6 +344,7 @@ mod tests {
         status: IssueStatus,
         assignee: Option<&str>,
         dependencies: Vec<IssueDependency>,
+        repo_name: &RepoName,
     ) -> Issue {
         Issue::new(
             IssueType::Task,
@@ -297,7 +353,7 @@ mod tests {
             String::new(),
             status,
             assignee.map(str::to_string),
-            None,
+            Some(job_settings(repo_name)),
             Vec::new(),
             dependencies,
             Vec::new(),
@@ -323,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let assigned_issue_id = {
             let mut store = state.store.write().await;
             store
@@ -332,6 +388,7 @@ mod tests {
                     IssueStatus::Open,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?
         };
@@ -344,6 +401,7 @@ mod tests {
                     IssueStatus::InProgress,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?
         };
@@ -356,6 +414,7 @@ mod tests {
                     IssueStatus::Closed,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?;
         }
@@ -366,6 +425,7 @@ mod tests {
 
         let mut issue_ids = HashSet::new();
         let mut spawned_from_issue_ids = HashSet::new();
+        let default_branch = "main".to_string();
         for task in tasks {
             let Task {
                 prompt,
@@ -376,7 +436,13 @@ mod tests {
             } = task;
 
             assert_eq!(prompt, "Fix the issue".to_string());
-            assert_eq!(context, BundleSpec::None);
+            assert_eq!(
+                context,
+                BundleSpec::ServiceRepository {
+                    name: repo_name.clone(),
+                    rev: Some(default_branch.clone())
+                }
+            );
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -400,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_requeue_when_task_exists() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
@@ -409,6 +475,7 @@ mod tests {
                     IssueStatus::Open,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?
         };
@@ -440,11 +507,17 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let blocker_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(issue("Blocker", IssueStatus::Open, None, vec![]))
+                .add_issue(issue(
+                    "Blocker",
+                    IssueStatus::Open,
+                    None,
+                    vec![],
+                    &repo_name,
+                ))
                 .await?
         };
 
@@ -459,6 +532,7 @@ mod tests {
                         IssueDependencyType::BlockedOn,
                         blocker_id.clone(),
                     )],
+                    &repo_name,
                 ))
                 .await?;
         }
@@ -471,7 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_spawn_when_parent_task_running() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let parent_id = {
             let mut store = state.store.write().await;
             store
@@ -480,6 +554,7 @@ mod tests {
                     IssueStatus::Open,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?
         };
@@ -515,6 +590,7 @@ mod tests {
                         IssueDependencyType::ChildOf,
                         parent_id.clone(),
                     )],
+                    &repo_name,
                 ))
                 .await?;
         }
@@ -527,11 +603,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn does_not_spawn_when_repo_or_image_missing() -> anyhow::Result<()> {
+        let (state, repo_name) = state_with_repository().await?;
+        {
+            let mut store = state.store.write().await;
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Missing repo".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: None,
+                        remote_url: None,
+                        image: Some("metis-worker:latest".to_string()),
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+
+            store
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Missing image".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name),
+                        remote_url: None,
+                        image: None,
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
+                .await?;
+        }
+
+        let tasks = queue("agent-a").spawn(&state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn uses_job_settings_max_retries_override() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
         queue.max_tries = 3;
 
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         {
             let mut store = state.store.write().await;
             store
@@ -543,10 +677,10 @@ mod tests {
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
                     job_settings: JobSettings {
-                        repo_name: None,
+                        repo_name: Some(repo_name),
                         remote_url: None,
-                        image: None,
-                        branch: None,
+                        image: Some("metis-worker:latest".to_string()),
+                        branch: Some("main".to_string()),
                         max_retries: Some(1),
                         cpu_limit: None,
                         memory_limit: None,
@@ -573,7 +707,7 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_simultaneous = 1;
 
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
@@ -584,7 +718,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings::default(),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -624,7 +758,7 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_simultaneous = 2;
 
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let first_issue_id = {
             let mut store = state.store.write().await;
             store
@@ -635,7 +769,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings::default(),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -652,7 +786,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings::default(),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -695,7 +829,7 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_tries = 2;
 
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         {
             let mut store = state.store.write().await;
             store
@@ -704,6 +838,7 @@ mod tests {
                     IssueStatus::Open,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?;
         }
@@ -727,7 +862,7 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_tries = 1;
 
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
@@ -736,6 +871,7 @@ mod tests {
                     IssueStatus::Open,
                     Some("agent-a"),
                     vec![],
+                    &repo_name,
                 ))
                 .await?
         };
@@ -758,12 +894,10 @@ mod tests {
     }
 
     #[test]
-    fn builds_from_config_with_default_image() {
+    fn builds_from_config() {
         let config = AgentQueueConfig {
             name: "agent-config".to_string(),
             prompt: "Handle issues".to_string(),
-            context: BundleSpec::None,
-            image: None,
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
         };
@@ -772,45 +906,45 @@ mod tests {
 
         assert_eq!(queue.name, "agent-config");
         assert_eq!(queue.prompt, "Handle issues");
-        assert_eq!(queue.image, None);
+        assert_eq!(queue.max_tries, DEFAULT_AGENT_MAX_TRIES);
+        assert_eq!(queue.max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
     }
 
     #[tokio::test]
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
-        let remote_url = "https://github.com/dourolabs/metis.git".to_string();
-        let default_branch = "main".to_string();
-        let default_image = "repo-image".to_string();
-        let repository = ServiceRepository::new(
-            repo_name.clone(),
-            remote_url.clone(),
-            Some(default_branch.clone()),
-            Some(default_image.clone()),
-        );
+        let (repo_name, repository) = repository();
+        let default_branch = repository
+            .default_branch
+            .clone()
+            .unwrap_or_else(|| "main".into());
+        let default_image = "agent-image".to_string();
         let state = test_state_with_repo(repository).await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
-                .add_issue(issue(
-                    "Assigned",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                ))
+                .add_issue(Issue {
+                    issue_type: IssueType::Task,
+                    description: "Assigned".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: IssueStatus::Open,
+                    assignee: Some("agent-a".to_string()),
+                    job_settings: JobSettings {
+                        repo_name: Some(repo_name.clone()),
+                        remote_url: None,
+                        image: Some(default_image.clone()),
+                        branch: None,
+                        max_retries: None,
+                        cpu_limit: None,
+                        memory_limit: None,
+                    },
+                    todo_list: Vec::new(),
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                })
                 .await?
         };
-        let queue = AgentQueue {
-            name: "agent-a".to_string(),
-            prompt: "Do the thing".to_string(),
-            context_spec: BundleSpec::ServiceRepository {
-                name: repo_name.clone(),
-                rev: None,
-            },
-            image: None,
-            max_tries: DEFAULT_AGENT_MAX_TRIES,
-            max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            spawn_attempts: RwLock::new(HashMap::new()),
-        };
+        let queue = queue("agent-a");
 
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -820,13 +954,13 @@ mod tests {
             tasks[0].context,
             BundleSpec::ServiceRepository {
                 name: repo_name.clone(),
-                rev: None
+                rev: Some(default_branch.clone())
             }
         );
         assert_eq!(
             resolved.context.bundle,
             Bundle::GitRepository {
-                url: remote_url,
+                url: "https://github.com/dourolabs/metis.git".to_string(),
                 rev: default_branch,
             }
         );
@@ -845,7 +979,7 @@ mod tests {
 
     #[tokio::test]
     async fn sets_creator_github_token_env_var() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         {
             let mut store = state.store.write().await;
             store
@@ -856,7 +990,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings::default(),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -873,7 +1007,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_empty_creator_github_token_env_var() -> anyhow::Result<()> {
-        let state = test_state();
+        let (state, repo_name) = state_with_repository().await?;
         {
             let mut store = state.store.write().await;
             store
@@ -884,7 +1018,7 @@ mod tests {
                     progress: String::new(),
                     status: IssueStatus::Open,
                     assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings::default(),
+                    job_settings: job_settings(&repo_name),
                     todo_list: Vec::new(),
                     dependencies: vec![],
                     patches: Vec::new(),
