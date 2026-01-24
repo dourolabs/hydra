@@ -2,7 +2,10 @@ use anyhow::{anyhow, Context, Result};
 use metis_common::users::{ResolveUserRequest, Username};
 use std::{fs, future::Future, io::ErrorKind, path::PathBuf, pin::Pin};
 
-use crate::{client::MetisClientInterface, command::login};
+use crate::{
+    client::{MetisClientInterface, MetisClientUnauthenticated},
+    command::login,
+};
 
 pub const DEFAULT_AUTH_TOKEN_PATH: &str = "~/.local/share/metis/auth-token";
 
@@ -53,20 +56,21 @@ pub(crate) async fn ensure_auth_token(
     client: &dyn MetisClientInterface,
     token_path: &PathBuf,
 ) -> Result<String> {
-    ensure_auth_token_with_login(client, token_path, |client, token_path| {
+    let unauth_client = MetisClientUnauthenticated::new(client.base_url().as_str())?;
+    ensure_auth_token_with_login(&unauth_client, token_path, |client, token_path| {
         Box::pin(login::run(client, token_path))
     })
     .await
 }
 
 async fn ensure_auth_token_with_login<F>(
-    client: &dyn MetisClientInterface,
+    client: &MetisClientUnauthenticated,
     token_path: &PathBuf,
     login_runner: F,
 ) -> Result<String>
 where
     F: for<'a> Fn(
-        &'a dyn MetisClientInterface,
+        &'a MetisClientUnauthenticated,
         &'a PathBuf,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>,
 {
@@ -107,7 +111,7 @@ pub(crate) async fn resolve_auth_user(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MetisClient;
+    use crate::client::MetisClientUnauthenticated;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
 
@@ -116,7 +120,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost", String::new()).expect("client");
+        let client = MetisClientUnauthenticated::new("http://localhost").expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -148,7 +152,7 @@ mod tests {
         fs::write(&token_path, "   \n").expect("write auth token");
 
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost", String::new()).expect("client");
+        let client = MetisClientUnauthenticated::new("http://localhost").expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -178,7 +182,7 @@ mod tests {
         fs::write(&token_path, "  token-123 \n").expect("write auth token");
 
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost", String::new()).expect("client");
+        let client = MetisClientUnauthenticated::new("http://localhost").expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
