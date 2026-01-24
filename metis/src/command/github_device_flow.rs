@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::PathBuf,
+    path::Path,
     time::Duration,
 };
 use tokio::time::{sleep, Instant};
@@ -40,7 +40,10 @@ enum TokenPollState {
     Token(String),
 }
 
-pub async fn run(client: &MetisClientUnauthenticated, token_path: &PathBuf) -> Result<()> {
+pub async fn login_with_github_device_flow(
+    client: &MetisClientUnauthenticated,
+    token_path: &Path,
+) -> Result<MetisClient> {
     let client_id = fetch_github_client_id(client)
         .await
         .context("failed to fetch GitHub client id from server")?;
@@ -68,7 +71,7 @@ pub async fn run(client: &MetisClientUnauthenticated, token_path: &PathBuf) -> R
         token_path.display()
     );
 
-    Ok(())
+    Ok(auth_client)
 }
 
 async fn fetch_github_client_id(client: &MetisClientUnauthenticated) -> Result<String> {
@@ -179,7 +182,7 @@ async fn login_with_github_token(
 
 async fn exchange_and_store_token(
     client: &MetisClientUnauthenticated,
-    token_path: &PathBuf,
+    token_path: &Path,
     github_token: &str,
 ) -> Result<String> {
     let auth_token = login_with_github_token(client, github_token).await?;
@@ -187,7 +190,7 @@ async fn exchange_and_store_token(
     Ok(auth_token)
 }
 
-fn write_auth_token_file(token_path: &PathBuf, token: &str) -> Result<()> {
+fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
     let parent = token_path
         .parent()
         .ok_or_else(|| anyhow!("auth token path missing parent directory"))?;
