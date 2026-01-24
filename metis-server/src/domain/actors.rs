@@ -57,6 +57,7 @@ impl Actor {
             auth_token_salt: Some(auth_token_salt),
             user_or_worker: UserOrWorker::Username(username),
         };
+        let auth_token = Self::format_auth_token(&actor.name(), &auth_token);
         Ok((user, actor, auth_token))
     }
 
@@ -68,7 +69,16 @@ impl Actor {
     }
 
     pub fn verify_auth_token(&self, token: &str) -> bool {
-        self.auth_token_hash == Self::hash_auth_token(token)
+        let (actor_name, raw_token) = match token.split_once(':') {
+            Some((actor_name, raw_token)) if !actor_name.is_empty() && !raw_token.is_empty() => {
+                (actor_name, raw_token)
+            }
+            _ => return false,
+        };
+        if actor_name != self.name() {
+            return false;
+        }
+        self.auth_token_hash == Self::hash_auth_token(raw_token)
     }
 
     pub fn new_for_task(task_id: TaskId) -> (Actor, String) {
@@ -78,6 +88,7 @@ impl Actor {
             auth_token_salt: Some(auth_token_salt),
             user_or_worker: UserOrWorker::Task(task_id),
         };
+        let auth_token = Self::format_auth_token(&actor.name(), &auth_token);
         (actor, auth_token)
     }
 
@@ -97,6 +108,10 @@ impl Actor {
             write!(&mut encoded, "{byte:02x}").expect("writing to string should not fail");
         }
         encoded
+    }
+
+    fn format_auth_token(actor_name: &str, token: &str) -> String {
+        format!("{actor_name}:{token}")
     }
 
     pub fn parse_name(name: &str) -> Result<UserOrWorker, ActorError> {
@@ -195,7 +210,11 @@ mod tests {
             actor.auth_token_salt.as_deref(),
             Some(salt) if !salt.is_empty()
         ));
-        assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(&auth_token));
+        let (actor_name, raw_token) = auth_token
+            .split_once(':')
+            .expect("auth token should include actor name prefix");
+        assert_eq!(actor_name, actor.name());
+        assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(raw_token));
     }
 
     #[tokio::test]
@@ -229,5 +248,17 @@ mod tests {
             err,
             ActorError::InvalidActorName(name) if name == "u-"
         ));
+    }
+
+    #[test]
+    fn verify_auth_token_rejects_mismatched_prefix() {
+        let (actor, token) = Actor::new_for_task(TaskId::new());
+        let (_, raw_token) = token
+            .split_once(':')
+            .expect("auth token should include actor name prefix");
+        let mismatched = format!("w-{}:{raw_token}", TaskId::new());
+
+        assert!(actor.verify_auth_token(&token));
+        assert!(!actor.verify_auth_token(&mismatched));
     }
 }

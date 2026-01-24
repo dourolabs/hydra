@@ -1598,6 +1598,10 @@ mod tests {
             actor.auth_token_salt.as_deref(),
             Some(salt) if !salt.is_empty()
         ));
+        let (actor_name, _) = token
+            .split_once(':')
+            .expect("auth token should include actor name prefix");
+        assert_eq!(actor_name, actor.name());
         assert!(actor.verify_auth_token(&token));
 
         let fetched = store.get_actor(&actor.name()).await.unwrap();
