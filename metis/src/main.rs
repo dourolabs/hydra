@@ -7,8 +7,7 @@ use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
     command,
     config::{self, AppConfig},
-    constants,
-    github_device_flow,
+    constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
 
