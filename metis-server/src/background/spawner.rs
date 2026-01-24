@@ -301,7 +301,7 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::ServiceRepository,
+        app::ServiceRepositoryConfig,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::test_state_with_repo,
     };
@@ -321,10 +321,9 @@ mod tests {
         }
     }
 
-    fn repository() -> (RepoName, ServiceRepository) {
+    fn repository() -> (RepoName, ServiceRepositoryConfig) {
         let repo_name = RepoName::from_str("dourolabs/metis").expect("repo name should parse");
-        let repository = ServiceRepository::new(
-            repo_name.clone(),
+        let repository = ServiceRepositoryConfig::new(
             "https://github.com/dourolabs/metis.git".to_string(),
             Some("main".to_string()),
             Some("repo-image".to_string()),
@@ -343,7 +342,7 @@ mod tests {
 
     async fn state_with_repository() -> anyhow::Result<(AppState, RepoName)> {
         let (repo_name, repository) = repository();
-        let state = test_state_with_repo(repository).await?;
+        let state = test_state_with_repo(repo_name.clone(), repository).await?;
         Ok((state, repo_name))
     }
 
@@ -945,7 +944,7 @@ mod tests {
             .clone()
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
-        let state = test_state_with_repo(repository).await?;
+        let state = test_state_with_repo(repo_name.clone(), repository.clone()).await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store

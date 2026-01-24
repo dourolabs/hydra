@@ -29,8 +29,8 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use super::{
-    MergeQueueError, RepositoryError, ServiceRepository, ServiceRepositoryConfig,
-    ServiceRepositoryInfo, ServiceState, TaskResolutionError,
+    MergeQueueError, RepositoryError, ServiceRepositoryConfig, ServiceRepositoryInfo, ServiceState,
+    TaskResolutionError,
 };
 
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
@@ -237,23 +237,24 @@ impl AppState {
 
         Ok(repositories
             .into_iter()
-            .map(|(name, config)| ServiceRepository::from((name, config)).without_secret())
+            .map(ServiceRepositoryInfo::from)
             .collect())
     }
 
     pub async fn create_repository(
         &self,
-        repository: ServiceRepository,
-    ) -> Result<ServiceRepository, RepositoryError> {
+        name: RepoName,
+        config: ServiceRepositoryConfig,
+    ) -> Result<ServiceRepositoryInfo, RepositoryError> {
         {
             let mut store = self.store.write().await;
             store
                 .add_repository(
-                    repository.name.clone(),
+                    name.clone(),
                     ServiceRepositoryConfig::new(
-                        repository.remote_url.clone(),
-                        repository.default_branch.clone(),
-                        repository.default_image.clone(),
+                        config.remote_url.clone(),
+                        config.default_branch.clone(),
+                        config.default_image.clone(),
                     ),
                 )
                 .await
@@ -265,14 +266,14 @@ impl AppState {
                 })?;
         }
 
-        Ok(repository)
+        Ok(ServiceRepositoryInfo::from((name, config)))
     }
 
     pub async fn update_repository(
         &self,
         name: RepoName,
         config: ServiceRepositoryConfig,
-    ) -> Result<ServiceRepository, RepositoryError> {
+    ) -> Result<ServiceRepositoryInfo, RepositoryError> {
         {
             let mut store = self.store.write().await;
             store
@@ -289,7 +290,7 @@ impl AppState {
 
         self.service_state.clear_cache(&name).await;
 
-        Ok(ServiceRepository::from((name, config)))
+        Ok(ServiceRepositoryInfo::from((name, config)))
     }
 
     pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
@@ -1071,7 +1072,7 @@ impl AppState {
         service_repo_name: &RepoName,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
-        let repository = self
+        let config = self
             .repository_from_store(service_repo_name)
             .await
             .map_err(|source| match source {
@@ -1084,9 +1085,11 @@ impl AppState {
                 },
             })?;
 
-        self.service_state.ensure_cached(&repository).await?;
         self.service_state
-            .get_merge_queue(&repository, branch_name)
+            .ensure_cached(service_repo_name, &config)
+            .await?;
+        self.service_state
+            .get_merge_queue(service_repo_name, &config, branch_name)
             .await
     }
 
@@ -1096,7 +1099,7 @@ impl AppState {
         branch_name: &str,
         patch_id: PatchId,
     ) -> Result<MergeQueue, MergeQueueError> {
-        let repository = self
+        let config = self
             .repository_from_store(service_repo_name)
             .await
             .map_err(|source| match source {
@@ -1111,9 +1114,11 @@ impl AppState {
 
         let patch = self.load_patch(patch_id.clone()).await?;
 
-        self.service_state.ensure_cached(&repository).await?;
         self.service_state
-            .add_patch_to_merge_queue(&repository, branch_name, patch_id, &patch)
+            .ensure_cached(service_repo_name, &config)
+            .await?;
+        self.service_state
+            .add_patch_to_merge_queue(service_repo_name, &config, branch_name, patch_id, &patch)
             .await
     }
 
@@ -1125,10 +1130,9 @@ impl AppState {
     pub(crate) async fn repository_from_store(
         &self,
         name: &RepoName,
-    ) -> Result<ServiceRepository, StoreError> {
+    ) -> Result<ServiceRepositoryConfig, StoreError> {
         let store = self.store.read().await;
-        let config = store.get_repository(name).await?;
-        Ok(ServiceRepository::from((name.clone(), config)))
+        store.get_repository(name).await
     }
 
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {

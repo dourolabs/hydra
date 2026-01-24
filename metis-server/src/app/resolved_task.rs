@@ -86,7 +86,7 @@ impl AppState {
                 default_image: None,
             }),
             BundleSpec::ServiceRepository { name, rev } => {
-                let repository =
+                let repository_config =
                     self.repository_from_store(&name)
                         .await
                         .map_err(|source| match source {
@@ -100,15 +100,15 @@ impl AppState {
                         })?;
 
                 let resolved_rev = rev
-                    .or_else(|| repository.default_branch.clone())
+                    .or_else(|| repository_config.default_branch.clone())
                     .unwrap_or_else(|| "main".to_string());
 
                 Ok(ResolvedBundle {
                     bundle: Bundle::GitRepository {
-                        url: repository.remote_url.clone(),
+                        url: repository_config.remote_url.clone(),
                         rev: resolved_rev,
                     },
-                    default_image: repository.default_image.clone(),
+                    default_image: repository_config.default_image.clone(),
                 })
             }
         }

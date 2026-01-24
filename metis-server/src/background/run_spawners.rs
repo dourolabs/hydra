@@ -120,7 +120,7 @@ impl ScheduledWorker for RunSpawnersWorker {
 mod tests {
     use super::*;
     use crate::{
-        app::ServiceRepository,
+        app::ServiceRepositoryConfig,
         background::AgentQueue,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         domain::{
@@ -159,7 +159,7 @@ mod tests {
             Vec::new(),
         )
     }
-
+  
     fn make_task(prompt: &str) -> crate::store::Task {
         crate::store::Task::new(
             prompt.to_string(),
@@ -172,9 +172,8 @@ mod tests {
         )
     }
 
-    fn repository(repo_name: &RepoName) -> ServiceRepository {
-        ServiceRepository::new(
-            repo_name.clone(),
+    fn repository(_repo_name: &RepoName) -> ServiceRepositoryConfig {
+        ServiceRepositoryConfig::new(
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("agent-image".to_string()),
@@ -198,7 +197,7 @@ mod tests {
             agent_name,
         )))];
 
-        add_repository(&state, &repository(&repo_name)).await?;
+        add_repository(&state, repo_name.clone(), repository(&repo_name)).await?;
         {
             let mut store = state.store.write().await;
             store

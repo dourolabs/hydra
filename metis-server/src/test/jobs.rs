@@ -58,7 +58,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let state = test_state();
     let (repo_name, repo) = service_repository();
-    add_repository(&state, &repo).await?;
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -130,7 +130,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let state = test_state();
     let (repo_name, repo) = service_repository();
-    add_repository(&state, &repo).await?;
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -187,7 +187,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
     let state = test_state();
     let (repo_name, repo) = service_repository();
-    add_repository(&state, &repo).await?;
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -271,7 +271,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
     let state = test_state();
     let (repo_name, repo) = service_repository();
-    add_repository(&state, &repo).await?;
+    add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let store = state.store.clone();
     let server = spawn_test_server_with_state(state).await?;
