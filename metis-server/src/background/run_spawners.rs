@@ -27,7 +27,8 @@ impl RunSpawnersWorker {
 impl ScheduledWorker for RunSpawnersWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        if self.state.agents.is_empty() {
+        let agents = self.state.agent_queues().await;
+        if agents.is_empty() {
             info!(worker = WORKER_NAME, "no agents configured; worker idle");
             return WorkerOutcome::Idle;
         }
@@ -35,7 +36,7 @@ impl ScheduledWorker for RunSpawnersWorker {
         let mut processed = 0usize;
         let mut failure_reason: Option<String> = None;
 
-        for agent in &self.state.agents {
+        for agent in agents {
             match agent.spawn(&self.state).await {
                 Ok(tasks) => {
                     if tasks.is_empty() {
@@ -131,6 +132,7 @@ mod tests {
     };
     use metis_common::RepoName;
     use std::{str::FromStr, sync::Arc};
+    use tokio::sync::RwLock;
 
     fn agent_queue_config(name: &str) -> AgentQueueConfig {
         AgentQueueConfig {
@@ -193,9 +195,9 @@ mod tests {
         let agent_name = "static";
         let repo_name = RepoName::from_str("dourolabs/metis")?;
 
-        state.agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
-            agent_name,
-        )))];
+        state.agents = Arc::new(RwLock::new(vec![Arc::new(AgentQueue::from_config(
+            &agent_queue_config(agent_name),
+        ))]));
 
         add_repository(&state, repo_name.clone(), repository(&repo_name)).await?;
         {
@@ -230,9 +232,9 @@ mod tests {
         let agent_name = "failing";
         let repo_name = RepoName::from_str("missing/repo")?;
 
-        state.agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
-            agent_name,
-        )))];
+        state.agents = Arc::new(RwLock::new(vec![Arc::new(AgentQueue::from_config(
+            &agent_queue_config(agent_name),
+        ))]));
         {
             let mut store = state.store.write().await;
             store

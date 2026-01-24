@@ -37,7 +37,11 @@ fn print_agents_pretty(agents: &[AgentRecord], writer: &mut impl Write) -> Resul
 
     writeln!(writer, "Available agents:")?;
     for agent in agents {
-        writeln!(writer, "  - {}", agent.name)?;
+        writeln!(
+            writer,
+            "  - {}: {} (max_tries={}, max_simultaneous={})",
+            agent.name, agent.prompt, agent.max_tries, agent.max_simultaneous
+        )?;
     }
     writer.flush()?;
     Ok(())

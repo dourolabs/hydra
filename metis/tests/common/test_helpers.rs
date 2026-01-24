@@ -323,7 +323,7 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
             service_state: Arc::new(ServiceState::default()),
             store: Arc::new(RwLock::new(store)),
             job_engine: Arc::new(MockJobEngine::new()),
-            agents: Vec::new(),
+            agents: Arc::new(RwLock::new(Vec::new())),
         },
         auth_token,
     ))
