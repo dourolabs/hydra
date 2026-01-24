@@ -91,22 +91,6 @@ commands without manual approvals.
 
 ## Local Development
 
-### Running the Dioxus dashboard
-
-The Dioxus CLI is required to run the local dashboard server.
-
-1. **Install the Dioxus CLI**:
-   ```bash
-   cargo install dioxus-cli
-   ```
-
-2. **Start the Dioxus dev server**:
-   ```bash
-   cd metis-dashboard
-   export METIS_API_ORIGIN="http://localhost:8080"
-   dx serve
-   ```
-
 ### Postgres for local development
 
 Use the helper script to run a local Postgres container with persistent data in a Docker volume:
