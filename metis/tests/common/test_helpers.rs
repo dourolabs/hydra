@@ -1,7 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
-use metis_common::{jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId};
+use metis_common::{
+    constants::ENV_METIS_TOKEN, jobs::SearchJobsQuery, task_status::Status, RepoName, TaskId,
+};
 use metis_server::{
     app::{AppState, ServiceState},
     store::{MemoryStore, Store},
@@ -48,7 +50,7 @@ impl TestEnvironment {
                 .arg("-c")
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
-                .env("METIS_TOKEN", TEST_METIS_TOKEN)
+                .env(ENV_METIS_TOKEN, TEST_METIS_TOKEN)
                 .env_remove("METIS_ISSUE_ID")
                 .output()
                 .await
