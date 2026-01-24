@@ -1529,6 +1529,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
+            auth_token_salt: None,
             user_or_worker: UserOrWorker::Username(Username::from("ada")),
         };
 
@@ -1544,6 +1545,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
+            auth_token_salt: None,
             user_or_worker: UserOrWorker::Task(TaskId::new()),
         };
         let name = actor.name();
@@ -1592,6 +1594,10 @@ mod tests {
         let (actor, token) = store.create_actor_for_task(task_id.clone()).await.unwrap();
 
         assert_eq!(actor.user_or_worker, UserOrWorker::Task(task_id));
+        assert!(matches!(
+            actor.auth_token_salt.as_deref(),
+            Some(salt) if !salt.is_empty()
+        ));
         assert!(actor.verify_auth_token(&token));
 
         let fetched = store.get_actor(&actor.name()).await.unwrap();

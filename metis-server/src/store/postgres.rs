@@ -33,7 +33,7 @@ pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 2;
 pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
-pub const ACTOR_SCHEMA_VERSION: i32 = 1;
+pub const ACTOR_SCHEMA_VERSION: i32 = 2;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
