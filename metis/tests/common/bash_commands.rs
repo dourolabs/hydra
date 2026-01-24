@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use metis::worker_commands::WorkerCommands;
 
-use super::test_helpers::metis_bin;
+use super::test_helpers::{metis_bin, TEST_AUTH_TOKEN};
 
 #[derive(Clone, Debug)]
 pub struct CommandOutput {
@@ -46,6 +46,11 @@ impl BashCommands {
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<CommandOutput> {
+        let mut command_env = env.clone();
+        command_env
+            .entry("METIS_TOKEN".to_string())
+            .or_insert_with(|| TEST_AUTH_TOKEN.to_string());
+
         let first_token = command_string.split_whitespace().next();
         let command_to_run = if first_token == Some("metis") {
             let metis_path = metis_bin();
@@ -58,7 +63,7 @@ impl BashCommands {
             .arg("-c")
             .arg(&command_to_run)
             .current_dir(working_dir)
-            .envs(env)
+            .envs(&command_env)
             .output()
             .await
             .context("failed to spawn custom run command")?;

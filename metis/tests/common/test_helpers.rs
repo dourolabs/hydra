@@ -13,6 +13,9 @@ use tokio::sync::RwLock;
 
 use super::bash_commands::{BashCommands, CommandOutput};
 
+/// Dummy auth token to prevent CLI tests from triggering interactive login.
+pub const TEST_AUTH_TOKEN: &str = "test-auth-token";
+
 pub struct TestEnvironment {
     pub server: metis_server::test_utils::TestServer,
     pub app_config: AppConfig,
@@ -46,6 +49,7 @@ impl TestEnvironment {
                 .arg("-c")
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
+                .env("METIS_TOKEN", TEST_AUTH_TOKEN)
                 .env_remove("METIS_ISSUE_ID")
                 .output()
                 .await
@@ -143,7 +147,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
             url: server_url.clone(),
         },
     };
-    let client = MetisClient::from_config(&app_config, String::new())?;
+    let client = MetisClient::from_config(&app_config, TEST_AUTH_TOKEN)?;
 
     Ok(TestEnvironment {
         server,

@@ -12,6 +12,8 @@ use metis_server::test_utils;
 use std::{fs, path::Path};
 use tempfile::tempdir;
 
+const TEST_AUTH_TOKEN: &str = "test-auth-token";
+
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
@@ -62,6 +64,7 @@ async fn run_metis_command(args: &[&str], app_config: &AppConfig, home_dir: &Pat
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
+        .env("METIS_TOKEN", TEST_AUTH_TOKEN)
         .env("HOME", home_dir)
         .output()
         .await
