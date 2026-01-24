@@ -573,7 +573,7 @@ impl Store for MemoryStore {
         &mut self,
         github_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-utils"))]
         if let Some(github_client) = self.github_client.as_ref() {
             let (user, actor, auth_token) =
                 Actor::new_for_github_token_with_client(github_token, github_client)

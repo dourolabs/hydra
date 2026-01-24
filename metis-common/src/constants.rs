@@ -9,3 +9,5 @@ pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_BROWSER: &str = "BROWSER";
+pub const ENV_GITHUB_DEVICE_CODE_URL: &str = "METIS_GITHUB_DEVICE_CODE_URL";
+pub const ENV_GITHUB_ACCESS_TOKEN_URL: &str = "METIS_GITHUB_ACCESS_TOKEN_URL";

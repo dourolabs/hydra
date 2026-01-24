@@ -1,6 +1,10 @@
-use crate::domain::users::{
-    CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
-    ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, User, UserSummary, Username,
+use crate::domain::{
+    actors::UserOrWorker,
+    users::{
+        CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
+        ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, User, UserSummary,
+        Username,
+    },
 };
 use crate::{app::AppState, routes::jobs::ApiError, store::StoreError};
 use axum::{
@@ -138,18 +142,53 @@ pub async fn resolve_user(
     info!("resolve_user invoked");
 
     let store = state.store.read().await;
-    let user = store
-        .get_user_by_github_token(&github_token)
-        .await
-        .map_err(|err| match err {
-            StoreError::UserNotFoundForToken => {
-                ApiError::not_found("user not found for provided token".to_string())
+    let user = match store.get_user_by_github_token(&github_token).await {
+        Ok(user) => user,
+        Err(StoreError::UserNotFoundForToken) => {
+            let actor = store
+                .validate_auth_token(&github_token)
+                .await
+                .map_err(|err| match err {
+                    StoreError::InvalidAuthToken | StoreError::ActorNotFound(_) => {
+                        StoreError::UserNotFoundForToken
+                    }
+                    other => other,
+                })
+                .map_err(|err| match err {
+                    StoreError::UserNotFoundForToken => {
+                        ApiError::not_found("user not found for provided token".to_string())
+                    }
+                    other => {
+                        error!(error = %other, "failed to resolve user by token");
+                        ApiError::internal(anyhow::anyhow!(
+                            "failed to resolve user by token: {other}"
+                        ))
+                    }
+                })?;
+
+            match actor.user_or_worker {
+                UserOrWorker::Username(username) => {
+                    store.get_user(&username).await.map_err(|err| {
+                        error!(error = %err, "failed to resolve user by token");
+                        ApiError::internal(anyhow::anyhow!(
+                            "failed to resolve user by token: {err}"
+                        ))
+                    })?
+                }
+                UserOrWorker::Task(_) => {
+                    return Err(ApiError::not_found(
+                        "user not found for provided token".to_string(),
+                    ));
+                }
             }
-            other => {
-                error!(error = %other, "failed to resolve user by token");
-                ApiError::internal(anyhow::anyhow!("failed to resolve user by token: {other}"))
-            }
-        })?;
+        }
+        Err(other) => {
+            error!(error = %other, "failed to resolve user by token");
+            return Err(ApiError::internal(anyhow::anyhow!(
+                "failed to resolve user by token: {other}"
+            )));
+        }
+    };
 
     info!(username = %user.username, "resolve_user completed");
     let response: v1::users::ResolveUserResponse =

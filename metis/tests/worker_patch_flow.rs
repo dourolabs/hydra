@@ -6,7 +6,7 @@ use metis_common::{
 
 mod common;
 
-use common::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
+use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {
@@ -15,6 +15,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     let repo_arg = env.service_repo_name.to_string();
     let server_url = env.server.base_url();
 
+    env.login().await?;
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID=i-work --var {}={} {}",
         repo_arg, server_url, ENV_METIS_TOKEN, env.auth_token, prompt

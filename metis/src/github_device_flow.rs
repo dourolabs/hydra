@@ -18,6 +18,21 @@ const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const GITHUB_SCOPE: &str = "read:user";
 const USER_AGENT_VALUE: &str = "metis-cli";
 
+#[derive(Clone, Debug, Default)]
+pub struct DeviceFlowConfig {
+    pub device_code_url: Option<String>,
+    pub access_token_url: Option<String>,
+}
+
+impl DeviceFlowConfig {
+    pub fn new(device_code_url: Option<String>, access_token_url: Option<String>) -> Self {
+        Self {
+            device_code_url,
+            access_token_url,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct DeviceFlowResponse {
     device_code: String,
@@ -44,11 +59,25 @@ pub async fn login_with_github_device_flow(
     client: &MetisClientUnauthenticated,
     token_path: &Path,
 ) -> Result<MetisClient> {
+    login_with_github_device_flow_with_config(client, token_path, &DeviceFlowConfig::default())
+        .await
+}
+
+pub async fn login_with_github_device_flow_with_config(
+    client: &MetisClientUnauthenticated,
+    token_path: &Path,
+    config: &DeviceFlowConfig,
+) -> Result<MetisClient> {
     let client_id = fetch_github_client_id(client)
         .await
         .context("failed to fetch GitHub client id from server")?;
+    let device_code_url = config.device_code_url.as_deref().unwrap_or(DEVICE_CODE_URL);
+    let access_token_url = config
+        .access_token_url
+        .as_deref()
+        .unwrap_or(ACCESS_TOKEN_URL);
     let http = reqwest::Client::new();
-    let device_flow = start_device_flow(&http, &client_id).await?;
+    let device_flow = start_device_flow(&http, &client_id, device_code_url).await?;
 
     println!(
         "Open {} and enter code: {}",
@@ -56,12 +85,12 @@ pub async fn login_with_github_device_flow(
     );
     println!("Waiting for authorization...");
 
-    let token = poll_for_token(&http, &client_id, &device_flow).await?;
+    let token = poll_for_token(&http, &client_id, &device_flow, access_token_url).await?;
     let auth_token = exchange_and_store_token(client, token_path, &token).await?;
     let auth_client = MetisClient::new(client.base_url().as_str(), auth_token.clone())
         .context("failed to create authenticated client")?;
     let resolved_user = auth_client
-        .resolve_user(&ResolveUserRequest::new(auth_token))
+        .resolve_user(&ResolveUserRequest::new(token.clone()))
         .await
         .context("failed to resolve user from auth token")?;
 
@@ -82,9 +111,13 @@ async fn fetch_github_client_id(client: &MetisClientUnauthenticated) -> Result<S
     Ok(response.client_id)
 }
 
-async fn start_device_flow(http: &reqwest::Client, client_id: &str) -> Result<DeviceFlowResponse> {
+async fn start_device_flow(
+    http: &reqwest::Client,
+    client_id: &str,
+    device_code_url: &str,
+) -> Result<DeviceFlowResponse> {
     let response = http
-        .post(DEVICE_CODE_URL)
+        .post(device_code_url)
         .header(ACCEPT, "application/json")
         .header(USER_AGENT, USER_AGENT_VALUE)
         .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
@@ -104,6 +137,7 @@ async fn poll_for_token(
     http: &reqwest::Client,
     client_id: &str,
     device_flow: &DeviceFlowResponse,
+    access_token_url: &str,
 ) -> Result<String> {
     let expires_at = Instant::now() + Duration::from_secs(device_flow.expires_in);
     let mut interval = Duration::from_secs(device_flow.interval.max(1));
@@ -114,7 +148,7 @@ async fn poll_for_token(
         }
 
         let response = http
-            .post(ACCESS_TOKEN_URL)
+            .post(access_token_url)
             .header(ACCEPT, "application/json")
             .header(USER_AGENT, USER_AGENT_VALUE)
             .form(&[

@@ -9,7 +9,7 @@ use tempfile::tempdir;
 
 mod common;
 
-use common::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
+use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
@@ -30,6 +30,7 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
         ))
         .await?;
 
+    env.login().await?;
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
         repo_arg,
@@ -101,6 +102,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
         ))
         .await?;
 
+    env.login().await?;
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
         repo_arg,

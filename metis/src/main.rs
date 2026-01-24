@@ -9,7 +9,10 @@ use metis::{
     config::{self, AppConfig},
     constants, github_device_flow,
 };
-use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
+use metis_common::constants::{
+    ENV_BROWSER, ENV_GITHUB_ACCESS_TOKEN_URL, ENV_GITHUB_DEVICE_CODE_URL, ENV_METIS_SERVER_URL,
+    ENV_METIS_TOKEN,
+};
 
 #[derive(Parser)]
 #[command(
@@ -52,6 +55,26 @@ struct Cli {
     /// Browser command for opening links (defaults to $BROWSER).
     #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
     browser: Option<String>,
+
+    /// Override GitHub device flow device code URL (primarily for tests).
+    #[arg(
+        long = "github-device-code-url",
+        value_name = "URL",
+        env = ENV_GITHUB_DEVICE_CODE_URL,
+        global = true,
+        hide = true
+    )]
+    github_device_code_url: Option<String>,
+
+    /// Override GitHub device flow access token URL (primarily for tests).
+    #[arg(
+        long = "github-access-token-url",
+        value_name = "URL",
+        env = ENV_GITHUB_ACCESS_TOKEN_URL,
+        global = true,
+        hide = true
+    )]
+    github_access_token_url: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -140,7 +163,16 @@ async fn resolve_client(
         return MetisClient::from_config(app_config, token);
     }
 
-    github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
+    let device_flow_config = github_device_flow::DeviceFlowConfig::new(
+        cli.github_device_code_url.clone(),
+        cli.github_access_token_url.clone(),
+    );
+    github_device_flow::login_with_github_device_flow_with_config(
+        unauth_client,
+        token_path,
+        &device_flow_config,
+    )
+    .await
 }
 
 async fn dispatch(
@@ -243,6 +275,8 @@ mod tests {
             token_path: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
             token: None,
             browser: None,
+            github_device_code_url: None,
+            github_access_token_url: None,
             command: Some(super::Commands::Agents { pretty: false }),
         }
     }
