@@ -972,7 +972,7 @@ mod tests {
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
-        MetisClient::with_http_client(server.base_url(), HttpClient::new())
+        MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
             .expect("failed to create metis client")
     }
 

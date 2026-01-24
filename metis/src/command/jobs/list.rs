@@ -413,7 +413,8 @@ mod tests {
     async fn run_passes_spawned_from_query() {
         let spawned_from = issue_id("from-filter");
         let server = MockServer::start();
-        let client = MetisClient::new(server.base_url()).expect("should construct client");
+        let client =
+            MetisClient::new(server.base_url(), String::new()).expect("should construct client");
 
         let list_response = ListJobsResponse::new(vec![sample_job("t-job-1")]);
 

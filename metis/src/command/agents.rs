@@ -62,7 +62,8 @@ mod tests {
             then.status(200).json_body_obj(&list_agents_response);
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
 
         let agents = fetch_agents(&client).await?;
         mock.assert();

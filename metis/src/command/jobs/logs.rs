@@ -115,7 +115,8 @@ mod tests {
                 .body("data: job logs\n\n");
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
         run(&client, job_id.clone().into(), false).await?;
 
         log_mock.assert();
@@ -144,7 +145,8 @@ mod tests {
                 .body("data: issue job logs\n\n");
         });
 
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
         run(&client, issue_id.clone().into(), false).await?;
 
         list_jobs_mock.assert();
@@ -155,7 +157,8 @@ mod tests {
     #[tokio::test]
     async fn logs_rejects_unexpected_id_type() -> Result<()> {
         let server = MockServer::start();
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
         let unexpected_requests = server.mock(|when, then| {
             when.any_request();
             then.status(500);

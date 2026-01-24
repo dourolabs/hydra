@@ -116,7 +116,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost").expect("client");
+        let client = MetisClient::new("http://localhost", String::new()).expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -148,7 +148,7 @@ mod tests {
         fs::write(&token_path, "   \n").expect("write auth token");
 
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost").expect("client");
+        let client = MetisClient::new("http://localhost", String::new()).expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -178,7 +178,7 @@ mod tests {
         fs::write(&token_path, "  token-123 \n").expect("write auth token");
 
         let login_calls = AtomicUsize::new(0);
-        let client = MetisClient::new("http://localhost").expect("client");
+        let client = MetisClient::new("http://localhost", String::new()).expect("client");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

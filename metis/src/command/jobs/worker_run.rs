@@ -639,7 +639,8 @@ mod tests {
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
         });
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
 
         submit_patch_artifact_if_present(
             &client,
@@ -678,7 +679,8 @@ mod tests {
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456")));
         });
-        let client = MetisClient::with_http_client(server.base_url(), HttpClient::new())?;
+        let client =
+            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
         let job_id = task_id("t-job-456");
         let repo_name = RepoName::from_str("dourolabs/example")?;
         submit_patch_artifact_if_present(
