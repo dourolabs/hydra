@@ -72,6 +72,7 @@ struct JobDisplay {
 #[derive(Clone, PartialEq)]
 struct IssueRecord {
     id: IssueId,
+    issue_type: IssueType,
     description: String,
     progress: String,
     status: IssueStatus,
@@ -277,11 +278,13 @@ impl Default for DashboardState {
 
         let mut running_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut running_issue_panel);
+        running_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
         let mut user_unowned_issue_panel = PanelState::new();
         configure_status_panel_keybindings(&mut user_unowned_issue_panel);
         user_unowned_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
         let mut completed_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut completed_issue_panel);
+        completed_issue_panel.register_keybinding(KeyCode::Enter, KeyModifiers::NONE, "Open PR");
 
         let mut state = Self {
             jobs: Vec::new(),
@@ -506,6 +509,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if let Some(issue_id) = merge_request_pr_open_id(key, state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: Some(issue_id),
+                };
+            }
+
             let submission = match state.selected_panel {
                 PanelFocus::NewIssue => handle_issue_draft_key(key, state),
                 PanelFocus::UserOwned | PanelFocus::Running | PanelFocus::Completed => {
@@ -609,6 +620,25 @@ fn is_issue_pr_open_key(key: KeyEvent, state: &DashboardState) -> bool {
 
     matches!(state.selected_panel, PanelFocus::UserOwned)
         && selected_issue_id(state, PanelFocus::UserOwned).is_some()
+}
+
+fn merge_request_pr_open_id(key: KeyEvent, state: &DashboardState) -> Option<IssueId> {
+    if key.code != KeyCode::Enter || !key.modifiers.is_empty() {
+        return None;
+    }
+
+    match state.selected_panel {
+        PanelFocus::Running | PanelFocus::Completed => {}
+        _ => return None,
+    }
+
+    let issue_id = selected_issue_id(state, state.selected_panel)?;
+    let issue = state.issues.iter().find(|issue| issue.id == issue_id)?;
+    if issue.issue_type == IssueType::MergeRequest {
+        Some(issue.id.clone())
+    } else {
+        None
+    }
 }
 
 fn selection_key_delta(key: KeyEvent) -> Option<i32> {
@@ -1868,6 +1898,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     let issue = record.issue;
     Some(IssueRecord {
         id: record.id,
+        issue_type: issue.issue_type,
         description: issue.description,
         progress: issue.progress,
         status: issue.status,
@@ -2626,6 +2657,7 @@ mod tests {
     fn issue(id: &str, status: IssueStatus, dependencies: Vec<IssueDependency>) -> IssueRecord {
         IssueRecord {
             id: issue_id(id),
+            issue_type: IssueType::Task,
             description: id.to_string(),
             progress: String::new(),
             status,
@@ -2638,11 +2670,30 @@ mod tests {
     fn issue_with_assignee(id: &str, status: IssueStatus, assignee: Option<&str>) -> IssueRecord {
         IssueRecord {
             id: issue_id(id),
+            issue_type: IssueType::Task,
             description: id.to_string(),
             progress: String::new(),
             status,
             assignee: assignee.map(str::to_string),
             dependencies: Vec::new(),
+            patches: Vec::new(),
+        }
+    }
+
+    fn issue_with_type(
+        id: &str,
+        issue_type: IssueType,
+        status: IssueStatus,
+        dependencies: Vec<IssueDependency>,
+    ) -> IssueRecord {
+        IssueRecord {
+            id: issue_id(id),
+            issue_type,
+            description: id.to_string(),
+            progress: String::new(),
+            status,
+            assignee: None,
+            dependencies,
             patches: Vec::new(),
         }
     }
@@ -2872,6 +2923,7 @@ mod tests {
     fn issue_lines_include_progress() {
         let issues = vec![IssueRecord {
             id: issue_id("i-progress"),
+            issue_type: IssueType::Task,
             description: "investigate logs".into(),
             progress: "drafting tests".into(),
             status: IssueStatus::Open,
@@ -2936,6 +2988,73 @@ mod tests {
 
         assert_eq!(outcome.open_issue_pr, Some(issue_id("i-0")));
         assert!(outcome.submission.is_none());
+    }
+
+    #[test]
+    fn enter_on_running_merge_request_requests_pr_open() {
+        let issue = issue_with_type(
+            "i-merge",
+            IssueType::MergeRequest,
+            IssueStatus::Open,
+            Vec::new(),
+        );
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert_eq!(outcome.open_issue_pr, Some(issue_id("i-merge")));
+    }
+
+    #[test]
+    fn enter_on_completed_merge_request_requests_pr_open() {
+        let issue = issue_with_type(
+            "i-merge",
+            IssueType::MergeRequest,
+            IssueStatus::Closed,
+            Vec::new(),
+        );
+        let completed_issue_lines = build_completed_issue_lines(&[issue.clone()], &[]);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            completed_issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Completed;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert_eq!(outcome.open_issue_pr, Some(issue_id("i-merge")));
+    }
+
+    #[test]
+    fn enter_on_running_non_merge_request_does_not_open_pr() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(outcome.open_issue_pr.is_none());
     }
 
     #[test]
@@ -3374,6 +3493,7 @@ mod tests {
         let issues = vec![
             IssueRecord {
                 id: issue_id("i-root"),
+                issue_type: IssueType::Task,
                 description: "i-root".to_string(),
                 progress: String::new(),
                 status: IssueStatus::Open,
@@ -3383,6 +3503,7 @@ mod tests {
             },
             IssueRecord {
                 id: issue_id("i-child"),
+                issue_type: IssueType::Task,
                 description: "i-child".to_string(),
                 progress: String::new(),
                 status: IssueStatus::Open,
