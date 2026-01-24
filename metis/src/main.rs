@@ -32,8 +32,22 @@ struct Cli {
     server_url: Option<String>,
 
     /// Path to the auth token file (defaults to ~/.local/share/metis/auth-token).
-    #[arg(long = "token", value_name = "PATH", global = true, default_value = auth::DEFAULT_AUTH_TOKEN_PATH)]
-    token: String,
+    #[arg(
+        long = "token-path",
+        value_name = "PATH",
+        global = true,
+        default_value = auth::DEFAULT_AUTH_TOKEN_PATH
+    )]
+    token_path: String,
+
+    /// Auth token value (also via METIS_TOKEN).
+    #[arg(
+        long = "token",
+        env = "METIS_TOKEN",
+        value_name = "TOKEN",
+        global = true
+    )]
+    token: Option<String>,
 
     /// Browser command for opening links (defaults to $BROWSER).
     #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
@@ -102,7 +116,7 @@ async fn main() -> Result<()> {
     let app_config = load_app_config(&cli)?;
     let client = MetisClient::from_config(&app_config, String::new())?;
     let unauth_client = MetisClientUnauthenticated::from_config(&app_config)?;
-    let token_path = config::expand_path(PathBuf::from(&cli.token));
+    let token_path = config::expand_path(PathBuf::from(&cli.token_path));
 
     dispatch(cli, &client, &unauth_client, &app_config, &token_path).await
 }
@@ -186,7 +200,8 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
-            token: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            token_path: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            token: None,
             browser: None,
             command: Some(super::Commands::Agents { pretty: false }),
         }
