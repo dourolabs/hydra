@@ -2931,6 +2931,8 @@ mod tests {
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn job_with_status(id: &str, status: Status, offset_seconds: i64) -> JobRecord {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
         let mut log = TaskStatusLog::new(Status::Pending, now);
@@ -4665,7 +4667,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::new(server.base_url(), String::new()).expect("failed to create client");
+            MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("failed to create client");
 
         let submission = IssueSubmission {
             prompt: "Draft release notes".to_string(),

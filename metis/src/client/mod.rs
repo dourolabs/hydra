@@ -1278,6 +1278,8 @@ mod tests {
     use serde_json::json;
     use std::str::FromStr;
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     #[tokio::test]
     async fn list_repositories_fetches_config() -> Result<()> {
         let server = MockServer::start();
@@ -1295,7 +1297,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         let response = client.list_repositories().await?;
 
@@ -1335,7 +1337,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         let response = client.create_repository(&request).await?;
 
@@ -1371,7 +1373,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         let error = client
             .update_repository(&repo_name, &request)

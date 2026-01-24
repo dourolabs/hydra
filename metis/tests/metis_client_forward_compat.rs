@@ -23,11 +23,13 @@ use metis_common::{
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
 
+const TEST_METIS_TOKEN: &str = "test-metis-token";
+
 #[tokio::test]
 async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let server = MockServer::start();
     let client =
-        MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+        MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
     let unauth_client =
         MetisClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())?;
 

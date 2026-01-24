@@ -509,6 +509,8 @@ mod tests {
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, path::Path, str::FromStr};
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn init_git_repo(repo_path: &Path) -> Result<String> {
         Repository::init(repo_path).context("failed to init git repo for test")?;
         git_configure_repo(repo_path, "Test User", "test@example.com")?;
@@ -640,7 +642,7 @@ mod tests {
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
         });
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         submit_patch_artifact_if_present(
             &client,
@@ -680,7 +682,7 @@ mod tests {
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-456")));
         });
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let job_id = task_id("t-job-456");
         let repo_name = RepoName::from_str("dourolabs/example")?;
         submit_patch_artifact_if_present(

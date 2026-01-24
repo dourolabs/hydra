@@ -233,6 +233,8 @@ mod tests {
     use serde_json::json;
     use std::str::FromStr;
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn sample_upsert_args() -> UpsertRepositoryArgs {
         UpsertRepositoryArgs {
             name: RepoName::from_str("dourolabs/metis").unwrap(),
@@ -254,7 +256,7 @@ mod tests {
     }
 
     fn mock_client(server: &MockServer) -> MetisClient {
-        MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+        MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
             .expect("mock client creation should not fail")
     }
 

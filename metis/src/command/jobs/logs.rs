@@ -75,6 +75,8 @@ mod tests {
     use reqwest::Client as HttpClient;
     use std::{collections::HashMap, str::FromStr};
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn task_id(value: &str) -> TaskId {
         ids::task_id(value)
     }
@@ -116,7 +118,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         run(&client, job_id.clone().into(), false).await?;
 
         log_mock.assert();
@@ -146,7 +148,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         run(&client, issue_id.clone().into(), false).await?;
 
         list_jobs_mock.assert();
@@ -158,7 +160,7 @@ mod tests {
     async fn logs_rejects_unexpected_id_type() -> Result<()> {
         let server = MockServer::start();
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
         let unexpected_requests = server.mock(|when, then| {
             when.any_request();
             then.status(500);
