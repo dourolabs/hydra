@@ -170,10 +170,13 @@ async fn login_with_github_token(
     token: &str,
 ) -> Result<String> {
     let request = LoginRequest::new(token.to_string());
-    let (auth_token, _client) = client
-        .login(&request)
-        .await
-        .context("failed to exchange GitHub token for Metis login token")?;
+    let (auth_token, _client) = MetisClient::login_with_http_client(
+        client.base_url().as_str(),
+        client.http_client().clone(),
+        &request,
+    )
+    .await
+    .context("failed to exchange GitHub token for Metis login token")?;
     Ok(auth_token)
 }
 

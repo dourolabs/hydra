@@ -218,41 +218,6 @@ impl MetisClientUnauthenticated {
         &self.base_url
     }
 
-    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
-    pub async fn login(&self, request: &LoginRequest) -> Result<(String, MetisClient)> {
-        self.login_with_http_client(self.http.clone(), request)
-            .await
-    }
-
-    /// Call `POST /v1/login` using a custom `reqwest::Client`.
-    pub async fn login_with_http_client(
-        &self,
-        http: HttpClient,
-        request: &LoginRequest,
-    ) -> Result<(String, MetisClient)> {
-        let url = self
-            .endpoint("/v1/login")
-            .with_context(|| "failed to construct login endpoint URL")?;
-        let response = http
-            .post(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit login request")?
-            .error_for_status_with_body("metis-server rejected login request")
-            .await?;
-
-        let login_response = response
-            .json::<LoginResponse>()
-            .await
-            .context("failed to decode login response")?;
-        let auth_token = login_response.login_token.clone();
-        let client =
-            MetisClient::with_http_client(self.base_url.as_str(), auth_token.clone(), http)?;
-
-        Ok((auth_token, client))
-    }
-
     /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.
     pub async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
         let url = self.endpoint("/v1/github/app/client-id")?;
@@ -281,6 +246,49 @@ impl MetisClientUnauthenticated {
 }
 
 impl MetisClient {
+    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
+    pub async fn login(
+        base_url: impl AsRef<str>,
+        request: &LoginRequest,
+    ) -> Result<(String, MetisClient)> {
+        Self::login_with_http_client(base_url, HttpClient::new(), request).await
+    }
+
+    /// Call `POST /v1/login` using a custom `reqwest::Client`.
+    pub async fn login_with_http_client(
+        base_url: impl AsRef<str>,
+        http: HttpClient,
+        request: &LoginRequest,
+    ) -> Result<(String, MetisClient)> {
+        let base_url_ref = base_url.as_ref();
+        let url = Url::parse(base_url_ref)
+            .with_context(|| format!("invalid Metis server URL '{base_url_ref}'"))?;
+        let login_url = url
+            .join("/v1/login")
+            .with_context(|| "failed to construct login endpoint URL")?;
+        let response = http
+            .post(login_url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit login request")?
+            .error_for_status_with_body("metis-server rejected login request")
+            .await?;
+
+        let login_response = response
+            .json::<LoginResponse>()
+            .await
+            .context("failed to decode login response")?;
+        let auth_token = login_response.login_token.clone();
+        let client = MetisClient {
+            base_url: url,
+            http,
+            auth_token: auth_token.clone(),
+        };
+
+        Ok((auth_token, client))
+    }
+
     /// Construct a new client using the server URL from the CLI configuration.
     pub fn from_config(config: &AppConfig, auth_token: impl Into<String>) -> Result<Self> {
         Self::new(&config.server.url, auth_token)
