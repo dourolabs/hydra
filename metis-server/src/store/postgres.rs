@@ -940,32 +940,6 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        let mut users = self
-            .fetch_payloads_with_ids::<User>(TABLE_USERS, "user", USER_SCHEMA_VERSION)
-            .await?
-            .into_iter()
-            .map(|(_, user)| user)
-            .collect::<Vec<_>>();
-        users.sort_by(|a, b| a.username.cmp(&b.username));
-        Ok(users)
-    }
-
-    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError> {
-        let query = format!("DELETE FROM {TABLE_USERS} WHERE id = $1");
-        let result = sqlx::query(&query)
-            .bind(username.as_str())
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        if result.rows_affected() == 0 {
-            return Err(StoreError::UserNotFound(username.clone()));
-        }
-
-        Ok(())
-    }
-
     async fn set_user_github_token(
         &mut self,
         username: &Username,
@@ -992,30 +966,6 @@ impl Store for PostgresStore {
         .await?;
 
         Ok(user)
-    }
-
-    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError> {
-        #[derive(sqlx::FromRow)]
-        struct PayloadRow {
-            schema_version: i32,
-            payload: Value,
-        }
-
-        let query = format!(
-            "SELECT schema_version, payload FROM {TABLE_USERS} WHERE payload->>'github_token' = $1"
-        );
-        let row = sqlx::query_as::<_, PayloadRow>(&query)
-            .bind(github_token)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let Some(row) = row else {
-            return Err(StoreError::UserNotFoundForToken);
-        };
-
-        ensure_schema_version("user", row.schema_version, USER_SCHEMA_VERSION)?;
-        serde_json::from_value(row.payload).map_err(map_serde_error("user"))
     }
 
     async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
@@ -1408,9 +1358,8 @@ mod tests {
         };
         store.add_user(user.clone()).await.unwrap();
 
-        let users = store.list_users().await.unwrap();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0], user);
+        let stored = store.get_user(&user.username).await.unwrap();
+        assert_eq!(stored, user);
 
         let username = Username::from("alice");
         let updated = store
@@ -1420,10 +1369,8 @@ mod tests {
         assert_eq!(updated.github_token, "new-token");
         assert_eq!(updated.github_user_id, Some(202));
 
-        store.delete_user(&username).await.unwrap();
-        assert!(store.list_users().await.unwrap().is_empty());
-
-        let err = store.delete_user(&username).await.unwrap_err();
-        assert!(matches!(err, StoreError::UserNotFound(name) if name == username));
+        let missing = Username::from("missing-user");
+        let err = store.get_user(&missing).await.unwrap_err();
+        assert!(matches!(err, StoreError::UserNotFound(name) if name == missing));
     }
 }

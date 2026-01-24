@@ -329,7 +329,8 @@ pub async fn run(
             max_retries,
             clear_job_settings,
         } => {
-            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
+            let creator =
+                resolve_creator_username_for_update(client, token_path, &id, &dependencies).await?;
             update_issue(
                 client,
                 id,
@@ -909,6 +910,24 @@ async fn resolve_creator_username(
             } else {
                 bail!("Failed to resolve authenticated user and no parent issue found");
             }
+        }
+    }
+}
+
+async fn resolve_creator_username_for_update(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::PathBuf,
+    issue_id: &IssueId,
+    dependencies: &[IssueDependency],
+) -> Result<Username> {
+    match resolve_creator_username(client, token_path, dependencies).await {
+        Ok(creator) => Ok(creator),
+        Err(_) => {
+            let issue = client
+                .get_issue(issue_id)
+                .await
+                .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+            Ok(issue.issue.creator)
         }
     }
 }

@@ -1466,9 +1466,9 @@ mod tests {
         assert_eq!(response.user.username.as_str(), "octo");
 
         let store_read = state.store.read().await;
-        let users = store_read.list_users().await?;
+        let user = store_read.get_user(&Username::from("octo")).await?;
         let actors = store_read.list_actors().await?;
-        assert_eq!(users.len(), 1);
+        assert_eq!(user.username.as_str(), "octo");
         assert_eq!(actors.len(), 1);
 
         Ok(())

@@ -26,7 +26,7 @@ use crate::store::{
 use anyhow::Context;
 use axum::{
     Json, Router,
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
 };
 use jsonwebtoken::EncodingKey;
 use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
@@ -78,17 +78,7 @@ pub async fn run_with_state(
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),
         )
-        .route(
-            "/v1/users",
-            get(routes::users::list_users).post(routes::users::create_user),
-        )
         .route("/v1/login", post(routes::login::login))
-        .route("/v1/users/resolve", post(routes::users::resolve_user))
-        .route("/v1/users/:username", delete(routes::users::delete_user))
-        .route(
-            "/v1/users/:username/github-token",
-            put(routes::users::set_github_token),
-        )
         .route(
             "/v1/github/app/client-id",
             get(routes::github::get_github_app_client_id),

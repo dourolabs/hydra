@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use metis_common::{
-    issues::{IssueStatus, SearchIssuesQuery},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery,
+        UpsertIssueRequest,
+    },
     task_status::Status,
-    users::{CreateUserRequest, Username},
+    users::Username,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -23,12 +26,43 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, "token-123").context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            "token-123".to_string(),
-        ))
-        .await?;
+    let parent_issue = Issue::new(
+        IssueType::Task,
+        "parent issue".to_string(),
+        Username::from("worker"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let parent_id = env
+        .client
+        .create_issue(&UpsertIssueRequest::new(parent_issue, None))
+        .await?
+        .issue_id;
+    let child_issue = Issue::new(
+        IssueType::Task,
+        "open child".to_string(),
+        Username::from("worker"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id.clone(),
+        )],
+        Vec::new(),
+    );
+    let child_id = env
+        .client
+        .create_issue(&UpsertIssueRequest::new(child_issue, None))
+        .await?
+        .issue_id;
 
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
@@ -44,16 +78,12 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
         .context("expected job to be created for worker issue child test")?;
     wait_for_status(&env.client, &job_id, Status::Running).await?;
 
-    let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env.run_as_worker(
-        vec![
-            "metis issues create \"parent issue\" | tee parent_id.txt".to_string(),
-            "metis issues create --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
-                .to_string(),
-            "metis issues update $(cat parent_id.txt) --status closed".to_string(),
-        ],
-        job_id,
-    )
-    .await;
+    let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env
+        .run_as_worker(
+            vec![format!("metis issues update {parent_id} --status closed")],
+            job_id,
+        )
+        .await;
     let error = worker_result.expect_err("closing a parent with an open child should fail");
     let message = error.to_string();
     assert!(
@@ -70,11 +100,11 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
         .issues;
     let parent = issues
         .iter()
-        .find(|issue| issue.issue.description == "parent issue")
+        .find(|issue| issue.id == parent_id)
         .context("expected parent issue to exist")?;
     let child = issues
         .iter()
-        .find(|issue| issue.issue.description == "open child")
+        .find(|issue| issue.id == child_id)
         .context("expected child issue to exist")?;
     assert_eq!(parent.issue.status, IssueStatus::Open);
     assert_eq!(child.issue.status, IssueStatus::Open);
@@ -94,12 +124,23 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, "token-123").context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            "token-123".to_string(),
-        ))
-        .await?;
+    let todo_issue = Issue::new(
+        IssueType::Task,
+        "issue with todos".to_string(),
+        Username::from("worker"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let todo_issue_id = env
+        .client
+        .create_issue(&UpsertIssueRequest::new(todo_issue, None))
+        .await?
+        .issue_id;
 
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
@@ -118,9 +159,8 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env
         .run_as_worker(
             vec![
-                "metis issues create \"issue with todos\" | tee issue_id.txt".to_string(),
-                "metis issues todo $(cat issue_id.txt) --add \"write more tests\"".to_string(),
-                "metis issues update $(cat issue_id.txt) --status closed".to_string(),
+                format!("metis issues todo {todo_issue_id} --add \"write more tests\""),
+                format!("metis issues update {todo_issue_id} --status closed"),
             ],
             job_id,
         )
@@ -141,7 +181,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
         .issues;
     let issue = issues
         .iter()
-        .find(|issue| issue.issue.description == "issue with todos")
+        .find(|issue| issue.id == todo_issue_id)
         .context("expected todo issue to exist")?;
     assert_eq!(issue.issue.status, IssueStatus::Open);
     assert_eq!(issue.issue.todo_list.len(), 1);

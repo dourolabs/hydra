@@ -52,8 +52,6 @@ pub enum StoreError {
     UserNotFound(Username),
     #[error("User already exists: {0}")]
     UserAlreadyExists(Username),
-    #[error("User not found for token")]
-    UserNotFoundForToken,
     #[error("Actor not found: {0}")]
     ActorNotFound(String),
     #[error("Actor already exists: {0}")]
@@ -323,12 +321,6 @@ pub trait Store: Send + Sync {
     /// Adds a new user to the store.
     async fn add_user(&mut self, user: User) -> Result<(), StoreError>;
 
-    /// Lists all users in the store.
-    async fn list_users(&self) -> Result<Vec<User>, StoreError>;
-
-    /// Deletes a user from the store.
-    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError>;
-
     /// Updates the GitHub token for the requested user.
     async fn set_user_github_token(
         &mut self,
@@ -336,9 +328,6 @@ pub trait Store: Send + Sync {
         github_token: String,
         github_user_id: Option<u64>,
     ) -> Result<User, StoreError>;
-
-    /// Resolves a user by their GitHub token.
-    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError>;
 
     /// Gets a user by their username.
     async fn get_user(&self, username: &Username) -> Result<User, StoreError>;

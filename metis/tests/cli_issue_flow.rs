@@ -8,6 +8,8 @@ use metis_common::{
     issues::{IssueStatus, SearchIssuesQuery},
     users::{User, Username},
 };
+use metis_server::domain::issues::{Issue, IssueStatus as DomainIssueStatus, IssueType};
+use metis_server::domain::users::Username as DomainUsername;
 use metis_server::test_utils;
 use std::{fs, path::Path};
 use tempfile::tempdir;
@@ -17,11 +19,24 @@ const TEST_METIS_TOKEN: &str = "token-123";
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
-    {
+    let parent_id = {
         let mut store = state.store.write().await;
         let user = User::new(Username::from("test-user"), TEST_METIS_TOKEN.to_string());
         store.add_user(user.into()).await?;
-    }
+        let parent = Issue::new(
+            IssueType::Task,
+            "parent issue".to_string(),
+            DomainUsername::from("test-user"),
+            String::new(),
+            DomainIssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        store.add_issue(parent).await?
+    };
     let server = test_utils::spawn_test_server_with_state(state).await?;
     let app_config = AppConfig {
         server: ServerSection {
@@ -38,7 +53,13 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let description = "integration flow issue";
 
     run_metis_command(
-        &["issues", "create", description],
+        &[
+            "issues",
+            "create",
+            "--deps",
+            &format!("child-of:{parent_id}"),
+            description,
+        ],
         &app_config,
         temp_home.path(),
     )

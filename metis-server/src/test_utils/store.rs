@@ -196,24 +196,12 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        fail()
-    }
-
-    async fn delete_user(&mut self, _username: &Username) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn set_user_github_token(
         &mut self,
         _username: &Username,
         _github_token: String,
         _github_user_id: Option<u64>,
     ) -> Result<User, StoreError> {
-        fail()
-    }
-
-    async fn get_user_by_github_token(&self, _github_token: &str) -> Result<User, StoreError> {
         fail()
     }
 
