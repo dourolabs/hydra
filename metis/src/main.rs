@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{fs, io::ErrorKind, path::PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     auth,
@@ -114,11 +114,35 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let app_config = load_app_config(&cli)?;
-    let client = MetisClient::from_config(&app_config, String::new())?;
     let unauth_client = MetisClientUnauthenticated::from_config(&app_config)?;
     let token_path = config::expand_path(PathBuf::from(&cli.token_path));
+    let client = resolve_client(&cli, &app_config, &unauth_client, &token_path).await?;
 
     dispatch(cli, &client, &unauth_client, &app_config, &token_path).await
+}
+
+async fn resolve_client(
+    cli: &Cli,
+    app_config: &AppConfig,
+    unauth_client: &MetisClientUnauthenticated,
+    token_path: &PathBuf,
+) -> Result<MetisClient> {
+    if let Some(token) = cli
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        command::github_device_flow::write_auth_token_file(token_path, token)
+            .context("failed to store auth token from --token")?;
+        return MetisClient::from_config(app_config, token.to_string());
+    }
+
+    if let Some(token) = read_token_from_path(token_path)? {
+        return MetisClient::from_config(app_config, token);
+    }
+
+    command::github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
 }
 
 async fn dispatch(
@@ -188,11 +212,30 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
     AppConfig::load(&config_path)
 }
 
+fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
+    match fs::read_to_string(token_path) {
+        Ok(token) => {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(anyhow!(
+            "failed to read auth token from {}: {err}",
+            token_path.display()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{load_app_config, resolve_command, Cli, Commands};
+    use super::{load_app_config, read_token_from_path, resolve_command, Cli, Commands};
     use crate::{auth, constants::DEFAULT_CONFIG_FILE};
     use clap::Parser;
+    use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -247,6 +290,35 @@ mod tests {
         };
         let config = load_app_config(&cli).expect("config should load from file");
         assert_eq!(config.server.url, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn read_token_from_path_returns_none_when_missing() {
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("missing-token");
+
+        let token = read_token_from_path(&token_path).expect("read token");
+        assert!(token.is_none());
+    }
+
+    #[test]
+    fn read_token_from_path_returns_none_when_empty() {
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("auth-token");
+        fs::write(&token_path, "   \n").expect("write token");
+
+        let token = read_token_from_path(&token_path).expect("read token");
+        assert!(token.is_none());
+    }
+
+    #[test]
+    fn read_token_from_path_trims_contents() {
+        let temp = tempdir().expect("tempdir");
+        let token_path = temp.path().join("auth-token");
+        fs::write(&token_path, "  token-123 \n").expect("write token");
+
+        let token = read_token_from_path(&token_path).expect("read token");
+        assert_eq!(token, Some("token-123".to_string()));
     }
 
     #[test]
