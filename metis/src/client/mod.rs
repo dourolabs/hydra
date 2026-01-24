@@ -325,7 +325,7 @@ impl MetisClient {
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
-        builder.bearer_auth(&self.auth_token)
+        builder.header(header::AUTHORIZATION, format!("Bearer {}", self.auth_token))
     }
 
     /// Call the `/health` endpoint and return the reported status string.
@@ -1251,7 +1251,7 @@ mod tests {
     use serde_json::json;
     use std::str::FromStr;
 
-    const TEST_METIS_TOKEN: &str = "test-metis-token";
+    const TEST_METIS_TOKEN: &str = "u-test:test-metis-token";
 
     #[tokio::test]
     async fn list_repositories_fetches_config() -> Result<()> {
@@ -1263,10 +1263,14 @@ mod tests {
             Some("ghcr.io/example/repo:main".to_string()),
         )];
         let payload = ListRepositoriesResponse::new(repositories);
+        let payload_for_mock = payload.clone();
+        let expected_auth_header = format!("Bearer {TEST_METIS_TOKEN}");
 
-        let mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200).json_body_obj(&payload);
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/repositories")
+                .header("authorization", expected_auth_header.as_str());
+            then.status(200).json_body_obj(&payload_for_mock);
         });
 
         let client =
