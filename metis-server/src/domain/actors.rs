@@ -50,12 +50,14 @@ impl Actor {
             github_token,
         };
 
-        let (auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let user_or_worker = UserOrWorker::Username(username);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
-            user_or_worker: UserOrWorker::Username(username),
+            user_or_worker,
         };
+        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         Ok((user, actor, auth_token))
     }
 
@@ -67,16 +69,24 @@ impl Actor {
     }
 
     pub fn verify_auth_token(&self, token: &str) -> bool {
-        self.auth_token_hash == Self::hash_auth_token(token)
+        let Some((actor_name, raw_token)) = token.split_once(':') else {
+            return false;
+        };
+        if raw_token.is_empty() || actor_name != self.name() {
+            return false;
+        }
+        self.auth_token_hash == Self::hash_auth_token(raw_token)
     }
 
     pub fn new_for_task(task_id: TaskId) -> (Actor, String) {
-        let (auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
+        let user_or_worker = UserOrWorker::Task(task_id);
         let actor = Actor {
             auth_token_hash,
             auth_token_salt,
-            user_or_worker: UserOrWorker::Task(task_id),
+            user_or_worker,
         };
+        let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
     }
 
@@ -96,6 +106,10 @@ impl Actor {
             write!(&mut encoded, "{byte:02x}").expect("writing to string should not fail");
         }
         encoded
+    }
+
+    fn format_auth_token(actor: &Actor, raw_token: &str) -> String {
+        format!("{}:{raw_token}", actor.name())
     }
 
     pub fn parse_name(name: &str) -> Result<UserOrWorker, ActorError> {
@@ -191,7 +205,12 @@ mod tests {
             UserOrWorker::Username(Username::from("octo"))
         );
         assert!(!actor.auth_token_salt.is_empty());
-        assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(&auth_token));
+        let prefix = format!("{}:", actor.name());
+        let raw_token = auth_token
+            .strip_prefix(&prefix)
+            .expect("auth token should include actor name prefix");
+        assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(raw_token));
+        assert!(actor.verify_auth_token(&auth_token));
     }
 
     #[tokio::test]
@@ -225,5 +244,16 @@ mod tests {
             err,
             ActorError::InvalidActorName(name) if name == "u-"
         ));
+    }
+
+    #[test]
+    fn verify_auth_token_requires_matching_actor_name() {
+        let task_id = TaskId::new();
+        let (actor, auth_token) = Actor::new_for_task(task_id);
+
+        assert!(actor.verify_auth_token(&auth_token));
+
+        let invalid = format!("u-wrong:{}", auth_token.split_once(':').unwrap().1);
+        assert!(!actor.verify_auth_token(&invalid));
     }
 }
