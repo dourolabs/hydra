@@ -11,9 +11,7 @@ pub async fn list_agents(
 ) -> Result<Json<ListAgentsResponse>, ApiError> {
     info!("list_agents invoked");
     let agents = state
-        .config
-        .background
-        .agent_queues
+        .agents
         .iter()
         .map(|queue| AgentRecord::new(queue.name.clone()))
         .collect();

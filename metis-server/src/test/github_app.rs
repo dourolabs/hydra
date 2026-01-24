@@ -18,7 +18,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
         service_state: Arc::new(ServiceState::default()),
         store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine: Arc::new(MockJobEngine::new()),
-        spawners: Vec::new(),
+        agents: Vec::new(),
     };
 
     let server = spawn_test_server_with_state(state).await?;
