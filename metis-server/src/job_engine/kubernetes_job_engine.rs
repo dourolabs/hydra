@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -18,12 +21,17 @@ use kube::{
     Api, Client,
     api::{DeleteParams, ListParams, LogParams, PostParams},
 };
-use metis_common::constants::{ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_OPENAI_API_KEY};
-use tokio::time::{Duration, sleep};
+use metis_common::constants::{
+    ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN, ENV_OPENAI_API_KEY,
+};
+use tokio::{
+    sync::RwLock,
+    time::{Duration, sleep},
+};
 use tracing::{error, info};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
-use crate::domain::users::User;
+use crate::{domain::users::User, store::Store};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -31,6 +39,7 @@ pub struct KubernetesJobEngine {
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secret: Option<String>,
+    pub store: Arc<RwLock<Box<dyn Store>>>,
 }
 
 fn merge_env_vars(
@@ -38,6 +47,7 @@ fn merge_env_vars(
     env_vars: &HashMap<String, String>,
     openai_api_key: &str,
     server_hostname: &str,
+    auth_token: Option<&str>,
 ) -> Vec<EnvVar> {
     let mut merged_vars: BTreeMap<String, String> = env_vars
         .iter()
@@ -46,6 +56,9 @@ fn merge_env_vars(
 
     merged_vars.insert(ENV_OPENAI_API_KEY.to_string(), openai_api_key.to_string());
     merged_vars.insert(ENV_METIS_ID.to_string(), job_uuid.to_string());
+    if let Some(token) = auth_token {
+        merged_vars.insert(ENV_METIS_TOKEN.to_string(), token.to_string());
+    }
 
     let hostname = server_hostname.trim();
     if !hostname.is_empty() {
@@ -85,12 +98,18 @@ impl KubernetesJobEngine {
         metadata_labels
     }
 
-    fn build_env_vars(&self, job_uuid: &TaskId, env_vars: &HashMap<String, String>) -> Vec<EnvVar> {
+    fn build_env_vars(
+        &self,
+        job_uuid: &TaskId,
+        env_vars: &HashMap<String, String>,
+        auth_token: Option<&str>,
+    ) -> Vec<EnvVar> {
         merge_env_vars(
             job_uuid,
             env_vars,
             &self.openai_api_key,
             &self.server_hostname,
+            auth_token,
         )
     }
 
@@ -487,6 +506,17 @@ impl JobEngine for KubernetesJobEngine {
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
         let metadata_labels = Self::build_metadata_labels(metis_id);
 
+        let (actor, auth_token) = {
+            let mut store = self.store.write().await;
+            store.create_actor_for_task(metis_id.clone()).await?
+        };
+        info!(
+            metis_id = %metis_id,
+            actor = %actor.name(),
+            job_name = %job_name,
+            "created actor for job"
+        );
+
         // Create secret for GitHub token if user is provided
         let secret_name = user.map(|_| format!("{AUTH_TOKEN_SECRET_NAME_PREFIX}{metis_id}"));
         if let Some(user) = user {
@@ -526,7 +556,7 @@ impl JobEngine for KubernetesJobEngine {
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
             args: None,
-            env: Some(self.build_env_vars(metis_id, env_vars)),
+            env: Some(self.build_env_vars(metis_id, env_vars, Some(&auth_token))),
             ..Default::default()
         };
 
@@ -858,7 +888,13 @@ mod tests {
             "http://example.com".to_string(),
         );
 
-        let merged = merge_env_vars(&job_id, &task_env, "openai-key", "metis.example.com");
+        let merged = merge_env_vars(
+            &job_id,
+            &task_env,
+            "openai-key",
+            "metis.example.com",
+            Some("auth-token"),
+        );
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
@@ -875,12 +911,16 @@ mod tests {
             merged_map.get(ENV_METIS_SERVER_URL),
             Some(&"http://metis.example.com".to_string())
         );
+        assert_eq!(
+            merged_map.get(ENV_METIS_TOKEN),
+            Some(&"auth-token".to_string())
+        );
     }
 
     #[test]
     fn merge_env_vars_skips_empty_server_hostname() {
         let job_id: TaskId = "t-abcd".parse().unwrap();
-        let merged = merge_env_vars(&job_id, &HashMap::new(), "openai-key", "   ");
+        let merged = merge_env_vars(&job_id, &HashMap::new(), "openai-key", "   ", None);
 
         let merged_map: HashMap<_, _> = merged
             .into_iter()
