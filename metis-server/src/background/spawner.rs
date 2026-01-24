@@ -254,9 +254,9 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::ServiceRepositoryConfig,
+        app::ServiceRepository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::test_state,
+        test::{test_state, test_state_with_repo},
     };
     use chrono::Utc;
 
@@ -782,21 +782,17 @@ mod tests {
 
     #[tokio::test]
     async fn service_repo_context_uses_repo_defaults() -> anyhow::Result<()> {
-        let state = test_state();
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_repository(
-                    repo_name.clone(),
-                    ServiceRepositoryConfig::new(
-                        "https://github.com/dourolabs/metis.git".to_string(),
-                        Some("main".to_string()),
-                        Some("repo-image".to_string()),
-                    ),
-                )
-                .await?;
-        }
+        let remote_url = "https://github.com/dourolabs/metis.git".to_string();
+        let default_branch = "main".to_string();
+        let default_image = "repo-image".to_string();
+        let repository = ServiceRepository::new(
+            repo_name.clone(),
+            remote_url.clone(),
+            Some(default_branch.clone()),
+            Some(default_image.clone()),
+        );
+        let state = test_state_with_repo(repository).await?;
         let issue_id = {
             let mut store = state.store.write().await;
             store
@@ -836,11 +832,11 @@ mod tests {
         assert_eq!(
             resolved.context.bundle,
             Bundle::GitRepository {
-                url: "https://github.com/dourolabs/metis.git".to_string(),
-                rev: "main".to_string(),
+                url: remote_url,
+                rev: default_branch,
             }
         );
-        assert_eq!(resolved.image, "repo-image");
+        assert_eq!(resolved.image, default_image);
         assert_eq!(resolved.env_vars.get("METIS_GITHUB_TOKEN"), None);
         assert_eq!(
             resolved
