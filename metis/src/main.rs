@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     auth,
-    client::{MetisClient, MetisClientInterface},
+    client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
     command,
     config::{self, AppConfig},
     constants,
@@ -101,14 +101,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let app_config = load_app_config(&cli)?;
     let client = MetisClient::from_config(&app_config, String::new())?;
+    let unauth_client = MetisClientUnauthenticated::from_config(&app_config)?;
     let token_path = config::expand_path(PathBuf::from(&cli.token));
 
-    dispatch(cli, &client, &app_config, &token_path).await
+    dispatch(cli, &client, &unauth_client, &app_config, &token_path).await
 }
 
 async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
+    unauth_client: &MetisClientUnauthenticated,
     app_config: &AppConfig,
     token_path: &PathBuf,
 ) -> Result<()> {
@@ -128,7 +130,7 @@ async fn dispatch(
         Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
-        Commands::Login => command::login::run(client, token_path).await?,
+        Commands::Login => command::login::run(unauth_client, token_path).await?,
         Commands::Chat {
             prompt,
             model,

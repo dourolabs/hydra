@@ -47,6 +47,13 @@ pub struct MetisClient {
     auth_token: String,
 }
 
+/// HTTP client for interacting with unauthenticated metis-server endpoints.
+#[derive(Clone)]
+pub struct MetisClientUnauthenticated {
+    base_url: Url,
+    http: HttpClient,
+}
+
 pub type LogStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
 type BytesStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 
@@ -176,7 +183,101 @@ pub trait MetisClientInterface: Send + Sync {
         patch_id: &PatchId,
     ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
-    async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse>;
+}
+
+impl MetisClientUnauthenticated {
+    /// Construct a new client using the server URL from the CLI configuration.
+    pub fn from_config(config: &AppConfig) -> Result<Self> {
+        Self::new(&config.server.url)
+    }
+
+    /// Construct a new client with the default reqwest HTTP client.
+    pub fn new(base_url: impl AsRef<str>) -> Result<Self> {
+        Self::with_http_client(base_url, HttpClient::new())
+    }
+
+    /// Construct a new client with a custom `reqwest::Client`.
+    pub fn with_http_client(base_url: impl AsRef<str>, http: HttpClient) -> Result<Self> {
+        let url = Url::parse(base_url.as_ref())
+            .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
+
+        Ok(Self {
+            base_url: url,
+            http,
+        })
+    }
+
+    /// Expose the underlying HTTP client for advanced operations.
+    #[allow(dead_code)]
+    pub fn http_client(&self) -> &HttpClient {
+        &self.http
+    }
+
+    /// Expose the resolved base URL used for requests.
+    pub fn base_url(&self) -> &Url {
+        &self.base_url
+    }
+
+    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
+    pub async fn login(&self, request: &LoginRequest) -> Result<(String, MetisClient)> {
+        self.login_with_http_client(self.http.clone(), request)
+            .await
+    }
+
+    /// Call `POST /v1/login` using a custom `reqwest::Client`.
+    pub async fn login_with_http_client(
+        &self,
+        http: HttpClient,
+        request: &LoginRequest,
+    ) -> Result<(String, MetisClient)> {
+        let url = self
+            .endpoint("/v1/login")
+            .with_context(|| "failed to construct login endpoint URL")?;
+        let response = http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit login request")?
+            .error_for_status_with_body("metis-server rejected login request")
+            .await?;
+
+        let login_response = response
+            .json::<LoginResponse>()
+            .await
+            .context("failed to decode login response")?;
+        let auth_token = login_response.login_token.clone();
+        let client =
+            MetisClient::with_http_client(self.base_url.as_str(), auth_token.clone(), http)?;
+
+        Ok((auth_token, client))
+    }
+
+    /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.
+    pub async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
+        let url = self.endpoint("/v1/github/app/client-id")?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to fetch GitHub app client id")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching GitHub app client id",
+            )
+            .await?;
+
+        response
+            .json::<GithubAppClientIdResponse>()
+            .await
+            .context("failed to decode GitHub app client id response")
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        self.base_url
+            .join(path)
+            .with_context(|| format!("failed to construct endpoint URL for '{path}'"))
+    }
 }
 
 impl MetisClient {
@@ -204,44 +305,6 @@ impl MetisClient {
             http,
             auth_token: auth_token.into(),
         })
-    }
-
-    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
-    pub async fn login(
-        base_url: impl AsRef<str>,
-        request: &LoginRequest,
-    ) -> Result<(String, Self)> {
-        Self::login_with_http_client(base_url, HttpClient::new(), request).await
-    }
-
-    /// Call `POST /v1/login` using a custom `reqwest::Client`.
-    pub async fn login_with_http_client(
-        base_url: impl AsRef<str>,
-        http: HttpClient,
-        request: &LoginRequest,
-    ) -> Result<(String, Self)> {
-        let url = Url::parse(base_url.as_ref())
-            .with_context(|| format!("invalid Metis server URL '{}'", base_url.as_ref()))?;
-        let url = url
-            .join("/v1/login")
-            .with_context(|| "failed to construct login endpoint URL")?;
-        let response = http
-            .post(url)
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit login request")?
-            .error_for_status_with_body("metis-server rejected login request")
-            .await?;
-
-        let login_response = response
-            .json::<LoginResponse>()
-            .await
-            .context("failed to decode login response")?;
-        let auth_token = login_response.login_token.clone();
-        let client = Self::with_http_client(base_url, auth_token.clone(), http)?;
-
-        Ok((auth_token, client))
     }
 
     /// Expose the underlying HTTP client for advanced operations.
@@ -929,26 +992,6 @@ impl MetisClient {
             .context("failed to decode list agents response")
     }
 
-    /// Call `GET /v1/github/app/client-id` to fetch the GitHub OAuth client id.
-    pub async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
-        let url = self.endpoint("/v1/github/app/client-id")?;
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .context("failed to fetch GitHub app client id")?
-            .error_for_status_with_body(
-                "metis-server returned an error while fetching GitHub app client id",
-            )
-            .await?;
-
-        response
-            .json::<GithubAppClientIdResponse>()
-            .await
-            .context("failed to decode GitHub app client id response")
-    }
-
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1221,10 +1264,6 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_agents(&self) -> Result<ListAgentsResponse> {
         MetisClient::list_agents(self).await
-    }
-
-    async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
-        MetisClient::get_github_app_client_id(self).await
     }
 }
 

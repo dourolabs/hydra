@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use httpmock::prelude::*;
-use metis::client::MetisClient;
+use metis::client::{MetisClient, MetisClientUnauthenticated};
 use metis_common::{
     issues::{
         AddTodoItemRequest, Issue, IssueDependencyType, IssueStatus, IssueType,
@@ -28,6 +28,8 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let server = MockServer::start();
     let client =
         MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+    let unauth_client =
+        MetisClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())?;
 
     let now = Utc::now();
     let job_id = TaskId::new();
@@ -522,7 +524,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let agents = client.list_agents().await?;
     assert_eq!(agents.agents.len(), 1);
 
-    let github_client = client.get_github_app_client_id().await?;
+    let github_client = unauth_client.get_github_app_client_id().await?;
     assert_eq!(github_client.client_id, "abc123");
 
     // Ensure unknown job status variants remain deserializable.
