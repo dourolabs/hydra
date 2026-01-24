@@ -9,7 +9,7 @@ use metis::{
     config::{self, AppConfig},
     constants,
 };
-use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
+use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN};
 
 #[derive(Parser)]
 #[command(
@@ -32,8 +32,17 @@ struct Cli {
     server_url: Option<String>,
 
     /// Path to the auth token file (defaults to ~/.local/share/metis/auth-token).
-    #[arg(long = "token", value_name = "PATH", global = true, default_value = auth::DEFAULT_AUTH_TOKEN_PATH)]
-    token: String,
+    #[arg(
+        long = "token",
+        value_name = "PATH",
+        global = true,
+        default_value = auth::DEFAULT_AUTH_TOKEN_PATH
+    )]
+    token_path: String,
+
+    /// Auth token to use for requests (via METIS_TOKEN).
+    #[arg(long = "auth-token", env = ENV_METIS_TOKEN, value_name = "TOKEN", global = true)]
+    token: Option<String>,
 
     /// Browser command for opening links (defaults to $BROWSER).
     #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
@@ -100,10 +109,37 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let app_config = load_app_config(&cli)?;
-    let client = MetisClient::from_config(&app_config, String::new())?;
-    let token_path = config::expand_path(PathBuf::from(&cli.token));
+    let token_path = config::expand_path(PathBuf::from(&cli.token_path));
+    let client = build_client(&cli, &app_config, &token_path).await?;
 
     dispatch(cli, &client, &app_config, &token_path).await
+}
+
+async fn build_client(
+    cli: &Cli,
+    app_config: &AppConfig,
+    token_path: &PathBuf,
+) -> Result<MetisClient> {
+    let token_override = cli
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string);
+
+    if let Some(token) = token_override {
+        return MetisClient::from_config(app_config, token);
+    }
+
+    match auth::read_auth_token_optional(token_path)? {
+        Some(token) => MetisClient::from_config(app_config, token),
+        None => {
+            let bootstrap_client = MetisClient::from_config(app_config, String::new())?;
+            let (_auth_token, client) =
+                command::login::login_and_store_token(&bootstrap_client, token_path).await?;
+            Ok(client)
+        }
+    }
 }
 
 async fn dispatch(
@@ -184,7 +220,8 @@ mod tests {
         Cli {
             config: None,
             server_url: None,
-            token: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            token_path: auth::DEFAULT_AUTH_TOKEN_PATH.to_string(),
+            token: None,
             browser: None,
             command: Some(super::Commands::Agents { pretty: false }),
         }

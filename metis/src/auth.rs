@@ -34,6 +34,14 @@ fn read_auth_token_state(token_path: &PathBuf) -> Result<AuthTokenState> {
     Ok(AuthTokenState::Present(trimmed.to_string()))
 }
 
+/// Read the auth token from disk, returning `None` when missing or empty.
+pub fn read_auth_token_optional(token_path: &PathBuf) -> Result<Option<String>> {
+    match read_auth_token_state(token_path)? {
+        AuthTokenState::Present(token) => Ok(Some(token)),
+        AuthTokenState::Missing(_) | AuthTokenState::Empty(_) => Ok(None),
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) fn read_auth_token(token_path: &PathBuf) -> Result<String> {
     match read_auth_token_state(token_path)? {

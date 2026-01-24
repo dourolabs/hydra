@@ -41,6 +41,26 @@ enum TokenPollState {
 }
 
 pub async fn run(client: &dyn MetisClientInterface, token_path: &PathBuf) -> Result<()> {
+    let (auth_token, authed_client) = login_and_store_token(client, token_path).await?;
+    let resolved_user = authed_client
+        .resolve_user(&ResolveUserRequest::new(auth_token))
+        .await
+        .context("failed to resolve user from auth token")?;
+
+    println!(
+        "Logged in as {}. Stored token at {}.",
+        resolved_user.user.username,
+        token_path.display()
+    );
+
+    Ok(())
+}
+
+/// Run the GitHub device flow, exchange the token, and persist the Metis auth token.
+pub async fn login_and_store_token(
+    client: &dyn MetisClientInterface,
+    token_path: &PathBuf,
+) -> Result<(String, MetisClient)> {
     let client_id = fetch_github_client_id(client)
         .await
         .context("failed to fetch GitHub client id from server")?;
@@ -54,19 +74,7 @@ pub async fn run(client: &dyn MetisClientInterface, token_path: &PathBuf) -> Res
     println!("Waiting for authorization...");
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let auth_token = exchange_and_store_token(client, token_path, &token).await?;
-    let resolved_user = client
-        .resolve_user(&ResolveUserRequest::new(auth_token))
-        .await
-        .context("failed to resolve user from auth token")?;
-
-    println!(
-        "Logged in as {}. Stored token at {}.",
-        resolved_user.user.username,
-        token_path.display()
-    );
-
-    Ok(())
+    exchange_and_store_token(client, token_path, &token).await
 }
 
 async fn fetch_github_client_id(client: &dyn MetisClientInterface) -> Result<String> {
@@ -163,22 +171,25 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
     }
 }
 
-async fn login_with_github_token(client: &dyn MetisClientInterface, token: &str) -> Result<String> {
+async fn login_with_github_token(
+    client: &dyn MetisClientInterface,
+    token: &str,
+) -> Result<(String, MetisClient)> {
     let request = LoginRequest::new(token.to_string());
-    let (auth_token, _client) = MetisClient::login(client.base_url().as_str(), &request)
+    let (auth_token, authed_client) = MetisClient::login(client.base_url().as_str(), &request)
         .await
         .context("failed to exchange GitHub token for Metis login token")?;
-    Ok(auth_token)
+    Ok((auth_token, authed_client))
 }
 
 async fn exchange_and_store_token(
     client: &dyn MetisClientInterface,
     token_path: &PathBuf,
     github_token: &str,
-) -> Result<String> {
-    let auth_token = login_with_github_token(client, github_token).await?;
+) -> Result<(String, MetisClient)> {
+    let (auth_token, authed_client) = login_with_github_token(client, github_token).await?;
     write_auth_token_file(token_path, &auth_token)?;
-    Ok(auth_token)
+    Ok((auth_token, authed_client))
 }
 
 fn write_auth_token_file(token_path: &PathBuf, token: &str) -> Result<()> {
@@ -274,13 +285,15 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
 
-        let auth_token = exchange_and_store_token(&client, &token_path, "gh-token")
-            .await
-            .expect("exchange");
+        let (auth_token, authed_client) =
+            exchange_and_store_token(&client, &token_path, "gh-token")
+                .await
+                .expect("exchange");
 
         login_mock.assert();
         let contents = fs::read_to_string(&token_path).expect("read token");
         assert_eq!(contents, "api-token");
         assert_eq!(auth_token, "api-token");
+        assert_eq!(authed_client.auth_token(), "api-token");
     }
 }
