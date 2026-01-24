@@ -7,8 +7,7 @@ use metis::{
     client::{MetisClient, MetisClientInterface, MetisClientUnauthenticated},
     command,
     config::{self, AppConfig},
-    constants,
-    github_device_flow,
+    constants, github_device_flow,
 };
 use metis_common::constants::{ENV_BROWSER, ENV_METIS_SERVER_URL};
 
@@ -119,7 +118,7 @@ async fn main() -> Result<()> {
     let token_path = config::expand_path(PathBuf::from(&cli.token_path));
     let client = resolve_client(&cli, &app_config, &unauth_client, &token_path).await?;
 
-    dispatch(cli, &client, &unauth_client, &app_config, &token_path).await
+    dispatch(cli, &client, &app_config, &token_path).await
 }
 
 async fn resolve_client(
@@ -147,7 +146,6 @@ async fn resolve_client(
 async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
-    unauth_client: &MetisClientUnauthenticated,
     app_config: &AppConfig,
     token_path: &PathBuf,
 ) -> Result<()> {
@@ -167,7 +165,7 @@ async fn dispatch(
         Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
-        Commands::Login => command::login::run(unauth_client, token_path).await?,
+        Commands::Login => {}
         Commands::Chat {
             prompt,
             model,
