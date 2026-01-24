@@ -3,7 +3,7 @@ use crate::{
     domain::{
         issues::{
             AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord,
-            IssueStatus, IssueType, JobSettings, ListIssuesResponse, ReplaceTodoListRequest,
+            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest,
             SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
             UpsertIssueRequest, UpsertIssueResponse,
         },
@@ -663,7 +663,8 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                     spawned_from: Some(created.issue_id.clone()),
                     image: Some(default_image()),
                     env_vars: HashMap::new(),
-                    job_settings: JobSettings::default(),
+                    cpu_limit: None,
+                    memory_limit: None,
                 },
                 Utc::now(),
             )

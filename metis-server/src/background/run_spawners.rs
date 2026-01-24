@@ -155,6 +155,7 @@ mod tests {
             None,
             HashMap::new(),
             None,
+            None,
         )
     }
 

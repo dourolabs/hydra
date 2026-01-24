@@ -1,4 +1,4 @@
-use super::{issues::JobSettings, task_status::TaskStatusLog};
+use super::task_status::TaskStatusLog;
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, RepoName, TaskId};
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,10 @@ pub struct Task {
     pub image: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env_vars: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "JobSettings::is_default")]
-    pub job_settings: JobSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<String>,
 }
 
 impl Task {
@@ -25,7 +27,8 @@ impl Task {
         spawned_from: Option<IssueId>,
         image: Option<String>,
         env_vars: HashMap<String, String>,
-        job_settings: Option<JobSettings>,
+        cpu_limit: Option<String>,
+        memory_limit: Option<String>,
     ) -> Self {
         Self {
             prompt,
@@ -33,7 +36,8 @@ impl Task {
             spawned_from,
             image,
             env_vars,
-            job_settings: job_settings.unwrap_or_default(),
+            cpu_limit,
+            memory_limit,
         }
     }
 }
@@ -239,7 +243,8 @@ impl From<api::jobs::Task> for Task {
             spawned_from: value.spawned_from,
             image: value.image,
             env_vars: value.env_vars,
-            job_settings: value.job_settings.into(),
+            cpu_limit: value.cpu_limit,
+            memory_limit: value.memory_limit,
         }
     }
 }
@@ -252,7 +257,8 @@ impl From<Task> for api::jobs::Task {
             value.spawned_from,
             value.image,
             value.env_vars,
-            Some(value.job_settings.into()),
+            value.cpu_limit,
+            value.memory_limit,
         )
     }
 }

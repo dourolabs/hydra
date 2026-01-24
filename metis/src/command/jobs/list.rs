@@ -312,6 +312,7 @@ mod tests {
                 None,
                 HashMap::new(),
                 None,
+                None,
             ),
             None,
             TaskStatusLog::new(Status::Pending, Utc::now()),

@@ -34,39 +34,7 @@ impl AppState {
     }
 
     async fn resolve_context(&self, task: &Task) -> Result<ResolvedBundle, BundleResolutionError> {
-        let mut resolved = self.resolve_bundle_spec(task.context.clone()).await?;
-        let settings = &task.job_settings;
-
-        if let Some(repo_name) = &settings.repo_name {
-            resolved = self
-                .resolve_bundle_spec(BundleSpec::ServiceRepository {
-                    name: repo_name.clone(),
-                    rev: settings.branch.clone(),
-                })
-                .await?;
-        }
-
-        let remote_url = settings
-            .remote_url
-            .clone()
-            .or_else(|| match &resolved.bundle {
-                Bundle::GitRepository { url, .. } => Some(url.clone()),
-                Bundle::None => None,
-            });
-        let rev = settings
-            .branch
-            .clone()
-            .or_else(|| match &resolved.bundle {
-                Bundle::GitRepository { rev, .. } => Some(rev.clone()),
-                Bundle::None => None,
-            })
-            .unwrap_or_else(|| "main".to_string());
-
-        if let Some(url) = remote_url {
-            resolved.bundle = Bundle::GitRepository { url, rev };
-        }
-
-        Ok(resolved)
+        self.resolve_bundle_spec(task.context.clone()).await
     }
 
     fn resolve_image(
@@ -87,10 +55,6 @@ impl AppState {
                 None => Ok(None),
             }
         };
-
-        if let Some(image) = image_from(task.job_settings.image.as_ref())? {
-            return Ok(image);
-        }
 
         if let Some(image) = image_from(task.image.as_ref())? {
             return Ok(image);

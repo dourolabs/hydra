@@ -2,7 +2,7 @@ use super::common::{default_image, patch_diff, service_repo_name};
 use crate::{
     domain::{
         issues::{
-            Issue, IssueRecord, IssueStatus, IssueType, JobSettings, UpsertIssueRequest,
+            Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest,
             UpsertIssueResponse,
         },
         jobs::BundleSpec,
@@ -77,7 +77,8 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                     spawned_from: None,
                     image: Some(default_image),
                     env_vars: HashMap::new(),
-                    job_settings: JobSettings::default(),
+                    cpu_limit: None,
+                    memory_limit: None,
                 },
                 Utc::now(),
             )
