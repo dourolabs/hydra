@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::{domain::users::User, store::StoreError};
+use crate::store::StoreError;
 
 mod kubernetes_job_engine;
 
@@ -85,7 +85,6 @@ pub trait JobEngine: Send + Sync {
     /// * `env_vars` - Environment variables to inject into the job container
     /// * `cpu_limit` - CPU request for the job container
     /// * `memory_limit` - Memory request for the job container
-    /// * `user` - Optional user whose GitHub token should be mounted in the job
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -96,7 +95,6 @@ pub trait JobEngine: Send + Sync {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
-        user: Option<&User>,
     ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.
