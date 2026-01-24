@@ -55,6 +55,15 @@ impl AgentQueue {
         }
     }
 
+    pub fn as_config(&self) -> AgentQueueConfig {
+        AgentQueueConfig {
+            name: self.name.clone(),
+            prompt: self.prompt.clone(),
+            max_tries: self.max_tries,
+            max_simultaneous: self.max_simultaneous,
+        }
+    }
+
     async fn build_task(
         &self,
         state: &AppState,
