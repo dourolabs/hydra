@@ -18,8 +18,8 @@ pub enum ActorError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
     pub auth_token_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_token_salt: Option<String>,
+    #[serde(default = "default_auth_token_salt")]
+    pub auth_token_salt: String,
     pub user_or_worker: UserOrWorker,
 }
 
@@ -54,7 +54,7 @@ impl Actor {
         let (auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor = Actor {
             auth_token_hash,
-            auth_token_salt: Some(auth_token_salt),
+            auth_token_salt,
             user_or_worker: UserOrWorker::Username(username),
         };
         Ok((user, actor, auth_token))
@@ -75,7 +75,7 @@ impl Actor {
         let (auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let actor = Actor {
             auth_token_hash,
-            auth_token_salt: Some(auth_token_salt),
+            auth_token_salt,
             user_or_worker: UserOrWorker::Task(task_id),
         };
         (actor, auth_token)
@@ -118,6 +118,10 @@ impl Actor {
 
         Err(ActorError::InvalidActorName(name.to_string()))
     }
+}
+
+fn default_auth_token_salt() -> String {
+    Uuid::new_v4().to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,10 +195,7 @@ mod tests {
             actor.user_or_worker,
             UserOrWorker::Username(Username::from("octo"))
         );
-        assert!(matches!(
-            actor.auth_token_salt.as_deref(),
-            Some(salt) if !salt.is_empty()
-        ));
+        assert!(!actor.auth_token_salt.is_empty());
         assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(&auth_token));
     }
 
