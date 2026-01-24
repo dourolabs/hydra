@@ -963,6 +963,8 @@ mod tests {
     use std::{fs, path::Path, str::FromStr};
     use tempfile::tempdir;
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn sample_diff() -> String {
         "--- a/file.txt\n+++ b/file.txt\n@@\n-old\n+new\n".to_string()
     }
@@ -972,7 +974,7 @@ mod tests {
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
-        MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())
+        MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
             .expect("failed to create metis client")
     }
 

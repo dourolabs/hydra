@@ -51,6 +51,8 @@ mod tests {
     use metis_common::agents::{AgentRecord, ListAgentsResponse};
     use reqwest::Client as HttpClient;
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     #[tokio::test]
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
@@ -63,7 +65,7 @@ mod tests {
         });
 
         let client =
-            MetisClient::with_http_client(server.base_url(), String::new(), HttpClient::new())?;
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
         let agents = fetch_agents(&client).await?;
         mock.assert();

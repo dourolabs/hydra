@@ -293,6 +293,8 @@ mod tests {
     use metis_common::task_status::Event;
     use std::collections::HashMap;
 
+    const TEST_METIS_TOKEN: &str = "test-metis-token";
+
     fn only_spawned_from_query(request: &HttpMockRequest) -> bool {
         match &request.query_params {
             Some(params) => params.len() == 1 && params[0].0 == "spawned_from",
@@ -414,7 +416,7 @@ mod tests {
         let spawned_from = issue_id("from-filter");
         let server = MockServer::start();
         let client =
-            MetisClient::new(server.base_url(), String::new()).expect("should construct client");
+            MetisClient::new(server.base_url(), TEST_METIS_TOKEN).expect("should construct client");
 
         let list_response = ListJobsResponse::new(vec![sample_job("t-job-1")]);
 
