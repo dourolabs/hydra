@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ServiceRepository, ServiceRepositoryConfig, ServiceState},
+    app::{AppState, ServiceRepositoryConfig, ServiceState},
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection,
@@ -10,7 +10,7 @@ use crate::{
     store::{MemoryStore, StoreError},
 };
 use anyhow::Context;
-use metis_common::TaskId;
+use metis_common::{RepoName, TaskId};
 use octocrab::Octocrab;
 use reqwest::{Client, header};
 use std::{
@@ -80,25 +80,22 @@ pub fn test_state() -> AppState {
 
 pub async fn add_repository(
     state: &AppState,
-    repository: &ServiceRepository,
+    name: RepoName,
+    config: ServiceRepositoryConfig,
 ) -> anyhow::Result<()> {
     let mut store = state.store.write().await;
     store
-        .add_repository(
-            repository.name.clone(),
-            ServiceRepositoryConfig::new(
-                repository.remote_url.clone(),
-                repository.default_branch.clone(),
-                repository.default_image.clone(),
-            ),
-        )
+        .add_repository(name, config)
         .await
         .context("failed to add repository to test state")
 }
 
-pub async fn test_state_with_repo(repository: ServiceRepository) -> anyhow::Result<AppState> {
+pub async fn test_state_with_repo(
+    name: RepoName,
+    config: ServiceRepositoryConfig,
+) -> anyhow::Result<AppState> {
     let state = test_state();
-    add_repository(&state, &repository).await?;
+    add_repository(&state, name, config).await?;
     Ok(state)
 }
 

@@ -15,9 +15,7 @@ pub use app_state::{
     AppState, CreateJobError, LoginError, SetJobStatusError, UpdateTodoListError, UpsertIssueError,
     UpsertPatchError,
 };
-pub use metis_common::repositories::{
-    ServiceRepository, ServiceRepositoryConfig, ServiceRepositoryInfo,
-};
+pub use metis_common::repositories::{ServiceRepositoryConfig, ServiceRepositoryInfo};
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 
 #[derive(Debug, Clone)]
@@ -143,9 +141,12 @@ pub enum GitRepositoryError {
     Git(#[from] git2::Error),
 }
 
-fn connect_repository(repo: &ServiceRepository) -> Result<ConnectedRepository, GitRepositoryError> {
+fn connect_repository(
+    _repo_name: &RepoName,
+    config: &ServiceRepositoryConfig,
+) -> Result<ConnectedRepository, GitRepositoryError> {
     let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
-    let repository = Repository::clone(&repo.remote_url, workdir.path())?;
+    let repository = Repository::clone(&config.remote_url, workdir.path())?;
 
     Ok(ConnectedRepository {
         repository,
@@ -161,10 +162,11 @@ impl ServiceState {
 
     pub async fn ensure_cached(
         &self,
-        repository: &ServiceRepository,
+        repo_name: &RepoName,
+        config: &ServiceRepositoryConfig,
     ) -> Result<(), MergeQueueError> {
-        self.initialize_merge_queue(&repository.name).await;
-        self.ensure_git_cache(repository).await?;
+        self.initialize_merge_queue(repo_name).await;
+        self.ensure_git_cache(repo_name, config).await?;
         Ok(())
     }
 
@@ -192,14 +194,15 @@ impl ServiceState {
 
     pub async fn get_merge_queue(
         &self,
-        repository: &ServiceRepository,
+        repo_name: &RepoName,
+        config: &ServiceRepositoryConfig,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_cached(repository).await?;
+        self.ensure_cached(repo_name, config).await?;
 
         let merge_queues = self.merge_queues.read().await;
         let queue = merge_queues
-            .get(&repository.name)
+            .get(repo_name)
             .and_then(|repo_queues| repo_queues.get(branch_name))
             .map(merge_queue_response)
             .unwrap_or_default();
@@ -209,25 +212,26 @@ impl ServiceState {
 
     pub async fn add_patch_to_merge_queue(
         &self,
-        repository: &ServiceRepository,
+        repo_name: &RepoName,
+        config: &ServiceRepositoryConfig,
         branch_name: &str,
         patch_id: PatchId,
         patch: &Patch,
     ) -> Result<MergeQueue, MergeQueueError> {
-        self.ensure_cached(repository).await?;
+        self.ensure_cached(repo_name, config).await?;
 
-        if patch.service_repo_name != repository.name {
+        if patch.service_repo_name != *repo_name {
             return Err(MergeQueueError::PatchRepositoryMismatch {
                 patch_id,
                 patch_repo: patch.service_repo_name.clone(),
-                service_repo: repository.name.clone(),
+                service_repo: repo_name.clone(),
             });
         }
 
-        let repository_handle = self.refresh_repository(repository).await?;
+        let repository_handle = self.refresh_repository(repo_name, config).await?;
 
         let mut merge_queues = self.merge_queues.write().await;
-        let repo_queues = merge_queues.entry(repository.name.clone()).or_default();
+        let repo_queues = merge_queues.entry(repo_name.clone()).or_default();
         let branch_name = branch_name.to_string();
         let queue_patch_id = patch_id.clone();
         let queue = match repo_queues.get_mut(&branch_name) {
@@ -235,7 +239,7 @@ impl ServiceState {
             None => {
                 let queue = MergeQueueImpl::new(&repository_handle, branch_ref(&branch_name))
                     .map_err(|source| MergeQueueError::QueueInitialization {
-                        repo_name: repository.name.clone(),
+                        repo_name: repo_name.clone(),
                         branch_name: branch_name.clone(),
                         source,
                     })?;
@@ -254,7 +258,7 @@ impl ServiceState {
             )
             .map_err(|source| MergeQueueError::QueueUpdate {
                 patch_id: queue_patch_id,
-                repo_name: repository.name.clone(),
+                repo_name: repo_name.clone(),
                 branch_name: branch_name.clone(),
                 source,
             })?;
@@ -264,14 +268,15 @@ impl ServiceState {
 
     async fn refresh_repository(
         &self,
-        repository: &ServiceRepository,
+        repo_name: &RepoName,
+        config: &ServiceRepositoryConfig,
     ) -> Result<Repository, MergeQueueError> {
-        let cache_entry = self.ensure_git_cache(repository).await?;
+        let cache_entry = self.ensure_git_cache(repo_name, config).await?;
 
         let cached = cache_entry.lock().await;
         let repository_handle =
             Repository::open(&cached.path).map_err(|source| MergeQueueError::Git {
-                repo_name: repository.name.clone(),
+                repo_name: repo_name.clone(),
                 source: source.into(),
             })?;
         drop(cached);
@@ -280,13 +285,13 @@ impl ServiceState {
             repository_handle
                 .find_remote("origin")
                 .map_err(|source| MergeQueueError::Git {
-                    repo_name: repository.name.clone(),
+                    repo_name: repo_name.clone(),
                     source: source.into(),
                 })?;
         remote
             .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
             .map_err(|source| MergeQueueError::Git {
-                repo_name: repository.name.clone(),
+                repo_name: repo_name.clone(),
                 source: source.into(),
             })?;
 
@@ -296,25 +301,26 @@ impl ServiceState {
 
     async fn ensure_git_cache(
         &self,
-        repository: &ServiceRepository,
+        repo_name: &RepoName,
+        config: &ServiceRepositoryConfig,
     ) -> Result<Arc<Mutex<CachedRepository>>, MergeQueueError> {
         let mut git_cache = self.git_cache.write().await;
-        if let Some(existing) = git_cache.get(&repository.name) {
+        if let Some(existing) = git_cache.get(repo_name) {
             return Ok(existing.clone());
         }
 
         let ConnectedRepository {
             repository: _,
             _workdir,
-        } = connect_repository(repository).map_err(|source| MergeQueueError::Git {
-            repo_name: repository.name.clone(),
+        } = connect_repository(repo_name, config).map_err(|source| MergeQueueError::Git {
+            repo_name: repo_name.clone(),
             source: source.into(),
         })?;
         let cached = Arc::new(Mutex::new(CachedRepository {
             path: _workdir.path().to_path_buf(),
             _workdir,
         }));
-        git_cache.insert(repository.name.clone(), cached.clone());
+        git_cache.insert(repo_name.clone(), cached.clone());
         Ok(cached)
     }
 
@@ -340,7 +346,7 @@ fn branch_ref(branch_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServiceRepository, connect_repository};
+    use super::{ServiceRepositoryConfig, connect_repository};
     use anyhow::Result;
     use git2::{Commit, Oid, Repository, Signature};
     use metis_common::RepoName;
@@ -353,18 +359,14 @@ mod tests {
         let remote_repo = Repository::init(remote_dir.path())?;
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
-        let repository = ServiceRepository::new(
-            RepoName::from_str("dourolabs/metis")?,
-            remote_dir
-                .path()
-                .to_str()
-                .expect("tempdir path is valid utf-8")
-                .to_string(),
+        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repository = ServiceRepositoryConfig::new(
+            remote_dir.path().to_str().unwrap().to_string(),
             None,
             None,
         );
 
-        let connected = connect_repository(&repository)?;
+        let connected = connect_repository(&repo_name, &repository)?;
         let repo = connected.repository();
 
         assert_eq!(repo.head()?.target(), Some(expected_head));
