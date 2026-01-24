@@ -21,24 +21,32 @@ pub enum TaskResolutionError {
     MissingDefaultImage,
 }
 
-async fn resolve_context(
-    task: &Task,
-    app_state: &AppState,
-) -> Result<ResolvedBundle, BundleResolutionError> {
-    let mut resolved = app_state.resolve_bundle_spec(task.context.clone()).await?;
+impl AppState {
+    pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
+        let context = self.resolve_context(task).await?;
+        let image = Self::resolve_image(task, &context, &self.config.job.default_image)?;
 
-    let settings = &task.job_settings;
-    if let Some(repo_name) = &settings.repo_name {
-        resolved = app_state
-            .resolve_bundle_spec(BundleSpec::ServiceRepository {
-                name: repo_name.clone(),
-                rev: settings.branch.clone(),
-            })
-            .await?;
+        Ok(ResolvedTask {
+            context,
+            image,
+            env_vars: task.env_vars.clone(),
+        })
     }
 
-    if settings.remote_url.is_some() || settings.branch.is_some() {
-        let url = settings
+    async fn resolve_context(&self, task: &Task) -> Result<ResolvedBundle, BundleResolutionError> {
+        let mut resolved = self.resolve_bundle_spec(task.context.clone()).await?;
+        let settings = &task.job_settings;
+
+        if let Some(repo_name) = &settings.repo_name {
+            resolved = self
+                .resolve_bundle_spec(BundleSpec::ServiceRepository {
+                    name: repo_name.clone(),
+                    rev: settings.branch.clone(),
+                })
+                .await?;
+        }
+
+        let remote_url = settings
             .remote_url
             .clone()
             .or_else(|| match &resolved.bundle {
@@ -54,77 +62,53 @@ async fn resolve_context(
             })
             .unwrap_or_else(|| "main".to_string());
 
-        if let Some(url) = url {
+        if let Some(url) = remote_url {
             resolved.bundle = Bundle::GitRepository { url, rev };
         }
+
+        Ok(resolved)
     }
 
-    Ok(resolved)
-}
+    fn resolve_image(
+        task: &Task,
+        resolved: &ResolvedBundle,
+        fallback_image: &str,
+    ) -> Result<String, TaskResolutionError> {
+        let image_from = |value: Option<&String>| -> Result<Option<String>, TaskResolutionError> {
+            match value {
+                Some(image) => {
+                    let trimmed = image.trim();
+                    if trimmed.is_empty() {
+                        Err(TaskResolutionError::EmptyImage)
+                    } else {
+                        Ok(Some(trimmed.to_string()))
+                    }
+                }
+                None => Ok(None),
+            }
+        };
 
-fn resolve_image(
-    task: &Task,
-    resolved: &ResolvedBundle,
-    fallback_image: &str,
-) -> Result<String, TaskResolutionError> {
-    if let Some(image) = &task.job_settings.image {
-        let trimmed = image.trim();
+        if let Some(image) = image_from(task.job_settings.image.as_ref())? {
+            return Ok(image);
+        }
+
+        if let Some(image) = image_from(task.image.as_ref())? {
+            return Ok(image);
+        }
+
+        if let Some(image) = image_from(resolved.default_image.as_ref())? {
+            return Ok(image);
+        }
+
+        let trimmed = fallback_image.trim();
         if trimmed.is_empty() {
-            return Err(TaskResolutionError::EmptyImage);
+            return Err(TaskResolutionError::MissingDefaultImage);
         }
-        return Ok(trimmed.to_string());
+
+        Ok(trimmed.to_string())
     }
 
-    if let Some(image) = &task.image {
-        let trimmed = image.trim();
-        if trimmed.is_empty() {
-            return Err(TaskResolutionError::EmptyImage);
-        }
-        return Ok(trimmed.to_string());
-    }
-
-    if let Some(default_image) = &resolved.default_image {
-        let trimmed = default_image.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-
-    let trimmed = fallback_image.trim();
-    if trimmed.is_empty() {
-        return Err(TaskResolutionError::MissingDefaultImage);
-    }
-
-    Ok(trimmed.to_string())
-}
-
-fn resolve_env_vars(task: &Task, _resolved: &ResolvedBundle) -> HashMap<String, String> {
-    task.env_vars.clone()
-}
-
-async fn resolve_task(
-    task: &Task,
-    app_state: &AppState,
-    fallback_image: &str,
-) -> Result<ResolvedTask, TaskResolutionError> {
-    let context = resolve_context(task, app_state).await?;
-    let image = resolve_image(task, &context, fallback_image)?;
-    let env_vars = resolve_env_vars(task, &context);
-
-    Ok(ResolvedTask {
-        context,
-        image,
-        env_vars,
-    })
-}
-
-impl AppState {
-    pub async fn resolve_task(&self, task: &Task) -> Result<ResolvedTask, TaskResolutionError> {
-        let fallback_image = &self.config.job.default_image;
-        resolve_task(task, self, fallback_image).await
-    }
-
-    pub async fn resolve_bundle_spec(
+    async fn resolve_bundle_spec(
         &self,
         spec: BundleSpec,
     ) -> Result<ResolvedBundle, BundleResolutionError> {
