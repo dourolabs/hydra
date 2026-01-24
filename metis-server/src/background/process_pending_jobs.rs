@@ -105,6 +105,7 @@ mod tests {
             None,
             HashMap::new(),
             None,
+            None,
         );
         let first_id = store
             .add_task(task.clone(), Utc::now())

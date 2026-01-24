@@ -6,7 +6,7 @@ use crate::{
             Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
             UpsertIssueRequest,
         },
-        jobs::CreateJobRequest,
+        jobs::{BundleSpec, CreateJobRequest},
         login::LoginResponse,
         patches::{Patch, PatchStatus, UpsertPatchRequest},
         users::UserSummary,
@@ -315,13 +315,55 @@ impl AppState {
             .map(|issue| issue.job_settings.clone())
             .filter(|settings| !JobSettings::is_default(settings));
 
+        let mut context = request.context;
+        let image = job_settings
+            .as_ref()
+            .and_then(|settings| settings.image.clone())
+            .or(request.image);
+        let cpu_limit = job_settings
+            .as_ref()
+            .and_then(|settings| settings.cpu_limit.clone());
+        let memory_limit = job_settings
+            .as_ref()
+            .and_then(|settings| settings.memory_limit.clone());
+
+        if let Some(settings) = job_settings {
+            if let Some(remote_url) = settings.remote_url.clone() {
+                let rev = settings
+                    .branch
+                    .clone()
+                    .or_else(|| match &context {
+                        BundleSpec::GitRepository { rev, .. } => Some(rev.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "main".to_string());
+                context = BundleSpec::GitRepository {
+                    url: remote_url,
+                    rev,
+                };
+            } else if let Some(repo_name) = settings.repo_name.clone() {
+                context = BundleSpec::ServiceRepository {
+                    name: repo_name,
+                    rev: settings.branch.clone(),
+                };
+            } else if let (Some(branch), BundleSpec::GitRepository { url, .. }) =
+                (settings.branch.clone(), &context)
+            {
+                context = BundleSpec::GitRepository {
+                    url: url.clone(),
+                    rev: branch,
+                };
+            }
+        }
+
         let task = Task::new(
             request.prompt,
-            request.context,
+            context,
             request.issue_id.clone(),
-            request.image,
+            image,
             env_vars,
-            job_settings.clone(),
+            cpu_limit,
+            memory_limit,
         );
 
         self.resolve_task(&task).await?;
@@ -373,42 +415,20 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
-        let (resolved, job_settings) = {
+        let (resolved, cpu_limit, memory_limit) = {
             let store = self.store.read().await;
             match store.get_task(&task_id).await {
-                Ok(mut task) => {
-                    let job_settings = match task.spawned_from.as_ref() {
-                        Some(issue_id) => match store.get_issue(issue_id).await {
-                            Ok(issue) => issue.job_settings,
-                            Err(err) => {
-                                warn!(
-                                    metis_id = %task_id,
-                                    issue_id = %issue_id,
-                                    error = %err,
-                                    "failed to load issue for spawning"
-                                );
-                                return;
-                            }
-                        },
-                        None => JobSettings::default(),
-                    };
-
-                    let merged = JobSettings::merge(task.job_settings.clone(), job_settings);
-                    task.job_settings = merged;
-                    let merged_job_settings = task.job_settings.clone();
-
-                    match self.resolve_task(&task).await {
-                        Ok(resolved) => (resolved, merged_job_settings),
-                        Err(err) => {
-                            warn!(
-                                metis_id = %task_id,
-                                error = %err,
-                                "failed to resolve task for spawning"
-                            );
-                            return;
-                        }
+                Ok(task) => match self.resolve_task(&task).await {
+                    Ok(resolved) => (resolved, task.cpu_limit.clone(), task.memory_limit.clone()),
+                    Err(err) => {
+                        warn!(
+                            metis_id = %task_id,
+                            error = %err,
+                            "failed to resolve task for spawning"
+                        );
+                        return;
                     }
-                }
+                },
                 Err(err) => {
                     warn!(
                         metis_id = %task_id,
@@ -420,20 +440,8 @@ impl AppState {
             }
         };
 
-        let cpu_limit = job_settings
-            .cpu_limit
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| job_config.cpu_limit.clone());
-        let memory_limit = job_settings
-            .memory_limit
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| job_config.memory_limit.clone());
+        let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
+        let memory_limit = memory_limit.unwrap_or_else(|| job_config.memory_limit.clone());
 
         match self
             .job_engine
@@ -1362,6 +1370,7 @@ mod tests {
             Some("worker:latest".to_string()),
             HashMap::new(),
             None,
+            None,
         )
     }
 
@@ -1372,6 +1381,7 @@ mod tests {
             Some(issue_id.clone()),
             Some("worker:latest".to_string()),
             HashMap::new(),
+            None,
             None,
         )
     }
@@ -1664,7 +1674,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_pending_task_uses_issue_resource_limits() {
+    async fn start_pending_task_uses_task_resource_limits() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let job_settings = JobSettings {
@@ -1694,10 +1704,10 @@ mod tests {
 
         let task_id = {
             let mut store = state.store.write().await;
-            store
-                .add_task(task_for_issue(&issue_id), Utc::now())
-                .await
-                .unwrap()
+            let mut task = task_for_issue(&issue_id);
+            task.cpu_limit = job_settings.cpu_limit.clone();
+            task.memory_limit = job_settings.memory_limit.clone();
+            store.add_task(task, Utc::now()).await.unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
