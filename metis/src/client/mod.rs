@@ -5,6 +5,7 @@ use futures::{stream, Stream, StreamExt};
 use metis_common::{
     agents::ListAgentsResponse,
     api::v1::error::ApiErrorBody,
+    api::v1::login::{LoginRequest, LoginResponse},
     github::GithubAppClientIdResponse,
     issues::{
         AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
@@ -173,6 +174,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
     async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse>;
+    async fn login(&self, request: &LoginRequest) -> Result<LoginResponse>;
 }
 
 impl MetisClient {
@@ -728,6 +730,25 @@ impl MetisClient {
             .context("failed to decode list users response")
     }
 
+    /// Call `POST /v1/login` to exchange a GitHub token for a Metis login token.
+    pub async fn login(&self, request: &LoginRequest) -> Result<LoginResponse> {
+        let url = self.endpoint("/v1/login")?;
+        let response = self
+            .http
+            .post(url)
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit login request")?
+            .error_for_status_with_body("metis-server rejected login request")
+            .await?;
+
+        response
+            .json::<LoginResponse>()
+            .await
+            .context("failed to decode login response")
+    }
+
     /// Call `POST /v1/users/resolve` to resolve a user by GitHub token.
     pub async fn resolve_user(&self, request: &ResolveUserRequest) -> Result<ResolveUserResponse> {
         let url = self.endpoint("/v1/users/resolve")?;
@@ -1169,6 +1190,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_github_app_client_id(&self) -> Result<GithubAppClientIdResponse> {
         MetisClient::get_github_app_client_id(self).await
+    }
+
+    async fn login(&self, request: &LoginRequest) -> Result<LoginResponse> {
+        MetisClient::login(self, request).await
     }
 }
 
