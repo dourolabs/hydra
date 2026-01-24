@@ -12,12 +12,14 @@ use metis_server::test_utils;
 use std::{fs, path::Path};
 use tempfile::tempdir;
 
+const TEST_METIS_TOKEN: &str = "token-123";
+
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
     {
         let mut store = state.store.write().await;
-        let user = User::new(Username::from("test-user"), "token-123".to_string());
+        let user = User::new(Username::from("test-user"), TEST_METIS_TOKEN.to_string());
         store.add_user(user.into()).await?;
     }
     let server = test_utils::spawn_test_server_with_state(state).await?;
@@ -26,12 +28,12 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             url: server.base_url(),
         },
     };
-    let client = MetisClient::from_config(&app_config, "token-123")?;
+    let client = MetisClient::from_config(&app_config, TEST_METIS_TOKEN)?;
     let temp_home = tempdir().context("create temp home")?;
     let auth_token_path = temp_home.path().join(".local/share/metis/auth-token");
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
-    fs::write(&auth_token_path, "token-123").context("write auth token")?;
+    fs::write(&auth_token_path, TEST_METIS_TOKEN).context("write auth token")?;
 
     let description = "integration flow issue";
 
@@ -62,6 +64,7 @@ async fn run_metis_command(args: &[&str], app_config: &AppConfig, home_dir: &Pat
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
+        .env("METIS_TOKEN", TEST_METIS_TOKEN)
         .env("HOME", home_dir)
         .output()
         .await
