@@ -1,6 +1,6 @@
 use std::{fs, io::ErrorKind, path::PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use metis::{
     auth,
@@ -133,8 +133,6 @@ async fn resolve_client(
         .map(str::trim)
         .filter(|token| !token.is_empty())
     {
-        command::github_device_flow::write_auth_token_file(token_path, token)
-            .context("failed to store auth token from --token")?;
         return MetisClient::from_config(app_config, token.to_string());
     }
 
