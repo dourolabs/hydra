@@ -37,6 +37,10 @@ app_id = 1
 client_id = "replace-with-client-id"
 # OAuth client_secret for device flow (private).
 client_secret = "replace-with-client-secret"
+# Optional override for GitHub API base URL (used for testing).
+api_base_url = "https://api.github.com"
+# Optional override for GitHub OAuth base URL (used for testing).
+oauth_base_url = "https://github.com"
 # GitHub App private key (PEM format).
 private_key = """-----BEGIN RSA PRIVATE KEY-----
 REPLACE_WITH_PRIVATE_KEY

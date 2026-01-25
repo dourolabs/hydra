@@ -58,6 +58,8 @@ pub fn test_app_config() -> AppConfig {
             client_id: "client-id".to_string(),
             client_secret: "client-secret".to_string(),
             private_key: "private-key".to_string(),
+            api_base_url: "https://api.github.com".to_string(),
+            oauth_base_url: "https://github.com".to_string(),
         },
         background: BackgroundSection::default(),
     }

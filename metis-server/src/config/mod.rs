@@ -151,6 +151,10 @@ pub struct GithubAppSection {
     pub client_id: String,
     pub client_secret: String,
     pub private_key: String,
+    #[serde(default = "default_github_api_base_url")]
+    pub api_base_url: String,
+    #[serde(default = "default_github_oauth_base_url")]
+    pub oauth_base_url: String,
 }
 
 impl GithubAppSection {
@@ -170,6 +174,14 @@ impl GithubAppSection {
         &self.private_key
     }
 
+    pub fn api_base_url(&self) -> &str {
+        &self.api_base_url
+    }
+
+    pub fn oauth_base_url(&self) -> &str {
+        &self.oauth_base_url
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(
             self.app_id > 0,
@@ -186,6 +198,14 @@ impl GithubAppSection {
         ensure!(
             non_empty(&self.private_key).is_some(),
             "github_app.private_key must be set"
+        );
+        ensure!(
+            non_empty(&self.api_base_url).is_some(),
+            "github_app.api_base_url must be set"
+        );
+        ensure!(
+            non_empty(&self.oauth_base_url).is_some(),
+            "github_app.oauth_base_url must be set"
         );
         Ok(())
     }
@@ -308,6 +328,14 @@ const fn default_idle_timeout_secs() -> u64 {
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
+}
+
+fn default_github_api_base_url() -> String {
+    "https://api.github.com".to_string()
+}
+
+fn default_github_oauth_base_url() -> String {
+    "https://github.com".to_string()
 }
 
 const fn default_agent_max_tries() -> u32 {
@@ -444,6 +472,8 @@ mod tests {
             client_id: "  ".to_string(),
             client_secret: "\n".to_string(),
             private_key: "key".to_string(),
+            api_base_url: "https://api.github.com".to_string(),
+            oauth_base_url: "https://github.com".to_string(),
         };
 
         let error = github_app
