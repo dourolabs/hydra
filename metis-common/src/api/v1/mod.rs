@@ -10,5 +10,6 @@ pub mod patches;
 pub mod repositories;
 pub mod task_status;
 pub mod users;
+pub mod whoami;
 
 pub use error::ApiError;

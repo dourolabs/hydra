@@ -11,5 +11,6 @@ pub(crate) mod merge_queues;
 mod patches;
 mod repositories;
 mod users;
+mod whoami;
 
 pub(crate) use crate::test_utils::*;

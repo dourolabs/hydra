@@ -123,6 +123,7 @@ pub async fn run_with_state(
             "/v1/jobs/:job_id/context",
             get(routes::jobs::context::get_job_context),
         )
+        .route("/v1/whoami", get(routes::whoami::whoami))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::auth::require_auth,

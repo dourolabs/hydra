@@ -8,3 +8,4 @@ pub mod merge_queues;
 pub mod patches;
 pub mod repositories;
 pub mod users;
+pub mod whoami;
