@@ -34,7 +34,7 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
-use crate::{client::MetisClientInterface, command::jobs};
+use crate::{auth, client::MetisClientInterface, command::jobs};
 
 pub mod panel;
 
@@ -363,9 +363,10 @@ struct EventOutcome {
 pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
+    token_path: &std::path::Path,
     browser_command: Option<&str>,
 ) -> Result<()> {
-    let username = resolve_dashboard_username(client).await?;
+    let username = resolve_dashboard_username(client, token_path).await?;
     let mut terminal = ratatui::init();
     let result =
         run_dashboard_loop(client, &mut terminal, username, server_url, browser_command).await;
@@ -373,17 +374,24 @@ pub async fn run(
     result
 }
 
-async fn resolve_dashboard_username(client: &dyn MetisClientInterface) -> Result<Username> {
-    let response = client
-        .whoami()
-        .await
-        .context("failed to resolve authenticated actor")?;
-    match response.actor {
-        ActorIdentity::User { username } => Ok(username),
-        ActorIdentity::Job { job_id } => {
-            bail!("authenticated actor is job '{job_id}', expected a user")
+async fn resolve_dashboard_username(
+    client: &dyn MetisClientInterface,
+    token_path: &std::path::Path,
+) -> Result<Username> {
+    match client.whoami().await {
+        Ok(response) => match response.actor {
+            ActorIdentity::User { username } => Ok(username),
+            ActorIdentity::Job { job_id } => {
+                bail!("authenticated actor is job '{job_id}', expected a user")
+            }
+            _ => bail!("authenticated actor type is unsupported"),
+        },
+        Err(whoami_err) => {
+            let token_path = token_path.to_path_buf();
+            auth::resolve_auth_user(client, &token_path)
+                .await
+                .with_context(|| format!("failed to resolve authenticated user ({whoami_err})"))
         }
-        _ => bail!("authenticated actor type is unsupported"),
     }
 }
 
