@@ -1,18 +1,24 @@
 use crate::{
+    app::{AppState, ServiceState},
     domain::{
         actors::Actor,
         issues::{Issue, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
         users::{User, Username},
     },
-    test_utils::{spawn_test_server_with_state, test_client_without_auth, test_state},
+    store::MemoryStore,
+    test_utils::{
+        MockJobEngine, spawn_test_server_with_state, test_app_config, test_client_without_auth,
+        test_state,
+    },
 };
 use chrono::Utc;
 use httpmock::prelude::*;
 use metis_common::{TaskId, github::GithubTokenResponse};
 use octocrab::Octocrab;
 use reqwest::{Client, header};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock;
 
 fn auth_client(token: &str) -> Client {
     let mut headers = header::HeaderMap::new();
@@ -63,6 +69,21 @@ fn build_github_client(base_url: String) -> Octocrab {
         .unwrap()
 }
 
+fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> AppState {
+    let mut config = test_app_config();
+    config.github_app.api_base_url = api_base_url;
+    config.github_app.oauth_base_url = oauth_base_url;
+
+    AppState {
+        config: Arc::new(config),
+        github_app: None,
+        service_state: Arc::new(ServiceState::default()),
+        store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        job_engine: Arc::new(MockJobEngine::new()),
+        agents: Arc::new(RwLock::new(Vec::new())),
+    }
+}
+
 #[tokio::test]
 async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
     let server = MockServer::start_async().await;
@@ -78,7 +99,7 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
         Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
             .await?;
 
-    let state = test_state();
+    let state = test_state_with_github_urls(server.base_url(), server.base_url());
     {
         let mut store = state.store.write().await;
         store.add_user(user).await?;
@@ -101,7 +122,15 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
-    let state = test_state();
+    let server = MockServer::start_async().await;
+    let _mock = server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_user_response("octo", 42));
+    });
+
+    let state = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
     let user = User::new(username.clone(), "task-token".to_string());
 
@@ -198,6 +227,161 @@ async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()>
         .await?;
 
     assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
+    let server = MockServer::start_async().await;
+    let _user_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/user")
+            .header("authorization", "Bearer expired-token");
+        then.status(401);
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/login/oauth/access_token")
+            .header("accept", "application/json")
+            .body_contains("grant_type=refresh_token")
+            .body_contains("refresh_token=refresh-token");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({
+                "access_token": "new-token",
+                "refresh_token": "new-refresh"
+            }));
+    });
+
+    let state = test_state_with_github_urls(server.base_url(), server.base_url());
+    let username = Username::from("creator");
+    let user = User {
+        username: username.clone(),
+        github_user_id: None,
+        github_token: "expired-token".to_string(),
+        github_refresh_token: Some("refresh-token".to_string()),
+    };
+
+    let issue_id = {
+        let mut store = state.store.write().await;
+        store.add_user(user).await?;
+        store
+            .add_issue(Issue::new(
+                IssueType::Task,
+                "task".to_string(),
+                username.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ))
+            .await?
+    };
+
+    let task_id = TaskId::new();
+    let task = Task::new(
+        "prompt".to_string(),
+        BundleSpec::None,
+        Some(issue_id),
+        None,
+        HashMap::new(),
+        None,
+        None,
+    );
+    let (actor, auth_token) = Actor::new_for_task(task_id.clone());
+    {
+        let mut store = state.store.write().await;
+        store.add_task_with_id(task_id, task, Utc::now()).await?;
+        store.add_actor(actor).await?;
+    }
+
+    let server = spawn_test_server_with_state(state.clone()).await?;
+    let client = auth_client(&auth_token);
+    let response = client
+        .get(format!("{}/v1/github/token", server.base_url()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: GithubTokenResponse = response.json().await?;
+    assert_eq!(body.github_token, "new-token");
+
+    let store = state.store.read().await;
+    let updated = store.get_user(&username).await?;
+    assert_eq!(updated.github_token, "new-token");
+    assert_eq!(updated.github_refresh_token.as_deref(), Some("new-refresh"));
+    refresh_mock.assert();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn github_token_expired_without_refresh_token_returns_unauthorized() -> anyhow::Result<()> {
+    let server = MockServer::start_async().await;
+    let _user_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/user")
+            .header("authorization", "Bearer expired-token");
+        then.status(401);
+    });
+
+    let state = test_state_with_github_urls(server.base_url(), server.base_url());
+    let username = Username::from("creator");
+    let user = User {
+        username: username.clone(),
+        github_user_id: None,
+        github_token: "expired-token".to_string(),
+        github_refresh_token: None,
+    };
+
+    let issue_id = {
+        let mut store = state.store.write().await;
+        store.add_user(user).await?;
+        store
+            .add_issue(Issue::new(
+                IssueType::Task,
+                "task".to_string(),
+                username.clone(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ))
+            .await?
+    };
+
+    let task_id = TaskId::new();
+    let task = Task::new(
+        "prompt".to_string(),
+        BundleSpec::None,
+        Some(issue_id),
+        None,
+        HashMap::new(),
+        None,
+        None,
+    );
+    let (actor, auth_token) = Actor::new_for_task(task_id.clone());
+    {
+        let mut store = state.store.write().await;
+        store.add_task_with_id(task_id, task, Utc::now()).await?;
+        store.add_actor(actor).await?;
+    }
+
+    let server = spawn_test_server_with_state(state).await?;
+    let client = auth_client(&auth_token);
+    let response = client
+        .get(format!("{}/v1/github/token", server.base_url()))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+
     Ok(())
 }
 
