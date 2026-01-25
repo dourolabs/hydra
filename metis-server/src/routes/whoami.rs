@@ -16,7 +16,7 @@ pub async fn whoami(
 
     let identity = match actor.user_or_worker {
         UserOrWorker::Username(username) => ActorIdentity::User { username },
-        UserOrWorker::Task(task_id) => ActorIdentity::Job { job_id: task_id },
+        UserOrWorker::Task(task_id) => ActorIdentity::Task { task_id },
     };
 
     info!("whoami completed");

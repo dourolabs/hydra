@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActorIdentity {
     User { username: Username },
-    Job { job_id: TaskId },
+    Task { task_id: TaskId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ impl From<ActorIdentity> for api::whoami::ActorIdentity {
             ActorIdentity::User { username } => api::whoami::ActorIdentity::User {
                 username: username.into(),
             },
-            ActorIdentity::Job { job_id } => api::whoami::ActorIdentity::Job { job_id },
+            ActorIdentity::Task { task_id } => api::whoami::ActorIdentity::Task { task_id },
         }
     }
 }
