@@ -3,6 +3,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
+    constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
         IssueGraphSelector, IssueGraphWildcard, IssueId, IssueRecord, IssueStatus, IssueType,
@@ -87,6 +88,14 @@ pub enum IssueCommands {
         /// Progress notes for the issue.
         #[arg(long, value_name = "PROGRESS")]
         progress: Option<String>,
+
+        /// Issue id whose job settings will be used as defaults.
+        #[arg(
+            long = "current-issue-id",
+            value_name = "ISSUE_ID",
+            env = ENV_METIS_ISSUE_ID
+        )]
+        current_issue_id: Option<IssueId>,
 
         /// Repository name to use for job settings.
         #[arg(long = "repo-name", value_name = "REPO_NAME")]
@@ -280,6 +289,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             assignee,
             description,
             progress,
+            current_issue_id,
             repo_name,
             remote_url,
             image,
@@ -302,6 +312,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 image,
                 branch,
                 max_retries,
+                current_issue_id,
             )
             .await
         }
@@ -664,6 +675,29 @@ fn resolve_job_settings(
     }
 }
 
+async fn resolve_inherited_job_settings(
+    client: &dyn MetisClientInterface,
+    current_issue_id: Option<IssueId>,
+) -> Result<JobSettings> {
+    let Some(issue_id) = current_issue_id else {
+        return Ok(JobSettings::default());
+    };
+
+    let issue = client
+        .get_issue(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+
+    let mut job_settings = JobSettings::default();
+    let current = issue.issue.job_settings;
+    job_settings.repo_name = current.repo_name;
+    job_settings.remote_url = current.remote_url;
+    job_settings.image = current.image;
+    job_settings.branch = current.branch;
+
+    Ok(job_settings)
+}
+
 async fn create_issue(
     client: &dyn MetisClientInterface,
     issue_type: IssueType,
@@ -679,6 +713,7 @@ async fn create_issue(
     image: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
+    current_issue_id: Option<IssueId>,
 ) -> Result<()> {
     let description = description.trim();
     if description.is_empty() {
@@ -700,8 +735,10 @@ async fn create_issue(
         None => None,
     };
 
+    let inherited_job_settings = resolve_inherited_job_settings(client, current_issue_id).await?;
+
     let (job_settings, job_settings_requested) = resolve_job_settings(
-        JobSettings::default(),
+        inherited_job_settings,
         repo_name,
         remote_url,
         image,
@@ -709,7 +746,8 @@ async fn create_issue(
         max_retries,
         false,
     )?;
-    let job_settings = job_settings_requested.then_some(job_settings);
+    let job_settings =
+        (job_settings_requested || !JobSettings::is_default(&job_settings)).then_some(job_settings);
 
     let request = UpsertIssueRequest::new(
         Issue::new(
@@ -1892,6 +1930,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1949,11 +1988,178 @@ mod tests {
             Some("worker:latest".into()),
             Some("feature/job-settings".into()),
             Some(4),
+            None,
         )
         .await
         .unwrap();
 
         create_mock.assert();
+        assert_eq!(create_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_issue_inherits_job_settings_from_current_issue() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let current_issue_id = issue_id("i-current");
+        let mut inherited_settings = JobSettings::default();
+        inherited_settings.repo_name = Some(sample_repo_name());
+        inherited_settings.remote_url = Some("https://example.com/service.git".into());
+        inherited_settings.image = Some("worker:latest".into());
+        inherited_settings.branch = Some("feature/job-settings".into());
+        let current_issue = IssueRecord::new(
+            current_issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(inherited_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let current_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{current_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::MergeRequest,
+                "New issue description".into(),
+                Username::from("creator-a"),
+                "Initial notes".into(),
+                IssueStatus::Open,
+                None,
+                Some(inherited_settings),
+                Vec::new(),
+                Vec::new(),
+                vec![],
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
+        });
+
+        create_issue(
+            &client,
+            IssueType::MergeRequest,
+            IssueStatus::Open,
+            Vec::new(),
+            vec![],
+            None,
+            Username::from("creator-a"),
+            "New issue description".into(),
+            Some("Initial notes".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(current_issue_id),
+        )
+        .await
+        .unwrap();
+
+        current_issue_mock.assert();
+        create_mock.assert();
+        assert_eq!(current_issue_mock.hits(), 1);
+        assert_eq!(create_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_issue_overrides_inherited_job_settings() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+
+        let current_issue_id = issue_id("i-current");
+        let mut inherited_settings = JobSettings::default();
+        inherited_settings.repo_name = Some(sample_repo_name());
+        inherited_settings.remote_url = Some("https://example.com/service.git".into());
+        inherited_settings.image = Some("worker:latest".into());
+        inherited_settings.branch = Some("feature/job-settings".into());
+        let current_issue = IssueRecord::new(
+            current_issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Existing issue".into(),
+                empty_user(),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(inherited_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let current_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{current_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+
+        let mut expected_settings = JobSettings::default();
+        expected_settings.repo_name = Some(RepoName::from_str("dourolabs/override").unwrap());
+        expected_settings.remote_url = inherited_settings.remote_url.clone();
+        expected_settings.image = Some("custom:tag".into());
+        expected_settings.branch = Some("override-branch".into());
+        let create_request = UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::MergeRequest,
+                "New issue description".into(),
+                Username::from("creator-a"),
+                "Initial notes".into(),
+                IssueStatus::Open,
+                None,
+                Some(expected_settings.clone()),
+                Vec::new(),
+                Vec::new(),
+                vec![],
+            ),
+            None,
+        );
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/issues")
+                .json_body_obj(&create_request);
+            then.status(200)
+                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new")));
+        });
+
+        create_issue(
+            &client,
+            IssueType::MergeRequest,
+            IssueStatus::Open,
+            Vec::new(),
+            vec![],
+            None,
+            Username::from("creator-a"),
+            "New issue description".into(),
+            Some("Initial notes".into()),
+            Some("dourolabs/override".into()),
+            None,
+            Some("custom:tag".into()),
+            Some("override-branch".into()),
+            None,
+            Some(current_issue_id),
+        )
+        .await
+        .unwrap();
+
+        current_issue_mock.assert();
+        create_mock.assert();
+        assert_eq!(current_issue_mock.hits(), 1);
         assert_eq!(create_mock.hits(), 1);
     }
     #[tokio::test]
@@ -1969,6 +2175,7 @@ mod tests {
             None,
             empty_user(),
             "   ".into(),
+            None,
             None,
             None,
             None,
@@ -1993,6 +2200,7 @@ mod tests {
             Some("   ".into()),
             empty_user(),
             "Valid description".into(),
+            None,
             None,
             None,
             None,

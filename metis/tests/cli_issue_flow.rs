@@ -4,7 +4,7 @@ use metis::{
     config::{AppConfig, ServerSection},
 };
 use metis_common::{
-    constants::{ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
+    constants::{ENV_METIS_ISSUE_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
     issues::{Issue, IssueStatus, IssueType, SearchIssuesQuery},
     users::Username,
     TaskId,
@@ -95,6 +95,7 @@ async fn run_metis_command(
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
         .env(ENV_METIS_TOKEN, auth_token)
         .env("HOME", home_dir)
+        .env_remove(ENV_METIS_ISSUE_ID)
         .output()
         .await
         .context("failed to spawn metis CLI command")?;
