@@ -325,7 +325,7 @@ impl MetisClient {
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
-        builder.header(header::AUTHORIZATION, format!("Bearer {}", self.auth_token))
+        builder.bearer_auth(&self.auth_token)
     }
 
     /// Call the `/health` endpoint and return the reported status string.

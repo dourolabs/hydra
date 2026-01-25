@@ -159,18 +159,6 @@ mod tests {
             Vec::new(),
         )
     }
-  
-    fn make_task(prompt: &str) -> crate::store::Task {
-        crate::store::Task::new(
-            prompt.to_string(),
-            BundleSpec::None,
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
-        )
-    }
 
     fn repository(_repo_name: &RepoName) -> ServiceRepositoryConfig {
         ServiceRepositoryConfig::new(
