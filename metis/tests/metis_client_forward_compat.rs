@@ -70,6 +70,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     );
     let user_path = format!("/v1/users/{username}");
     let github_token_path = format!("/v1/users/{username}/github-token");
+    let github_token_lookup_path = "/v1/github/token";
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -300,6 +301,14 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    server.mock(move |when, then| {
+        when.method(GET).path(github_token_lookup_path);
+        then.status(200).json_body(json!({
+            "github_token": "gho_forward_compat",
+            "extra": "github-token"
+        }));
+    });
+
     let merge_queue_path_clone = merge_queue_path.clone();
     let patch_id_for_merge_clone = patch_id_for_merge.clone();
     server.mock(move |when, then| {
@@ -512,6 +521,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         .set_user_github_token(&username, &token_update)
         .await?;
     assert_eq!(updated_user.user.username, username);
+
+    let github_token = client.get_github_token().await?;
+    assert_eq!(github_token, "gho_forward_compat");
 
     // Merge queue
     let merge_queue = client.get_merge_queue(&repo_name, "main").await?;

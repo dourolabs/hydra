@@ -6,7 +6,7 @@ use metis_common::{
     agents::ListAgentsResponse,
     api::v1::error::ApiErrorBody,
     api::v1::login::{LoginRequest, LoginResponse},
-    github::GithubAppClientIdResponse,
+    github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
         AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
         SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
@@ -175,6 +175,7 @@ pub trait MetisClientInterface: Send + Sync {
         username: &Username,
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse>;
+    async fn get_github_token(&self) -> Result<String>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -898,6 +899,27 @@ impl MetisClient {
             .context("failed to decode update github token response")
     }
 
+    /// Call `GET /v1/github/token` to fetch the authenticated user's GitHub token.
+    pub async fn get_github_token(&self) -> Result<String> {
+        let url = self.endpoint("/v1/github/token")?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch GitHub token")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching GitHub token",
+            )
+            .await?;
+
+        let token = response
+            .json::<GithubTokenResponse>()
+            .await
+            .context("failed to decode GitHub token response")?;
+
+        Ok(token.github_token)
+    }
+
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -1220,6 +1242,10 @@ impl MetisClientInterface for MetisClient {
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse> {
         MetisClient::set_user_github_token(self, username, request).await
+    }
+
+    async fn get_github_token(&self) -> Result<String> {
+        MetisClient::get_github_token(self).await
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
