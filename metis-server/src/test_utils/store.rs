@@ -163,7 +163,7 @@ impl Store for FailingStore {
     async fn create_actor_for_github_token(
         &mut self,
         _github_token: String,
-        _github_refresh_token: Option<String>,
+        _github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
         fail()
     }
@@ -204,8 +204,8 @@ impl Store for FailingStore {
         &mut self,
         _username: &Username,
         _github_token: String,
-        _github_user_id: Option<u64>,
-        _github_refresh_token: Option<String>,
+        _github_user_id: u64,
+        _github_refresh_token: String,
     ) -> Result<User, StoreError> {
         fail()
     }

@@ -12,7 +12,7 @@ pub async fn login(
     let payload: LoginRequest = payload.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_refresh_token =
-        normalize_optional_non_empty("github_refresh_token", payload.github_refresh_token)?;
+        normalize_non_empty("github_refresh_token", payload.github_refresh_token)?;
     info!("login invoked");
 
     let response = state
@@ -32,22 +32,6 @@ fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
     }
 
     Ok(trimmed.to_string())
-}
-
-fn normalize_optional_non_empty(
-    field: &str,
-    value: Option<String>,
-) -> Result<Option<String>, ApiError> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(ApiError::bad_request(format!("{field} must not be empty")));
-    }
-
-    Ok(Some(trimmed.to_string()))
 }
 
 fn map_login_error(error: LoginError) -> ApiError {

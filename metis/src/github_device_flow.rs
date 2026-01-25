@@ -38,7 +38,7 @@ struct TokenPollResponse {
 #[derive(Debug)]
 struct DeviceFlowToken {
     access_token: String,
-    refresh_token: Option<String>,
+    refresh_token: String,
 }
 
 enum TokenPollState {
@@ -162,7 +162,9 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
     if let Some(token) = payload.access_token {
         return Ok(TokenPollState::Token(DeviceFlowToken {
             access_token: token,
-            refresh_token: payload.refresh_token,
+            refresh_token: payload
+                .refresh_token
+                .ok_or_else(|| anyhow!("GitHub device flow response missing refresh token"))?,
         }));
     }
 
@@ -186,12 +188,9 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
 async fn login_with_github_token(
     client: &MetisClientUnauthenticated,
     token: &str,
-    refresh_token: Option<&str>,
+    refresh_token: &str,
 ) -> Result<String> {
-    let request = LoginRequest::new(
-        token.to_string(),
-        refresh_token.map(|value| value.to_string()),
-    );
+    let request = LoginRequest::new(token.to_string(), refresh_token.to_string());
     let (auth_token, _client) = client
         .login(&request)
         .await
@@ -207,7 +206,7 @@ async fn exchange_and_store_token(
     let auth_token = login_with_github_token(
         client,
         &github_token.access_token,
-        github_token.refresh_token.as_deref(),
+        &github_token.refresh_token,
     )
     .await?;
     write_auth_token_file(token_path, &auth_token)?;
@@ -291,14 +290,15 @@ mod tests {
     async fn exchange_and_store_token_uses_login_response_token() {
         let server = MockServer::start();
         let login_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/login")
-                .json_body(json!({ "github_token": "gh-token" }));
+            when.method(POST).path("/v1/login").json_body(json!({
+                "github_token": "gh-token",
+                "github_refresh_token": "refresh-token"
+            }));
             then.status(200).json_body(json!({
                 "login_token": "api-token",
                 "user": {
                     "username": "octo",
-                    "github_user_id": null
+                    "github_user_id": 42
                 }
             }));
         });
@@ -314,7 +314,7 @@ mod tests {
             &token_path,
             &DeviceFlowToken {
                 access_token: "gh-token".to_string(),
-                refresh_token: None,
+                refresh_token: "refresh-token".to_string(),
             },
         )
         .await

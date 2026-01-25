@@ -840,7 +840,7 @@ impl Store for PostgresStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_refresh_token: Option<String>,
+        github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
         let (user, actor, auth_token) =
             Actor::new_for_github_token(github_token, github_refresh_token)
@@ -971,8 +971,8 @@ impl Store for PostgresStore {
         &mut self,
         username: &Username,
         github_token: String,
-        github_user_id: Option<u64>,
-        github_refresh_token: Option<String>,
+        github_user_id: u64,
+        github_refresh_token: String,
     ) -> Result<User, StoreError> {
         let mut user: User = self
             .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
@@ -980,12 +980,8 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
 
         user.github_token = github_token;
-        if let Some(github_user_id) = github_user_id {
-            user.github_user_id = Some(github_user_id);
-        }
-        if let Some(github_refresh_token) = github_refresh_token {
-            user.github_refresh_token = Some(github_refresh_token);
-        }
+        user.github_user_id = github_user_id;
+        user.github_refresh_token = github_refresh_token;
 
         self.update_payload(
             TABLE_USERS,
@@ -1409,9 +1405,9 @@ mod tests {
         let mut store = PostgresStore::new(pool);
         let user = User {
             username: Username::from("alice"),
-            github_user_id: Some(101),
+            github_user_id: 101,
             github_token: "token".to_string(),
-            github_refresh_token: None,
+            github_refresh_token: "refresh-token".to_string(),
         };
         store.add_user(user.clone()).await.unwrap();
 
@@ -1421,11 +1417,16 @@ mod tests {
 
         let username = Username::from("alice");
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string(), Some(202), None)
+            .set_user_github_token(
+                &username,
+                "new-token".to_string(),
+                202,
+                "new-refresh".to_string(),
+            )
             .await
             .unwrap();
         assert_eq!(updated.github_token, "new-token");
-        assert_eq!(updated.github_user_id, Some(202));
+        assert_eq!(updated.github_user_id, 202);
 
         store.delete_user(&username).await.unwrap();
         assert!(store.list_users().await.unwrap().is_empty());

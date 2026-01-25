@@ -26,7 +26,7 @@ impl Actor {
     /// Creates a new user-backed actor from a GitHub token.
     pub async fn new_for_github_token(
         github_token: String,
-        github_refresh_token: Option<String>,
+        github_refresh_token: String,
     ) -> Result<(User, Actor, String), ActorError> {
         let github_client = Octocrab::builder()
             .personal_token(github_token.clone())
@@ -38,7 +38,7 @@ impl Actor {
 
     pub(crate) async fn new_for_github_token_with_client(
         github_token: String,
-        github_refresh_token: Option<String>,
+        github_refresh_token: String,
         github_client: &Octocrab,
     ) -> Result<(User, Actor, String), ActorError> {
         let github_user = github_client
@@ -49,7 +49,7 @@ impl Actor {
         let username = Username::from(github_user.login);
         let user = User {
             username: username.clone(),
-            github_user_id: Some(github_user.id.into_inner()),
+            github_user_id: github_user.id.into_inner(),
             github_token,
             github_refresh_token,
         };
@@ -197,7 +197,7 @@ mod tests {
         let github_client = build_github_client(server.base_url());
         let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
             "gh-token".to_string(),
-            Some("gh-refresh".to_string()),
+            "gh-refresh".to_string(),
             &github_client,
         )
         .await
@@ -205,9 +205,9 @@ mod tests {
 
         assert!(!auth_token.is_empty());
         assert_eq!(user.username, Username::from("octo"));
-        assert_eq!(user.github_user_id, Some(42));
+        assert_eq!(user.github_user_id, 42);
         assert_eq!(user.github_token, "gh-token");
-        assert_eq!(user.github_refresh_token.as_deref(), Some("gh-refresh"));
+        assert_eq!(user.github_refresh_token, "gh-refresh");
         assert_eq!(
             actor.user_or_worker,
             UserOrWorker::Username(Username::from("octo"))
@@ -230,10 +230,13 @@ mod tests {
         });
 
         let github_client = build_github_client(server.base_url());
-        let err =
-            Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
-                .await
-                .expect_err("should fail when GitHub lookup fails");
+        let err = Actor::new_for_github_token_with_client(
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+            &github_client,
+        )
+        .await
+        .expect_err("should fail when GitHub lookup fails");
         assert!(matches!(err, ActorError::GithubLookupFailed(_)));
     }
 
