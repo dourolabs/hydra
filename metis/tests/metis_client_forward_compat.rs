@@ -15,7 +15,7 @@ use metis_common::{
     jobs::{Bundle, BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
-    repositories::{CreateRepositoryRequest, ServiceRepositoryConfig, UpdateRepositoryRequest},
+    repositories::{CreateRepositoryRequest, Repository, UpdateRepositoryRequest},
     task_status::{Event, Status},
     users::{CreateUserRequest, UpdateGithubTokenRequest, Username},
     whoami::ActorIdentity,
@@ -503,7 +503,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(patches.patches.len(), 1);
 
     // Repositories
-    let repo_config = ServiceRepositoryConfig::new(
+    let repo_config = Repository::new(
         "https://example.com/repo.git".to_string(),
         Some("main".to_string()),
         None,
@@ -669,9 +669,11 @@ fn forward_patch_json(
 fn forward_repo_info(repo_name: &RepoName) -> Value {
     json!({
         "name": repo_name,
-        "remote_url": "https://example.com/repo.git",
-        "default_branch": "main",
-        "default_image": "ghcr.io/dourolabs/metis:main",
+        "repository": {
+            "remote_url": "https://example.com/repo.git",
+            "default_branch": "main",
+            "default_image": "ghcr.io/dourolabs/metis:main"
+        },
         "sync": "on"
     })
 }

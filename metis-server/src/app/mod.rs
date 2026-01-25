@@ -4,7 +4,7 @@ mod resolved_task;
 use crate::{
     domain::jobs::Bundle, domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError,
 };
-use git2::Repository;
+use git2::Repository as GitRepository;
 use metis_common::{PatchId, RepoName, merge_queues::MergeQueue};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
@@ -15,7 +15,7 @@ pub use app_state::{
     AgentError, AppState, CreateJobError, LoginError, SetJobStatusError, UpdateTodoListError,
     UpsertIssueError, UpsertPatchError,
 };
-pub use metis_common::repositories::{ServiceRepositoryConfig, ServiceRepositoryInfo};
+pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 
 #[derive(Debug, Clone)]
@@ -26,13 +26,13 @@ pub struct ResolvedBundle {
 
 #[allow(dead_code)]
 pub struct ConnectedRepository {
-    repository: Repository,
+    repository: GitRepository,
     _workdir: TempDir,
 }
 
 impl ConnectedRepository {
     #[allow(dead_code)]
-    pub fn repository(&self) -> &Repository {
+    pub fn repository(&self) -> &GitRepository {
         &self.repository
     }
 }
@@ -143,10 +143,10 @@ pub enum GitRepositoryError {
 
 fn connect_repository(
     _repo_name: &RepoName,
-    config: &ServiceRepositoryConfig,
+    config: &Repository,
 ) -> Result<ConnectedRepository, GitRepositoryError> {
     let workdir = TempDir::new().map_err(GitRepositoryError::TempDir)?;
-    let repository = Repository::clone(&config.remote_url, workdir.path())?;
+    let repository = GitRepository::clone(&config.remote_url, workdir.path())?;
 
     Ok(ConnectedRepository {
         repository,
@@ -163,7 +163,7 @@ impl ServiceState {
     pub async fn ensure_cached(
         &self,
         repo_name: &RepoName,
-        config: &ServiceRepositoryConfig,
+        config: &Repository,
     ) -> Result<(), MergeQueueError> {
         self.initialize_merge_queue(repo_name).await;
         self.ensure_git_cache(repo_name, config).await?;
@@ -195,7 +195,7 @@ impl ServiceState {
     pub async fn get_merge_queue(
         &self,
         repo_name: &RepoName,
-        config: &ServiceRepositoryConfig,
+        config: &Repository,
         branch_name: &str,
     ) -> Result<MergeQueue, MergeQueueError> {
         self.ensure_cached(repo_name, config).await?;
@@ -213,7 +213,7 @@ impl ServiceState {
     pub async fn add_patch_to_merge_queue(
         &self,
         repo_name: &RepoName,
-        config: &ServiceRepositoryConfig,
+        config: &Repository,
         branch_name: &str,
         patch_id: PatchId,
         patch: &Patch,
@@ -269,13 +269,13 @@ impl ServiceState {
     async fn refresh_repository(
         &self,
         repo_name: &RepoName,
-        config: &ServiceRepositoryConfig,
-    ) -> Result<Repository, MergeQueueError> {
+        config: &Repository,
+    ) -> Result<GitRepository, MergeQueueError> {
         let cache_entry = self.ensure_git_cache(repo_name, config).await?;
 
         let cached = cache_entry.lock().await;
         let repository_handle =
-            Repository::open(&cached.path).map_err(|source| MergeQueueError::Git {
+            GitRepository::open(&cached.path).map_err(|source| MergeQueueError::Git {
                 repo_name: repo_name.clone(),
                 source: source.into(),
             })?;
@@ -302,7 +302,7 @@ impl ServiceState {
     async fn ensure_git_cache(
         &self,
         repo_name: &RepoName,
-        config: &ServiceRepositoryConfig,
+        config: &Repository,
     ) -> Result<Arc<Mutex<CachedRepository>>, MergeQueueError> {
         let mut git_cache = self.git_cache.write().await;
         if let Some(existing) = git_cache.get(repo_name) {
@@ -346,9 +346,9 @@ fn branch_ref(branch_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServiceRepositoryConfig, connect_repository};
+    use super::{Repository, connect_repository};
     use anyhow::Result;
-    use git2::{Commit, Oid, Repository, Signature};
+    use git2::{Commit, Oid, Repository as GitRepository, Signature};
     use metis_common::RepoName;
     use std::{fs, path::Path, str::FromStr};
     use tempfile::TempDir;
@@ -356,15 +356,12 @@ mod tests {
     #[test]
     fn connect_returns_git2_repository_for_remote_url() -> Result<()> {
         let remote_dir = TempDir::new()?;
-        let remote_repo = Repository::init(remote_dir.path())?;
+        let remote_repo = GitRepository::init(remote_dir.path())?;
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
         let repo_name = RepoName::from_str("dourolabs/metis")?;
-        let repository = ServiceRepositoryConfig::new(
-            remote_dir.path().to_str().unwrap().to_string(),
-            None,
-            None,
-        );
+        let repository =
+            Repository::new(remote_dir.path().to_str().unwrap().to_string(), None, None);
 
         let connected = connect_repository(&repo_name, &repository)?;
         let repo = connected.repository();
@@ -376,7 +373,7 @@ mod tests {
         Ok(())
     }
 
-    fn commit_file(repo: &Repository, name: &str, contents: &str, message: &str) -> Result<Oid> {
+    fn commit_file(repo: &GitRepository, name: &str, contents: &str, message: &str) -> Result<Oid> {
         let signature = Signature::now("Tester", "tester@example.com")?;
         let workdir = repo
             .workdir()

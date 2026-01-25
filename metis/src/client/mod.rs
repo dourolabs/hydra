@@ -1393,8 +1393,7 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use metis_common::repositories::{
-        CreateRepositoryRequest, ServiceRepositoryConfig, ServiceRepositoryInfo,
-        UpdateRepositoryRequest,
+        CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
     };
     use serde_json::json;
     use std::str::FromStr;
@@ -1404,11 +1403,13 @@ mod tests {
     #[tokio::test]
     async fn list_repositories_fetches_config() -> Result<()> {
         let server = MockServer::start();
-        let repositories = vec![ServiceRepositoryInfo::new(
+        let repositories = vec![RepositoryRecord::new(
             RepoName::from_str("dourolabs/metis")?,
-            "https://example.com/repo.git".to_string(),
-            Some("main".to_string()),
-            Some("ghcr.io/example/repo:main".to_string()),
+            Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                Some("ghcr.io/example/repo:main".to_string()),
+            ),
         )];
         let payload = ListRepositoriesResponse::new(repositories);
         let payload_for_mock = payload.clone();
@@ -1438,17 +1439,15 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/new-repo")?;
         let request = CreateRepositoryRequest::new(
             repo_name.clone(),
-            ServiceRepositoryConfig::new(
+            Repository::new(
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/example/new-repo:main".to_string()),
             ),
         );
-        let response_body = UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
+        let response_body = UpsertRepositoryResponse::new(RepositoryRecord::new(
             repo_name.clone(),
-            request.repository.remote_url.clone(),
-            request.repository.default_branch.clone(),
-            request.repository.default_image.clone(),
+            request.repository.clone(),
         ));
 
         let mock = server.mock(|when, then| {
@@ -1469,7 +1468,7 @@ mod tests {
         mock.assert();
         assert_eq!(response.repository.name, repo_name);
         assert_eq!(
-            response.repository.default_image.as_deref(),
+            response.repository.repository.default_image.as_deref(),
             Some("ghcr.io/example/new-repo:main")
         );
 
@@ -1480,7 +1479,7 @@ mod tests {
     async fn update_repository_includes_repo_and_propagates_errors() -> Result<()> {
         let server = MockServer::start();
         let repo_name = RepoName::from_str("dourolabs/missing")?;
-        let request = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
+        let request = UpdateRepositoryRequest::new(Repository::new(
             "https://example.com/updated.git".to_string(),
             None,
             None,

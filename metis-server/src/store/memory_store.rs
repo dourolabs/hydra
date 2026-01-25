@@ -14,7 +14,7 @@ use crate::domain::{
     task_status::Event,
     users::{User, Username},
 };
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
 
 /// An in-memory implementation of the Store trait.
 ///
@@ -28,7 +28,7 @@ pub struct MemoryStore {
     /// Maps patch IDs to their Patch data
     patches: HashMap<PatchId, Patch>,
     /// Maps repository names to their configurations
-    repositories: HashMap<RepoName, ServiceRepositoryConfig>,
+    repositories: HashMap<RepoName, Repository>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
     issue_children: HashMap<IssueId, Vec<IssueId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
@@ -187,7 +187,7 @@ impl Store for MemoryStore {
     async fn add_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError> {
         if self.repositories.contains_key(&name) {
             return Err(StoreError::RepositoryAlreadyExists(name));
@@ -197,7 +197,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError> {
+    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError> {
         self.repositories
             .get(name)
             .cloned()
@@ -207,7 +207,7 @@ impl Store for MemoryStore {
     async fn update_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError> {
         if !self.repositories.contains_key(&name) {
             return Err(StoreError::RepositoryNotFound(name));
@@ -217,9 +217,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_repositories(
-        &self,
-    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError> {
+    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError> {
         let mut repositories: Vec<_> = self
             .repositories
             .iter()
@@ -732,13 +730,13 @@ mod tests {
     };
     use chrono::Utc;
     use httpmock::prelude::*;
-    use metis_common::{RepoName, TaskId, repositories::ServiceRepositoryConfig};
+    use metis_common::{RepoName, TaskId, repositories::Repository};
     use octocrab::Octocrab;
     use serde_json::json;
     use std::{collections::HashSet, str::FromStr};
 
-    fn sample_repository_config() -> ServiceRepositoryConfig {
-        ServiceRepositoryConfig::new(
+    fn sample_repository_config() -> Repository {
+        Repository::new(
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),

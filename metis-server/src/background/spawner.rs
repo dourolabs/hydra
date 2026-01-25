@@ -310,7 +310,7 @@ mod tests {
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
     use crate::{
-        app::ServiceRepositoryConfig,
+        app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::test_state_with_repo,
     };
@@ -330,9 +330,9 @@ mod tests {
         }
     }
 
-    fn repository() -> (RepoName, ServiceRepositoryConfig) {
+    fn repository() -> (RepoName, Repository) {
         let repo_name = RepoName::from_str("dourolabs/metis").expect("repo name should parse");
-        let repository = ServiceRepositoryConfig::new(
+        let repository = Repository::new(
             "https://github.com/dourolabs/metis.git".to_string(),
             Some("main".to_string()),
             Some("repo-image".to_string()),

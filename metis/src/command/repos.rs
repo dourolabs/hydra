@@ -2,8 +2,7 @@ use crate::client::MetisClientInterface;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
-    CreateRepositoryRequest, ServiceRepositoryConfig, ServiceRepositoryInfo,
-    UpdateRepositoryRequest,
+    CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
 use std::io::{self, Write};
@@ -75,9 +74,7 @@ pub async fn run(client: &dyn MetisClientInterface, command: ReposCommand) -> Re
     Ok(())
 }
 
-async fn fetch_repositories(
-    client: &dyn MetisClientInterface,
-) -> Result<Vec<ServiceRepositoryInfo>> {
+async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<RepositoryRecord>> {
     let response = client
         .list_repositories()
         .await
@@ -88,7 +85,7 @@ async fn fetch_repositories(
 async fn create_repository(
     client: &dyn MetisClientInterface,
     args: UpsertRepositoryArgs,
-) -> Result<ServiceRepositoryInfo> {
+) -> Result<RepositoryRecord> {
     let request = build_create_request(&args)?;
     let response = client
         .create_repository(&request)
@@ -100,7 +97,7 @@ async fn create_repository(
 async fn update_repository(
     client: &dyn MetisClientInterface,
     args: UpsertRepositoryArgs,
-) -> Result<ServiceRepositoryInfo> {
+) -> Result<RepositoryRecord> {
     let (repo_name, request) = build_update_request(&args)?;
     let response = client
         .update_repository(&repo_name, &request)
@@ -125,8 +122,8 @@ fn build_update_request(
     ))
 }
 
-fn build_repository_config(args: &UpsertRepositoryArgs) -> Result<ServiceRepositoryConfig> {
-    Ok(ServiceRepositoryConfig::new(
+fn build_repository_config(args: &UpsertRepositoryArgs) -> Result<Repository> {
+    Ok(Repository::new(
         parse_required(&args.remote_url, "remote URL")?,
         parse_optional(
             &args.default_branch,
@@ -174,10 +171,7 @@ fn parse_optional(
     }
 }
 
-fn print_repositories(
-    repositories: &[ServiceRepositoryInfo],
-    writer: &mut impl Write,
-) -> Result<()> {
+fn print_repositories(repositories: &[RepositoryRecord], writer: &mut impl Write) -> Result<()> {
     if repositories.is_empty() {
         writeln!(writer, "No repositories configured.")?;
         writer.flush()?;
@@ -194,7 +188,7 @@ fn print_repositories(
 
 fn print_single_repository(
     action: &str,
-    repository: &ServiceRepositoryInfo,
+    repository: &RepositoryRecord,
     writer: &mut impl Write,
 ) -> Result<()> {
     writeln!(writer, "{action}:")?;
@@ -204,21 +198,22 @@ fn print_single_repository(
 }
 
 fn write_repository_details(
-    repository: &ServiceRepositoryInfo,
+    repository: &RepositoryRecord,
     indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
+    let config = &repository.repository;
     writeln!(writer, "{indent}- {}", repository.name)?;
-    writeln!(writer, "{indent}  remote_url: {}", repository.remote_url)?;
+    writeln!(writer, "{indent}  remote_url: {}", config.remote_url)?;
     writeln!(
         writer,
         "{indent}  default_branch: {}",
-        repository.default_branch.as_deref().unwrap_or("<none>")
+        config.default_branch.as_deref().unwrap_or("<none>")
     )?;
     writeln!(
         writer,
         "{indent}  default_image: {}",
-        repository.default_image.as_deref().unwrap_or("<none>")
+        config.default_image.as_deref().unwrap_or("<none>")
     )?;
     Ok(())
 }
@@ -246,12 +241,14 @@ mod tests {
         }
     }
 
-    fn sample_repository_info(name: &RepoName) -> ServiceRepositoryInfo {
-        ServiceRepositoryInfo::new(
+    fn sample_repository_info(name: &RepoName) -> RepositoryRecord {
+        RepositoryRecord::new(
             name.clone(),
-            "https://example.com/metis.git".to_string(),
-            Some("main".to_string()),
-            Some("ghcr.io/dourolabs/metis:latest".to_string()),
+            Repository::new(
+                "https://example.com/metis.git".to_string(),
+                Some("main".to_string()),
+                Some("ghcr.io/dourolabs/metis:latest".to_string()),
+            ),
         )
     }
 
@@ -265,11 +262,9 @@ mod tests {
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
         let repositories = ListRepositoriesResponse::new(vec![
             sample_repository_info(&repo_name),
-            ServiceRepositoryInfo::new(
+            RepositoryRecord::new(
                 RepoName::from_str("dourolabs/api").unwrap(),
-                "git@github.com:dourolabs/api.git".to_string(),
-                None,
-                None,
+                Repository::new("git@github.com:dourolabs/api.git".to_string(), None, None),
             ),
         ]);
         let server = MockServer::start();
@@ -370,11 +365,9 @@ mod tests {
                     "default_image": "ghcr.io/dourolabs/metis:stable"
                 }));
             then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(ServiceRepositoryInfo::new(
+                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
                     args.name.clone(),
-                    args.remote_url.clone(),
-                    None,
-                    args.default_image.clone(),
+                    Repository::new(args.remote_url.clone(), None, args.default_image.clone()),
                 )));
         });
         let client = mock_client(&server);

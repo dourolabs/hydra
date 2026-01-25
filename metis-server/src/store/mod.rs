@@ -6,7 +6,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::ServiceRepositoryConfig};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -86,11 +86,11 @@ pub trait Store: Send + Sync {
     async fn add_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError>;
 
     /// Retrieves a repository configuration by name.
-    async fn get_repository(&self, name: &RepoName) -> Result<ServiceRepositoryConfig, StoreError>;
+    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError>;
 
     /// Updates an existing repository configuration.
     ///
@@ -98,13 +98,11 @@ pub trait Store: Send + Sync {
     async fn update_repository(
         &mut self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
+        config: Repository,
     ) -> Result<(), StoreError>;
 
     /// Lists all repository configurations keyed by name.
-    async fn list_repositories(
-        &self,
-    ) -> Result<Vec<(RepoName, ServiceRepositoryConfig)>, StoreError>;
+    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError>;
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///

@@ -302,7 +302,7 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
     store
         .add_repository(
             repo_name.clone(),
-            metis_common::repositories::ServiceRepositoryConfig::new(
+            metis_common::repositories::Repository::new(
                 remote_url.to_string(),
                 Some("main".to_string()),
                 None,

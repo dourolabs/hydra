@@ -29,7 +29,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use super::{
-    MergeQueueError, RepositoryError, ServiceRepositoryConfig, ServiceRepositoryInfo, ServiceState,
+    MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
     TaskResolutionError,
 };
 
@@ -236,7 +236,7 @@ impl AppState {
         Ok(LoginResponse::new(login_token, UserSummary::from(user)))
     }
 
-    pub async fn list_repositories(&self) -> Result<Vec<ServiceRepositoryInfo>, RepositoryError> {
+    pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
         let store = self.store.read().await;
         let repositories = store
             .list_repositories()
@@ -245,26 +245,19 @@ impl AppState {
 
         Ok(repositories
             .into_iter()
-            .map(ServiceRepositoryInfo::from)
+            .map(RepositoryRecord::from)
             .collect())
     }
 
     pub async fn create_repository(
         &self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
-    ) -> Result<ServiceRepositoryInfo, RepositoryError> {
+        config: Repository,
+    ) -> Result<RepositoryRecord, RepositoryError> {
         {
             let mut store = self.store.write().await;
             store
-                .add_repository(
-                    name.clone(),
-                    ServiceRepositoryConfig::new(
-                        config.remote_url.clone(),
-                        config.default_branch.clone(),
-                        config.default_image.clone(),
-                    ),
-                )
+                .add_repository(name.clone(), config.clone())
                 .await
                 .map_err(|source| match source {
                     StoreError::RepositoryAlreadyExists(name) => {
@@ -274,14 +267,14 @@ impl AppState {
                 })?;
         }
 
-        Ok(ServiceRepositoryInfo::from((name, config)))
+        Ok(RepositoryRecord::from((name, config)))
     }
 
     pub async fn update_repository(
         &self,
         name: RepoName,
-        config: ServiceRepositoryConfig,
-    ) -> Result<ServiceRepositoryInfo, RepositoryError> {
+        config: Repository,
+    ) -> Result<RepositoryRecord, RepositoryError> {
         {
             let mut store = self.store.write().await;
             store
@@ -298,7 +291,7 @@ impl AppState {
 
         self.service_state.clear_cache(&name).await;
 
-        Ok(ServiceRepositoryInfo::from((name, config)))
+        Ok(RepositoryRecord::from((name, config)))
     }
 
     pub async fn list_agent_configs(&self) -> Vec<AgentQueueConfig> {
@@ -1216,7 +1209,7 @@ impl AppState {
     pub(crate) async fn repository_from_store(
         &self,
         name: &RepoName,
-    ) -> Result<ServiceRepositoryConfig, StoreError> {
+    ) -> Result<Repository, StoreError> {
         let store = self.store.read().await;
         store.get_repository(name).await
     }

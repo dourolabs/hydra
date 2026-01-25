@@ -1,8 +1,8 @@
 use crate::{
-    app::ServiceRepositoryConfig,
+    app::Repository,
     test::{spawn_test_server_with_state, test_client, test_state},
 };
-use git2::{Repository, Signature};
+use git2::{Repository as GitRepository, Signature};
 use metis_common::{
     RepoName,
     repositories::{
@@ -38,8 +38,8 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
     let repository = &body.repositories[0];
 
     assert_eq!(repository.name, name);
-    assert!(repository.default_branch.is_some());
-    assert!(repository.default_image.is_some());
+    assert!(repository.repository.default_branch.is_some());
+    assert!(repository.repository.default_image.is_some());
 
     Ok(())
 }
@@ -58,7 +58,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
     let payload = CreateRepositoryRequest::new(
         name.clone(),
-        ServiceRepositoryConfig::new(
+        Repository::new(
             remote_url.clone(),
             Some("main".to_string()),
             Some("ghcr.io/example/new-repo:main".to_string()),
@@ -74,10 +74,13 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
     let body: UpsertRepositoryResponse = response.json().await?;
     assert_eq!(body.repository.name, name);
-    assert_eq!(body.repository.remote_url, remote_url);
-    assert_eq!(body.repository.default_branch.as_deref(), Some("main"));
+    assert_eq!(body.repository.repository.remote_url, remote_url);
     assert_eq!(
-        body.repository.default_image.as_deref(),
+        body.repository.repository.default_branch.as_deref(),
+        Some("main")
+    );
+    assert_eq!(
+        body.repository.repository.default_image.as_deref(),
         Some("ghcr.io/example/new-repo:main")
     );
 
@@ -115,7 +118,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let state = test_state();
     let store = state.store.clone();
     let service_state = state.service_state.clone();
-    let repository = ServiceRepositoryConfig::new(
+    let repository = Repository::new(
         repo_url(&original_remote),
         Some("develop".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
@@ -131,11 +134,8 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
-        repo_url(&updated_remote),
-        None,
-        None,
-    ));
+    let payload =
+        UpdateRepositoryRequest::new(Repository::new(repo_url(&updated_remote), None, None));
 
     let response = client
         .put(format!(
@@ -151,9 +151,12 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
 
     let body: UpsertRepositoryResponse = response.json().await?;
     assert_eq!(body.repository.name, name);
-    assert_eq!(body.repository.remote_url, repo_url(&updated_remote));
-    assert!(body.repository.default_branch.is_none());
-    assert!(body.repository.default_image.is_none());
+    assert_eq!(
+        body.repository.repository.remote_url,
+        repo_url(&updated_remote)
+    );
+    assert!(body.repository.repository.default_branch.is_none());
+    assert!(body.repository.repository.default_image.is_none());
 
     let stored = {
         let store = store.read().await;
@@ -179,11 +182,7 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
     let client = test_client();
     let remote_dir = create_remote_repository()?;
 
-    let payload = UpdateRepositoryRequest::new(ServiceRepositoryConfig::new(
-        repo_url(&remote_dir),
-        None,
-        None,
-    ));
+    let payload = UpdateRepositoryRequest::new(Repository::new(repo_url(&remote_dir), None, None));
 
     let response = client
         .put(format!(
@@ -210,7 +209,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
         store
             .add_repository(
                 name.clone(),
-                ServiceRepositoryConfig::new(
+                Repository::new(
                     repository.remote_url.clone(),
                     repository.default_branch.clone(),
                     repository.default_image.clone(),
@@ -223,7 +222,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
     let bad_payload = CreateRepositoryRequest::new(
         RepoName::from_str("dourolabs/new-repo")?,
-        ServiceRepositoryConfig::new("   ".to_string(), None, None),
+        Repository::new("   ".to_string(), None, None),
     );
     let bad_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
@@ -234,7 +233,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
     let duplicate_payload = CreateRepositoryRequest::new(
         name.clone(),
-        ServiceRepositoryConfig::new("https://example.com/new-repo.git".to_string(), None, None),
+        Repository::new("https://example.com/new-repo.git".to_string(), None, None),
     );
     let duplicate_response = client
         .post(format!("{}/v1/repositories", server.base_url()))
@@ -248,7 +247,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
 
 fn create_remote_repository() -> anyhow::Result<TempDir> {
     let directory = TempDir::new()?;
-    let repository = Repository::init(directory.path())?;
+    let repository = GitRepository::init(directory.path())?;
     let signature = Signature::now("Tester", "tester@example.com")?;
 
     commit_file(
@@ -263,7 +262,7 @@ fn create_remote_repository() -> anyhow::Result<TempDir> {
 }
 
 fn commit_file(
-    repository: &Repository,
+    repository: &GitRepository,
     path: &str,
     contents: &str,
     message: &str,

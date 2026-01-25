@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, ServiceRepositoryConfig, ServiceState},
+    app::{AppState, Repository, ServiceState},
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection,
@@ -81,7 +81,7 @@ pub fn test_state() -> AppState {
 pub async fn add_repository(
     state: &AppState,
     name: RepoName,
-    config: ServiceRepositoryConfig,
+    config: Repository,
 ) -> anyhow::Result<()> {
     let mut store = state.store.write().await;
     store
@@ -90,10 +90,7 @@ pub async fn add_repository(
         .context("failed to add repository to test state")
 }
 
-pub async fn test_state_with_repo(
-    name: RepoName,
-    config: ServiceRepositoryConfig,
-) -> anyhow::Result<AppState> {
+pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow::Result<AppState> {
     let state = test_state();
     add_repository(&state, name, config).await?;
     Ok(state)
