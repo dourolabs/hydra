@@ -1,4 +1,3 @@
-use crate::auth;
 use crate::client::MetisClientInterface;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -11,7 +10,8 @@ use metis_common::{
         UpsertIssueRequest,
     },
     patches::{PatchRecord, Review},
-    users::{ResolveUserRequest, User, Username},
+    users::Username,
+    whoami::ActorIdentity,
     PatchId, RepoName,
 };
 use serde::Serialize;
@@ -252,7 +252,7 @@ pub enum IssueCommands {
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: IssueCommands,
-    token_path: &std::path::PathBuf,
+    token_path: &std::path::Path,
 ) -> Result<()> {
     match command {
         IssueCommands::List {
@@ -872,44 +872,38 @@ async fn update_issue(
     Ok(())
 }
 
-async fn resolve_authenticated_user(
-    client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
-) -> Result<User> {
-    let token = auth::ensure_auth_token(client, token_path).await?;
-    let response = client
-        .resolve_user(&ResolveUserRequest::new(token.clone()))
-        .await
-        .context("failed to resolve user from auth token")?;
-    let mut user = User::new(response.user.username, token);
-    user.github_user_id = response.user.github_user_id;
-    Ok(user)
-}
-
 async fn resolve_creator_username(
     client: &dyn MetisClientInterface,
-    token_path: &std::path::PathBuf,
+    _token_path: &std::path::Path,
     dependencies: &[IssueDependency],
 ) -> Result<Username> {
-    // First try to resolve the authenticated user
-    match resolve_authenticated_user(client, token_path).await {
-        Ok(user) => Ok(user.username),
-        Err(_) => {
-            // If that fails, try to get the creator from the parent issue
-            if let Some(parent_id) = dependencies
-                .iter()
-                .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
-                .map(|dependency| dependency.issue_id.clone())
-            {
-                let parent = client
-                    .get_issue(&parent_id)
-                    .await
-                    .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
-                Ok(parent.issue.creator)
-            } else {
-                bail!("Failed to resolve authenticated user and no parent issue found");
-            }
+    let resolve_from_parent = || async {
+        if let Some(parent_id) = dependencies
+            .iter()
+            .find(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
+            .map(|dependency| dependency.issue_id.clone())
+        {
+            let parent = client
+                .get_issue(&parent_id)
+                .await
+                .with_context(|| format!("failed to fetch parent issue '{parent_id}'"))?;
+            Ok(parent.issue.creator)
+        } else {
+            bail!("Failed to resolve authenticated user and no parent issue found");
         }
+    };
+
+    match client
+        .whoami()
+        .await
+        .context("failed to resolve authenticated actor")
+    {
+        Ok(response) => match response.actor {
+            ActorIdentity::User { username } => Ok(username),
+            ActorIdentity::Task { .. } => resolve_from_parent().await,
+            _ => resolve_from_parent().await,
+        },
+        Err(_) => resolve_from_parent().await,
     }
 }
 
@@ -1463,7 +1457,8 @@ mod tests {
     use metis_common::{
         patches::{Patch, PatchRecord, Review},
         users::Username,
-        PatchId, RepoName,
+        whoami::{ActorIdentity, WhoAmIResponse},
+        PatchId, RepoName, TaskId,
     };
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
@@ -2037,6 +2032,76 @@ mod tests {
     #[test]
     fn parse_issue_graph_filter_rejects_invalid_shapes() {
         assert!(parse_issue_graph_filter("i-abcd:child-of:i-efgh").is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_creator_username_uses_whoami_user() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::User {
+            username: Username::from("creator-a"),
+        });
+        let whoami_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
+        });
+
+        let username = resolve_creator_username(&client, &std::path::PathBuf::from("unused"), &[])
+            .await
+            .unwrap();
+
+        assert_eq!(username, Username::from("creator-a"));
+        whoami_mock.assert();
+        assert_eq!(whoami_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_creator_username_falls_back_to_parent_for_task() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let parent_id = issue_id("i-parent");
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
+            task_id: TaskId::from_str("t-abcd").unwrap(),
+        });
+        let whoami_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
+        });
+        let parent_issue = IssueRecord::new(
+            parent_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Parent issue".into(),
+                Username::from("parent-creator"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let parent_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{parent_id}").as_str());
+            then.status(200).json_body_obj(&parent_issue);
+        });
+
+        let dependencies = vec![IssueDependency::new(
+            IssueDependencyType::ChildOf,
+            parent_id,
+        )];
+        let username =
+            resolve_creator_username(&client, &std::path::PathBuf::from("unused"), &dependencies)
+                .await
+                .unwrap();
+
+        assert_eq!(username, Username::from("parent-creator"));
+        whoami_mock.assert();
+        parent_mock.assert();
+        assert_eq!(whoami_mock.hits(), 1);
+        assert_eq!(parent_mock.hits(), 1);
     }
 
     #[tokio::test]
