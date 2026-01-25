@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
     process::Command,
+    str::FromStr,
     time::Duration,
 };
 
@@ -18,10 +19,11 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     patches::{GithubPr, PatchRecord},
+    repositories::{CreateRepositoryRequest, Repository, RepositoryRecord},
     task_status::{Status, TaskError, TaskStatusLog},
     users::Username,
     whoami::ActorIdentity,
-    IssueId, PatchId, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -220,6 +222,102 @@ impl IssueDraft {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RepoFieldFocus {
+    Name,
+    Url,
+}
+
+#[derive(Clone)]
+struct RepoDraft {
+    name: TextArea<'static>,
+    url: TextArea<'static>,
+    focus: RepoFieldFocus,
+    validation_error: Option<String>,
+    info_message: Option<String>,
+    is_submitting: bool,
+}
+
+impl Default for RepoDraft {
+    fn default() -> Self {
+        let mut draft = Self {
+            name: TextArea::default(),
+            url: TextArea::default(),
+            focus: RepoFieldFocus::Name,
+            validation_error: None,
+            info_message: None,
+            is_submitting: false,
+        };
+        draft.configure_inputs();
+        draft
+    }
+}
+
+impl RepoDraft {
+    fn name_text(&self) -> String {
+        self.name.lines().join("\n")
+    }
+
+    fn url_text(&self) -> String {
+        self.url.lines().join("\n")
+    }
+
+    #[cfg(test)]
+    fn set_name(&mut self, name: &str) {
+        self.name = TextArea::from(name.lines());
+        self.configure_inputs();
+    }
+
+    #[cfg(test)]
+    fn set_url(&mut self, url: &str) {
+        self.url = TextArea::from(url.lines());
+        self.configure_inputs();
+    }
+
+    fn note_edit(&mut self) {
+        self.validation_error = None;
+        self.info_message = None;
+    }
+
+    fn set_focus(&mut self, focus: RepoFieldFocus) {
+        self.focus = focus;
+        self.configure_inputs();
+    }
+
+    fn active_input_mut(&mut self) -> &mut TextArea<'static> {
+        match self.focus {
+            RepoFieldFocus::Name => &mut self.name,
+            RepoFieldFocus::Url => &mut self.url,
+        }
+    }
+
+    fn configure_inputs(&mut self) {
+        configure_repo_input(
+            &mut self.name,
+            "org/repo",
+            matches!(self.focus, RepoFieldFocus::Name),
+        );
+        configure_repo_input(
+            &mut self.url,
+            "https://...",
+            matches!(self.focus, RepoFieldFocus::Url),
+        );
+    }
+}
+
+fn configure_repo_input(input: &mut TextArea<'static>, placeholder: &str, focused: bool) {
+    input.set_placeholder_text(placeholder);
+    input.set_placeholder_style(Style::default().fg(Color::DarkGray));
+    input.set_style(Style::default());
+    if focused {
+        input.set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+        input.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+    } else {
+        input.set_cursor_line_style(Style::default());
+        input.set_cursor_style(Style::default());
+    }
+}
+
 impl PartialEq for IssueDraft {
     fn eq(&self, other: &Self) -> bool {
         self.prompt_text() == other.prompt_text()
@@ -253,6 +351,7 @@ struct IssueDetailsState {
 struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
+    repositories: Vec<RepositoryRecord>,
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
@@ -270,10 +369,13 @@ struct DashboardState {
     issue_details: IssueDetailsState,
     jobs_error: Option<String>,
     records_error: Option<String>,
+    repositories_error: Option<String>,
     username: Username,
     server_url: String,
     browser_command: Option<String>,
     issue_draft: IssueDraft,
+    repo_draft: Option<RepoDraft>,
+    selected_repo_name: Option<RepoName>,
     selected_panel: PanelFocus,
     last_frame_size: Option<Rect>,
 }
@@ -282,10 +384,6 @@ impl Default for DashboardState {
     fn default() -> Self {
         let mut issue_creator_panel = PanelState::new();
         issue_creator_panel.set_scroll_keys_enabled(false);
-        issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
-        issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
-        issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
-        issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
 
         let mut running_issue_panel = PanelState::new();
         configure_issue_tree_panel_keybindings(&mut running_issue_panel);
@@ -308,6 +406,7 @@ impl Default for DashboardState {
         let mut state = Self {
             jobs: Vec::new(),
             issues: Vec::new(),
+            repositories: Vec::new(),
             issue_lines: IssueLines::default(),
             user_unowned_issue_lines: IssueLines::default(),
             completed_issue_lines: CompletedIssueLines::default(),
@@ -324,13 +423,17 @@ impl Default for DashboardState {
             issue_details: IssueDetailsState::default(),
             jobs_error: None,
             records_error: None,
+            repositories_error: None,
             username: Username::from(""),
             server_url: String::new(),
             browser_command: None,
             issue_draft: IssueDraft::default(),
+            repo_draft: None,
+            selected_repo_name: None,
             selected_panel: PanelFocus::default(),
             last_frame_size: None,
         };
+        configure_issue_creator_keybindings(&mut state);
         update_panel_focus(&mut state);
         state
     }
@@ -354,9 +457,15 @@ struct IssueSubmission {
     assignee: String,
 }
 
+struct RepoSubmission {
+    name: RepoName,
+    url: String,
+}
+
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
+    repo_submission: Option<RepoSubmission>,
     open_issue_pr: Option<IssueId>,
 }
 
@@ -405,6 +514,12 @@ async fn run_dashboard_loop(
 
     if let Err(err) = refresh_records(client, &mut state).await {
         state.records_error = Some(format!("Failed to load issues: {err}"));
+    }
+
+    if let Err(err) = refresh_repositories(client, &mut state).await {
+        state.repositories_error = Some(format!("Failed to load repositories: {err}"));
+        state.repo_draft = Some(RepoDraft::default());
+        update_panel_focus(&mut state);
     }
 
     let mut events = EventStream::new();
@@ -460,6 +575,16 @@ async fn run_dashboard_loop(
                                 ));
                             }
                         }
+                        if let Some(submission) = outcome.repo_submission {
+                            if let Some(draft) = state.repo_draft.as_mut() {
+                                draft.info_message =
+                                    Some("Creating repository...".to_string());
+                            }
+                            terminal.draw(|f| render(f, &mut state))?;
+                            let submission_result =
+                                submit_repository(client, &submission).await;
+                            handle_repo_submission_result(&mut state, submission_result);
+                        }
                         if let Some(submission) = outcome.submission {
                             let assignee = submission.assignee.clone();
                             state.issue_draft.info_message =
@@ -507,6 +632,17 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: true,
                     submission: None,
+                    repo_submission: None,
+                    open_issue_pr: None,
+                };
+            }
+
+            if repo_setup_active(state) {
+                let repo_submission = handle_repo_draft_key(key, state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    repo_submission,
                     open_issue_pr: None,
                 };
             }
@@ -516,6 +652,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -525,6 +662,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -534,6 +672,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -542,6 +681,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: selected_issue_id(state, PanelFocus::UserOwned),
                 };
             }
@@ -550,6 +690,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: Some(issue_id),
                 };
             }
@@ -559,6 +700,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -573,14 +715,25 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission,
+                repo_submission: None,
                 open_issue_pr: None,
             }
         }
         Event::Paste(text) => {
+            if repo_setup_active(state) {
+                handle_repo_paste(text, state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    repo_submission: None,
+                    open_issue_pr: None,
+                };
+            }
             if state.issue_details.is_open {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -588,6 +741,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -602,6 +756,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                repo_submission: None,
                 open_issue_pr: None,
             }
         }
@@ -611,14 +766,24 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                repo_submission: None,
                 open_issue_pr: None,
             }
         }
         Event::Mouse(mouse) => {
+            if repo_setup_active(state) {
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    repo_submission: None,
+                    open_issue_pr: None,
+                };
+            }
             if state.issue_details.is_open {
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
+                    repo_submission: None,
                     open_issue_pr: None,
                 };
             }
@@ -627,12 +792,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
             EventOutcome {
                 should_quit: false,
                 submission: None,
+                repo_submission: None,
                 open_issue_pr: None,
             }
         }
         _ => EventOutcome {
             should_quit: false,
             submission: None,
+            repo_submission: None,
             open_issue_pr: None,
         },
     }
@@ -655,6 +822,15 @@ fn is_panel_focus_key(key: KeyEvent) -> bool {
         KeyCode::Tab => key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT,
         _ => false,
     }
+}
+
+fn is_repo_field_cycle_key(key: KeyEvent) -> bool {
+    matches!(
+        (key.code, key.modifiers),
+        (KeyCode::Tab, KeyModifiers::NONE)
+            | (KeyCode::Tab, KeyModifiers::SHIFT)
+            | (KeyCode::BackTab, _)
+    )
 }
 
 fn is_issue_submit_key(key: KeyEvent) -> bool {
@@ -776,6 +952,52 @@ fn update_panel_focus(state: &mut DashboardState) {
     state
         .completed_issue_panel
         .set_focused(state.selected_panel == PanelFocus::Completed);
+    configure_issue_creator_keybindings(state);
+}
+
+fn repo_setup_active(state: &DashboardState) -> bool {
+    state.repo_draft.is_some() && state.repositories.is_empty()
+}
+
+fn configure_issue_creator_keybindings(state: &mut DashboardState) {
+    state.issue_creator_panel.clear_keybindings();
+    state.issue_creator_panel.set_scroll_keys_enabled(false);
+    if repo_setup_active(state) {
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::Tab,
+            KeyModifiers::NONE,
+            "Next field",
+        );
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::BackTab,
+            KeyModifiers::NONE,
+            "Prev field",
+        );
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+            "Create repo",
+        );
+    } else {
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::Char('a'),
+            KeyModifiers::ALT,
+            "Assignee",
+        );
+        state
+            .issue_creator_panel
+            .register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::Tab,
+            KeyModifiers::NONE,
+            "Next panel",
+        );
+        state.issue_creator_panel.register_keybinding(
+            KeyCode::BackTab,
+            KeyModifiers::NONE,
+            "Prev panel",
+        );
+    }
 }
 
 fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<IssueSubmission> {
@@ -804,6 +1026,54 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     }
 
     None
+}
+
+fn handle_repo_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<RepoSubmission> {
+    let draft = state.repo_draft.as_mut()?;
+
+    if draft.is_submitting {
+        if is_issue_submit_key(key) {
+            draft.info_message = Some("Repository creation already in progress.".to_string());
+        }
+        return None;
+    }
+
+    if is_repo_field_cycle_key(key) {
+        let next_focus = match draft.focus {
+            RepoFieldFocus::Name => RepoFieldFocus::Url,
+            RepoFieldFocus::Url => RepoFieldFocus::Name,
+        };
+        draft.set_focus(next_focus);
+        state.selected_panel = PanelFocus::NewIssue;
+        return None;
+    }
+
+    if is_issue_submit_key(key) {
+        state.selected_panel = PanelFocus::NewIssue;
+        return attempt_repo_submit(state);
+    }
+
+    if draft.active_input_mut().input(key) {
+        draft.note_edit();
+        state.repositories_error = None;
+        state.selected_panel = PanelFocus::NewIssue;
+    }
+
+    None
+}
+
+fn handle_repo_paste(text: String, state: &mut DashboardState) {
+    let Some(draft) = state.repo_draft.as_mut() else {
+        return;
+    };
+    if draft.is_submitting {
+        return;
+    }
+    if draft.active_input_mut().insert_str(text) {
+        draft.note_edit();
+        state.repositories_error = None;
+        state.selected_panel = PanelFocus::NewIssue;
+    }
 }
 
 fn handle_issue_details_key(key: KeyEvent, state: &mut DashboardState) -> bool {
@@ -1046,6 +1316,51 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     })
 }
 
+fn attempt_repo_submit(state: &mut DashboardState) -> Option<RepoSubmission> {
+    let draft = state.repo_draft.as_mut()?;
+
+    if draft.is_submitting {
+        draft.info_message = Some("Repository creation already in progress.".to_string());
+        draft.validation_error = None;
+        return None;
+    }
+
+    let name = draft.name_text();
+    let url = draft.url_text();
+    let name = name.trim();
+    let url = url.trim();
+
+    if name.is_empty() {
+        draft.validation_error = Some("Repository name is required.".to_string());
+        draft.info_message = None;
+        return None;
+    }
+
+    if url.is_empty() {
+        draft.validation_error = Some("Repository URL is required.".to_string());
+        draft.info_message = None;
+        return None;
+    }
+
+    let repo_name = match RepoName::from_str(name) {
+        Ok(repo_name) => repo_name,
+        Err(err) => {
+            draft.validation_error = Some(format!("Repository name is invalid: {err}"));
+            draft.info_message = None;
+            return None;
+        }
+    };
+
+    draft.validation_error = None;
+    draft.info_message = None;
+    draft.is_submitting = true;
+
+    Some(RepoSubmission {
+        name: repo_name,
+        url: url.to_string(),
+    })
+}
+
 fn handle_issue_submission_result(
     state: &mut DashboardState,
     assignee: &str,
@@ -1064,6 +1379,32 @@ fn handle_issue_submission_result(
             state.issue_draft.validation_error =
                 Some(format!("Failed to create issue for @{assignee}: {err}"));
             state.issue_draft.info_message = None;
+        }
+    }
+}
+
+fn handle_repo_submission_result(state: &mut DashboardState, result: Result<RepositoryRecord>) {
+    match result {
+        Ok(repository) => {
+            state
+                .repositories
+                .retain(|record| record.name != repository.name);
+            state.repositories.push(repository.clone());
+            state.selected_repo_name = Some(repository.name.clone());
+            state.repo_draft = None;
+            state.repositories_error = None;
+            state.issue_draft.validation_error = None;
+            state.issue_draft.info_message =
+                Some(format!("Repository {} created.", repository.name));
+            state.selected_panel = PanelFocus::NewIssue;
+            update_panel_focus(state);
+        }
+        Err(err) => {
+            if let Some(draft) = state.repo_draft.as_mut() {
+                draft.is_submitting = false;
+                draft.validation_error = Some(format!("Failed to create repository: {err}"));
+                draft.info_message = None;
+            }
         }
     }
 }
@@ -1101,6 +1442,21 @@ async fn submit_issue(
         .await
         .context("failed to create issue")?;
     Ok(response.issue_id)
+}
+
+async fn submit_repository(
+    client: &dyn MetisClientInterface,
+    submission: &RepoSubmission,
+) -> Result<RepositoryRecord> {
+    let request = CreateRepositoryRequest::new(
+        submission.name.clone(),
+        Repository::new(submission.url.trim().to_string(), None, None),
+    );
+    let response = client
+        .create_repository(&request)
+        .await
+        .context("failed to create repository")?;
+    Ok(response.repository)
 }
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
@@ -1234,6 +1590,11 @@ fn render_issue_creator(
     area: ratatui::layout::Rect,
     state: &mut DashboardState,
 ) {
+    if repo_setup_active(state) {
+        render_repo_creator(frame, area, state);
+        return;
+    }
+
     frame.render_stateful_widget(
         Panel::new("New issue", Vec::new()),
         area,
@@ -1279,6 +1640,53 @@ fn render_issue_creator(
     frame.render_widget(
         Paragraph::new(footer).alignment(Alignment::Right),
         footer_columns[1],
+    );
+}
+
+fn render_repo_creator(frame: &mut Frame, area: ratatui::layout::Rect, state: &mut DashboardState) {
+    frame.render_stateful_widget(
+        Panel::new("Create repository", Vec::new()),
+        area,
+        &mut state.issue_creator_panel,
+    );
+
+    let sections = repo_creator_layout(area);
+    let draft = state.repo_draft.as_ref().expect("repo draft missing");
+
+    let name_label = Line::from(Span::styled(
+        "Repository name (org/repo)",
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(name_label), sections.name_label);
+    frame.render_widget(draft.name.widget(), sections.name_input);
+
+    let url_label = Line::from(Span::styled(
+        "Repository URL (https://...)",
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(url_label), sections.url_label);
+    frame.render_widget(draft.url.widget(), sections.url_input);
+
+    let footer = if draft.is_submitting {
+        Line::from(Span::styled(
+            "Creating repository...",
+            Style::default().fg(Color::Yellow),
+        ))
+    } else if let Some(error) = &draft.validation_error {
+        Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red)))
+    } else if let Some(info) = &draft.info_message {
+        Line::from(Span::styled(
+            info.clone(),
+            Style::default().fg(Color::Green),
+        ))
+    } else if let Some(error) = &state.repositories_error {
+        Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red)))
+    } else {
+        Line::from("")
+    };
+    frame.render_widget(
+        Paragraph::new(footer).alignment(Alignment::Right),
+        sections.footer,
     );
 }
 
@@ -1369,6 +1777,14 @@ struct IssueCreatorLayout {
     footer: Rect,
 }
 
+struct RepoCreatorLayout {
+    name_label: Rect,
+    name_input: Rect,
+    url_label: Rect,
+    url_input: Rect,
+    footer: Rect,
+}
+
 fn issue_panel_layout(area: Rect) -> IssuePanelLayout {
     let panels = Layout::default()
         .direction(Direction::Vertical)
@@ -1395,6 +1811,29 @@ fn issue_creator_layout(area: Rect) -> IssueCreatorLayout {
     IssueCreatorLayout {
         prompt_input: sections[0],
         footer: sections[1],
+    }
+}
+
+fn repo_creator_layout(area: Rect) -> RepoCreatorLayout {
+    let inner = panel_content_area(area);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(2),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    RepoCreatorLayout {
+        name_label: sections[0],
+        name_input: sections[1],
+        url_label: sections[2],
+        url_input: sections[3],
+        footer: sections[5],
     }
 }
 
@@ -2105,6 +2544,35 @@ async fn refresh_records(
 
     let derived_changed = update_views(state);
     Ok(changed || derived_changed)
+}
+
+async fn refresh_repositories(
+    client: &dyn MetisClientInterface,
+    state: &mut DashboardState,
+) -> Result<bool> {
+    let response = client
+        .list_repositories()
+        .await
+        .context("failed to fetch repositories")?;
+    state.repositories_error = None;
+
+    let repositories = response.repositories;
+    let changed = repositories != state.repositories;
+    if changed {
+        state.repositories = repositories;
+    }
+
+    if state.repositories.is_empty() {
+        if state.repo_draft.is_none() {
+            state.repo_draft = Some(RepoDraft::default());
+            state.selected_panel = PanelFocus::NewIssue;
+        }
+    } else {
+        state.repo_draft = None;
+    }
+
+    update_panel_focus(state);
+    Ok(changed)
 }
 
 fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
@@ -2939,6 +3407,7 @@ mod tests {
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::str::FromStr;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
@@ -3007,6 +3476,70 @@ mod tests {
             dependencies: Vec::new(),
             patches: Vec::new(),
         }
+    }
+
+    #[test]
+    fn repo_submit_requires_name() {
+        let mut state = DashboardState {
+            repo_draft: Some(RepoDraft::default()),
+            ..DashboardState::default()
+        };
+        state
+            .repo_draft
+            .as_mut()
+            .expect("repo draft missing")
+            .set_url("https://example.com/repo.git");
+
+        let submission = attempt_repo_submit(&mut state);
+
+        assert!(submission.is_none());
+        let error = state
+            .repo_draft
+            .as_ref()
+            .and_then(|draft| draft.validation_error.as_deref());
+        assert_eq!(error, Some("Repository name is required."));
+    }
+
+    #[test]
+    fn repo_submit_requires_url() {
+        let mut state = DashboardState {
+            repo_draft: Some(RepoDraft::default()),
+            ..DashboardState::default()
+        };
+        state
+            .repo_draft
+            .as_mut()
+            .expect("repo draft missing")
+            .set_name("dourolabs/metis");
+
+        let submission = attempt_repo_submit(&mut state);
+
+        assert!(submission.is_none());
+        let error = state
+            .repo_draft
+            .as_ref()
+            .and_then(|draft| draft.validation_error.as_deref());
+        assert_eq!(error, Some("Repository URL is required."));
+    }
+
+    #[test]
+    fn repo_submit_accepts_valid_inputs() {
+        let mut state = DashboardState {
+            repo_draft: Some(RepoDraft::default()),
+            ..DashboardState::default()
+        };
+        let draft = state.repo_draft.as_mut().expect("repo draft missing");
+        draft.set_name("dourolabs/metis");
+        draft.set_url("https://example.com/repo.git");
+
+        let submission = attempt_repo_submit(&mut state);
+
+        let submission = submission.expect("expected repo submission");
+        assert_eq!(
+            submission.name,
+            RepoName::from_str("dourolabs/metis").unwrap()
+        );
+        assert_eq!(submission.url, "https://example.com/repo.git");
     }
 
     fn issue_with_type(
