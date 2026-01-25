@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use metis_common::{
-    issues::{IssueStatus, SearchIssuesQuery},
+    issues::{Issue, IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest},
     task_status::Status,
     users::{CreateUserRequest, Username},
 };
@@ -39,6 +39,23 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     )])
     .await?;
 
+    let grandparent_issue = UpsertIssueRequest::new(
+        Issue::new(
+            IssueType::Task,
+            "grandparent issue".into(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        None,
+    );
+    let grandparent_id = env.client.create_issue(&grandparent_issue).await?.issue_id;
+
     let job_id = job_id_for_prompt(&env.client, prompt)
         .await
         .context("expected job to be created for worker issue child test")?;
@@ -46,10 +63,14 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
 
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env.run_as_worker(
         vec![
-            "metis issues create \"parent issue\" | tee parent_id.txt".to_string(),
+            format!(
+                "metis issues create --deps child-of:{grandparent_id} \"parent issue\" | tee parent_id.txt"
+            ),
             "metis issues create --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
                 .to_string(),
-            "metis issues update $(cat parent_id.txt) --status closed".to_string(),
+            format!(
+                "metis issues update $(cat parent_id.txt) --status closed --deps child-of:{grandparent_id}"
+            ),
         ],
         job_id,
     )
@@ -110,6 +131,23 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     )])
     .await?;
 
+    let grandparent_issue = UpsertIssueRequest::new(
+        Issue::new(
+            IssueType::Task,
+            "todo grandparent issue".into(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        None,
+    );
+    let grandparent_id = env.client.create_issue(&grandparent_issue).await?.issue_id;
+
     let job_id = job_id_for_prompt(&env.client, prompt)
         .await
         .context("expected job to be created for worker issue todo test")?;
@@ -118,9 +156,13 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env
         .run_as_worker(
             vec![
-                "metis issues create \"issue with todos\" | tee issue_id.txt".to_string(),
+                format!(
+                    "metis issues create --deps child-of:{grandparent_id} \"issue with todos\" | tee issue_id.txt"
+                ),
                 "metis issues todo $(cat issue_id.txt) --add \"write more tests\"".to_string(),
-                "metis issues update $(cat issue_id.txt) --status closed".to_string(),
+                format!(
+                    "metis issues update $(cat issue_id.txt) --status closed --deps child-of:{grandparent_id}"
+                ),
             ],
             job_id,
         )

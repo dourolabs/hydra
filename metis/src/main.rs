@@ -1,4 +1,8 @@
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
@@ -124,7 +128,7 @@ async fn resolve_client(
     cli: &Cli,
     app_config: &AppConfig,
     unauth_client: &MetisClientUnauthenticated,
-    token_path: &PathBuf,
+    token_path: &Path,
 ) -> Result<MetisClient> {
     if let Some(token) = cli
         .token
@@ -146,7 +150,7 @@ async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
-    token_path: &PathBuf,
+    token_path: &Path,
 ) -> Result<()> {
     match resolve_command(cli.command) {
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
@@ -199,7 +203,7 @@ fn load_app_config(cli: &Cli) -> Result<AppConfig> {
     AppConfig::load(&config_path)
 }
 
-fn read_token_from_path(token_path: &PathBuf) -> Result<Option<String>> {
+fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(token_path) {
         Ok(token) => {
             let trimmed = token.trim();
