@@ -149,9 +149,9 @@ async fn dispatch(
     token_path: &PathBuf,
 ) -> Result<()> {
     match resolve_command(cli.command) {
-        Commands::Jobs { command } => command::jobs::run(client, command, token_path).await?,
+        Commands::Jobs { command } => command::jobs::run(client, command).await?,
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
-        Commands::Patches { command } => command::patches::run(client, command, token_path).await?,
+        Commands::Patches { command } => command::patches::run(client, command).await?,
         Commands::Dashboard => {
             command::dashboard::run(
                 client,
