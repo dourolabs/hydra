@@ -24,11 +24,12 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
         .context("create auth token dir")?;
     fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} --var METIS_ISSUE_ID={} {}",
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} --var METIS_ISSUE_ID={} --var METIS_TOKEN={} {}",
         repo_arg,
         server_url,
         temp_home.path().display(),
         env.current_issue_id,
+        env.auth_token,
         prompt
     )])
     .await?;
@@ -110,11 +111,12 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
         .context("create auth token dir")?;
     fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} --var METIS_ISSUE_ID={} {}",
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} --var METIS_ISSUE_ID={} --var METIS_TOKEN={} {}",
         repo_arg,
         server_url,
         temp_home.path().display(),
         env.current_issue_id,
+        env.auth_token,
         prompt
     )])
     .await?;
