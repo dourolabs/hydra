@@ -48,6 +48,7 @@ const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
 const ISSUE_CREATOR_PANEL_INNER_HEIGHT: u16 = 10;
 const ISSUE_CREATOR_PANEL_HEIGHT: u16 = ISSUE_CREATOR_PANEL_INNER_HEIGHT + 2;
+const ISSUE_CREATOR_FOOTER_GAP: usize = 2;
 #[derive(Copy, Clone, PartialEq, Default, Debug)]
 enum PanelFocus {
     #[default]
@@ -1303,9 +1304,10 @@ fn render_issue_creator(
     ]);
     let footer_width = sections.footer.width as usize;
     let assignee_width = assignee_line.width().min(footer_width);
+    let footer_gap = ISSUE_CREATOR_FOOTER_GAP.min(footer_width.saturating_sub(assignee_width));
     let repo_width = repo_line
         .width()
-        .min(footer_width.saturating_sub(assignee_width));
+        .min(footer_width.saturating_sub(assignee_width + footer_gap));
 
     let footer = if draft.is_submitting {
         Line::from(Span::styled(
@@ -1326,15 +1328,16 @@ fn render_issue_creator(
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(assignee_width as u16),
+            Constraint::Length(footer_gap as u16),
             Constraint::Length(repo_width as u16),
             Constraint::Min(0),
         ])
         .split(sections.footer);
     frame.render_widget(Paragraph::new(assignee_line), footer_columns[0]);
-    frame.render_widget(Paragraph::new(repo_line), footer_columns[1]);
+    frame.render_widget(Paragraph::new(repo_line), footer_columns[2]);
     frame.render_widget(
         Paragraph::new(footer).alignment(Alignment::Right),
-        footer_columns[2],
+        footer_columns[3],
     );
 }
 
