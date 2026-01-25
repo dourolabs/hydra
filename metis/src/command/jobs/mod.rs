@@ -105,7 +105,7 @@ pub enum JobsCommand {
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: JobsCommand,
-    token_path: &std::path::PathBuf,
+    token_path: &std::path::Path,
 ) -> Result<()> {
     match command {
         JobsCommand::Create {

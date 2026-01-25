@@ -15,7 +15,6 @@ use metis_common::{
 };
 use tempfile::Builder;
 
-use crate::auth;
 use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
@@ -31,7 +30,7 @@ pub async fn run(
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
-    token_path: &PathBuf,
+    _token_path: &Path,
 ) -> Result<()> {
     let WorkerContext {
         request_context,
@@ -47,7 +46,7 @@ pub async fn run(
         .as_ref()
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
-    let github_token = auth::ensure_auth_token(client, token_path).await.ok();
+    let github_token = client.get_github_token().await.ok();
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
