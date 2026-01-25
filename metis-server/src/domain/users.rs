@@ -78,6 +78,33 @@ impl User {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GithubUserCredentials {
+    pub github_user_id: u64,
+    pub github_token: String,
+    pub github_refresh_token: String,
+}
+
+impl From<User> for GithubUserCredentials {
+    fn from(user: User) -> Self {
+        Self {
+            github_user_id: user.github_user_id,
+            github_token: user.github_token,
+            github_refresh_token: user.github_refresh_token,
+        }
+    }
+}
+
+impl From<&User> for GithubUserCredentials {
+    fn from(user: &User) -> Self {
+        Self {
+            github_user_id: user.github_user_id,
+            github_token: user.github_token.clone(),
+            github_refresh_token: user.github_refresh_token.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserSummary {
     pub username: Username,

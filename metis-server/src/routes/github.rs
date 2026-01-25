@@ -28,7 +28,7 @@ pub async fn get_github_token(
     Extension(actor): Extension<Actor>,
 ) -> Result<Json<GithubTokenResponse>, ApiError> {
     info!(actor = %actor.name(), "get_github_token invoked");
-    let (username, user) = {
+    let (username, credentials) = {
         let store = state.store.read().await;
         let username = match &actor.user_or_worker {
             UserOrWorker::Username(username) => username.clone(),
@@ -64,30 +64,34 @@ pub async fn get_github_token(
             }
         };
 
-        let user = store.get_user(&username).await.map_err(|err| match err {
-            StoreError::UserNotFound(missing) => {
-                error!(username = %missing, "user not found");
-                ApiError::not_found(format!("user '{missing}' not found"))
-            }
-            other => {
-                error!(username = %username, error = %other, "failed to load user");
-                ApiError::internal(format!("failed to load user '{username}': {other}"))
-            }
-        })?;
+        let credentials = store
+            .get_user_github_credentials(&username)
+            .await
+            .map_err(|err| match err {
+                StoreError::UserNotFound(missing) => {
+                    error!(username = %missing, "user not found");
+                    ApiError::not_found(format!("user '{missing}' not found"))
+                }
+                other => {
+                    error!(username = %username, error = %other, "failed to load user");
+                    ApiError::internal(format!("failed to load user '{username}': {other}"))
+                }
+            })?;
 
-        (username, user)
+        (username, credentials)
     };
 
-    let mut github_token = user.github_token.clone();
+    let mut github_token = credentials.github_token.clone();
     if !github_token_is_valid(&state.config.github_app, &github_token).await? {
         let refreshed =
-            refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
+            refresh_github_token(&state.config.github_app, &credentials.github_refresh_token)
+                .await?;
         let mut store = state.store.write().await;
         let updated = store
             .set_user_github_token(
                 &username,
                 refreshed.access_token.clone(),
-                user.github_user_id,
+                credentials.github_user_id,
                 refreshed.refresh_token.clone(),
             )
             .await

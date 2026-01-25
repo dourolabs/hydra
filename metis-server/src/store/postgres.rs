@@ -5,7 +5,7 @@ use crate::{
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
         task_status::Event,
-        users::{User, Username},
+        users::{GithubUserCredentials, User, Username},
     },
     store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
@@ -965,6 +965,16 @@ impl Store for PostgresStore {
         }
 
         Ok(())
+    }
+
+    async fn get_user_github_credentials(
+        &self,
+        username: &Username,
+    ) -> Result<GithubUserCredentials, StoreError> {
+        self.fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
+            .await?
+            .map(|user| GithubUserCredentials::from(&user))
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
 
     async fn set_user_github_token(

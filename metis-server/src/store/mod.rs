@@ -2,7 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorError},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
-    users::{User, Username},
+    users::{GithubUserCredentials, User, Username},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -343,6 +343,12 @@ pub trait Store: Send + Sync {
 
     /// Deletes a user from the store.
     async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError>;
+
+    /// Gets the GitHub credentials for a user.
+    async fn get_user_github_credentials(
+        &self,
+        username: &Username,
+    ) -> Result<GithubUserCredentials, StoreError>;
 
     /// Updates the GitHub token for the requested user.
     async fn set_user_github_token(

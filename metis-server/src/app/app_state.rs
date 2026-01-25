@@ -1544,9 +1544,12 @@ mod tests {
         assert_eq!(response.user.username.as_str(), "octo");
 
         let store_read = state.store.read().await;
-        let users = store_read.list_users().await?;
+        let credentials = store_read
+            .get_user_github_credentials(&Username::from("octo"))
+            .await?;
         let actors = store_read.list_actors().await?;
-        assert_eq!(users.len(), 1);
+        assert_eq!(credentials.github_user_id, 42);
+        assert_eq!(credentials.github_refresh_token, "gh-refresh");
         assert_eq!(actors.len(), 1);
 
         Ok(())

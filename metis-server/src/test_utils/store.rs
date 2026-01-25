@@ -200,6 +200,13 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn get_user_github_credentials(
+        &self,
+        _username: &Username,
+    ) -> Result<crate::domain::users::GithubUserCredentials, StoreError> {
+        fail()
+    }
+
     async fn set_user_github_token(
         &mut self,
         _username: &Username,

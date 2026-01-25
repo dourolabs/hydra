@@ -12,7 +12,7 @@ use crate::domain::{
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     task_status::Event,
-    users::{User, Username},
+    users::{GithubUserCredentials, User, Username},
 };
 use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
 
@@ -657,6 +657,16 @@ impl Store for MemoryStore {
         }
 
         Ok(())
+    }
+
+    async fn get_user_github_credentials(
+        &self,
+        username: &Username,
+    ) -> Result<GithubUserCredentials, StoreError> {
+        self.users
+            .get(username)
+            .map(GithubUserCredentials::from)
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
 
     async fn set_user_github_token(
