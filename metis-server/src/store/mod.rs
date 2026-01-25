@@ -341,9 +341,6 @@ pub trait Store: Send + Sync {
     /// Lists all users in the store.
     async fn list_users(&self) -> Result<Vec<User>, StoreError>;
 
-    /// Deletes a user from the store.
-    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError>;
-
     /// Updates the GitHub token for the requested user.
     async fn set_user_github_token(
         &mut self,
