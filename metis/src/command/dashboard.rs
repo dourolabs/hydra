@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use crossterm::event::{
     Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
@@ -20,6 +20,7 @@ use metis_common::{
     patches::{GithubPr, PatchRecord},
     task_status::{Status, TaskError, TaskStatusLog},
     users::Username,
+    whoami::ActorIdentity,
     IssueId, PatchId, TaskId,
 };
 use ratatui::{
@@ -33,7 +34,7 @@ use ratatui::{
 };
 use tui_textarea::TextArea;
 
-use crate::{auth, client::MetisClientInterface, command::jobs};
+use crate::{client::MetisClientInterface, command::jobs};
 
 pub mod panel;
 
@@ -362,16 +363,28 @@ struct EventOutcome {
 pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
-    token_path: &std::path::Path,
     browser_command: Option<&str>,
 ) -> Result<()> {
-    let token_path_buf = token_path.to_path_buf();
-    let username = auth::resolve_auth_user(client, &token_path_buf).await?;
+    let username = resolve_dashboard_username(client).await?;
     let mut terminal = ratatui::init();
     let result =
         run_dashboard_loop(client, &mut terminal, username, server_url, browser_command).await;
     ratatui::restore();
     result
+}
+
+async fn resolve_dashboard_username(client: &dyn MetisClientInterface) -> Result<Username> {
+    let response = client
+        .whoami()
+        .await
+        .context("failed to resolve authenticated actor")?;
+    match response.actor {
+        ActorIdentity::User { username } => Ok(username),
+        ActorIdentity::Job { job_id } => {
+            bail!("authenticated actor is job '{job_id}', expected a user")
+        }
+        _ => bail!("authenticated actor type is unsupported"),
+    }
 }
 
 async fn run_dashboard_loop(
