@@ -2,7 +2,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
 use metis_common::{
-    constants::ENV_METIS_TOKEN,
+    constants::{ENV_METIS_ISSUE_ID, ENV_METIS_TOKEN},
+    issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
     jobs::SearchJobsQuery,
     task_status::Status,
     users::{User, Username},
@@ -26,6 +27,7 @@ pub struct TestEnvironment {
     pub _tempdir: TempDir,
     pub service_repo_name: RepoName,
     pub auth_token: String,
+    pub current_issue_id: metis_common::IssueId,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
@@ -54,7 +56,7 @@ impl TestEnvironment {
                 .arg(&command_to_run)
                 .env("METIS_SERVER_URL", &self.app_config.server.url)
                 .env(ENV_METIS_TOKEN, &self.auth_token)
-                .env_remove("METIS_ISSUE_ID")
+                .env(ENV_METIS_ISSUE_ID, self.current_issue_id.as_ref())
                 .output()
                 .await
                 .context("failed to spawn metis command")?;
@@ -150,6 +152,28 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         },
     };
     let client = MetisClient::from_config(&app_config, auth_token.clone())?;
+    let mut current_issue_settings = JobSettings::default();
+    current_issue_settings.repo_name = Some(service_repo_name.clone());
+    current_issue_settings.image = Some("worker:latest".into());
+    current_issue_settings.branch = Some("main".into());
+    let current_issue_id = client
+        .create_issue(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "current issue context".into(),
+                Username::from("test-user"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                Some(current_issue_settings),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            None,
+        ))
+        .await?
+        .issue_id;
 
     Ok(TestEnvironment {
         server,
@@ -158,6 +182,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         _tempdir: tempdir,
         service_repo_name,
         auth_token,
+        current_issue_id,
     })
 }
 
