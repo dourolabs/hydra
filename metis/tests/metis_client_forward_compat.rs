@@ -13,6 +13,7 @@ use metis_common::{
     },
     job_status::JobStatusUpdate,
     jobs::{Bundle, BundleSpec, CreateJobRequest, SearchJobsQuery},
+    login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{CreateRepositoryRequest, Repository, UpdateRepositoryRequest},
@@ -87,6 +88,21 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_id_for_merge = patch_id.clone();
     let patch_id_for_enqueue = patch_id.clone();
     let username_for_whoami = username.clone();
+
+    server.mock(|when, then| {
+        when.method(POST).path("/v1/login").json_body(json!({
+            "github_token": "gho_forward_compat",
+            "github_refresh_token": "ghr_forward_compat"
+        }));
+        then.status(200).json_body(json!({
+            "login_token": "login-token",
+            "user": {
+                "username": "future-user",
+                "github_user_id": 4242
+            },
+            "extra": "login"
+        }));
+    });
 
     server.mock(move |when, then| {
         when.method(POST).path("/v1/jobs");
@@ -315,6 +331,13 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         then.status(200)
             .json_body(json!({ "client_id": "abc123", "note": "github" }));
     });
+
+    let login_request = LoginRequest::new(
+        "gho_forward_compat".to_string(),
+        "ghr_forward_compat".to_string(),
+    );
+    let (login_token, _login_client) = unauth_client.login(&login_request).await?;
+    assert_eq!(login_token, "login-token");
 
     // Job endpoints
     let create_job_request = CreateJobRequest::new(
