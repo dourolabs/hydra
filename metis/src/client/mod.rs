@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use metis_common::{
-    agents::ListAgentsResponse,
+    agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::error::ApiErrorBody,
     api::v1::login::{LoginRequest, LoginResponse},
     github::{GithubAppClientIdResponse, GithubTokenResponse},
@@ -186,6 +186,11 @@ pub trait MetisClientInterface: Send + Sync {
         patch_id: &PatchId,
     ) -> Result<MergeQueue>;
     async fn list_agents(&self) -> Result<ListAgentsResponse>;
+    async fn get_agent(&self, name: &str) -> Result<AgentResponse>;
+    async fn create_agent(&self, request: &UpsertAgentRequest) -> Result<AgentResponse>;
+    async fn update_agent(&self, name: &str, request: &UpsertAgentRequest)
+        -> Result<AgentResponse>;
+    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse>;
 }
 
 impl MetisClientUnauthenticated {
@@ -1006,6 +1011,80 @@ impl MetisClient {
             .context("failed to decode list agents response")
     }
 
+    /// Call `GET /v1/agents/:name` to fetch a specific agent.
+    pub async fn get_agent(&self, name: &str) -> Result<AgentResponse> {
+        let url = self.endpoint(&format!("/v1/agents/{name}"))?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch agent")?
+            .error_for_status_with_body("metis-server returned an error while fetching agent")
+            .await?;
+
+        response
+            .json::<AgentResponse>()
+            .await
+            .context("failed to decode agent response")
+    }
+
+    /// Call `POST /v1/agents` to create an agent.
+    pub async fn create_agent(&self, request: &UpsertAgentRequest) -> Result<AgentResponse> {
+        let url = self.endpoint("/v1/agents")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create agent request")?
+            .error_for_status_with_body("metis-server returned an error while creating agent")
+            .await?;
+
+        response
+            .json::<AgentResponse>()
+            .await
+            .context("failed to decode create agent response")
+    }
+
+    /// Call `PUT /v1/agents/:name` to update an agent.
+    pub async fn update_agent(
+        &self,
+        name: &str,
+        request: &UpsertAgentRequest,
+    ) -> Result<AgentResponse> {
+        let url = self.endpoint(&format!("/v1/agents/{name}"))?;
+        let response = self
+            .authed(self.http.put(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update agent request")?
+            .error_for_status_with_body("metis-server returned an error while updating agent")
+            .await?;
+
+        response
+            .json::<AgentResponse>()
+            .await
+            .context("failed to decode update agent response")
+    }
+
+    /// Call `DELETE /v1/agents/:name` to delete an agent.
+    pub async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
+        let url = self.endpoint(&format!("/v1/agents/{name}"))?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete agent request")?
+            .error_for_status_with_body("metis-server returned an error while deleting agent")
+            .await?;
+
+        response
+            .json::<DeleteAgentResponse>()
+            .await
+            .context("failed to decode delete agent response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1286,6 +1365,26 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_agents(&self) -> Result<ListAgentsResponse> {
         MetisClient::list_agents(self).await
+    }
+
+    async fn get_agent(&self, name: &str) -> Result<AgentResponse> {
+        MetisClient::get_agent(self, name).await
+    }
+
+    async fn create_agent(&self, request: &UpsertAgentRequest) -> Result<AgentResponse> {
+        MetisClient::create_agent(self, request).await
+    }
+
+    async fn update_agent(
+        &self,
+        name: &str,
+        request: &UpsertAgentRequest,
+    ) -> Result<AgentResponse> {
+        MetisClient::update_agent(self, name, request).await
+    }
+
+    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
+        MetisClient::delete_agent(self, name).await
     }
 }
 

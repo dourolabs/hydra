@@ -105,7 +105,16 @@ pub async fn run_with_state(
         )
         .route("/v1/github/token", get(routes::github::get_github_token))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
-        .route("/v1/agents", get(routes::agents::list_agents))
+        .route(
+            "/v1/agents",
+            get(routes::agents::list_agents).post(routes::agents::create_agent),
+        )
+        .route(
+            "/v1/agents/:agent_name",
+            get(routes::agents::get_agent)
+                .put(routes::agents::update_agent)
+                .delete(routes::agents::delete_agent),
+        )
         .route(
             "/v1/jobs/:job_id",
             get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
@@ -230,13 +239,15 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("config.toml"))
 }
 
-fn build_agents(config: &AppConfig) -> Vec<Arc<AgentQueue>> {
-    config
-        .background
-        .agent_queues
-        .iter()
-        .map(|queue| Arc::new(AgentQueue::from_config(queue)))
-        .collect()
+fn build_agents(config: &AppConfig) -> Arc<RwLock<Vec<Arc<AgentQueue>>>> {
+    Arc::new(RwLock::new(
+        config
+            .background
+            .agent_queues
+            .iter()
+            .map(|queue| Arc::new(AgentQueue::from_config(queue)))
+            .collect(),
+    ))
 }
 
 fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
