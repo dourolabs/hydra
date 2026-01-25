@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use metis_common::{api::v1::login::LoginRequest, users::ResolveUserRequest};
+use metis_common::{api::v1::login::LoginRequest, whoami::ActorIdentity};
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::{
@@ -67,14 +67,19 @@ pub async fn login_with_github_device_flow(
     let auth_token = exchange_and_store_token(client, token_path, &token).await?;
     let auth_client = MetisClient::new(client.base_url().as_str(), auth_token.clone())
         .context("failed to create authenticated client")?;
-    let resolved_user = auth_client
-        .resolve_user(&ResolveUserRequest::new(auth_token))
+    let whoami = auth_client
+        .whoami()
         .await
-        .context("failed to resolve user from auth token")?;
+        .context("failed to fetch authenticated user")?;
+    let actor_label = match whoami.actor {
+        ActorIdentity::User { username } => username.to_string(),
+        ActorIdentity::Task { task_id } => task_id.to_string(),
+        _ => "unknown".to_string(),
+    };
 
     println!(
         "Logged in as {}. Stored token at {}.",
-        resolved_user.user.username,
+        actor_label,
         token_path.display()
     );
 
