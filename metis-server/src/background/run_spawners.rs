@@ -123,10 +123,8 @@ mod tests {
         app::ServiceRepositoryConfig,
         background::AgentQueue,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        domain::{
-            issues::{Issue, IssueStatus, IssueType, JobSettings},
-            users::Username,
-        },
+        domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
+        domain::users::Username,
         test::{add_repository, test_state},
     };
     use metis_common::RepoName;
@@ -157,18 +155,6 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
-        )
-    }
-  
-    fn make_task(prompt: &str) -> crate::store::Task {
-        crate::store::Task::new(
-            prompt.to_string(),
-            BundleSpec::None,
-            None,
-            None,
-            HashMap::new(),
-            None,
-            None,
         )
     }
 
