@@ -661,6 +661,7 @@ impl Store for MemoryStore {
         username: &Username,
         github_token: String,
         github_user_id: Option<u64>,
+        github_refresh_token: Option<String>,
     ) -> Result<User, StoreError> {
         let user = self
             .users
@@ -669,6 +670,9 @@ impl Store for MemoryStore {
         user.github_token = github_token;
         if let Some(github_user_id) = github_user_id {
             user.github_user_id = Some(github_user_id);
+        }
+        if let Some(github_refresh_token) = github_refresh_token {
+            user.github_refresh_token = Some(github_refresh_token);
         }
         Ok(user.clone())
     }
@@ -698,6 +702,7 @@ impl MemoryStore {
                         &user.username,
                         user.github_token.clone(),
                         user.github_user_id,
+                        user.github_refresh_token.clone(),
                     )
                     .await?;
                 }
@@ -1469,12 +1474,13 @@ mod tests {
                 username: username.clone(),
                 github_user_id: Some(101),
                 github_token: "old-token".to_string(),
+                github_refresh_token: None,
             })
             .await
             .unwrap();
 
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string(), Some(202))
+            .set_user_github_token(&username, "new-token".to_string(), Some(202), None)
             .await
             .unwrap();
 
@@ -1497,6 +1503,7 @@ mod tests {
                 username: username.clone(),
                 github_user_id: Some(11),
                 github_token: "token-abc".to_string(),
+                github_refresh_token: None,
             })
             .await
             .unwrap();

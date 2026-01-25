@@ -55,6 +55,8 @@ pub struct User {
     pub username: Username,
     pub github_user_id: Option<u64>,
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl User {
@@ -63,7 +65,13 @@ impl User {
             username,
             github_user_id: None,
             github_token,
+            github_refresh_token: None,
         }
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
+        self
     }
 }
 
@@ -100,6 +108,8 @@ pub struct CreateUserRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_user_id: Option<u64>,
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl CreateUserRequest {
@@ -108,11 +118,17 @@ impl CreateUserRequest {
             username,
             github_user_id: None,
             github_token,
+            github_refresh_token: None,
         }
     }
 
     pub fn with_github_user_id(mut self, github_user_id: Option<u64>) -> Self {
         self.github_user_id = github_user_id;
+        self
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
         self
     }
 }
@@ -123,6 +139,8 @@ pub struct UpdateGithubTokenRequest {
     pub github_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_user_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl UpdateGithubTokenRequest {
@@ -130,11 +148,17 @@ impl UpdateGithubTokenRequest {
         Self {
             github_token,
             github_user_id: None,
+            github_refresh_token: None,
         }
     }
 
     pub fn with_github_user_id(mut self, github_user_id: Option<u64>) -> Self {
         self.github_user_id = github_user_id;
+        self
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
         self
     }
 }

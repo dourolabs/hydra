@@ -351,6 +351,7 @@ pub trait Store: Send + Sync {
         username: &Username,
         github_token: String,
         github_user_id: Option<u64>,
+        github_refresh_token: Option<String>,
     ) -> Result<User, StoreError>;
 
     /// Resolves a user by their GitHub token.

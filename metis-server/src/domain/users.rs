@@ -54,6 +54,8 @@ pub struct User {
     pub username: Username,
     pub github_user_id: Option<u64>,
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl User {
@@ -62,7 +64,13 @@ impl User {
             username,
             github_user_id: None,
             github_token,
+            github_refresh_token: None,
         }
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
+        self
     }
 }
 
@@ -97,6 +105,8 @@ pub struct CreateUserRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_user_id: Option<u64>,
     pub github_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl CreateUserRequest {
@@ -105,7 +115,13 @@ impl CreateUserRequest {
             username,
             github_user_id: None,
             github_token,
+            github_refresh_token: None,
         }
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
+        self
     }
 }
 
@@ -114,6 +130,8 @@ pub struct UpdateGithubTokenRequest {
     pub github_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_user_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_refresh_token: Option<String>,
 }
 
 impl UpdateGithubTokenRequest {
@@ -121,7 +139,13 @@ impl UpdateGithubTokenRequest {
         Self {
             github_token,
             github_user_id: None,
+            github_refresh_token: None,
         }
+    }
+
+    pub fn with_github_refresh_token(mut self, github_refresh_token: Option<String>) -> Self {
+        self.github_refresh_token = github_refresh_token;
+        self
     }
 }
 
@@ -198,13 +222,15 @@ impl From<api::users::User> for User {
             username: value.username.into(),
             github_user_id: value.github_user_id,
             github_token: value.github_token,
+            github_refresh_token: value.github_refresh_token,
         }
     }
 }
 
 impl From<User> for api::users::User {
     fn from(value: User) -> Self {
-        let mut user = api::users::User::new(value.username.into(), value.github_token);
+        let mut user = api::users::User::new(value.username.into(), value.github_token)
+            .with_github_refresh_token(value.github_refresh_token);
         user.github_user_id = value.github_user_id;
         user
     }
@@ -233,6 +259,7 @@ impl From<api::users::CreateUserRequest> for CreateUserRequest {
             username: value.username.into(),
             github_user_id: value.github_user_id,
             github_token: value.github_token,
+            github_refresh_token: value.github_refresh_token,
         }
     }
 }
@@ -241,6 +268,7 @@ impl From<CreateUserRequest> for api::users::CreateUserRequest {
     fn from(value: CreateUserRequest) -> Self {
         api::users::CreateUserRequest::new(value.username.into(), value.github_token)
             .with_github_user_id(value.github_user_id)
+            .with_github_refresh_token(value.github_refresh_token)
     }
 }
 
@@ -249,6 +277,7 @@ impl From<api::users::UpdateGithubTokenRequest> for UpdateGithubTokenRequest {
         UpdateGithubTokenRequest {
             github_token: value.github_token,
             github_user_id: value.github_user_id,
+            github_refresh_token: value.github_refresh_token,
         }
     }
 }
@@ -257,6 +286,7 @@ impl From<UpdateGithubTokenRequest> for api::users::UpdateGithubTokenRequest {
     fn from(value: UpdateGithubTokenRequest) -> Self {
         api::users::UpdateGithubTokenRequest::new(value.github_token)
             .with_github_user_id(value.github_user_id)
+            .with_github_refresh_token(value.github_refresh_token)
     }
 }
 

@@ -17,6 +17,7 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
                 username: Username::from("alice"),
                 github_user_id: Some(101),
                 github_token: "token-123".to_string(),
+                github_refresh_token: None,
             })
             .await
             .unwrap();
@@ -38,6 +39,7 @@ async fn list_users_does_not_return_tokens() -> anyhow::Result<()> {
     let user = users[0].as_object().expect("user should be an object");
     assert_eq!(user.get("username").and_then(Value::as_str), Some("alice"));
     assert!(user.get("github_token").is_none());
+    assert!(user.get("github_refresh_token").is_none());
     assert_eq!(
         user.get("github_user_id").and_then(Value::as_u64),
         Some(101)
@@ -57,6 +59,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
         username: Username::from("bob"),
         github_user_id: Some(111),
         github_token: "old-token".to_string(),
+        github_refresh_token: None,
     };
     let create_response = client
         .post(format!("{}/v1/users", server.base_url()))
@@ -68,6 +71,7 @@ async fn set_github_token_overwrites_existing() -> anyhow::Result<()> {
     let update_payload = UpdateGithubTokenRequest {
         github_token: "new-token".to_string(),
         github_user_id: Some(222),
+        github_refresh_token: None,
     };
     let update_response = client
         .put(format!("{}/v1/users/bob/github-token", server.base_url()))
@@ -111,6 +115,7 @@ async fn resolve_user_returns_summary() -> anyhow::Result<()> {
                 username: Username::from("alice"),
                 github_user_id: Some(101),
                 github_token: "token-123".to_string(),
+                github_refresh_token: None,
             })
             .await
             .unwrap();
@@ -132,6 +137,7 @@ async fn resolve_user_returns_summary() -> anyhow::Result<()> {
     let user = body["user"].as_object().expect("user should be an object");
     assert_eq!(user.get("username").and_then(Value::as_str), Some("alice"));
     assert!(user.get("github_token").is_none());
+    assert!(user.get("github_refresh_token").is_none());
 
     Ok(())
 }

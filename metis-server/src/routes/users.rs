@@ -35,12 +35,15 @@ pub async fn create_user(
     let username: Username = normalize_non_empty("username", payload.username.into())?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
+    let github_refresh_token =
+        normalize_optional_non_empty("github_refresh_token", payload.github_refresh_token)?;
     info!(username = %username, "create_user invoked");
 
     let user = User {
         username: username.clone(),
         github_user_id,
         github_token,
+        github_refresh_token,
     };
 
     let mut store = state.store.write().await;
@@ -104,11 +107,18 @@ pub async fn set_github_token(
     let username: Username = normalize_non_empty("username", username)?.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_user_id = normalize_optional_positive("github_user_id", payload.github_user_id)?;
+    let github_refresh_token =
+        normalize_optional_non_empty("github_refresh_token", payload.github_refresh_token)?;
     info!(username = %username, "set_github_token invoked");
 
     let mut store = state.store.write().await;
     let updated = store
-        .set_user_github_token(&username, github_token, github_user_id)
+        .set_user_github_token(
+            &username,
+            github_token,
+            github_user_id,
+            github_refresh_token,
+        )
         .await
         .map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
@@ -172,6 +182,16 @@ fn normalize_optional_positive(field: &str, value: Option<u64>) -> Result<Option
             "{field} must be greater than zero"
         ))),
         Some(value) => Ok(Some(value)),
+        None => Ok(None),
+    }
+}
+
+fn normalize_optional_non_empty(
+    field: &str,
+    value: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    match value {
+        Some(value) => Ok(Some(normalize_non_empty(field, value)?)),
         None => Ok(None),
     }
 }

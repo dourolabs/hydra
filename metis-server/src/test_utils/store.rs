@@ -209,6 +209,7 @@ impl Store for FailingStore {
         _username: &Username,
         _github_token: String,
         _github_user_id: Option<u64>,
+        _github_refresh_token: Option<String>,
     ) -> Result<User, StoreError> {
         fail()
     }
