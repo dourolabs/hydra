@@ -17,7 +17,7 @@ use metis_common::{
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{CreateRepositoryRequest, Repository, UpdateRepositoryRequest},
     task_status::{Event, Status},
-    users::{CreateUserRequest, UpdateGithubTokenRequest, Username},
+    users::Username,
     whoami::ActorIdentity,
     IssueId, PatchId, RepoName, TaskId,
 };
@@ -69,8 +69,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         "/v1/repositories/{}/{}",
         repo_name.organization, repo_name.repo
     );
-    let user_path = format!("/v1/users/{username}");
-    let github_token_path = format!("/v1/users/{username}/github-token");
     let github_token_lookup_path = "/v1/github/token";
     let whoami_path = "/v1/whoami";
     let merge_queue_path = format!(
@@ -88,9 +86,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_id_for_update = patch_id.clone();
     let patch_id_for_merge = patch_id.clone();
     let patch_id_for_enqueue = patch_id.clone();
-    let username_for_users = username.clone();
-    let username_for_delete = username.clone();
-    let username_for_token = username.clone();
     let username_for_whoami = username.clone();
 
     server.mock(move |when, then| {
@@ -269,39 +264,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         then.status(200).json_body(
             json!({ "repository": repository_body_for_update.clone(), "note": "update-repo" }),
         );
-    });
-
-    let username_for_users_clone = username_for_users.clone();
-    server.mock(move |when, then| {
-        when.method(GET).path("/v1/users");
-        then.status(200)
-            .json_body(json!({ "users": [{"username": username_for_users_clone, "github_user_id": 123, "scope": "extra"}], "extra": "list-users" }));
-    });
-
-    let username_for_create_clone = username.clone();
-    server.mock(move |when, then| {
-        when.method(POST).path("/v1/users");
-        then.status(200).json_body(json!({
-            "user": { "username": username_for_create_clone, "github_user_id": 123, "bonus": "field" }
-        }));
-    });
-
-    let user_delete_path = user_path.clone();
-    let username_for_delete_clone = username_for_delete.clone();
-    server.mock(move |when, then| {
-        when.method(DELETE).path(user_delete_path.as_str());
-        then.status(200)
-            .json_body(json!({ "username": username_for_delete_clone, "archived": true }));
-    });
-
-    let github_token_path_clone = github_token_path.clone();
-    let username_for_token_clone = username_for_token.clone();
-    server.mock(move |when, then| {
-        when.method(PUT).path(github_token_path_clone.as_str());
-        then.status(200).json_body(json!({
-            "user": { "username": username_for_token_clone, "github_user_id": 123, "scopes": ["repo"] },
-            "updated": true
-        }));
     });
 
     server.mock(move |when, then| {
@@ -519,23 +481,6 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let repos = client.list_repositories().await?;
     assert_eq!(repos.repositories.len(), 1);
-
-    // Users
-    let create_user = CreateUserRequest::new(username.clone(), "token".to_string());
-    let created_user = client.create_user(&create_user).await?;
-    assert_eq!(created_user.user.username, username);
-
-    let listed_users = client.list_users().await?;
-    assert_eq!(listed_users.users.len(), 1);
-
-    let deleted_user = client.delete_user(&username).await?;
-    assert_eq!(deleted_user.username, username);
-
-    let token_update = UpdateGithubTokenRequest::new("new-token".to_string());
-    let updated_user = client
-        .set_user_github_token(&username, &token_update)
-        .await?;
-    assert_eq!(updated_user.user.username, username);
 
     let github_token = client.get_github_token().await?;
     assert_eq!(github_token, "gho_forward_compat");

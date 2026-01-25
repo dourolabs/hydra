@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use metis_common::{
     issues::{Issue, IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest},
     task_status::Status,
-    users::{CreateUserRequest, Username},
+    users::Username,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -23,13 +23,6 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            env.auth_token.clone(),
-        ))
-        .await?;
-
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
         repo_arg,
@@ -43,7 +36,7 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
         Issue::new(
             IssueType::Task,
             "grandparent issue".into(),
-            Username::from("worker"),
+            Username::from("test-user"),
             String::new(),
             IssueStatus::Open,
             None,
@@ -115,13 +108,6 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
     fs::create_dir_all(auth_token_path.parent().expect("auth token parent"))
         .context("create auth token dir")?;
     fs::write(&auth_token_path, &env.auth_token).context("write auth token")?;
-    env.client
-        .create_user(&CreateUserRequest::new(
-            Username::from("worker"),
-            env.auth_token.clone(),
-        ))
-        .await?;
-
     env.run_as_user(vec![format!(
         "metis jobs create --repo {} --var METIS_SERVER_URL={} --var HOME={} {}",
         repo_arg,
@@ -135,7 +121,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
         Issue::new(
             IssueType::Task,
             "todo grandparent issue".into(),
-            Username::from("worker"),
+            Username::from("test-user"),
             String::new(),
             IssueStatus::Open,
             None,
