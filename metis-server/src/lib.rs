@@ -103,6 +103,7 @@ pub async fn run_with_state(
             "/v1/merge-queues/:organization/:repo/:branch/patches",
             get(routes::merge_queues::get_merge_queue).post(routes::merge_queues::enqueue_patch),
         )
+        .route("/v1/github/token", get(routes::github::get_github_token))
         .route("/v1/jobs/", get(routes::jobs::list_jobs))
         .route("/v1/agents", get(routes::agents::list_agents))
         .route(

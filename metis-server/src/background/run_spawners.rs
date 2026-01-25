@@ -123,10 +123,8 @@ mod tests {
         app::ServiceRepositoryConfig,
         background::AgentQueue,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        domain::{
-            issues::{Issue, IssueStatus, IssueType, JobSettings},
-            users::Username,
-        },
+        domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
+        domain::users::Username,
         test::{add_repository, test_state},
     };
     use metis_common::RepoName;
