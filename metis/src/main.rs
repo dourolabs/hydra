@@ -63,11 +63,10 @@ enum Commands {
         #[command(subcommand)]
         command: command::jobs::JobsCommand,
     },
-    /// List available agents.
+    /// Manage agents.
     Agents {
-        /// Pretty-print the agents instead of emitting JSONL.
-        #[arg(long)]
-        pretty: bool,
+        #[command(subcommand)]
+        command: command::agents::AgentsCommand,
     },
     /// Manage patches.
     Patches {
@@ -150,7 +149,7 @@ async fn dispatch(
 ) -> Result<()> {
     match resolve_command(cli.command) {
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
-        Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
+        Commands::Agents { command } => command::agents::run(client, command).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
         Commands::Dashboard => {
             command::dashboard::run(client, &app_config.server.url, cli.browser.as_deref()).await?
@@ -222,6 +221,7 @@ mod tests {
     use super::{load_app_config, read_token_from_path, resolve_command, Cli, Commands};
     use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
     use clap::Parser;
+    use metis::command::agents::AgentsCommand;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -233,7 +233,9 @@ mod tests {
             token_path: DEFAULT_AUTH_TOKEN_PATH.to_string(),
             token: None,
             browser: None,
-            command: Some(super::Commands::Agents { pretty: false }),
+            command: Some(super::Commands::Agents {
+                command: AgentsCommand::List { pretty: false },
+            }),
         }
     }
 
