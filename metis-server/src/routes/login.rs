@@ -1,5 +1,4 @@
 use crate::app::{AppState, LoginError};
-use crate::domain::login::LoginRequest;
 use crate::routes::jobs::ApiError;
 use axum::{Json, extract::State};
 use metis_common::api::v1;
@@ -9,7 +8,6 @@ pub async fn login(
     State(state): State<AppState>,
     Json(payload): Json<v1::login::LoginRequest>,
 ) -> Result<Json<v1::login::LoginResponse>, ApiError> {
-    let payload: LoginRequest = payload.into();
     let github_token = normalize_non_empty("github_token", payload.github_token)?;
     let github_refresh_token =
         normalize_non_empty("github_refresh_token", payload.github_refresh_token)?;
@@ -21,7 +19,6 @@ pub async fn login(
         .map_err(map_login_error)?;
 
     info!(username = %response.user.username, "login completed");
-    let response: v1::login::LoginResponse = response.into();
     Ok(Json(response))
 }
 

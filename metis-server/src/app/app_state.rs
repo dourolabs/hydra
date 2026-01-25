@@ -7,7 +7,6 @@ use crate::{
             UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
-        login::LoginResponse,
         patches::{Patch, PatchStatus, UpsertPatchRequest},
         users::UserSummary,
     },
@@ -17,6 +16,7 @@ use crate::{
 use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
+    api::v1 as api,
     constants::ENV_METIS_ID,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
@@ -224,7 +224,7 @@ impl AppState {
         &self,
         github_token: String,
         github_refresh_token: String,
-    ) -> Result<LoginResponse, LoginError> {
+    ) -> Result<api::login::LoginResponse, LoginError> {
         let mut store = self.store.write().await;
         let (user, _actor, login_token) = store
             .create_actor_for_github_token(github_token, github_refresh_token)
@@ -234,7 +234,9 @@ impl AppState {
                 other => LoginError::Store { source: other },
             })?;
 
-        Ok(LoginResponse::new(login_token, UserSummary::from(user)))
+        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
+
+        Ok(api::login::LoginResponse::new(login_token, user_summary))
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
