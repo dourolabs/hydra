@@ -223,15 +223,16 @@ impl AppState {
     pub async fn login_with_github_token(
         &self,
         github_token: String,
+        github_refresh_token: Option<String>,
     ) -> Result<LoginResponse, LoginError> {
         let mut store = self.store.write().await;
         let (user, _actor, login_token) = store
-            .create_actor_for_github_token(github_token)
+            .create_actor_for_github_token(github_token, github_refresh_token)
             .await
             .map_err(|source| match source {
-            StoreError::GithubTokenInvalid(message) => LoginError::InvalidGithubToken(message),
-            other => LoginError::Store { source: other },
-        })?;
+                StoreError::GithubTokenInvalid(message) => LoginError::InvalidGithubToken(message),
+                other => LoginError::Store { source: other },
+            })?;
 
         Ok(LoginResponse::new(login_token, UserSummary::from(user)))
     }
@@ -1535,7 +1536,7 @@ mod tests {
 
         let state = test_state_with_github_client(build_github_client(github_server.base_url()));
         let response = state
-            .login_with_github_token("gh-token".to_string())
+            .login_with_github_token("gh-token".to_string(), None)
             .await
             .expect("login should succeed");
 
@@ -1561,7 +1562,7 @@ mod tests {
 
         let state = test_state_with_github_client(build_github_client(github_server.base_url()));
         let err = state
-            .login_with_github_token("bad-token".to_string())
+            .login_with_github_token("bad-token".to_string(), None)
             .await
             .expect_err("login should fail for invalid token");
 

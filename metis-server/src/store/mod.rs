@@ -303,6 +303,7 @@ pub trait Store: Send + Sync {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
+        github_refresh_token: Option<String>,
     ) -> Result<(User, Actor, String), StoreError>;
 
     /// Creates and persists a task-backed actor for the given task.
