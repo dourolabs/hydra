@@ -192,10 +192,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        fail()
-    }
-
     async fn set_user_github_token(
         &mut self,
         _username: &Username,

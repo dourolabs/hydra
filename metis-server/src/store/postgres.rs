@@ -941,17 +941,6 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        let mut users = self
-            .fetch_payloads_with_ids::<User>(TABLE_USERS, "user", USER_SCHEMA_VERSION)
-            .await?
-            .into_iter()
-            .map(|(_, user)| user)
-            .collect::<Vec<_>>();
-        users.sort_by(|a, b| a.username.cmp(&b.username));
-        Ok(users)
-    }
-
     async fn set_user_github_token(
         &mut self,
         username: &Username,
@@ -1372,9 +1361,8 @@ mod tests {
         };
         store.add_user(user.clone()).await.unwrap();
 
-        let users = store.list_users().await.unwrap();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0], user);
+        let fetched = store.get_user(&Username::from("alice")).await.unwrap();
+        assert_eq!(fetched, user);
 
         let username = Username::from("alice");
         let updated = store

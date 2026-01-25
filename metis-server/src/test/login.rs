@@ -1,4 +1,7 @@
-use crate::test::{spawn_test_server_with_state, test_client, test_state_with_github_client};
+use crate::{
+    domain::users::Username,
+    test::{spawn_test_server_with_state, test_client, test_state_with_github_client},
+};
 use httpmock::prelude::*;
 use metis_common::api::v1::login::LoginRequest;
 use octocrab::Octocrab;
@@ -80,11 +83,10 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     );
 
     let store_read = store.read().await;
-    let users = store_read.list_users().await?;
-    assert_eq!(users.len(), 1);
-    assert_eq!(users[0].username.as_str(), "octo");
-    assert_eq!(users[0].github_user_id, 42);
-    assert_eq!(users[0].github_refresh_token, "gh-refresh");
+    let user = store_read.get_user(&Username::from("octo")).await?;
+    assert_eq!(user.username.as_str(), "octo");
+    assert_eq!(user.github_user_id, 42);
+    assert_eq!(user.github_refresh_token, "gh-refresh");
 
     let actors = store_read.list_actors().await?;
     assert!(
@@ -120,9 +122,8 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
 
     let store_read = store.read().await;
-    let users = store_read.list_users().await?;
-    assert_eq!(users.len(), 1);
-    assert_eq!(users[0].github_refresh_token, "gh-refresh");
+    let user = store_read.get_user(&Username::from("octo")).await?;
+    assert_eq!(user.github_refresh_token, "gh-refresh");
 
     Ok(())
 }

@@ -338,9 +338,6 @@ pub trait Store: Send + Sync {
     /// Adds a new user to the store.
     async fn add_user(&mut self, user: User) -> Result<(), StoreError>;
 
-    /// Lists all users in the store.
-    async fn list_users(&self) -> Result<Vec<User>, StoreError>;
-
     /// Updates the GitHub token for the requested user.
     async fn set_user_github_token(
         &mut self,

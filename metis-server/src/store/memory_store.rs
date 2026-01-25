@@ -645,12 +645,6 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_users(&self) -> Result<Vec<User>, StoreError> {
-        let mut users: Vec<User> = self.users.values().cloned().collect();
-        users.sort_by(|a, b| a.username.cmp(&b.username));
-        Ok(users)
-    }
-
     async fn set_user_github_token(
         &mut self,
         username: &Username,
@@ -1476,11 +1470,10 @@ mod tests {
         assert_eq!(updated.github_user_id, 202);
         assert_eq!(updated.github_refresh_token, "new-refresh");
 
-        let users = store.list_users().await.unwrap();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0].github_token, "new-token");
-        assert_eq!(users[0].github_user_id, 202);
-        assert_eq!(users[0].github_refresh_token, "new-refresh");
+        let user = store.get_user(&username).await.unwrap();
+        assert_eq!(user.github_token, "new-token");
+        assert_eq!(user.github_user_id, 202);
+        assert_eq!(user.github_refresh_token, "new-refresh");
     }
 
     #[tokio::test]
