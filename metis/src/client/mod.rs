@@ -31,6 +31,7 @@ use metis_common::{
         CreateUserRequest, DeleteUserResponse, ListUsersResponse, ResolveUserRequest,
         ResolveUserResponse, UpdateGithubTokenRequest, UpsertUserResponse, Username,
     },
+    whoami::WhoAmIResponse,
     IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
@@ -176,6 +177,7 @@ pub trait MetisClientInterface: Send + Sync {
         request: &UpdateGithubTokenRequest,
     ) -> Result<UpsertUserResponse>;
     async fn get_github_token(&self) -> Result<String>;
+    async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -920,6 +922,23 @@ impl MetisClient {
         Ok(token.github_token)
     }
 
+    /// Call `GET /v1/whoami` to identify the authenticated actor.
+    pub async fn whoami(&self) -> Result<WhoAmIResponse> {
+        let url = self.endpoint("/v1/whoami")?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch whoami response")?
+            .error_for_status_with_body("metis-server returned an error while fetching whoami")
+            .await?;
+
+        response
+            .json::<WhoAmIResponse>()
+            .await
+            .context("failed to decode whoami response")
+    }
+
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -1246,6 +1265,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_github_token(&self) -> Result<String> {
         MetisClient::get_github_token(self).await
+    }
+
+    async fn whoami(&self) -> Result<WhoAmIResponse> {
+        MetisClient::whoami(self).await
     }
 
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
