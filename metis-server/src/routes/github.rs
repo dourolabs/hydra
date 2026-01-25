@@ -80,20 +80,14 @@ pub async fn get_github_token(
 
     let mut github_token = user.github_token.clone();
     if !github_token_is_valid(&state.config.github_app, &github_token).await? {
-        let Some(refresh_token) = user.github_refresh_token.as_deref() else {
-            error!(username = %username, "github token expired without refresh token");
-            return Err(ApiError::unauthorized(
-                "GitHub token expired; re-authenticate to refresh",
-            ));
-        };
-
-        let refreshed = refresh_github_token(&state.config.github_app, refresh_token).await?;
+        let refreshed =
+            refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
         let mut store = state.store.write().await;
         let updated = store
             .set_user_github_token(
                 &username,
                 refreshed.access_token.clone(),
-                None,
+                user.github_user_id,
                 refreshed.refresh_token.clone(),
             )
             .await
@@ -127,7 +121,7 @@ struct GithubRefreshTokenResponse {
 
 struct RefreshedGithubToken {
     access_token: String,
-    refresh_token: Option<String>,
+    refresh_token: String,
 }
 
 async fn github_token_is_valid(config: &GithubAppSection, token: &str) -> Result<bool, ApiError> {
@@ -158,7 +152,7 @@ async fn github_token_is_valid(config: &GithubAppSection, token: &str) -> Result
 
 async fn refresh_github_token(
     config: &GithubAppSection,
-    refresh_token: &str,
+    current_refresh_token: &str,
 ) -> Result<RefreshedGithubToken, ApiError> {
     let url = join_url(config.oauth_base_url(), "/login/oauth/access_token");
     let response = Client::new()
@@ -169,7 +163,7 @@ async fn refresh_github_token(
             ("client_id", config.client_id()),
             ("client_secret", config.client_secret()),
             ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
+            ("refresh_token", current_refresh_token),
         ])
         .send()
         .await
@@ -190,7 +184,9 @@ async fn refresh_github_token(
     if let Some(access_token) = payload.access_token {
         return Ok(RefreshedGithubToken {
             access_token,
-            refresh_token: payload.refresh_token,
+            refresh_token: payload
+                .refresh_token
+                .unwrap_or_else(|| current_refresh_token.to_string()),
         });
     }
 

@@ -71,7 +71,7 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
     let token = {
         let mut store = state.store.write().await;
         let (_user, _actor, token) = store
-            .create_actor_for_github_token("gh-token".to_string(), None)
+            .create_actor_for_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await?;
         token
     };

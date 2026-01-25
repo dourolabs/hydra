@@ -55,7 +55,7 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("gh-token".to_string(), None);
+    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)
@@ -102,7 +102,7 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("gh-token".to_string(), Some("gh-refresh".to_string()));
+    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)
@@ -114,7 +114,7 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
     let store_read = store.read().await;
     let users = store_read.list_users().await?;
     assert_eq!(users.len(), 1);
-    assert_eq!(users[0].github_refresh_token.as_deref(), Some("gh-refresh"));
+    assert_eq!(users[0].github_refresh_token, "gh-refresh");
 
     Ok(())
 }
@@ -126,7 +126,7 @@ async fn login_rejects_empty_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("  ".to_string(), None);
+    let payload = LoginRequest::new("  ".to_string(), "gh-refresh".to_string());
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)
@@ -149,7 +149,7 @@ async fn login_returns_bad_request_for_invalid_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("bad-token".to_string(), None);
+    let payload = LoginRequest::new("bad-token".to_string(), "gh-refresh".to_string());
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)

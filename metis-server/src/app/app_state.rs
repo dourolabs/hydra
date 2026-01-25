@@ -223,7 +223,7 @@ impl AppState {
     pub async fn login_with_github_token(
         &self,
         github_token: String,
-        github_refresh_token: Option<String>,
+        github_refresh_token: String,
     ) -> Result<LoginResponse, LoginError> {
         let mut store = self.store.write().await;
         let (user, _actor, login_token) = store
@@ -1536,7 +1536,7 @@ mod tests {
 
         let state = test_state_with_github_client(build_github_client(github_server.base_url()));
         let response = state
-            .login_with_github_token("gh-token".to_string(), None)
+            .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await
             .expect("login should succeed");
 
@@ -1562,7 +1562,7 @@ mod tests {
 
         let state = test_state_with_github_client(build_github_client(github_server.base_url()));
         let err = state
-            .login_with_github_token("bad-token".to_string(), None)
+            .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
             .await
             .expect_err("login should fail for invalid token");
 

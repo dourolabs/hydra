@@ -570,7 +570,7 @@ impl Store for MemoryStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
-        github_refresh_token: Option<String>,
+        github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
         #[cfg(test)]
         if let Some(github_client) = self.github_client.as_ref() {
@@ -663,20 +663,16 @@ impl Store for MemoryStore {
         &mut self,
         username: &Username,
         github_token: String,
-        github_user_id: Option<u64>,
-        github_refresh_token: Option<String>,
+        github_user_id: u64,
+        github_refresh_token: String,
     ) -> Result<User, StoreError> {
         let user = self
             .users
             .get_mut(username)
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
         user.github_token = github_token;
-        if let Some(github_user_id) = github_user_id {
-            user.github_user_id = Some(github_user_id);
-        }
-        if let Some(github_refresh_token) = github_refresh_token {
-            user.github_refresh_token = Some(github_refresh_token);
-        }
+        user.github_user_id = github_user_id;
+        user.github_refresh_token = github_refresh_token;
         Ok(user.clone())
     }
 
@@ -1475,25 +1471,32 @@ mod tests {
         store
             .add_user(User {
                 username: username.clone(),
-                github_user_id: Some(101),
+                github_user_id: 101,
                 github_token: "old-token".to_string(),
-                github_refresh_token: None,
+                github_refresh_token: "old-refresh".to_string(),
             })
             .await
             .unwrap();
 
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string(), Some(202), None)
+            .set_user_github_token(
+                &username,
+                "new-token".to_string(),
+                202,
+                "new-refresh".to_string(),
+            )
             .await
             .unwrap();
 
         assert_eq!(updated.github_token, "new-token");
-        assert_eq!(updated.github_user_id, Some(202));
+        assert_eq!(updated.github_user_id, 202);
+        assert_eq!(updated.github_refresh_token, "new-refresh");
 
         let users = store.list_users().await.unwrap();
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].github_token, "new-token");
-        assert_eq!(users[0].github_user_id, Some(202));
+        assert_eq!(users[0].github_user_id, 202);
+        assert_eq!(users[0].github_refresh_token, "new-refresh");
     }
 
     #[tokio::test]
@@ -1504,9 +1507,9 @@ mod tests {
         store
             .add_user(User {
                 username: username.clone(),
-                github_user_id: Some(11),
+                github_user_id: 11,
                 github_token: "token-abc".to_string(),
-                github_refresh_token: None,
+                github_refresh_token: "refresh-token".to_string(),
             })
             .await
             .unwrap();
@@ -1583,7 +1586,7 @@ mod tests {
         let github_client = build_github_client(server.base_url());
         let mut store = MemoryStore::new_with_github_client(github_client);
         let (user, actor, auth_token) = store
-            .create_actor_for_github_token("gh-token".to_string(), None)
+            .create_actor_for_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await
             .unwrap();
 

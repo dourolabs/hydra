@@ -95,9 +95,12 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
     });
 
     let github_client = build_github_client(server.base_url());
-    let (user, actor, auth_token) =
-        Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
-            .await?;
+    let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
+        "gh-token".to_string(),
+        "gh-refresh".to_string(),
+        &github_client,
+    )
+    .await?;
 
     let state = test_state_with_github_urls(server.base_url(), server.base_url());
     {
@@ -132,7 +135,12 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
 
     let state = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
-    let user = User::new(username.clone(), "task-token".to_string());
+    let user = User::new(
+        username.clone(),
+        101,
+        "task-token".to_string(),
+        "refresh-token".to_string(),
+    );
 
     let issue_id = {
         let mut store = state.store.write().await;
@@ -209,9 +217,12 @@ async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()>
     });
 
     let github_client = build_github_client(server.base_url());
-    let (_user, actor, auth_token) =
-        Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
-            .await?;
+    let (_user, actor, auth_token) = Actor::new_for_github_token_with_client(
+        "gh-token".to_string(),
+        "gh-refresh".to_string(),
+        &github_client,
+    )
+    .await?;
 
     let state = test_state();
     {
@@ -257,9 +268,9 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
-        github_user_id: None,
+        github_user_id: 101,
         github_token: "expired-token".to_string(),
-        github_refresh_token: Some("refresh-token".to_string()),
+        github_refresh_token: "refresh-token".to_string(),
     };
 
     let issue_id = {
@@ -312,14 +323,14 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let store = state.store.read().await;
     let updated = store.get_user(&username).await?;
     assert_eq!(updated.github_token, "new-token");
-    assert_eq!(updated.github_refresh_token.as_deref(), Some("new-refresh"));
+    assert_eq!(updated.github_refresh_token, "new-refresh");
     refresh_mock.assert();
 
     Ok(())
 }
 
 #[tokio::test]
-async fn github_token_expired_without_refresh_token_returns_unauthorized() -> anyhow::Result<()> {
+async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<()> {
     let server = MockServer::start_async().await;
     let _user_mock = server.mock(|when, then| {
         when.method(GET)
@@ -327,14 +338,27 @@ async fn github_token_expired_without_refresh_token_returns_unauthorized() -> an
             .header("authorization", "Bearer expired-token");
         then.status(401);
     });
+    let _refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/login/oauth/access_token")
+            .header("accept", "application/json")
+            .body_contains("grant_type=refresh_token")
+            .body_contains("refresh_token=bad-refresh");
+        then.status(400)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "bad refresh token"
+            }));
+    });
 
     let state = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
-        github_user_id: None,
+        github_user_id: 101,
         github_token: "expired-token".to_string(),
-        github_refresh_token: None,
+        github_refresh_token: "bad-refresh".to_string(),
     };
 
     let issue_id = {

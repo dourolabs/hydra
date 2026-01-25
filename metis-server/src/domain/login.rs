@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub github_token: String,
-    pub github_refresh_token: Option<String>,
+    pub github_refresh_token: String,
 }
 
 impl LoginRequest {
-    pub fn new(github_token: String, github_refresh_token: Option<String>) -> Self {
+    pub fn new(github_token: String, github_refresh_token: String) -> Self {
         Self {
             github_token,
             github_refresh_token,

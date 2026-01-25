@@ -311,7 +311,12 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
         .await?;
 
     let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
-    let user = User::new(Username::from("test-user"), auth_token.clone());
+    let user = User::new(
+        Username::from("test-user"),
+        1,
+        auth_token.clone(),
+        "gh-refresh-token".to_string(),
+    );
     store.add_user(user.into()).await?;
 
     Ok((
