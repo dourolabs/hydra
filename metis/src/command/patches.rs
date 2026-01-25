@@ -20,7 +20,6 @@ use metis_common::{
 };
 use serde::Deserialize;
 
-use crate::auth;
 use crate::client::MetisClientInterface;
 use crate::git;
 use crate::git::{
@@ -159,7 +158,7 @@ pub enum PatchesCommand {
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: PatchesCommand,
-    token_path: &std::path::PathBuf,
+    _token_path: &Path,
 ) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
@@ -184,7 +183,7 @@ pub async fn run(
                 commit_range,
                 allow_uncommitted,
                 None,
-                token_path,
+                _token_path,
             )
             .await
         }
@@ -280,7 +279,7 @@ async fn create_patch(
     commit_range: Option<String>,
     allow_uncommitted: bool,
     repo_root: Option<&Path>,
-    token_path: &PathBuf,
+    _token_path: &Path,
 ) -> Result<()> {
     let repo_root = match repo_root {
         Some(path) => path.to_path_buf(),
@@ -297,12 +296,17 @@ async fn create_patch(
         bail!("No changes found in commit range '{commit_range}'.");
     }
 
+    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let github_token = if create_github_pr {
-        Some(auth::ensure_auth_token(client, token_path).await?)
+        Some(
+            client
+                .get_github_token()
+                .await
+                .context("failed to fetch GitHub token")?,
+        )
     } else {
         None
     };
-    let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
     let is_automatic_backup = false;
     let patch_title = title.clone();
     let patch_description = description.clone();
@@ -1340,6 +1344,7 @@ mod tests {
             error.contains("Creator GitHub token is required to create a GitHub pull request")
                 || error.contains("failed to create GitHub pull request")
                 || error.contains("failed to push branch")
+                || error.contains("GitHub token")
                 || error.contains("github"),
             "error should reference GitHub token or PR creation: {error}"
         );
