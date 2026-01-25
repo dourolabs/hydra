@@ -9,7 +9,7 @@ pub mod util;
 
 pub use api::v1::{
     agents, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
-    task_status, users,
+    task_status, users, whoami,
 };
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use repo_name::{RepoName, RepoNameError};
