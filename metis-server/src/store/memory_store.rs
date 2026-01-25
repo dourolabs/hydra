@@ -570,13 +570,17 @@ impl Store for MemoryStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
+        github_refresh_token: Option<String>,
     ) -> Result<(User, Actor, String), StoreError> {
         #[cfg(test)]
         if let Some(github_client) = self.github_client.as_ref() {
-            let (user, actor, auth_token) =
-                Actor::new_for_github_token_with_client(github_token, github_client)
-                    .await
-                    .map_err(super::map_actor_error)?;
+            let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
+                github_token,
+                github_refresh_token,
+                github_client,
+            )
+            .await
+            .map_err(super::map_actor_error)?;
 
             self.upsert_user_and_actor(user.clone(), actor.clone())
                 .await?;
@@ -584,9 +588,10 @@ impl Store for MemoryStore {
             return Ok((user, actor, auth_token));
         }
 
-        let (user, actor, auth_token) = Actor::new_for_github_token(github_token)
-            .await
-            .map_err(super::map_actor_error)?;
+        let (user, actor, auth_token) =
+            Actor::new_for_github_token(github_token, github_refresh_token)
+                .await
+                .map_err(super::map_actor_error)?;
 
         self.upsert_user_and_actor(user.clone(), actor.clone())
             .await?;
@@ -1578,7 +1583,7 @@ mod tests {
         let github_client = build_github_client(server.base_url());
         let mut store = MemoryStore::new_with_github_client(github_client);
         let (user, actor, auth_token) = store
-            .create_actor_for_github_token("gh-token".to_string())
+            .create_actor_for_github_token("gh-token".to_string(), None)
             .await
             .unwrap();
 

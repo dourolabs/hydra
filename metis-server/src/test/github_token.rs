@@ -75,7 +75,8 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
 
     let github_client = build_github_client(server.base_url());
     let (user, actor, auth_token) =
-        Actor::new_for_github_token_with_client("gh-token".to_string(), &github_client).await?;
+        Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
+            .await?;
 
     let state = test_state();
     {
@@ -180,7 +181,8 @@ async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()>
 
     let github_client = build_github_client(server.base_url());
     let (_user, actor, auth_token) =
-        Actor::new_for_github_token_with_client("gh-token".to_string(), &github_client).await?;
+        Actor::new_for_github_token_with_client("gh-token".to_string(), None, &github_client)
+            .await?;
 
     let state = test_state();
     {

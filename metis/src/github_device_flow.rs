@@ -30,14 +30,21 @@ struct DeviceFlowResponse {
 #[derive(Debug, Deserialize)]
 struct TokenPollResponse {
     access_token: Option<String>,
+    refresh_token: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
+}
+
+#[derive(Debug)]
+struct DeviceFlowToken {
+    access_token: String,
+    refresh_token: Option<String>,
 }
 
 enum TokenPollState {
     Pending,
     SlowDown,
-    Token(String),
+    Token(DeviceFlowToken),
 }
 
 pub async fn login_with_github_device_flow(
@@ -104,7 +111,7 @@ async fn poll_for_token(
     http: &reqwest::Client,
     client_id: &str,
     device_flow: &DeviceFlowResponse,
-) -> Result<String> {
+) -> Result<DeviceFlowToken> {
     let expires_at = Instant::now() + Duration::from_secs(device_flow.expires_in);
     let mut interval = Duration::from_secs(device_flow.interval.max(1));
 
@@ -148,7 +155,10 @@ async fn poll_for_token(
 
 fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState> {
     if let Some(token) = payload.access_token {
-        return Ok(TokenPollState::Token(token));
+        return Ok(TokenPollState::Token(DeviceFlowToken {
+            access_token: token,
+            refresh_token: payload.refresh_token,
+        }));
     }
 
     match payload.error.as_deref() {
@@ -171,8 +181,12 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
 async fn login_with_github_token(
     client: &MetisClientUnauthenticated,
     token: &str,
+    refresh_token: Option<&str>,
 ) -> Result<String> {
-    let request = LoginRequest::new(token.to_string());
+    let request = LoginRequest::new(
+        token.to_string(),
+        refresh_token.map(|value| value.to_string()),
+    );
     let (auth_token, _client) = client
         .login(&request)
         .await
@@ -183,9 +197,14 @@ async fn login_with_github_token(
 async fn exchange_and_store_token(
     client: &MetisClientUnauthenticated,
     token_path: &Path,
-    github_token: &str,
+    github_token: &DeviceFlowToken,
 ) -> Result<String> {
-    let auth_token = login_with_github_token(client, github_token).await?;
+    let auth_token = login_with_github_token(
+        client,
+        &github_token.access_token,
+        github_token.refresh_token.as_deref(),
+    )
+    .await?;
     write_auth_token_file(token_path, &auth_token)?;
     Ok(auth_token)
 }
@@ -229,6 +248,7 @@ mod tests {
     fn interpret_token_response_handles_pending_states() {
         let pending = interpret_token_response(TokenPollResponse {
             access_token: None,
+            refresh_token: None,
             error: Some("authorization_pending".to_string()),
             error_description: None,
         })
@@ -237,6 +257,7 @@ mod tests {
 
         let slow_down = interpret_token_response(TokenPollResponse {
             access_token: None,
+            refresh_token: None,
             error: Some("slow_down".to_string()),
             error_description: None,
         })
@@ -283,9 +304,16 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
 
-        let auth_token = exchange_and_store_token(&client, &token_path, "gh-token")
-            .await
-            .expect("exchange");
+        let auth_token = exchange_and_store_token(
+            &client,
+            &token_path,
+            &DeviceFlowToken {
+                access_token: "gh-token".to_string(),
+                refresh_token: None,
+            },
+        )
+        .await
+        .expect("exchange");
 
         login_mock.assert();
         let contents = fs::read_to_string(&token_path).expect("read token");

@@ -55,7 +55,7 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("gh-token".to_string());
+    let payload = LoginRequest::new("gh-token".to_string(), None);
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)
@@ -88,13 +88,45 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn login_persists_refresh_token() -> anyhow::Result<()> {
+    let github_server = MockServer::start_async().await;
+    let _mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_user_response("octo", 42));
+    });
+
+    let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+    let store = state.store.clone();
+    let server = spawn_test_server_with_state(state).await?;
+    let client = test_client();
+
+    let payload = LoginRequest::new("gh-token".to_string(), Some("gh-refresh".to_string()));
+    let response = client
+        .post(format!("{}/v1/login", server.base_url()))
+        .json(&payload)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let store_read = store.read().await;
+    let users = store_read.list_users().await?;
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].github_refresh_token.as_deref(), Some("gh-refresh"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn login_rejects_empty_token() -> anyhow::Result<()> {
     let state =
         test_state_with_github_client(build_github_client("https://example.invalid".to_string()));
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("  ".to_string());
+    let payload = LoginRequest::new("  ".to_string(), None);
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)
@@ -117,7 +149,7 @@ async fn login_returns_bad_request_for_invalid_token() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
-    let payload = LoginRequest::new("bad-token".to_string());
+    let payload = LoginRequest::new("bad-token".to_string(), None);
     let response = client
         .post(format!("{}/v1/login", server.base_url()))
         .json(&payload)

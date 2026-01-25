@@ -840,10 +840,12 @@ impl Store for PostgresStore {
     async fn create_actor_for_github_token(
         &mut self,
         github_token: String,
+        github_refresh_token: Option<String>,
     ) -> Result<(User, Actor, String), StoreError> {
-        let (user, actor, auth_token) = Actor::new_for_github_token(github_token)
-            .await
-            .map_err(super::map_actor_error)?;
+        let (user, actor, auth_token) =
+            Actor::new_for_github_token(github_token, github_refresh_token)
+                .await
+                .map_err(super::map_actor_error)?;
 
         if let Err(err) = self.add_user(user.clone()).await {
             match err {
