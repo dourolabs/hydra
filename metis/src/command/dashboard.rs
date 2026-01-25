@@ -21,7 +21,7 @@ use metis_common::{
     task_status::{Status, TaskError, TaskStatusLog},
     users::Username,
     whoami::ActorIdentity,
-    IssueId, PatchId, TaskId,
+    IssueId, PatchId, RepoName, RepositoryRecord, TaskId,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -141,6 +141,8 @@ struct IssueDraft {
     prompt: TextArea<'static>,
     assignees: Vec<String>,
     assignee_index: usize,
+    repos: Vec<RepoName>,
+    repo_index: usize,
     validation_error: Option<String>,
     info_message: Option<String>,
     is_submitting: bool,
@@ -152,6 +154,8 @@ impl Default for IssueDraft {
             prompt: TextArea::default(),
             assignees: vec!["pm".to_string()],
             assignee_index: 0,
+            repos: Vec::new(),
+            repo_index: 0,
             validation_error: None,
             info_message: None,
             is_submitting: false,
@@ -197,6 +201,24 @@ impl IssueDraft {
         self.assignee_index = next;
     }
 
+    fn selected_repo(&self) -> Option<&RepoName> {
+        self.repos.get(self.repo_index)
+    }
+
+    fn cycle_repo(&mut self, forward: bool) {
+        if self.repos.is_empty() {
+            return;
+        }
+
+        let total = self.repos.len();
+        let next = if forward {
+            (self.repo_index + 1) % total
+        } else {
+            self.repo_index.saturating_add(total - 1) % total
+        };
+        self.repo_index = next;
+    }
+
     fn note_edit(&mut self) {
         self.validation_error = None;
         self.info_message = None;
@@ -225,6 +247,8 @@ impl PartialEq for IssueDraft {
         self.prompt_text() == other.prompt_text()
             && self.assignees == other.assignees
             && self.assignee_index == other.assignee_index
+            && self.repos == other.repos
+            && self.repo_index == other.repo_index
             && self.validation_error == other.validation_error
             && self.info_message == other.info_message
             && self.is_submitting == other.is_submitting
@@ -253,6 +277,7 @@ struct IssueDetailsState {
 struct DashboardState {
     jobs: Vec<JobDetails>,
     issues: Vec<IssueRecord>,
+    repositories: Vec<RepositoryRecord>,
     issue_lines: IssueLines,
     user_unowned_issue_lines: IssueLines,
     completed_issue_lines: CompletedIssueLines,
@@ -283,6 +308,7 @@ impl Default for DashboardState {
         let mut issue_creator_panel = PanelState::new();
         issue_creator_panel.set_scroll_keys_enabled(false);
         issue_creator_panel.register_keybinding(KeyCode::Char('a'), KeyModifiers::ALT, "Assignee");
+        issue_creator_panel.register_keybinding(KeyCode::Char('r'), KeyModifiers::ALT, "Repo");
         issue_creator_panel.register_keybinding(KeyCode::Enter, KeyModifiers::ALT, "Submit");
         issue_creator_panel.register_keybinding(KeyCode::Tab, KeyModifiers::NONE, "Next panel");
         issue_creator_panel.register_keybinding(KeyCode::BackTab, KeyModifiers::NONE, "Prev panel");
@@ -308,6 +334,7 @@ impl Default for DashboardState {
         let mut state = Self {
             jobs: Vec::new(),
             issues: Vec::new(),
+            repositories: Vec::new(),
             issue_lines: IssueLines::default(),
             user_unowned_issue_lines: IssueLines::default(),
             completed_issue_lines: CompletedIssueLines::default(),
@@ -404,7 +431,7 @@ async fn run_dashboard_loop(
     }
 
     if let Err(err) = refresh_records(client, &mut state).await {
-        state.records_error = Some(format!("Failed to load issues: {err}"));
+        state.records_error = Some(format!("Failed to load records: {err}"));
     }
 
     let mut events = EventStream::new();
@@ -439,7 +466,7 @@ async fn run_dashboard_loop(
                         needs_draw |= changed;
                     }
                     Err(err) => {
-                        state.records_error = Some(format!("Failed to refresh issues: {err}"));
+                        state.records_error = Some(format!("Failed to refresh records: {err}"));
                         needs_draw = true;
                     }
                 }
@@ -480,7 +507,7 @@ async fn run_dashboard_loop(
                                     }
                                     Err(err) => {
                                         state.records_error =
-                                            Some(format!("Failed to refresh issues: {err}"));
+                                            Some(format!("Failed to refresh records: {err}"));
                                     }
                                 }
                             }
@@ -789,6 +816,12 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
 
     if is_alt_char_key(key, 'a') {
         state.issue_draft.cycle_assignee(true);
+        state.selected_panel = PanelFocus::NewIssue;
+        return None;
+    }
+
+    if is_alt_char_key(key, 'r') {
+        state.issue_draft.cycle_repo(true);
         state.selected_panel = PanelFocus::NewIssue;
         return None;
     }
@@ -1254,7 +1287,19 @@ fn render_issue_creator(
         Span::styled("Assignee: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(format!("@{assignee}"), Style::default().fg(Color::Yellow)),
     ]);
-    let assignee_width = assignee_line.width().min(sections.footer.width as usize) as u16;
+    let repo_label = draft
+        .selected_repo()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "-".to_string());
+    let repo_line = Line::from(vec![
+        Span::styled("Repo: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(repo_label, Style::default().fg(Color::Yellow)),
+    ]);
+    let footer_width = sections.footer.width as usize;
+    let assignee_width = assignee_line.width().min(footer_width);
+    let repo_width = repo_line
+        .width()
+        .min(footer_width.saturating_sub(assignee_width));
 
     let footer = if draft.is_submitting {
         Line::from(Span::styled(
@@ -1273,12 +1318,17 @@ fn render_issue_creator(
     };
     let footer_columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(assignee_width), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(assignee_width as u16),
+            Constraint::Length(repo_width as u16),
+            Constraint::Min(0),
+        ])
         .split(sections.footer);
     frame.render_widget(Paragraph::new(assignee_line), footer_columns[0]);
+    frame.render_widget(Paragraph::new(repo_line), footer_columns[1]);
     frame.render_widget(
         Paragraph::new(footer).alignment(Alignment::Right),
-        footer_columns[1],
+        footer_columns[2],
     );
 }
 
@@ -2097,14 +2147,19 @@ async fn refresh_records(
     state: &mut DashboardState,
 ) -> Result<bool> {
     let issues = fetch_issues(client).await?;
+    let repositories = fetch_repositories(client).await?;
 
-    let changed = issues != state.issues;
-    if changed {
+    let issues_changed = issues != state.issues;
+    if issues_changed {
         state.issues = issues;
+    }
+    let repositories_changed = repositories != state.repositories;
+    if repositories_changed {
+        state.repositories = repositories;
     }
 
     let derived_changed = update_views(state);
-    Ok(changed || derived_changed)
+    Ok(issues_changed || repositories_changed || derived_changed)
 }
 
 fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
@@ -2148,6 +2203,14 @@ async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueReco
     Ok(issues)
 }
 
+async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<RepositoryRecord>> {
+    let response = client
+        .list_repositories()
+        .await
+        .context("failed to fetch repositories")?;
+    Ok(response.repositories)
+}
+
 fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
     let issue = record.issue;
     Some(IssueRecord {
@@ -2168,6 +2231,8 @@ fn update_views(state: &mut DashboardState) -> bool {
     let previous_completed_issue_lines = state.completed_issue_lines.clone();
     let previous_assignee_options = state.issue_draft.assignees.clone();
     let previous_assignee_index = state.issue_draft.assignee_index;
+    let previous_repo_options = state.issue_draft.repos.clone();
+    let previous_repo_index = state.issue_draft.repo_index;
     let issue_details_open = state.issue_details.is_open;
 
     let known_issue_ids: HashSet<IssueId> =
@@ -2192,6 +2257,7 @@ fn update_views(state: &mut DashboardState) -> bool {
         &state.collapsed_issue_ids,
     );
     update_assignee_options(state);
+    update_repo_options(state);
 
     state.issue_lines = issue_lines;
     state.user_unowned_issue_lines = user_unowned_issue_lines;
@@ -2206,6 +2272,8 @@ fn update_views(state: &mut DashboardState) -> bool {
         || previous_completed_issue_lines != state.completed_issue_lines
         || previous_assignee_options != state.issue_draft.assignees
         || previous_assignee_index != state.issue_draft.assignee_index
+        || previous_repo_options != state.issue_draft.repos
+        || previous_repo_index != state.issue_draft.repo_index
         || issue_details_open != state.issue_details.is_open
 }
 
@@ -2317,6 +2385,40 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
                 options.insert(trimmed.to_string());
             }
         }
+    }
+
+    options.into_iter().collect()
+}
+
+fn update_repo_options(state: &mut DashboardState) {
+    let preferred = state.issue_draft.selected_repo().cloned();
+    let options = build_repo_options(&state.repositories);
+    if options != state.issue_draft.repos {
+        state.issue_draft.repos = options;
+    }
+
+    let fallback_index = if state.issue_draft.repos.is_empty() {
+        None
+    } else {
+        Some(0)
+    };
+    let next_index = preferred
+        .and_then(|preferred| {
+            state
+                .issue_draft
+                .repos
+                .iter()
+                .position(|repo| repo == &preferred)
+        })
+        .or(fallback_index)
+        .unwrap_or(0);
+    state.issue_draft.repo_index = next_index;
+}
+
+fn build_repo_options(repositories: &[RepositoryRecord]) -> Vec<RepoName> {
+    let mut options = BTreeSet::new();
+    for repository in repositories {
+        options.insert(repository.name.clone());
     }
 
     options.into_iter().collect()
@@ -2935,10 +3037,12 @@ mod tests {
     use metis_common::issues::UpsertIssueResponse;
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
+    use metis_common::{RepoName, Repository, RepositoryRecord};
     use ratatui::buffer::Buffer;
     use ratatui::prelude::StatefulWidget;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::str::FromStr;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
@@ -2980,6 +3084,13 @@ mod tests {
             ),
             None,
             log,
+        )
+    }
+
+    fn repo_record(name: &str) -> RepositoryRecord {
+        RepositoryRecord::new(
+            RepoName::from_str(name).expect("invalid repo name"),
+            Repository::new("git@github.com:example/repo.git".to_string(), None, None),
         )
     }
 
@@ -4009,6 +4120,25 @@ mod tests {
     }
 
     #[test]
+    fn build_repo_options_includes_unique_sorted() {
+        let repositories = vec![
+            repo_record("dourolabs/metis"),
+            repo_record("dourolabs/api"),
+            repo_record("dourolabs/metis"),
+        ];
+
+        let options = build_repo_options(&repositories);
+
+        assert_eq!(
+            options,
+            vec![
+                RepoName::from_str("dourolabs/api").unwrap(),
+                RepoName::from_str("dourolabs/metis").unwrap(),
+            ]
+        );
+    }
+
+    #[test]
     fn update_assignee_options_keeps_pm_as_default() {
         let mut state = DashboardState {
             issues: vec![issue_with_assignee("i-1", IssueStatus::Open, Some("alice"))],
@@ -4018,6 +4148,39 @@ mod tests {
         update_assignee_options(&mut state);
 
         assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
+    }
+
+    #[test]
+    fn update_repo_options_keeps_existing_selection() {
+        let mut state = DashboardState::default();
+        state.issue_draft.repos = vec![
+            RepoName::from_str("dourolabs/metis").unwrap(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+        ];
+        state.issue_draft.repo_index = 1;
+        state.repositories = vec![repo_record("dourolabs/metis"), repo_record("dourolabs/api")];
+
+        update_repo_options(&mut state);
+
+        assert_eq!(
+            state.issue_draft.selected_repo(),
+            Some(&RepoName::from_str("dourolabs/api").unwrap())
+        );
+    }
+
+    #[test]
+    fn update_repo_options_defaults_to_first_option() {
+        let mut state = DashboardState {
+            repositories: vec![repo_record("dourolabs/metis")],
+            ..DashboardState::default()
+        };
+
+        update_repo_options(&mut state);
+
+        assert_eq!(
+            state.issue_draft.selected_repo(),
+            Some(&RepoName::from_str("dourolabs/metis").unwrap())
+        );
     }
 
     #[test]
@@ -4094,6 +4257,27 @@ mod tests {
     }
 
     #[test]
+    fn alt_r_cycles_repo_in_new_issue_panel() {
+        let mut state = DashboardState::default();
+        state.issue_draft.repos = vec![
+            RepoName::from_str("dourolabs/metis").unwrap(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+        ];
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(
+            state.issue_draft.selected_repo(),
+            Some(&RepoName::from_str("dourolabs/api").unwrap())
+        );
+    }
+
+    #[test]
     fn alt_a_does_not_cycle_assignee_when_not_focused() {
         let mut state = DashboardState {
             selected_panel: PanelFocus::Running,
@@ -4109,6 +4293,30 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(outcome.submission.is_none());
         assert_eq!(state.issue_draft.selected_assignee(), Some("pm"));
+    }
+
+    #[test]
+    fn alt_r_does_not_cycle_repo_when_not_focused() {
+        let mut state = DashboardState {
+            selected_panel: PanelFocus::Running,
+            ..DashboardState::default()
+        };
+        state.issue_draft.repos = vec![
+            RepoName::from_str("dourolabs/metis").unwrap(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+        ];
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert!(outcome.submission.is_none());
+        assert_eq!(
+            state.issue_draft.selected_repo(),
+            Some(&RepoName::from_str("dourolabs/metis").unwrap())
+        );
     }
 
     #[test]
