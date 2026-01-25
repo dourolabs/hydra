@@ -995,30 +995,6 @@ impl Store for PostgresStore {
         Ok(user)
     }
 
-    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError> {
-        #[derive(sqlx::FromRow)]
-        struct PayloadRow {
-            schema_version: i32,
-            payload: Value,
-        }
-
-        let query = format!(
-            "SELECT schema_version, payload FROM {TABLE_USERS} WHERE payload->>'github_token' = $1"
-        );
-        let row = sqlx::query_as::<_, PayloadRow>(&query)
-            .bind(github_token)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let Some(row) = row else {
-            return Err(StoreError::UserNotFoundForToken);
-        };
-
-        ensure_schema_version("user", row.schema_version, USER_SCHEMA_VERSION)?;
-        serde_json::from_value(row.payload).map_err(map_serde_error("user"))
-    }
-
     async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         self.fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?

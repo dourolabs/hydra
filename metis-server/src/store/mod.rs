@@ -353,9 +353,6 @@ pub trait Store: Send + Sync {
         github_refresh_token: String,
     ) -> Result<User, StoreError>;
 
-    /// Resolves a user by their GitHub token.
-    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError>;
-
     /// Gets a user by their username.
     async fn get_user(&self, username: &Username) -> Result<User, StoreError>;
 }
