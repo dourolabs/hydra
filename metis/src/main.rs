@@ -153,13 +153,7 @@ async fn dispatch(
         Commands::Agents { pretty } => command::agents::run(client, pretty).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
         Commands::Dashboard => {
-            command::dashboard::run(
-                client,
-                &app_config.server.url,
-                token_path,
-                cli.browser.as_deref(),
-            )
-            .await?
+            command::dashboard::run(client, &app_config.server.url, cli.browser.as_deref()).await?
         }
         Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
