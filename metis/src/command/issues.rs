@@ -325,7 +325,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             max_retries,
             clear_job_settings,
         } => {
-            let creator = resolve_creator_username(client, &dependencies).await?;
             update_issue(
                 client,
                 id,
@@ -333,7 +332,6 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
                 status,
                 assignee,
                 clear_assignee,
-                creator,
                 description,
                 dependencies,
                 clear_dependencies,
@@ -745,7 +743,6 @@ async fn update_issue(
     status: Option<IssueStatus>,
     assignee: Option<String>,
     clear_assignee: bool,
-    creator: Username,
     description: Option<String>,
     dependencies: Vec<IssueDependency>,
     clear_dependencies: bool,
@@ -849,7 +846,7 @@ async fn update_issue(
     let updated_issue = Issue::new(
         issue_type.unwrap_or(current.issue.issue_type),
         description.unwrap_or(current.issue.description),
-        creator,
+        current.issue.creator,
         progress_update.unwrap_or(current.issue.progress),
         status.unwrap_or(current.issue.status),
         assignee.unwrap_or(current.issue.assignee),
@@ -2157,7 +2154,6 @@ mod tests {
             Some(IssueStatus::Closed),
             Some("owner-b".into()),
             false,
-            empty_user(),
             Some("Updated issue description".into()),
             vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
@@ -2242,7 +2238,6 @@ mod tests {
             None,
             None,
             true,
-            empty_user(),
             None,
             vec![],
             true,
@@ -2328,7 +2323,6 @@ mod tests {
             None,
             None,
             false,
-            empty_user(),
             None,
             vec![],
             false,
