@@ -20,8 +20,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+            rust_targets: x86_64-unknown-linux-gnu
+          - os: macos-15
+            target: universal-apple-darwin
+            rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,7 +32,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy, rustfmt
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -44,8 +46,21 @@ jobs:
           echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LIBRARY_PATH=${OPENSSL_PREFIX}/lib" >> "$GITHUB_ENV"
 
-      - name: Build metis CLI
+      - name: Build metis CLI (Linux)
+        if: runner.os != 'macOS'
         run: cargo build -p metis --release --target ${{ matrix.target }}
+
+      - name: Build metis CLI (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build -p metis --release --target x86_64-apple-darwin
+          cargo build -p metis --release --target aarch64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            -output target/universal-apple-darwin/release/metis \
+            target/x86_64-apple-darwin/release/metis \
+            target/aarch64-apple-darwin/release/metis
+          lipo -info target/universal-apple-darwin/release/metis
 
       - name: Prepare artifact
         id: package
