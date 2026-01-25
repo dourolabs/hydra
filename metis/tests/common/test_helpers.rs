@@ -91,7 +91,6 @@ impl TestEnvironment {
         let temp_dir =
             tempfile::tempdir().context("failed to create temporary directory for worker")?;
         let worker_dir = temp_dir.path().to_path_buf();
-        let token_path = temp_dir.path().join("auth-token");
 
         let bash_commands = BashCommands::new_with_failure(commands, fail_after_run);
 
@@ -102,7 +101,6 @@ impl TestEnvironment {
             None,
             None,
             &bash_commands,
-            &token_path,
         )
         .await;
 

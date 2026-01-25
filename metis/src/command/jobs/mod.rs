@@ -102,11 +102,7 @@ pub enum JobsCommand {
     },
 }
 
-pub async fn run(
-    client: &dyn MetisClientInterface,
-    command: JobsCommand,
-    token_path: &std::path::Path,
-) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Result<()> {
     match command {
         JobsCommand::Create {
             wait,
@@ -131,16 +127,7 @@ pub async fn run(
             issue_id,
         } => {
             let commands = CodexCommands;
-            worker_run::run(
-                client,
-                job,
-                path,
-                openai_api_key,
-                issue_id,
-                &commands,
-                token_path,
-            )
-            .await?
+            worker_run::run(client, job, path, openai_api_key, issue_id, &commands).await?
         }
     }
 

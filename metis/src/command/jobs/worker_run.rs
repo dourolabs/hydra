@@ -30,7 +30,6 @@ pub async fn run(
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
-    _token_path: &Path,
 ) -> Result<()> {
     let WorkerContext {
         request_context,

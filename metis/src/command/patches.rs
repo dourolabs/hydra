@@ -155,11 +155,7 @@ pub enum PatchesCommand {
     },
 }
 
-pub async fn run(
-    client: &dyn MetisClientInterface,
-    command: PatchesCommand,
-    _token_path: &Path,
-) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
         PatchesCommand::Create {
@@ -183,7 +179,6 @@ pub async fn run(
                 commit_range,
                 allow_uncommitted,
                 None,
-                _token_path,
             )
             .await
         }
@@ -279,7 +274,6 @@ async fn create_patch(
     commit_range: Option<String>,
     allow_uncommitted: bool,
     repo_root: Option<&Path>,
-    _token_path: &Path,
 ) -> Result<()> {
     let repo_root = match repo_root {
         Some(path) => path.to_path_buf(),
@@ -965,7 +959,6 @@ mod tests {
     };
     use reqwest::Client as HttpClient;
     use std::{fs, path::Path, str::FromStr};
-    use tempfile::tempdir;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
@@ -1151,9 +1144,6 @@ mod tests {
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         create_patch(
             &client,
             patch_title.clone(),
@@ -1165,7 +1155,6 @@ mod tests {
             None,
             false,
             Some(&repo_path),
-            &token_path,
         )
         .await?;
 
@@ -1221,9 +1210,6 @@ mod tests {
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
 
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         create_patch(
             &client,
             title.clone(),
@@ -1235,7 +1221,6 @@ mod tests {
             commit_range,
             false,
             Some(&repo_path),
-            &token_path,
         )
         .await?;
 
@@ -1252,9 +1237,6 @@ mod tests {
         let client = metis_client(&server);
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-missing-job");
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         let result = create_patch(
             &client,
             "missing job".to_string(),
@@ -1266,7 +1248,6 @@ mod tests {
             commit_range,
             false,
             Some(&repo_path),
-            &token_path,
         )
         .await;
 
@@ -1320,9 +1301,6 @@ mod tests {
         let patch_response = UpsertPatchResponse::new(patch_id("p-gh-token"));
         let _patch_mock = mock_create_patch(&server, expected_patch_request, patch_response);
 
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         let result = create_patch(
             &client,
             "pr title".to_string(),
@@ -1334,7 +1312,6 @@ mod tests {
             commit_range,
             false,
             Some(&repo_path),
-            &token_path,
         )
         .await;
 
@@ -1440,9 +1417,6 @@ mod tests {
                 .json_body_obj(&UpsertIssueResponse::new(issue_id("i-merge")));
         });
 
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         create_patch(
             &client,
             "custom patch title".to_string(),
@@ -1454,7 +1428,6 @@ mod tests {
             None,
             false,
             Some(&repo_path),
-            &token_path,
         )
         .await?;
 
@@ -1546,9 +1519,6 @@ mod tests {
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
 
-        let temp_token_dir = tempdir()?;
-        let token_path = temp_token_dir.path().join("auth-token");
-        fs::write(&token_path, "test-token")?;
         create_patch(
             &client,
             "backup patch".to_string(),
@@ -1560,7 +1530,6 @@ mod tests {
             commit_range,
             false,
             Some(repo_path.as_path()),
-            &token_path,
         )
         .await?;
 
