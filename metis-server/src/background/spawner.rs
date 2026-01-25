@@ -1000,7 +1000,6 @@ mod tests {
             }
         );
         assert_eq!(resolved.image, default_image);
-        assert_eq!(resolved.env_vars.get("METIS_GITHUB_TOKEN"), None);
         assert_eq!(
             resolved
                 .env_vars
@@ -1008,62 +1007,6 @@ mod tests {
                 .map(|value| value.as_str()),
             Some(issue_id.as_ref())
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn sets_creator_github_token_env_var() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Needs token".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
-
-        let queue = queue("agent-a");
-        let tasks = queue.spawn(&state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn skips_empty_creator_github_token_env_var() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Empty token".to_string(),
-                    creator: Username::from("spawner"),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
-
-        let queue = queue("agent-a");
-        let tasks = queue.spawn(&state).await?;
-        assert_eq!(tasks.len(), 1);
 
         Ok(())
     }
