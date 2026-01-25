@@ -14,7 +14,7 @@ use futures::StreamExt;
 use metis_common::{
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueRecord as ApiIssueRecord, IssueStatus,
-        IssueType, SearchIssuesQuery, UpsertIssueRequest,
+        IssueType, JobSettings, SearchIssuesQuery, UpsertIssueRequest,
     },
     jobs::{JobRecord, SearchJobsQuery},
     patches::{GithubPr, PatchRecord},
@@ -379,6 +379,7 @@ fn configure_issue_tree_panel_keybindings(panel: &mut PanelState) {
 struct IssueSubmission {
     prompt: String,
     assignee: String,
+    repo_name: Option<RepoName>,
 }
 
 struct EventOutcome {
@@ -1076,6 +1077,7 @@ fn attempt_issue_submit(state: &mut DashboardState) -> Option<IssueSubmission> {
     Some(IssueSubmission {
         prompt: prompt.to_string(),
         assignee,
+        repo_name: state.issue_draft.selected_repo().cloned(),
     })
 }
 
@@ -1121,7 +1123,11 @@ async fn submit_issue(
             String::new(),
             IssueStatus::Open,
             assignee,
-            None,
+            submission.repo_name.as_ref().map(|repo_name| {
+                let mut settings = JobSettings::default();
+                settings.repo_name = Some(repo_name.clone());
+                settings
+            }),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4218,11 +4224,16 @@ mod tests {
         let mut state = DashboardState::default();
         state.issue_draft.set_prompt("Ship dashboard", true);
         state.issue_draft.assignees = vec!["pm".to_string()];
+        state.issue_draft.repos = vec![RepoName::from_str("dourolabs/metis").unwrap()];
 
         let submission = attempt_issue_submit(&mut state).expect("submission missing");
 
         assert_eq!(submission.prompt, "Ship dashboard");
         assert_eq!(submission.assignee, "pm");
+        assert_eq!(
+            submission.repo_name,
+            Some(RepoName::from_str("dourolabs/metis").unwrap())
+        );
         assert!(state.issue_draft.is_submitting);
     }
 
@@ -4876,6 +4887,9 @@ mod tests {
                     "progress": "",
                     "status": "open",
                     "assignee": "alice",
+                    "job_settings": {
+                        "repo_name": "dourolabs/metis"
+                    },
                     "dependencies": [],
                     "patches": []
                 }
@@ -4890,6 +4904,7 @@ mod tests {
         let submission = IssueSubmission {
             prompt: "Draft release notes".to_string(),
             assignee: "alice".to_string(),
+            repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
         };
 
         let created = submit_issue(&client, &submission, &Username::from(" metis-user "))
