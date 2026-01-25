@@ -676,14 +676,6 @@ impl Store for MemoryStore {
         Ok(user.clone())
     }
 
-    async fn get_user_by_github_token(&self, github_token: &str) -> Result<User, StoreError> {
-        self.users
-            .values()
-            .find(|user| user.github_token == github_token)
-            .cloned()
-            .ok_or(StoreError::UserNotFoundForToken)
-    }
-
     async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         self.users
             .get(username)
@@ -1497,35 +1489,6 @@ mod tests {
         assert_eq!(users[0].github_token, "new-token");
         assert_eq!(users[0].github_user_id, 202);
         assert_eq!(users[0].github_refresh_token, "new-refresh");
-    }
-
-    #[tokio::test]
-    async fn get_user_by_github_token_returns_match() {
-        let mut store = MemoryStore::new();
-        let username = Username::from("user-one");
-
-        store
-            .add_user(User {
-                username: username.clone(),
-                github_user_id: 11,
-                github_token: "token-abc".to_string(),
-                github_refresh_token: "refresh-token".to_string(),
-            })
-            .await
-            .unwrap();
-
-        let user = store.get_user_by_github_token("token-abc").await.unwrap();
-
-        assert_eq!(user.username, username);
-    }
-
-    #[tokio::test]
-    async fn get_user_by_github_token_returns_not_found() {
-        let store = MemoryStore::new();
-
-        let err = store.get_user_by_github_token("missing").await.unwrap_err();
-
-        assert!(matches!(err, StoreError::UserNotFoundForToken));
     }
 
     #[tokio::test]
