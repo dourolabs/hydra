@@ -249,11 +249,7 @@ pub enum IssueCommands {
     },
 }
 
-pub async fn run(
-    client: &dyn MetisClientInterface,
-    command: IssueCommands,
-    token_path: &std::path::Path,
-) -> Result<()> {
+pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
@@ -290,7 +286,7 @@ pub async fn run(
             branch,
             max_retries,
         } => {
-            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
+            let creator = resolve_creator_username(client, &dependencies).await?;
             create_issue(
                 client,
                 r#type,
@@ -329,7 +325,7 @@ pub async fn run(
             max_retries,
             clear_job_settings,
         } => {
-            let creator = resolve_creator_username(client, token_path, &dependencies).await?;
+            let creator = resolve_creator_username(client, &dependencies).await?;
             update_issue(
                 client,
                 id,
@@ -874,7 +870,6 @@ async fn update_issue(
 
 async fn resolve_creator_username(
     client: &dyn MetisClientInterface,
-    _token_path: &std::path::Path,
     dependencies: &[IssueDependency],
 ) -> Result<Username> {
     let resolve_from_parent = || async {
@@ -2046,9 +2041,7 @@ mod tests {
             then.status(200).json_body_obj(&whoami_response);
         });
 
-        let username = resolve_creator_username(&client, &std::path::PathBuf::from("unused"), &[])
-            .await
-            .unwrap();
+        let username = resolve_creator_username(&client, &[]).await.unwrap();
 
         assert_eq!(username, Username::from("creator-a"));
         whoami_mock.assert();
@@ -2092,10 +2085,9 @@ mod tests {
             IssueDependencyType::ChildOf,
             parent_id,
         )];
-        let username =
-            resolve_creator_username(&client, &std::path::PathBuf::from("unused"), &dependencies)
-                .await
-                .unwrap();
+        let username = resolve_creator_username(&client, &dependencies)
+            .await
+            .unwrap();
 
         assert_eq!(username, Username::from("parent-creator"));
         whoami_mock.assert();

@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     let token_path = config::expand_path(PathBuf::from(&cli.token_path));
     let client = resolve_client(&cli, &app_config, &unauth_client, &token_path).await?;
 
-    dispatch(cli, &client, &app_config, &token_path).await
+    dispatch(cli, &client, &app_config).await
 }
 
 async fn resolve_client(
@@ -150,7 +150,6 @@ async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
     app_config: &AppConfig,
-    token_path: &Path,
 ) -> Result<()> {
     match resolve_command(cli.command) {
         Commands::Jobs { command } => command::jobs::run(client, command).await?,
@@ -159,7 +158,7 @@ async fn dispatch(
         Commands::Dashboard => {
             command::dashboard::run(client, &app_config.server.url, cli.browser.as_deref()).await?
         }
-        Commands::Issues { command } => command::issues::run(client, command, token_path).await?,
+        Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
         Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Login => (),
