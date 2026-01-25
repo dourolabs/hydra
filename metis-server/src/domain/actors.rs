@@ -48,6 +48,7 @@ impl Actor {
             username: username.clone(),
             github_user_id: Some(github_user.id.into_inner()),
             github_token,
+            github_refresh_token: None,
         };
 
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();

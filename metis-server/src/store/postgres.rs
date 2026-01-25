@@ -31,7 +31,7 @@ pub const ISSUE_SCHEMA_VERSION: i32 = 1;
 pub const PATCH_SCHEMA_VERSION: i32 = 1;
 pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
-pub const USER_SCHEMA_VERSION: i32 = 2;
+pub const USER_SCHEMA_VERSION: i32 = 3;
 pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
 pub const ACTOR_SCHEMA_VERSION: i32 = 3;
 
@@ -852,6 +852,7 @@ impl Store for PostgresStore {
                         &user.username,
                         user.github_token.clone(),
                         user.github_user_id,
+                        user.github_refresh_token.clone(),
                     )
                     .await?;
                 }
@@ -969,6 +970,7 @@ impl Store for PostgresStore {
         username: &Username,
         github_token: String,
         github_user_id: Option<u64>,
+        github_refresh_token: Option<String>,
     ) -> Result<User, StoreError> {
         let mut user: User = self
             .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
@@ -978,6 +980,9 @@ impl Store for PostgresStore {
         user.github_token = github_token;
         if let Some(github_user_id) = github_user_id {
             user.github_user_id = Some(github_user_id);
+        }
+        if let Some(github_refresh_token) = github_refresh_token {
+            user.github_refresh_token = Some(github_refresh_token);
         }
 
         self.update_payload(
@@ -1404,6 +1409,7 @@ mod tests {
             username: Username::from("alice"),
             github_user_id: Some(101),
             github_token: "token".to_string(),
+            github_refresh_token: None,
         };
         store.add_user(user.clone()).await.unwrap();
 
@@ -1413,7 +1419,7 @@ mod tests {
 
         let username = Username::from("alice");
         let updated = store
-            .set_user_github_token(&username, "new-token".to_string(), Some(202))
+            .set_user_github_token(&username, "new-token".to_string(), Some(202), None)
             .await
             .unwrap();
         assert_eq!(updated.github_token, "new-token");
