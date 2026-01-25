@@ -224,9 +224,12 @@ metadata:
   name: server-pod-manager
   namespace: ${NAMESPACE}
 rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
   # Allow managing Pods directly (if you create Pod objects)
   - apiGroups: [""]
-    resources: ["pods", "secrets"]
+    resources: ["pods"]
     verbs: ["create", "get", "list", "watch", "delete"]
   # Allow reading pod logs (subresource needed for kubectl logs)
   - apiGroups: [""]
