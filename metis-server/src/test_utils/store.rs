@@ -196,10 +196,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_user(&mut self, _username: &Username) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn set_user_github_token(
         &mut self,
         _username: &Username,

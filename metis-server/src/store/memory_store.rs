@@ -651,14 +651,6 @@ impl Store for MemoryStore {
         Ok(users)
     }
 
-    async fn delete_user(&mut self, username: &Username) -> Result<(), StoreError> {
-        if self.users.remove(username).is_none() {
-            return Err(StoreError::UserNotFound(username.clone()));
-        }
-
-        Ok(())
-    }
-
     async fn set_user_github_token(
         &mut self,
         username: &Username,
@@ -1489,16 +1481,6 @@ mod tests {
         assert_eq!(users[0].github_token, "new-token");
         assert_eq!(users[0].github_user_id, 202);
         assert_eq!(users[0].github_refresh_token, "new-refresh");
-    }
-
-    #[tokio::test]
-    async fn delete_missing_user_returns_error() {
-        let mut store = MemoryStore::new();
-
-        let username = Username::from("missing-user");
-        let err = store.delete_user(&username).await.unwrap_err();
-
-        assert!(matches!(err, StoreError::UserNotFound(name) if name == username));
     }
 
     #[tokio::test]
