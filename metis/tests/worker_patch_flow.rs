@@ -16,8 +16,8 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     let server_url = env.server.base_url();
 
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID=i-work --var {}={} {}",
-        repo_arg, server_url, ENV_METIS_TOKEN, env.auth_token, prompt
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID={} --var {}={} {}",
+        repo_arg, server_url, env.current_issue_id, ENV_METIS_TOKEN, env.auth_token, prompt
     )])
     .await?;
 

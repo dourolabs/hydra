@@ -7,7 +7,6 @@ use std::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use metis::worker_commands::WorkerCommands;
-use metis_common::constants::ENV_METIS_ISSUE_ID;
 
 use super::test_helpers::metis_bin;
 
@@ -59,7 +58,6 @@ impl BashCommands {
             .arg("-c")
             .arg(&command_to_run)
             .current_dir(working_dir)
-            .env_remove(ENV_METIS_ISSUE_ID)
             .envs(env)
             .output()
             .await

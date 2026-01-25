@@ -1,5 +1,8 @@
-use anyhow::{Context, Result};
-use metis_common::task_status::Status;
+use anyhow::{bail, Context, Result};
+use metis_common::{
+    jobs::{BundleSpec, SearchJobsQuery},
+    task_status::Status,
+};
 
 mod common;
 
@@ -13,8 +16,8 @@ async fn worker_run_executes_cleanup_on_error() -> Result<()> {
     let server_url = env.server.base_url();
 
     env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} {}",
-        repo_arg, server_url, prompt
+        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID={} {}",
+        repo_arg, server_url, env.current_issue_id, prompt
     )])
     .await?;
 
@@ -22,8 +25,20 @@ async fn worker_run_executes_cleanup_on_error() -> Result<()> {
         .await
         .context("expected job to be created for worker cleanup error test")?;
     wait_for_status(&env.client, &job_id, Status::Running).await?;
+    let job = env
+        .client
+        .list_jobs(&SearchJobsQuery::default())
+        .await?
+        .jobs
+        .into_iter()
+        .find(|job| job.id == job_id)
+        .context("expected job to exist after creation")?;
+    match job.task.context {
+        BundleSpec::ServiceRepository { .. } => {}
+        other => bail!("job missing service repository context: {other:?}"),
+    };
 
-    let run_result = env
+    let run_error = env
         .run_as_worker_with_failure(
             vec![
                 "echo \"cleanup with error\" >> README.md".to_string(),
@@ -32,13 +47,12 @@ async fn worker_run_executes_cleanup_on_error() -> Result<()> {
             job_id.clone(),
             true,
         )
-        .await;
-    assert!(
-        run_result.is_err(),
-        "worker_run should return an error when commands are configured to fail"
-    );
+        .await
+        .expect_err("worker_run should return an error when commands are configured to fail");
 
-    wait_for_status(&env.client, &job_id, Status::Failed).await?;
+    wait_for_status(&env.client, &job_id, Status::Failed)
+        .await
+        .with_context(|| format!("job did not transition to failed: {run_error}"))?;
 
     Ok(())
 }

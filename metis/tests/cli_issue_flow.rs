@@ -5,12 +5,12 @@ use metis::{
 };
 use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN},
-    issues::{Issue, IssueStatus, IssueType, SearchIssuesQuery},
+    issues::{Issue, IssueStatus, IssueType, JobSettings, SearchIssuesQuery},
     users::Username,
-    TaskId,
+    IssueId, RepoName, TaskId,
 };
 use metis_server::test_utils;
-use std::{fs, path::Path};
+use std::{fs, path::Path, str::FromStr};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -19,6 +19,11 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let (auth_token, parent_id) = {
         let mut store = state.store.write().await;
         let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
+        let mut parent_job_settings = JobSettings::default();
+        parent_job_settings.repo_name = Some(RepoName::from_str("acme/cli-flow").unwrap());
+        parent_job_settings.remote_url = Some("https://example.com/cli-flow.git".into());
+        parent_job_settings.image = Some("worker:latest".into());
+        parent_job_settings.branch = Some("feature/cli-flow".into());
         let parent_issue = Issue::new(
             IssueType::Task,
             "parent issue".into(),
@@ -26,7 +31,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             String::new(),
             IssueStatus::Open,
             None,
-            None,
+            Some(parent_job_settings.clone()),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -56,6 +61,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         &app_config,
         temp_home.path(),
         &auth_token,
+        &parent_id,
     )
     .await?;
     eprintln!("metis issues create complete");
@@ -75,11 +81,28 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         &app_config,
         temp_home.path(),
         &auth_token,
+        &parent_id,
     )
     .await?;
     eprintln!("metis issues list complete");
 
     assert_eq!(created.issue.status, IssueStatus::Open);
+    assert_eq!(
+        created.issue.job_settings.repo_name,
+        Some(RepoName::from_str("acme/cli-flow").unwrap())
+    );
+    assert_eq!(
+        created.issue.job_settings.remote_url,
+        Some("https://example.com/cli-flow.git".into())
+    );
+    assert_eq!(
+        created.issue.job_settings.image,
+        Some("worker:latest".into())
+    );
+    assert_eq!(
+        created.issue.job_settings.branch,
+        Some("feature/cli-flow".into())
+    );
 
     Ok(())
 }
@@ -89,13 +112,14 @@ async fn run_metis_command(
     app_config: &AppConfig,
     home_dir: &Path,
     auth_token: &str,
+    current_issue_id: &IssueId,
 ) -> Result<()> {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
         .env(ENV_METIS_SERVER_URL, &app_config.server.url)
         .env(ENV_METIS_TOKEN, auth_token)
         .env("HOME", home_dir)
-        .env_remove(ENV_METIS_ISSUE_ID)
+        .env(ENV_METIS_ISSUE_ID, current_issue_id.as_ref())
         .output()
         .await
         .context("failed to spawn metis CLI command")?;
