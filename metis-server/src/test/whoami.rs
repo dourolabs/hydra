@@ -99,7 +99,7 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn whoami_returns_job_identity() -> anyhow::Result<()> {
+async fn whoami_returns_task_identity() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let token = test_auth_token();
@@ -107,7 +107,7 @@ async fn whoami_returns_job_identity() -> anyhow::Result<()> {
         .split_once(':')
         .map(|(name, _)| name)
         .expect("expected token to include actor name");
-    let expected_job_id = actor_name
+    let expected_task_id = actor_name
         .strip_prefix("w-")
         .expect("expected worker actor token");
 
@@ -120,11 +120,11 @@ async fn whoami_returns_job_identity() -> anyhow::Result<()> {
 
     let body: WhoAmIResponse = response.json().await?;
     match body.actor {
-        ActorIdentity::Job { job_id } => {
-            assert_eq!(job_id.as_ref(), expected_job_id);
+        ActorIdentity::Task { task_id } => {
+            assert_eq!(task_id.as_ref(), expected_task_id);
         }
         other => {
-            panic!("expected job identity, got {other:?}");
+            panic!("expected task identity, got {other:?}");
         }
     }
 
