@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, command::output::CommandContext};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
@@ -87,7 +87,11 @@ pub struct UpdateRepositoryArgs {
     pub clear_default_image: bool,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: ReposCommand) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: ReposCommand,
+    _context: &CommandContext,
+) -> Result<()> {
     match command {
         ReposCommand::List => {
             let repositories = fetch_repositories(client).await?;

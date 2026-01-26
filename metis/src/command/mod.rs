@@ -3,5 +3,6 @@ pub mod chat;
 pub mod dashboard;
 pub mod issues;
 pub mod jobs;
+pub mod output;
 pub mod patches;
 pub mod repos;

@@ -1,6 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
-use metis::client::MetisClient;
 use metis::config::{AppConfig, ServerSection};
+use metis::{
+    client::MetisClient,
+    command::output::{CommandContext, ResolvedOutputFormat},
+};
 use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_METIS_TOKEN},
     issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
@@ -96,6 +99,7 @@ impl TestEnvironment {
 
         let bash_commands = BashCommands::new_with_failure(commands, fail_after_run);
 
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
         let run_result = metis::command::jobs::worker_run::run(
             &self.client,
             job_id,
@@ -103,6 +107,7 @@ impl TestEnvironment {
             None,
             None,
             &bash_commands,
+            &context,
         )
         .await;
 

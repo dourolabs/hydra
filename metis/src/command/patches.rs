@@ -20,19 +20,17 @@ use metis_common::{
 };
 use serde::Deserialize;
 
-use crate::client::MetisClientInterface;
 use crate::git;
 use crate::git::{
     apply_patch, branch_exists, checkout_new_branch, current_branch,
     diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
+use crate::{
+    client::MetisClientInterface,
+    command::output::{render_patch_records, CommandContext, ResolvedOutputFormat},
+};
 use git2::Repository;
-
-/// ANSI color codes
-const GREEN: &str = "\x1b[32m";
-const RED: &str = "\x1b[31m";
-const RESET: &str = "\x1b[0m";
 
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
@@ -155,7 +153,11 @@ pub enum PatchesCommand {
     },
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: PatchesCommand) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: PatchesCommand,
+    _context: &CommandContext,
+) -> Result<()> {
     match command {
         PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
         PatchesCommand::Create {
@@ -233,21 +235,23 @@ async fn list_patches_with_writer(
             .get_patch(&id)
             .await
             .with_context(|| format!("failed to fetch patch '{id}'"))?;
-        if pretty {
-            print_patches_pretty(&[patch], writer)?;
+        let format = if pretty {
+            ResolvedOutputFormat::Pretty
         } else {
-            print_patches_jsonl(&[patch], writer)?;
-        }
+            ResolvedOutputFormat::Jsonl
+        };
+        render_patch_records(format, &[patch], writer)?;
         return Ok(());
     }
 
     let patches = fetch_patches(client, query).await?;
 
-    if pretty {
-        print_patches_pretty(&patches, writer)?;
+    let format = if pretty {
+        ResolvedOutputFormat::Pretty
     } else {
-        print_patches_jsonl(&patches, writer)?;
-    }
+        ResolvedOutputFormat::Jsonl
+    };
+    render_patch_records(format, &patches, writer)?;
 
     Ok(())
 }
@@ -631,87 +635,6 @@ pub async fn create_patch_artifact_from_repo(
 
 fn git_repository_root() -> Result<PathBuf> {
     git::repository_root(None)
-}
-
-fn extract_patch_title(record: &PatchRecord) -> &str {
-    &record.patch.title
-}
-
-fn extract_patch_status(record: &PatchRecord) -> PatchStatus {
-    record.patch.status
-}
-
-fn extract_patch_description(record: &PatchRecord) -> &str {
-    &record.patch.description
-}
-
-fn format_patch_status(status: PatchStatus) -> &'static str {
-    match status {
-        PatchStatus::Open => "open",
-        PatchStatus::Closed => "closed",
-        PatchStatus::Merged => "merged",
-        _ => "unknown",
-    }
-}
-
-fn print_patches_jsonl(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
-    for patch in patches {
-        serde_json::to_writer(&mut *writer, patch)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn print_patches_pretty(patches: &[PatchRecord], writer: &mut impl Write) -> Result<()> {
-    for patch in patches {
-        write_patch_record_pretty(patch, writer)?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_patch_record_pretty(record: &PatchRecord, writer: &mut impl Write) -> Result<()> {
-    let title = extract_patch_title(record);
-    let status = extract_patch_status(record);
-    let description = extract_patch_description(record);
-    writeln!(
-        writer,
-        "Patch {} [{}]: {}",
-        record.id,
-        format_patch_status(status),
-        title
-    )?;
-    writeln!(
-        writer,
-        "Repository: {}",
-        record.patch.service_repo_name.as_str()
-    )?;
-    if !description.trim().is_empty() {
-        writeln!(writer, "{description}")?;
-    }
-    if record.patch.diff.trim().is_empty() {
-        writeln!(writer, "[no diff available]")?;
-    } else {
-        writeln!(writer)?;
-        pretty_print_patch(&record.patch.diff, writer)?;
-    }
-    writeln!(writer)?;
-    Ok(())
-}
-
-/// Pretty-print a patch with color coding (green for additions, red for deletions).
-fn pretty_print_patch(patch: &str, writer: &mut impl Write) -> Result<()> {
-    for line in patch.lines() {
-        if line.starts_with('+') && !line.starts_with("+++") {
-            writeln!(writer, "{GREEN}{line}{RESET}")?;
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            writeln!(writer, "{RED}{line}{RESET}")?;
-        } else {
-            writeln!(writer, "{line}")?;
-        }
-    }
-    Ok(())
 }
 
 async fn apply_patch_record(client: &dyn MetisClientInterface, id: PatchId) -> Result<()> {

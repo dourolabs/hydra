@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, command::output::CommandContext};
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
@@ -23,6 +23,7 @@ pub async fn run(
     cli_vars: Vec<String>,
     prompt_parts: Vec<String>,
     issue_id: Option<IssueId>,
+    _context: &CommandContext,
 ) -> Result<()> {
     let context = build_context(repo_arg, rev_arg)?;
 
@@ -206,8 +207,11 @@ fn parse_cli_variables(cli_vars: &[String]) -> Result<std::collections::HashMap<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MetisClient;
     use crate::test_utils::ids;
+    use crate::{
+        client::MetisClient,
+        command::output::{CommandContext, ResolvedOutputFormat},
+    };
     use chrono::{Duration as ChronoDuration, Utc};
     use httpmock::prelude::*;
     use metis_common::{
@@ -218,6 +222,10 @@ mod tests {
     use std::collections::HashMap;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
+
+    fn test_context() -> CommandContext {
+        CommandContext::new(ResolvedOutputFormat::Pretty)
+    }
 
     fn task_id(value: &str) -> TaskId {
         ids::task_id(value)
@@ -292,6 +300,7 @@ mod tests {
             then.status(200).json_body_obj(&completed_jobs);
         });
 
+        let context = test_context();
         run(
             &client,
             true,
@@ -301,6 +310,7 @@ mod tests {
             vec![],
             vec!["test prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -333,6 +343,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("t-job-service")));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -342,6 +353,7 @@ mod tests {
             vec![],
             vec!["test prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -374,6 +386,7 @@ mod tests {
                 )));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -383,6 +396,7 @@ mod tests {
             vec![],
             vec!["test prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -413,6 +427,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("t-job-git")));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -422,6 +437,7 @@ mod tests {
             vec![],
             vec!["test prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -452,6 +468,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("t-job-git-default-rev")));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -461,6 +478,7 @@ mod tests {
             vec![],
             vec!["test prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -488,6 +506,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("t-job-image")));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -497,6 +516,7 @@ mod tests {
             vec![],
             vec!["custom image".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -525,6 +545,7 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("t-job-with-vars")));
         });
 
+        let context = test_context();
         run(
             &client,
             false,
@@ -534,6 +555,7 @@ mod tests {
             vec!["FOO=bar".into(), "PROMPT=from_cli".into()],
             vec!["variable prompt".into()],
             None,
+            &context,
         )
         .await
         .unwrap();
@@ -553,7 +575,19 @@ mod tests {
                 .json_body_obj(&CreateJobResponse::new(task_id("unused")));
         });
 
-        let result = run(&client, false, None, None, None, vec![], vec![], None).await;
+        let context = test_context();
+        let result = run(
+            &client,
+            false,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            None,
+            &context,
+        )
+        .await;
 
         assert!(result.is_err());
         create_mock.assert_hits(0);
