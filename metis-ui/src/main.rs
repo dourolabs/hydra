@@ -1,5 +1,12 @@
 use dioxus::prelude::*;
 
+use crate::components::select::{
+    Select, SelectGroup, SelectGroupLabel, SelectItemIndicator, SelectList, SelectOption,
+    SelectTrigger, SelectValue,
+};
+
+mod components;
+
 const STAGING_URL: &str = "http://metis-staging.monster-vibes.ts.net";
 const APP_CSS: Asset = asset!("/assets/app.css");
 
@@ -7,6 +14,15 @@ const APP_CSS: Asset = asset!("/assets/app.css");
 enum ServerChoice {
     Staging,
     Custom,
+}
+
+impl ServerChoice {
+    const fn label(self) -> &'static str {
+        match self {
+            ServerChoice::Staging => "Staging",
+            ServerChoice::Custom => "Custom",
+        }
+    }
 }
 
 fn main() {
@@ -31,18 +47,32 @@ fn App() -> Element {
             header { class: "top-bar",
                 div { class: "server-selector",
                     label { "Server" }
-                    select {
-                        value: if is_custom { "custom" } else { "staging" },
-                        onchange: move |event| {
-                            let value = event.value();
-                            server_choice.set(if value == "custom" {
-                                ServerChoice::Custom
-                            } else {
-                                ServerChoice::Staging
-                            });
+                    Select::<ServerChoice> {
+                        default_value: Some(ServerChoice::Staging),
+                        on_value_change: move |value: Option<ServerChoice>| {
+                            server_choice.set(value.unwrap_or(ServerChoice::Staging));
                         },
-                        option { value: "staging", "Staging" }
-                        option { value: "custom", "Custom" }
+                        placeholder: "Select server",
+                        SelectTrigger { aria_label: "Server", SelectValue {} }
+                        SelectList { aria_label: "Server options",
+                            SelectGroup {
+                                SelectGroupLabel { "Environment" }
+                                SelectOption::<ServerChoice> {
+                                    index: 0usize,
+                                    value: ServerChoice::Staging,
+                                    text_value: Some(ServerChoice::Staging.label().to_string()),
+                                    "{ServerChoice::Staging.label()}"
+                                    SelectItemIndicator {}
+                                }
+                                SelectOption::<ServerChoice> {
+                                    index: 1usize,
+                                    value: ServerChoice::Custom,
+                                    text_value: Some(ServerChoice::Custom.label().to_string()),
+                                    "{ServerChoice::Custom.label()}"
+                                    SelectItemIndicator {}
+                                }
+                            }
+                        }
                     }
                     if is_custom {
                         input {
