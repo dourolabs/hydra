@@ -2375,6 +2375,7 @@ dependencies = [
  "tokio",
  "toml",
  "tui-textarea",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]

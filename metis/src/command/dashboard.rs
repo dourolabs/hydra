@@ -33,6 +33,7 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use tui_textarea::TextArea;
+use unicode_width::UnicodeWidthChar;
 
 use crate::{client::MetisClientInterface, command::jobs};
 
@@ -1287,7 +1288,13 @@ fn render_issue_creator(
 
     let sections = issue_creator_layout(area);
     let draft = &state.issue_draft;
-    frame.render_widget(draft.prompt.widget(), sections.prompt_input);
+    let prompt_width = sections.prompt_input.width as usize;
+    let prompt_lines = issue_draft_prompt_lines(&draft.prompt, prompt_width);
+    let scroll_offset = state.issue_draft_scroll.offset.min(u16::MAX as usize) as u16;
+    let prompt = Paragraph::new(prompt_lines)
+        .alignment(draft.prompt.alignment())
+        .scroll((scroll_offset, 0));
+    frame.render_widget(prompt, sections.prompt_input);
     render_panel_scrollbar(
         frame,
         sections.prompt_input,
@@ -1651,8 +1658,9 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
 
     let creator_layout = issue_creator_layout(layout.issue_creator);
     let prompt_view_height = creator_layout.prompt_input.height as usize;
-    let prompt_lines = state.issue_draft.prompt.lines().len();
-    let cursor_row = state.issue_draft.prompt.cursor().0;
+    let prompt_width = creator_layout.prompt_input.width as usize;
+    let (prompt_lines, cursor_row) =
+        issue_draft_prompt_metrics(&state.issue_draft.prompt, prompt_width);
     let max_offset = max_scroll_offset(prompt_lines, prompt_view_height);
     state.issue_draft_scroll.offset = next_scroll_top(
         state.issue_draft_scroll.offset,
@@ -1979,6 +1987,227 @@ fn wrapped_issue_line_len(line: &Line<'_>, width: usize) -> usize {
     let line_width = line.width();
     let wrapped = line_width.saturating_add(width.saturating_sub(1)) / width;
     wrapped.max(1)
+}
+
+#[derive(Clone, Debug)]
+struct WrappedSegment {
+    text: String,
+    start_char: usize,
+    end_char: usize,
+}
+
+fn wrap_line_segments(line: &str, width: usize) -> Vec<WrappedSegment> {
+    if width == 0 {
+        return Vec::new();
+    }
+
+    if line.is_empty() {
+        return vec![WrappedSegment {
+            text: String::new(),
+            start_char: 0,
+            end_char: 0,
+        }];
+    }
+
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    let mut segment_start = 0;
+    let mut char_index = 0;
+
+    for ch in line.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > width && current_width > 0 {
+            segments.push(WrappedSegment {
+                text: current,
+                start_char: segment_start,
+                end_char: char_index,
+            });
+            current = String::new();
+            current_width = 0;
+            segment_start = char_index;
+        }
+
+        current.push(ch);
+        current_width = current_width.saturating_add(ch_width);
+        char_index += 1;
+
+        if current_width >= width {
+            segments.push(WrappedSegment {
+                text: current,
+                start_char: segment_start,
+                end_char: char_index,
+            });
+            current = String::new();
+            current_width = 0;
+            segment_start = char_index;
+        }
+    }
+
+    if !current.is_empty() || segments.is_empty() {
+        segments.push(WrappedSegment {
+            text: current,
+            start_char: segment_start,
+            end_char: char_index,
+        });
+    }
+
+    segments
+}
+
+fn issue_draft_prompt_metrics(prompt: &TextArea<'_>, width: usize) -> (usize, usize) {
+    if width == 0 {
+        return (0, 0);
+    }
+
+    if prompt.is_empty() && !prompt.placeholder_text().is_empty() {
+        let mut total: usize = 0;
+        for line in prompt.placeholder_text().lines() {
+            total = total.saturating_add(wrap_line_segments(line, width).len().max(1));
+        }
+        return (total.max(1), 0);
+    }
+
+    let cursor = prompt.cursor();
+    let mut total: usize = 0;
+    let mut cursor_row = 0;
+
+    for (row_index, line) in prompt.lines().iter().enumerate() {
+        let segments = wrap_line_segments(line, width);
+        let segment_count = segments.len().max(1);
+
+        if row_index == cursor.0 {
+            let line_char_len = line.chars().count();
+            let mut cursor_segment = segment_count.saturating_sub(1);
+            for (segment_index, segment) in segments.iter().enumerate() {
+                if cursor.1 < segment.end_char
+                    || (cursor.1 == line_char_len && segment.end_char == line_char_len)
+                {
+                    cursor_segment = segment_index;
+                    break;
+                }
+            }
+            cursor_row = total.saturating_add(cursor_segment);
+        }
+
+        total = total.saturating_add(segment_count);
+    }
+
+    (total.max(1), cursor_row)
+}
+
+fn issue_draft_prompt_lines(prompt: &TextArea<'_>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+
+    if prompt.is_empty() && !prompt.placeholder_text().is_empty() {
+        let placeholder_style = prompt.placeholder_style().unwrap_or_default();
+        let mut lines = Vec::new();
+        for line in prompt.placeholder_text().lines() {
+            for segment in wrap_line_segments(line, width) {
+                lines.push(Line::styled(segment.text, placeholder_style));
+            }
+        }
+        return lines;
+    }
+
+    let cursor = prompt.cursor();
+    let cursor_line_style = prompt.cursor_line_style();
+    let cursor_style = prompt.cursor_style();
+    let base_style = prompt.style();
+    let mut lines = Vec::new();
+
+    for (row_index, line) in prompt.lines().iter().enumerate() {
+        let line_style = if row_index == cursor.0 {
+            base_style.patch(cursor_line_style)
+        } else {
+            base_style
+        };
+        let segments = wrap_line_segments(line, width);
+        let line_char_len = line.chars().count();
+        let cursor_segment = if row_index == cursor.0 {
+            segments
+                .iter()
+                .enumerate()
+                .find_map(|(index, segment)| {
+                    if cursor.1 < segment.end_char
+                        || (cursor.1 == line_char_len && segment.end_char == line_char_len)
+                    {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| segments.len().saturating_sub(1))
+        } else {
+            usize::MAX
+        };
+
+        for (segment_index, segment) in segments.into_iter().enumerate() {
+            if row_index == cursor.0 && segment_index == cursor_segment {
+                let cursor_offset = cursor.1.saturating_sub(segment.start_char);
+                let cursor_at_end = cursor.1 == line_char_len && segment.end_char == line_char_len;
+                lines.push(prompt_segment_with_cursor(
+                    segment.text,
+                    cursor_offset,
+                    cursor_at_end,
+                    line_style,
+                    line_style.patch(cursor_style),
+                ));
+            } else {
+                lines.push(Line::styled(segment.text, line_style));
+            }
+        }
+    }
+
+    lines
+}
+
+fn prompt_segment_with_cursor(
+    segment: String,
+    cursor_offset: usize,
+    cursor_at_end: bool,
+    line_style: Style,
+    cursor_style: Style,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    if segment.is_empty() && cursor_at_end {
+        spans.push(Span::styled(" ", cursor_style));
+        return Line::from(spans);
+    }
+
+    let mut before = String::new();
+    let mut after = String::new();
+    let mut cursor_char = None;
+
+    for (index, ch) in segment.chars().enumerate() {
+        if index < cursor_offset {
+            before.push(ch);
+        } else if index == cursor_offset {
+            cursor_char = Some(ch);
+        } else {
+            after.push(ch);
+        }
+    }
+
+    if !before.is_empty() {
+        spans.push(Span::styled(before, line_style));
+    }
+    if let Some(ch) = cursor_char {
+        spans.push(Span::styled(ch.to_string(), cursor_style));
+    } else if cursor_at_end {
+        spans.push(Span::styled(" ", cursor_style));
+    }
+    if !after.is_empty() {
+        spans.push(Span::styled(after, line_style));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(" ", cursor_style));
+    }
+
+    Line::from(spans)
 }
 
 fn max_scroll_offset(total_items: usize, view_height: usize) -> usize {
@@ -3116,6 +3345,7 @@ mod tests {
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::str::FromStr;
+    use tui_textarea::CursorMove;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
 
@@ -4602,6 +4832,39 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(state.running_issue_panel.scroll_offset() > 0);
         assert_eq!(state.running_issue_selection.index, 1);
+    }
+
+    #[test]
+    fn issue_draft_prompt_metrics_wraps_cursor_row() {
+        let mut textarea = TextArea::from(["012345"]);
+        textarea.move_cursor(CursorMove::End);
+
+        let (total, cursor_row) = issue_draft_prompt_metrics(&textarea, 4);
+
+        assert_eq!(total, 2);
+        assert_eq!(cursor_row, 1);
+    }
+
+    #[test]
+    fn issue_draft_prompt_lines_wraps_long_line() {
+        let textarea = TextArea::from(["012345"]);
+
+        let lines = issue_draft_prompt_lines(&textarea, 4);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "0123");
+        assert_eq!(line_text(&lines[1]), "45");
+    }
+
+    #[test]
+    fn issue_draft_prompt_lines_show_cursor_at_line_end() {
+        let mut textarea = TextArea::from(["abcd"]);
+        textarea.move_cursor(CursorMove::End);
+
+        let lines = issue_draft_prompt_lines(&textarea, 10);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(line_text(&lines[0]), "abcd ");
     }
 
     #[test]
