@@ -105,4 +105,4 @@ api_server = ""
 
 # Optional imagePullSecret configured via 1Password operator for pulling images.
 # Leave blank to omit imagePullSecrets from the worker pod spec.
-# image_pull_secret = "ghcr-credentials"
+# image_pull_secrets = ["ghcr-credentials"]
