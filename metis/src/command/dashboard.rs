@@ -38,7 +38,7 @@ use crate::{client::MetisClientInterface, command::jobs};
 
 pub mod panel;
 
-use panel::{wrapped_content_len, Panel, PanelEvent, PanelState};
+use panel::{keybinding_line_from_labels, wrapped_content_len, Panel, PanelEvent, PanelState};
 
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -1366,6 +1366,9 @@ fn render_issue_details(frame: &mut Frame, state: &mut DashboardState) {
     if view.content_len > view.view_height {
         render_panel_scrollbar(frame, view.layout.content, view.scrollbar_state);
     }
+
+    let footer = Paragraph::new(view.keybinding_line).wrap(Wrap { trim: true });
+    frame.render_widget(footer, view.layout.footer);
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
@@ -2028,12 +2031,14 @@ fn render_panel_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: Scroll
 struct IssueDetailsLayout {
     area: Rect,
     content: Rect,
+    footer: Rect,
 }
 
 struct IssueDetailsView<'a> {
     layout: IssueDetailsLayout,
     lines: Vec<Line<'static>>,
     title: Line<'a>,
+    keybinding_line: Line<'static>,
     content_len: usize,
     view_height: usize,
     scroll_offset: u16,
@@ -2058,10 +2063,12 @@ fn issue_details_view(state: &mut DashboardState) -> Option<IssueDetailsView<'st
     state.issue_details.scroll.scrollbar_state =
         list_scrollbar_state(content_len, view_height, scroll_offset);
     let title = issue_detail_title(issue);
+    let keybinding_line = issue_detail_keybinding_line();
     Some(IssueDetailsView {
         layout,
         lines,
         title,
+        keybinding_line,
         content_len,
         view_height,
         scroll_offset: scroll_offset.min(u16::MAX as usize) as u16,
@@ -2079,28 +2086,31 @@ fn issue_details_layout(area: Rect) -> IssueDetailsLayout {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     let popup = Rect::new(x, y, width, height);
-    let content = popup.inner(Margin {
-        vertical: 2,
+    let inner = popup.inner(Margin {
+        vertical: 1,
         horizontal: 2,
     });
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
     IssueDetailsLayout {
         area: popup,
-        content,
+        content: sections[0],
+        footer: sections[1],
     }
 }
 
 fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
-    let close_hint = "Esc/Enter to close";
-    Line::from(vec![
-        Span::styled(
-            format!("Issue {}", issue.id),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {close_hint}"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])
+    Line::from(Span::styled(
+        format!("Issue {}", issue.id),
+        Style::default().add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn issue_detail_keybinding_line() -> Line<'static> {
+    let bindings = [("j/k or Up/Down", "Scroll"), ("Esc/Enter", "Close")];
+    keybinding_line_from_labels(&bindings, true)
 }
 
 fn issue_detail_lines(issue: &IssueRecord, current_username: &str) -> Vec<Line<'static>> {
