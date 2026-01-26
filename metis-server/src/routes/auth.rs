@@ -21,7 +21,10 @@ pub async fn require_auth(
         }
     };
 
-    let actor = { state.validate_auth_token(token).await };
+    let actor = {
+        let store = state.store.read().await;
+        store.validate_auth_token(token).await
+    };
 
     match actor {
         Ok(actor) => {

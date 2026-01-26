@@ -45,12 +45,13 @@ pub async fn get_job_status(
 ) -> Result<Json<GetJobStatusResponse>, ApiError> {
     info!(job_id = %job_id, "get_job_status invoked");
 
-    state.get_task(&job_id).await.map_err(|err| {
+    let store = state.store.read().await;
+    store.get_task(&job_id).await.map_err(|err| {
         error!(error = %err, job_id = %job_id, "failed to load task for job status");
         ApiError::not_found(format!("Job '{job_id}' not found"))
     })?;
 
-    let status_log = state.get_status_log(&job_id).await.map_err(|err| {
+    let status_log = store.get_status_log(&job_id).await.map_err(|err| {
         error!(
             error = %err,
             job_id = %job_id,

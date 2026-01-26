@@ -15,13 +15,14 @@ pub async fn get_job_context(
     info!(job_id = %job_id, "get_job_context invoked");
 
     let task = {
-        let task = state.get_task(&job_id).await.map_err(|err| {
+        let store = state.store.read().await;
+        let task = store.get_task(&job_id).await.map_err(|err| {
             error!(error = %err, job_id = %job_id, "failed to get task");
             ApiError::not_found(format!("Job '{job_id}' not found"))
         })?;
 
         if let Some(issue_id) = task.spawned_from.clone() {
-            match state.get_issue(&issue_id).await {
+            match store.get_issue(&issue_id).await {
                 Ok(_) => {}
                 Err(StoreError::IssueNotFound(_)) => {
                     return Err(ApiError::not_found(format!("issue '{issue_id}' not found")));
