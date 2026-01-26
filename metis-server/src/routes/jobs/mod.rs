@@ -1,7 +1,7 @@
 use crate::domain::jobs::{CreateJobRequest, JobRecord, ListJobsResponse, SearchJobsQuery};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
-    store::{Store, StoreError, TaskError},
+    store::{StoreError, Task, TaskError, TaskStatusLog},
 };
 use axum::{
     Json, async_trait,
@@ -64,11 +64,7 @@ pub async fn list_jobs(
         spawned_from = ?query.spawned_from,
         "list_jobs invoked"
     );
-    let config = state.config;
-    let namespace = config.metis.namespace.clone();
-
-    let store_read = state.store.read().await;
-    let store = store_read.as_ref();
+    let namespace = state.config.metis.namespace.clone();
 
     let search_term = query
         .q
@@ -78,7 +74,7 @@ pub async fn list_jobs(
     let spawned_from_filter = query.spawned_from.as_ref();
 
     // Get all tasks with all statuses
-    let task_ids = store.list_tasks().await.map_err(|err| {
+    let task_ids = state.list_tasks().await.map_err(|err| {
         error!(error = %err, "failed to list tasks");
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
@@ -86,7 +82,7 @@ pub async fn list_jobs(
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(JobRecord, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
-        match job_record_with_time(&task_id, store).await {
+        match job_record_with_time_from_state(&state, &task_id).await {
             Ok(summary) => {
                 if spawned_from_matches(spawned_from_filter, &summary.0)
                     && job_matches(search_term.as_deref(), &summary.0)
@@ -133,10 +129,7 @@ pub async fn get_job(
 ) -> Result<Json<v1::jobs::JobRecord>, ApiError> {
     info!(job_id = %job_id, "get_job invoked");
 
-    let store_read = state.store.read().await;
-    let store = store_read.as_ref();
-
-    let (summary, _) = job_record_with_time(&job_id, store)
+    let (summary, _) = job_record_with_time_from_state(&state, &job_id)
         .await
         .map_err(|err| match err {
             StoreError::TaskNotFound(_) => {
@@ -195,20 +188,27 @@ where
     }
 }
 
-async fn job_record_with_time(
+async fn job_record_with_time_from_state(
+    state: &AppState,
     job_id: &TaskId,
-    store: &dyn Store,
 ) -> Result<(JobRecord, Option<DateTime<Utc>>), StoreError> {
-    let status_log = store.get_status_log(job_id).await?;
-    let task = store.get_task(job_id).await?;
-    let notes = job_notes_from_store(job_id, store).await;
+    let status_log = state.get_status_log(job_id).await?;
+    let task = state.get_task(job_id).await?;
+    Ok(job_record_with_time(job_id, task, status_log))
+}
 
+fn job_record_with_time(
+    job_id: &TaskId,
+    task: Task,
+    status_log: TaskStatusLog,
+) -> (JobRecord, Option<DateTime<Utc>>) {
+    let notes = job_notes_from_status_log(&status_log);
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
-    Ok((
+    (
         JobRecord::new(job_id.clone(), task, notes, status_log),
         reference_time,
-    ))
+    )
 }
 
 fn spawned_from_matches(expected: Option<&IssueId>, job: &JobRecord) -> bool {
@@ -239,8 +239,7 @@ fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
     true
 }
 
-async fn job_notes_from_store(job_id: &TaskId, store: &dyn Store) -> Option<String> {
-    let status_log = store.get_status_log(job_id).await.ok()?;
+fn job_notes_from_status_log(status_log: &TaskStatusLog) -> Option<String> {
     status_log
         .result()
         .and_then(Result::err)

@@ -72,8 +72,7 @@ pub async fn get_patch(
     PatchIdPath(patch_id): PatchIdPath,
 ) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
     info!(patch_id = %patch_id, "get_patch invoked");
-    let store_read = state.store.read().await;
-    let patch = store_read
+    let patch = state
         .get_patch(&patch_id)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
@@ -96,8 +95,7 @@ pub async fn list_patches(
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
 
-    let store_read = state.store.read().await;
-    let patches = store_read
+    let patches = state
         .list_patches()
         .await
         .map_err(|err| map_patch_error(err, None))?;
