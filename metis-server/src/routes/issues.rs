@@ -100,8 +100,7 @@ pub async fn get_issue(
     IssueIdPath(issue_id): IssueIdPath,
 ) -> Result<Json<v1::issues::IssueRecord>, ApiError> {
     info!(issue_id = %issue_id, "get_issue invoked");
-    let store_read = state.store.read().await;
-    let issue = store_read
+    let issue = state
         .get_issue(&issue_id)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
@@ -136,8 +135,7 @@ pub async fn list_issues(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
 
-    let store_read = state.store.read().await;
-    let issues = store_read
+    let issues = state
         .list_issues()
         .await
         .map_err(|err| map_issue_error(err, None))?;
@@ -151,7 +149,7 @@ pub async fn list_issues(
         None
     } else {
         Some(
-            store_read
+            state
                 .search_issue_graph(&query.graph_filters)
                 .await
                 .map_err(map_graph_filter_error)?,

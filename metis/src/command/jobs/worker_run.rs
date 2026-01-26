@@ -15,13 +15,13 @@ use metis_common::{
 };
 use tempfile::Builder;
 
-use crate::client::MetisClientInterface;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
     clone_repo, commit_changes, configure_repo, push_branch, resolve_head_oid, stage_all_changes,
     workdir_diff,
 };
 use crate::worker_commands::WorkerCommands;
+use crate::{client::MetisClientInterface, command::output::CommandContext};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -30,6 +30,7 @@ pub async fn run(
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
+    _context: &CommandContext,
 ) -> Result<()> {
     let WorkerContext {
         request_context,

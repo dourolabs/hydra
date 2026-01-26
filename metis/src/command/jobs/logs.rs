@@ -1,9 +1,14 @@
 use super::create::stream_job_logs_via_server;
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, command::output::CommandContext};
 use anyhow::{bail, Context, Result};
 use metis_common::{jobs::SearchJobsQuery, IssueId, MetisId, TaskId};
 
-pub async fn run(client: &dyn MetisClientInterface, id: MetisId, watch: bool) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    id: MetisId,
+    watch: bool,
+    _context: &CommandContext,
+) -> Result<()> {
     if let Some(job_id) = id.as_task_id() {
         return stream_logs_for_job(client, job_id, watch).await;
     }
@@ -65,8 +70,11 @@ async fn stream_logs_for_issue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MetisClient;
     use crate::test_utils::ids;
+    use crate::{
+        client::MetisClient,
+        command::output::{CommandContext, ResolvedOutputFormat},
+    };
     use httpmock::prelude::*;
     use metis_common::{
         jobs::{JobRecord, ListJobsResponse, Task},
@@ -120,7 +128,8 @@ mod tests {
 
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        run(&client, job_id.clone().into(), false).await?;
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+        run(&client, job_id.clone().into(), false, &context).await?;
 
         log_mock.assert();
         Ok(())
@@ -150,7 +159,8 @@ mod tests {
 
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        run(&client, issue_id.clone().into(), false).await?;
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+        run(&client, issue_id.clone().into(), false, &context).await?;
 
         list_jobs_mock.assert();
         log_mock.assert();
@@ -167,7 +177,8 @@ mod tests {
             then.status(500);
         });
 
-        let result = run(&client, MetisId::from_str("p-patchzz")?, false).await;
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+        let result = run(&client, MetisId::from_str("p-patchzz")?, false, &context).await;
 
         assert!(result.is_err());
         unexpected_requests.assert_hits(0);

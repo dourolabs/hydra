@@ -35,7 +35,10 @@ use ratatui::{
 use tui_textarea::TextArea;
 use unicode_width::UnicodeWidthChar;
 
-use crate::{client::MetisClientInterface, command::jobs};
+use crate::{
+    client::MetisClientInterface,
+    command::{jobs, output::CommandContext},
+};
 
 pub mod panel;
 
@@ -429,6 +432,7 @@ pub async fn run(
     client: &dyn MetisClientInterface,
     server_url: &str,
     browser_command: Option<&str>,
+    _context: &CommandContext,
 ) -> Result<()> {
     let whoami = client
         .whoami()

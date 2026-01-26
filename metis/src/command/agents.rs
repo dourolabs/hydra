@@ -1,4 +1,4 @@
-use crate::client::MetisClientInterface;
+use crate::{client::MetisClientInterface, command::output::CommandContext};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::agents::{AgentRecord, UpsertAgentRequest};
@@ -66,7 +66,11 @@ pub struct UpdateAgentArgs {
     pub max_simultaneous: Option<u32>,
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: AgentsCommand) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: AgentsCommand,
+    _context: &CommandContext,
+) -> Result<()> {
     match command {
         AgentsCommand::List { pretty } => list_agents(client, pretty).await?,
         AgentsCommand::Create(args) => {
