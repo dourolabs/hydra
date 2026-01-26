@@ -291,8 +291,8 @@ impl PanelState {
     }
 }
 
-fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
-    let (key_style, label_style) = if focused {
+fn keybinding_styles(focused: bool) -> (Style, Style) {
+    if focused {
         (
             Style::default()
                 .fg(Color::Yellow)
@@ -306,7 +306,11 @@ fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
         )
-    };
+    }
+}
+
+fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
+    let (key_style, label_style) = keybinding_styles(focused);
     let mut spans = Vec::new();
     let mut push_binding = |key_label: String, label: &str| {
         if !spans.is_empty() {
@@ -324,6 +328,23 @@ fn keybinding_line(state: &PanelState, focused: bool) -> Line<'static> {
         push_binding(format_keybinding(binding), &binding.label);
     }
 
+    Line::from(spans)
+}
+
+pub(crate) fn keybinding_line_from_labels(
+    bindings: &[(&'static str, &'static str)],
+    focused: bool,
+) -> Line<'static> {
+    let (key_style, label_style) = keybinding_styles(focused);
+    let mut spans = Vec::new();
+    for (key_label, label) in bindings {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled((*key_label).to_string(), key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled((*label).to_string(), label_style));
+    }
     Line::from(spans)
 }
 
