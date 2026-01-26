@@ -1,4 +1,7 @@
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{render_job_records, CommandContext, ResolvedOutputFormat},
+};
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use metis_common::{
@@ -23,9 +26,9 @@ pub async fn run(
     cli_vars: Vec<String>,
     prompt_parts: Vec<String>,
     issue_id: Option<IssueId>,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
-    let context = build_context(repo_arg, rev_arg)?;
+    let bundle_context = build_context(repo_arg, rev_arg)?;
 
     let prompt = if prompt_parts.is_empty() {
         bail!("prompt is required")
@@ -46,27 +49,49 @@ pub async fn run(
         }
         None => None,
     };
-    let request = CreateJobRequest::new(prompt, image, context, variables).with_issue_id(issue_id);
+    let request =
+        CreateJobRequest::new(prompt, image, bundle_context, variables).with_issue_id(issue_id);
     let response = client.create_job(&request).await?;
     let job_id = response.job_id;
 
-    println!("Requested Metis job {job_id}");
+    let job = client.get_job(&job_id).await?;
+    let mut buffer = Vec::new();
+    render_job_records(context.output_format, &[job], &mut buffer)?;
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
 
     if wait {
-        println!("Streaming logs for job '{job_id}' via metis-server…");
-        stream_job_logs_via_server(client, &job_id, true).await?;
-        wait_for_job_completion_via_server(client, &job_id).await?;
+        if context.output_format == ResolvedOutputFormat::Pretty {
+            eprintln!("Streaming logs for job '{job_id}' via metis-server…");
+        }
+        let log_output = match context.output_format {
+            ResolvedOutputFormat::Jsonl => LogOutputTarget::Stderr,
+            ResolvedOutputFormat::Pretty => LogOutputTarget::Stdout,
+        };
+        stream_job_logs_via_server(client, &job_id, true, log_output).await?;
+        wait_for_job_completion_via_server(client, &job_id, context.output_format).await?;
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum LogOutputTarget {
+    Stdout,
+    Stderr,
 }
 
 pub(crate) async fn stream_job_logs_via_server(
     client: &dyn MetisClientInterface,
     job_id: &TaskId,
     watch: bool,
+    output: LogOutputTarget,
 ) -> Result<()> {
     let query = LogsQuery::new(Some(watch), None);
+    let mut writer: Box<dyn Write + Send> = match output {
+        LogOutputTarget::Stdout => Box::new(io::stdout()),
+        LogOutputTarget::Stderr => Box::new(io::stderr()),
+    };
 
     let mut log_stream = client
         .get_job_logs(job_id, &query)
@@ -75,8 +100,8 @@ pub(crate) async fn stream_job_logs_via_server(
 
     while let Some(line) = log_stream.next().await {
         let line = line?;
-        io::stdout().write_all(line.as_bytes())?;
-        io::stdout().flush()?;
+        writer.write_all(line.as_bytes())?;
+        writer.flush()?;
     }
 
     Ok(())
@@ -85,6 +110,7 @@ pub(crate) async fn stream_job_logs_via_server(
 async fn wait_for_job_completion_via_server(
     client: &dyn MetisClientInterface,
     job_id: &TaskId,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     loop {
         let response = client.list_jobs(&SearchJobsQuery::default()).await?;
@@ -95,7 +121,9 @@ async fn wait_for_job_completion_via_server(
         {
             match job.status_log.current_status() {
                 Status::Complete => {
-                    println!("Job '{job_id}' completed successfully.");
+                    if output_format == ResolvedOutputFormat::Pretty {
+                        eprintln!("Job '{job_id}' completed successfully.");
+                    }
                     return Ok(());
                 }
                 Status::Failed => {
@@ -214,6 +242,7 @@ mod tests {
     };
     use chrono::{Duration as ChronoDuration, Utc};
     use httpmock::prelude::*;
+    use httpmock::Mock;
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, Task},
         task_status::{Event, Status, TaskStatusLog},
@@ -248,6 +277,13 @@ mod tests {
         )
     }
 
+    fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
+        server.mock(|when, then| {
+            when.method(GET).path(format!("/v1/jobs/{}", job.id));
+            then.status(200).json_body_obj(&job);
+        })
+    }
+
     #[tokio::test]
     async fn spawn_uses_injected_client_and_waits_for_completion() {
         let server = MockServer::start();
@@ -279,6 +315,13 @@ mod tests {
                 .header("content-type", "text/event-stream")
                 .body("data: first log line\n\ndata: second log line\n\n");
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let start_time = Utc::now();
         let completed_jobs = ListJobsResponse::new(vec![job_record(
@@ -317,6 +360,7 @@ mod tests {
 
         create_mock.assert();
         logs_mock.assert();
+        job_mock.assert();
         list_mock.assert();
     }
 
@@ -337,11 +381,19 @@ mod tests {
             },
             variables,
         );
+        let job_id = task_id("t-job-service");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("t-job-service")));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -359,6 +411,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]
@@ -378,13 +431,19 @@ mod tests {
             },
             variables,
         );
+        let job_id = task_id("t-job-service-default-rev");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id(
-                    "t-job-service-default-rev",
-                )));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -402,6 +461,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]
@@ -421,11 +481,19 @@ mod tests {
             },
             variables,
         );
+        let job_id = task_id("t-job-git");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("t-job-git")));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -443,6 +511,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]
@@ -462,11 +531,19 @@ mod tests {
             },
             variables,
         );
+        let job_id = task_id("t-job-git-default-rev");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("t-job-git-default-rev")));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -484,6 +561,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]
@@ -500,11 +578,19 @@ mod tests {
             BundleSpec::None,
             variables,
         );
+        let job_id = task_id("t-job-image");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("t-job-image")));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -522,6 +608,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]
@@ -539,11 +626,19 @@ mod tests {
                 ("FOO".to_string(), "bar".to_string()),
             ]),
         );
+        let job_id = task_id("t-job-with-vars");
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/jobs").json_body_obj(&request);
             then.status(200)
-                .json_body_obj(&CreateJobResponse::new(task_id("t-job-with-vars")));
+                .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
+        let job_mock = mock_get_job(
+            &server,
+            job_record(
+                job_id.as_ref(),
+                TaskStatusLog::new(Status::Pending, Utc::now()),
+            ),
+        );
 
         let context = test_context();
         run(
@@ -561,6 +656,7 @@ mod tests {
         .unwrap();
 
         create_mock.assert();
+        job_mock.assert();
     }
 
     #[tokio::test]

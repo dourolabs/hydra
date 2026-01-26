@@ -15,7 +15,7 @@ pub mod list;
 pub mod logs;
 pub mod worker_run;
 
-pub(crate) use list::format_runtime;
+pub(crate) use crate::command::output::format_runtime;
 pub use list::DEFAULT_JOB_LIMIT;
 
 #[derive(Subcommand)]
@@ -64,9 +64,6 @@ pub enum JobsCommand {
             default_value_t = DEFAULT_JOB_LIMIT,
         )]
         limit: usize,
-        /// Emit jobs as machine-readable JSON instead of the default table.
-        #[arg(long = "json")]
-        json: bool,
         /// Filter jobs that were spawned from a specific issue.
         #[arg(long = "from", value_name = "ISSUE_ID")]
         spawned_from: Option<IssueId>,
@@ -126,9 +123,8 @@ pub async fn run(
         }
         JobsCommand::List {
             limit,
-            json,
             spawned_from,
-        } => list::run(client, limit, spawned_from, json, context).await?,
+        } => list::run(client, limit, spawned_from, context).await?,
         JobsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
         JobsCommand::Kill { job } => kill::run(client, job, context).await?,
         JobsCommand::WorkerRun {

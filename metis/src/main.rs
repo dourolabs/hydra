@@ -255,7 +255,7 @@ mod tests {
             browser: None,
             output_format: OutputFormat::Auto,
             command: Some(super::Commands::Agents {
-                command: AgentsCommand::List { pretty: false },
+                command: AgentsCommand::List,
             }),
         }
     }

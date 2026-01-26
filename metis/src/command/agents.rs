@@ -1,17 +1,16 @@
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{render_agent_records, CommandContext},
+};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::agents::{AgentRecord, UpsertAgentRequest};
-use std::io::{self, Write};
+use std::io;
 
 #[derive(Debug, Subcommand)]
 pub enum AgentsCommand {
     /// List configured agents.
-    List {
-        /// Pretty-print the agents instead of emitting JSONL.
-        #[arg(long)]
-        pretty: bool,
-    },
+    List,
     /// Create a new agent.
     Create(CreateAgentArgs),
     /// Update an existing agent.
@@ -69,38 +68,28 @@ pub struct UpdateAgentArgs {
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: AgentsCommand,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
+    let mut stdout = io::stdout().lock();
     match command {
-        AgentsCommand::List { pretty } => list_agents(client, pretty).await?,
+        AgentsCommand::List => {
+            let agents = fetch_agents(client).await?;
+            render_agent_records(context.output_format, &agents, &mut stdout)?;
+        }
         AgentsCommand::Create(args) => {
             let agent = create_agent(client, args).await?;
-            let mut stdout = io::stdout().lock();
-            print_agent_action("Created agent", &agent, &mut stdout)?;
+            render_agent_records(context.output_format, &[agent], &mut stdout)?;
         }
         AgentsCommand::Update(args) => {
             let agent = update_agent(client, args).await?;
-            let mut stdout = io::stdout().lock();
-            print_agent_action("Updated agent", &agent, &mut stdout)?;
+            render_agent_records(context.output_format, &[agent], &mut stdout)?;
         }
         AgentsCommand::Delete { name } => {
             let deleted = delete_agent(client, &name).await?;
-            let mut stdout = io::stdout().lock();
-            print_agent_action("Deleted agent", &deleted, &mut stdout)?;
+            render_agent_records(context.output_format, &[deleted], &mut stdout)?;
         }
     }
 
-    Ok(())
-}
-
-async fn list_agents(client: &dyn MetisClientInterface, pretty: bool) -> Result<()> {
-    let agents = fetch_agents(client).await?;
-    let mut stdout = io::stdout().lock();
-    if pretty {
-        print_agents_pretty(&agents, &mut stdout)?;
-    } else {
-        print_agents_jsonl(&agents, &mut stdout)?;
-    }
     Ok(())
 }
 
@@ -194,53 +183,13 @@ fn normalize_non_empty(value: &str, field: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn print_agents_jsonl(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
-    for agent in agents {
-        serde_json::to_writer(&mut *writer, agent)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn print_agents_pretty(agents: &[AgentRecord], writer: &mut impl Write) -> Result<()> {
-    if agents.is_empty() {
-        writeln!(writer, "No agents configured.")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    writeln!(writer, "Available agents:")?;
-    for agent in agents {
-        write_agent_details(agent, "  ", writer)?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn print_agent_action(action: &str, agent: &AgentRecord, writer: &mut impl Write) -> Result<()> {
-    writeln!(writer, "{action}:")?;
-    write_agent_details(agent, "  ", writer)?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_agent_details(agent: &AgentRecord, indent: &str, writer: &mut impl Write) -> Result<()> {
-    writeln!(writer, "{indent}- {}", agent.name)?;
-    writeln!(writer, "{indent}  prompt: {}", agent.prompt)?;
-    writeln!(writer, "{indent}  max_tries: {}", agent.max_tries)?;
-    writeln!(
-        writer,
-        "{indent}  max_simultaneous: {}",
-        agent.max_simultaneous
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MetisClient;
+    use crate::{
+        client::MetisClient,
+        command::output::{render_agent_records, ResolvedOutputFormat},
+    };
     use httpmock::prelude::*;
     use metis_common::agents::{
         AgentRecord, AgentResponse, DeleteAgentResponse, ListAgentsResponse,
@@ -268,7 +217,7 @@ mod tests {
         mock.assert();
 
         let mut output = Vec::new();
-        print_agents_jsonl(&agents, &mut output)?;
+        render_agent_records(ResolvedOutputFormat::Jsonl, &agents, &mut output)?;
         let output = String::from_utf8(output)?;
         assert!(output.contains("\"name\":\"alpha\""));
         assert!(output.contains("\"name\":\"beta\""));
@@ -281,10 +230,9 @@ mod tests {
         let agents = vec![AgentRecord::with_details("alpha", "prompt", 2, 5)];
         let mut output = Vec::new();
 
-        print_agents_pretty(&agents, &mut output)?;
+        render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
         let output = String::from_utf8(output)?;
 
-        assert!(output.contains("Available agents:"));
         assert!(output.contains("alpha"));
         assert!(output.contains("prompt"));
         assert!(output.contains("max_tries: 2"));
