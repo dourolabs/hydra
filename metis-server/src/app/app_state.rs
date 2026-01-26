@@ -14,9 +14,7 @@ use crate::{
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
-#[cfg(test)]
-use chrono::DateTime;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
     api::v1 as api,
@@ -252,11 +250,6 @@ impl AppState {
         store.get_issue(issue_id).await
     }
 
-    pub async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
-        let store = self.store.read().await;
-        store.list_issues().await
-    }
-
     pub async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -273,16 +266,6 @@ impl AppState {
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
         let store = self.store.read().await;
         store.list_patches().await
-    }
-
-    pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
-        let store = self.store.read().await;
-        store.get_task(task_id).await
-    }
-
-    pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.read().await;
-        store.list_tasks().await
     }
 
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
@@ -388,6 +371,29 @@ impl AppState {
         self.agents.read().await.clone()
     }
 
+    pub(crate) async fn list_tasks_with_status(
+        &self,
+        status: Status,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.list_tasks_with_status(status).await
+    }
+
+    pub(crate) async fn add_task(
+        &self,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<TaskId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_task(task, created_at).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_patch(patch).await
+    }
+
     pub async fn create_agent(
         &self,
         agent: AgentQueueConfig,
@@ -405,6 +411,15 @@ impl AppState {
         Ok(created.as_config())
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
+        self.store = Arc::new(RwLock::new(store));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
+        self.agents = Arc::new(RwLock::new(agents));
+    }
     pub async fn update_agent(
         &self,
         agent_name: &str,
@@ -1290,12 +1305,6 @@ impl AppState {
     }
 
     #[cfg(test)]
-    pub(crate) async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
-        let store = self.store.read().await;
-        store.get_issue(issue_id).await
-    }
-
-    #[cfg(test)]
     pub(crate) async fn update_issue(
         &self,
         issue_id: &IssueId,
@@ -1326,16 +1335,6 @@ impl AppState {
     ) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.read().await;
         store.get_tasks_for_issue(issue_id).await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn add_task(
-        &self,
-        task: Task,
-        created_at: DateTime<Utc>,
-    ) -> Result<TaskId, StoreError> {
-        let mut store = self.store.write().await;
-        store.add_task(task, created_at).await
     }
 
     #[cfg(test)]
