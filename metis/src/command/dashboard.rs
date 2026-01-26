@@ -2092,6 +2092,7 @@ fn issue_details_layout(area: Rect) -> IssueDetailsLayout {
 fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
     let close_hint = "Esc/Enter to close";
     Line::from(vec![
+        Span::raw(" "),
         Span::styled(
             format!("Issue {}", issue.id),
             Style::default().add_modifier(Modifier::BOLD),
@@ -2100,6 +2101,7 @@ fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
             format!("  {close_hint}"),
             Style::default().fg(Color::DarkGray),
         ),
+        Span::raw(" "),
     ])
 }
 
