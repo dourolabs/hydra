@@ -38,7 +38,7 @@ pub struct KubernetesJobEngine {
     pub openai_api_key: String,
     pub server_hostname: String,
     pub client: Client,
-    pub image_pull_secret: Option<String>,
+    pub image_pull_secrets: Vec<String>,
     pub store: Arc<RwLock<Box<dyn Store>>>,
 }
 
@@ -76,17 +76,26 @@ fn merge_env_vars(
         .collect()
 }
 
-fn build_image_pull_secrets(image_pull_secret: Option<&str>) -> Option<Vec<LocalObjectReference>> {
-    image_pull_secret
-        .and_then(|name| {
+fn build_image_pull_secrets(image_pull_secrets: &[String]) -> Option<Vec<LocalObjectReference>> {
+    let secrets = image_pull_secrets
+        .iter()
+        .filter_map(|name| {
             let trimmed = name.trim();
             if trimmed.is_empty() {
                 None
             } else {
-                Some(trimmed.to_string())
+                Some(LocalObjectReference {
+                    name: Some(trimmed.to_string()),
+                })
             }
         })
-        .map(|name| vec![LocalObjectReference { name: Some(name) }])
+        .collect::<Vec<_>>();
+
+    if secrets.is_empty() {
+        None
+    } else {
+        Some(secrets)
+    }
 }
 
 impl KubernetesJobEngine {
@@ -528,7 +537,7 @@ impl JobEngine for KubernetesJobEngine {
             ..Default::default()
         });
 
-        let image_pull_secrets = build_image_pull_secrets(self.image_pull_secret.as_deref());
+        let image_pull_secrets = build_image_pull_secrets(&self.image_pull_secrets);
 
         let job = Job {
             metadata: ObjectMeta {
@@ -854,7 +863,7 @@ mod tests {
 
     #[test]
     fn build_image_pull_secrets_includes_reference_when_set() {
-        let secrets = build_image_pull_secrets(Some("ghcr-credentials"))
+        let secrets = build_image_pull_secrets(&["ghcr-credentials".to_string()])
             .expect("expected image_pull_secrets");
 
         assert_eq!(secrets.len(), 1);
@@ -863,8 +872,8 @@ mod tests {
 
     #[test]
     fn build_image_pull_secrets_omits_blank_and_none() {
-        assert!(build_image_pull_secrets(None).is_none());
-        assert!(build_image_pull_secrets(Some("   ")).is_none());
+        assert!(build_image_pull_secrets(&Vec::new()).is_none());
+        assert!(build_image_pull_secrets(&["   ".to_string()]).is_none());
     }
 
     #[test]

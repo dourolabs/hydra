@@ -187,18 +187,7 @@ pub async fn run() -> anyhow::Result<()> {
         openai_api_key,
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
-        image_pull_secret: app_config
-            .kubernetes
-            .image_pull_secret
-            .clone()
-            .and_then(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            }),
+        image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
         store: store.clone(),
     };
 
