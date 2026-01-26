@@ -47,10 +47,16 @@ impl<'a> Panel<'a> {
         T: Into<Line<'a>>,
     {
         Self {
-            title: title.into(),
+            title: pad_title(title.into()),
             content,
         }
     }
+}
+
+fn pad_title<'a>(mut title: Line<'a>) -> Line<'a> {
+    title.spans.insert(0, Span::raw(" "));
+    title.spans.push(Span::raw(" "));
+    title
 }
 
 impl StatefulWidget for Panel<'_> {
@@ -529,6 +535,20 @@ mod tests {
         let footer = row_text(&buffer, footer_y, area.width);
         assert!(footer.contains("j/k or Up/Down"));
         assert!(footer.contains("r Refresh"));
+    }
+
+    #[test]
+    fn panel_title_is_padded() {
+        let mut state = PanelState::new();
+        state.set_focused(true);
+
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buffer = Buffer::empty(area);
+        let panel = Panel::new("Title", Vec::new());
+        panel.render(area, &mut buffer, &mut state);
+
+        let header = row_text(&buffer, area.y, area.width);
+        assert!(header.contains(" Title "));
     }
 
     #[test]
