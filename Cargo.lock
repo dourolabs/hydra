@@ -3614,6 +3614,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "core-foundation 0.9.4",
  "crossterm 0.27.0",
  "futures",
  "git2",
