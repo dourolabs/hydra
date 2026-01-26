@@ -102,6 +102,20 @@ Use the helper script to run a local Postgres container with persistent data in 
 
 By default the container listens on `localhost:5432` with database/user/password `metis`. Point `metis-server/config.toml` at it (e.g., `url = "postgres://metis:metis@localhost:5432/metis"`).
 
+### GitHub App for local development
+
+Create a GitHub App for local development if you want Metis to read/write repository data via the GitHub API:
+
+1. Create a new GitHub App in your GitHub settings and generate a private key for it.
+2. Set the app permissions to the minimum required for Metis:
+   - Actions: Read & Write
+   - Checks: Read & Write
+   - Commit statuses: Read-only
+   - Contents: Read & Write
+   - Pull requests: Read & Write
+3. Install the GitHub App on the Metis repository you want to operate against.
+4. Use the app credentials in your local config or environment variables per `metis-server/config.toml.sample`.
+
 ### Running metis-server in a kind cluster
 
 For local development with a kind (Kubernetes in Docker) cluster:
