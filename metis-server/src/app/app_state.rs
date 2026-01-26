@@ -1278,21 +1278,10 @@ impl AppState {
         issue_ready(store.as_ref(), issue_id).await
     }
 
-    pub(crate) async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
-        let store = self.store.read().await;
-        store.list_issues().await
-    }
-
     #[cfg(test)]
     pub(crate) async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
         let mut store = self.store.write().await;
         store.add_issue(issue).await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
-        let store = self.store.read().await;
-        store.get_issue(issue_id).await
     }
 
     #[cfg(test)]
@@ -1303,16 +1292,6 @@ impl AppState {
     ) -> Result<(), StoreError> {
         let mut store = self.store.write().await;
         store.update_issue(issue_id, issue).await
-    }
-
-    pub(crate) async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.read().await;
-        store.list_tasks().await
-    }
-
-    pub(crate) async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
-        let store = self.store.read().await;
-        store.get_task(task_id).await
     }
 
     pub(crate) async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
