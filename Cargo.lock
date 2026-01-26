@@ -2428,6 +2428,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "metis-ui"
+version = "0.1.0"
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
