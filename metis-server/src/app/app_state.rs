@@ -13,6 +13,8 @@ use crate::{
     job_engine::{JobEngine, JobEngineError, JobStatus},
     store::{Status, Store, StoreError, Task, TaskError},
 };
+#[cfg(test)]
+use chrono::DateTime;
 use chrono::{Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
@@ -1207,6 +1209,90 @@ impl AppState {
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.read().await;
         issue_ready(store.as_ref(), issue_id).await
+    }
+
+    pub(crate) async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_issues().await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_issue(issue).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
+        let store = self.store.read().await;
+        store.get_issue(issue_id).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn update_issue(
+        &self,
+        issue_id: &IssueId,
+        issue: Issue,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.update_issue(issue_id, issue).await
+    }
+
+    pub(crate) async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.list_tasks().await
+    }
+
+    pub(crate) async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
+        let store = self.store.read().await;
+        store.get_task(task_id).await
+    }
+
+    pub(crate) async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
+        let store = self.store.read().await;
+        store.get_status(task_id).await
+    }
+
+    pub(crate) async fn get_tasks_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.get_tasks_for_issue(issue_id).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn add_task(
+        &self,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<TaskId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_task(task, created_at).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn mark_task_running(
+        &self,
+        task_id: &TaskId,
+        started_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.mark_task_running(task_id, started_at).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn mark_task_complete(
+        &self,
+        task_id: &TaskId,
+        result: Result<(), TaskError>,
+        last_message: Option<String>,
+        completed_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store
+            .mark_task_complete(task_id, result, last_message, completed_at)
+            .await
     }
 
     pub(crate) async fn repository_from_store(
