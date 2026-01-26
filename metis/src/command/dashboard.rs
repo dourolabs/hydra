@@ -59,6 +59,29 @@ enum PanelFocus {
     Completed,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+enum IssueListFilter {
+    #[default]
+    All,
+    CreatorOnly,
+}
+
+impl IssueListFilter {
+    fn toggle(self) -> Self {
+        match self {
+            IssueListFilter::All => IssueListFilter::CreatorOnly,
+            IssueListFilter::CreatorOnly => IssueListFilter::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            IssueListFilter::All => "All",
+            IssueListFilter::CreatorOnly => "Creator-only",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 struct JobDetails {
     display: JobDisplay,
@@ -298,6 +321,7 @@ struct DashboardState {
     issue_creator_panel: PanelState,
     issue_draft_scroll: ListScrollState,
     issue_details: IssueDetailsState,
+    issue_list_filter: IssueListFilter,
     jobs_error: Option<String>,
     records_error: Option<String>,
     username: Username,
@@ -354,6 +378,7 @@ impl Default for DashboardState {
             issue_creator_panel,
             issue_draft_scroll: ListScrollState::default(),
             issue_details: IssueDetailsState::default(),
+            issue_list_filter: IssueListFilter::default(),
             jobs_error: None,
             records_error: None,
             username: Username::from(""),
@@ -379,6 +404,7 @@ fn configure_status_panel_keybindings(panel: &mut PanelState) {
 fn configure_issue_tree_panel_keybindings(panel: &mut PanelState) {
     configure_status_panel_keybindings(panel);
     panel.register_keybinding(KeyCode::Char(' '), KeyModifiers::NONE, "Expand/Collapse");
+    panel.register_keybinding(KeyCode::Char('f'), KeyModifiers::ALT, "Filter");
 }
 
 struct IssueSubmission {
@@ -570,6 +596,16 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 };
             }
 
+            if is_issue_filter_toggle_key(key) {
+                toggle_issue_list_filter(state);
+                return EventOutcome {
+                    should_quit: false,
+                    submission: None,
+                    open_issue_pr: None,
+                    status_update: None,
+                };
+            }
+
             if is_panel_focus_key(key) {
                 handle_panel_focus_key(key, state);
                 return EventOutcome {
@@ -731,6 +767,10 @@ fn is_issue_submit_key(key: KeyEvent) -> bool {
     key.code == KeyCode::Enter && has_alt_modifier(key.modifiers)
 }
 
+fn is_issue_filter_toggle_key(key: KeyEvent) -> bool {
+    is_alt_char_key(key, 'f')
+}
+
 fn is_issue_tree_space_key(key: KeyEvent, state: &DashboardState) -> bool {
     if !key.modifiers.is_empty() || state.issue_creator_panel.focused() {
         return false;
@@ -856,6 +896,12 @@ fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
             next_panel_focus(state.selected_panel)
         };
     update_panel_focus(state);
+}
+
+fn toggle_issue_list_filter(state: &mut DashboardState) {
+    state.issue_list_filter = state.issue_list_filter.toggle();
+    update_views(state);
+    scroll_selected_issue_into_view(state);
 }
 
 fn next_panel_focus(current: PanelFocus) -> PanelFocus {
@@ -1278,6 +1324,7 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
         layout.header,
         state.username.as_str(),
         &state.server_url,
+        state.issue_list_filter,
     );
     render_issue_creator(frame, layout.issue_creator, state);
     render_issue_sections(frame, layout.issue_sections, state);
@@ -1294,9 +1341,13 @@ fn render_dashboard_header(
     area: ratatui::layout::Rect,
     username: &str,
     server_url: &str,
+    issue_list_filter: IssueListFilter,
 ) {
     let title = dashboard_title(username, server_url);
-    let hint = "Tab/Shift+Tab to change panels, Ctrl+C to exit.";
+    let hint = format!(
+        "Tab/Shift+Tab to change panels, Alt+F to filter issues ({}), Ctrl+C to exit.",
+        issue_list_filter.label()
+    );
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -2741,10 +2792,15 @@ fn update_views(state: &mut DashboardState) -> bool {
         .collapsed_issue_ids
         .retain(|issue_id| known_issue_ids.contains(issue_id));
 
-    seed_completed_issue_collapses(state);
+    let filtered_issues = filter_issue_records(
+        &state.issues,
+        state.username.as_str(),
+        state.issue_list_filter,
+    );
+    seed_completed_issue_collapses(state, &filtered_issues);
 
     let issue_lines = build_issue_lines_with_collapsed(
-        &state.issues,
+        &filtered_issues,
         &state.jobs,
         true,
         &state.collapsed_issue_ids,
@@ -2752,7 +2808,7 @@ fn update_views(state: &mut DashboardState) -> bool {
     let user_unowned_issue_lines =
         build_user_unowned_issue_lines(state.username.as_str(), &state.issues, &state.jobs);
     let completed_issue_lines = build_completed_issue_lines_with_collapsed(
-        &state.issues,
+        &filtered_issues,
         &state.jobs,
         &state.collapsed_issue_ids,
     );
@@ -2792,8 +2848,8 @@ fn reconcile_issue_details(state: &mut DashboardState) {
     }
 }
 
-fn seed_completed_issue_collapses(state: &mut DashboardState) {
-    let nodes = build_issue_nodes(&state.issues, &state.jobs);
+fn seed_completed_issue_collapses(state: &mut DashboardState, issues: &[IssueRecord]) {
+    let nodes = build_issue_nodes(issues, &state.jobs);
     if nodes.is_empty() {
         state.known_completed_issue_ids.clear();
         return;
@@ -2812,6 +2868,27 @@ fn seed_completed_issue_collapses(state: &mut DashboardState) {
         }
     }
     state.known_completed_issue_ids = completed_issue_ids;
+}
+
+fn filter_issue_records(
+    issues: &[IssueRecord],
+    username: &str,
+    issue_list_filter: IssueListFilter,
+) -> Vec<IssueRecord> {
+    match issue_list_filter {
+        IssueListFilter::All => issues.to_vec(),
+        IssueListFilter::CreatorOnly => {
+            let trimmed_username = username.trim();
+            if trimmed_username.is_empty() {
+                return Vec::new();
+            }
+            issues
+                .iter()
+                .filter(|issue| issue.creator.as_str().trim() == trimmed_username)
+                .cloned()
+                .collect()
+        }
+    }
 }
 
 fn clamp_issue_selections(state: &mut DashboardState) {
@@ -3698,13 +3775,20 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, width, height);
-                render_dashboard_header(frame, area, "metis-user", "https://example.com");
+                render_dashboard_header(
+                    frame,
+                    area,
+                    "metis-user",
+                    "https://example.com",
+                    IssueListFilter::All,
+                );
             })
             .expect("draw failed");
 
         let buffer = terminal.backend().buffer();
         let header = row_text(buffer, 0, width);
         assert!(header.contains("Tab/Shift+Tab to change panels"));
+        assert!(header.contains("Alt+F to filter issues"));
         assert!(header.contains("Ctrl+C to exit"));
         assert!(!header.contains("j/k or Up/Down"));
     }
@@ -3990,6 +4074,53 @@ mod tests {
             user_unowned_issue_lines,
             ..DashboardState::default()
         }
+    }
+
+    #[test]
+    fn alt_f_toggles_issue_list_filter() {
+        let issues = vec![
+            IssueRecord {
+                id: issue_id("i-user"),
+                issue_type: IssueType::Task,
+                description: "User issue".to_string(),
+                creator: Username::from("alice"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            },
+            IssueRecord {
+                id: issue_id("i-other"),
+                issue_type: IssueType::Task,
+                description: "Other issue".to_string(),
+                creator: Username::from("bob"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            },
+        ];
+        let mut state = DashboardState {
+            issues,
+            username: Username::from("alice"),
+            ..DashboardState::default()
+        };
+
+        update_views(&mut state);
+        assert_eq!(state.issue_list_filter, IssueListFilter::All);
+        assert_eq!(state.issue_lines.rows.len(), 2);
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert_eq!(state.issue_list_filter, IssueListFilter::CreatorOnly);
+        assert_eq!(state.issue_lines.rows.len(), 1);
+        assert_eq!(state.issue_lines.rows[0].creator, Username::from("alice"));
     }
 
     #[test]
