@@ -1296,8 +1296,7 @@ fn render_dashboard_header(
     server_url: &str,
 ) {
     let title = dashboard_title(username, server_url);
-    let hint =
-        "Tab/Shift+Tab to change panels, j/k or Up/Down to scroll (select in issue lists), Ctrl+C to exit.";
+    let hint = "Tab/Shift+Tab to change panels, Ctrl+C to exit.";
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Max(hint.len() as u16)])
@@ -3543,8 +3542,10 @@ mod tests {
     use metis_common::jobs::{BundleSpec, Task};
     use metis_common::task_status::Event;
     use metis_common::{RepoName, Repository, RepositoryRecord};
+    use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::prelude::StatefulWidget;
+    use ratatui::Terminal;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::str::FromStr;
@@ -3685,6 +3686,27 @@ mod tests {
             dashboard_title("cprussin", "https://example.com/"),
             "Metis Dashboard — cprussin @ https://example.com"
         );
+    }
+
+    #[test]
+    fn dashboard_header_hint_excludes_scroll() {
+        let width = 120u16;
+        let height = 1u16;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal init failed");
+
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, height);
+                render_dashboard_header(frame, area, "metis-user", "https://example.com");
+            })
+            .expect("draw failed");
+
+        let buffer = terminal.backend().buffer();
+        let header = row_text(buffer, 0, width);
+        assert!(header.contains("Tab/Shift+Tab to change panels"));
+        assert!(header.contains("Ctrl+C to exit"));
+        assert!(!header.contains("j/k or Up/Down"));
     }
 
     fn job_details_with_issue(
