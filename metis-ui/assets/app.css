@@ -47,7 +47,6 @@ body {
     font-size: 0.95rem;
 }
 
-.server-selector select,
 .server-selector input {
     font-family: inherit;
     font-size: 0.95rem;
@@ -58,7 +57,6 @@ body {
     color: var(--ink);
 }
 
-.server-selector select:focus,
 .server-selector input:focus {
     outline: 2px solid color-mix(in srgb, var(--focus) 70%, white 30%);
     outline-offset: 2px;
