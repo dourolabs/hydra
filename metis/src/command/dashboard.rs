@@ -275,6 +275,7 @@ struct IssueDetailsState {
     is_open: bool,
     issue_id: Option<IssueId>,
     scroll: ListScrollState,
+    confirm_drop: bool,
 }
 
 #[derive(Clone)]
@@ -386,10 +387,16 @@ struct IssueSubmission {
     repo_name: Option<RepoName>,
 }
 
+struct IssueStatusUpdate {
+    issue_id: IssueId,
+    status: IssueStatus,
+}
+
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
     open_issue_pr: Option<IssueId>,
+    status_update: Option<IssueStatusUpdate>,
 }
 
 pub async fn run(
@@ -484,12 +491,21 @@ async fn run_dashboard_loop(
                             break;
                         }
                         if let Some(issue_id) = outcome.open_issue_pr {
-                            if let Err(err) =
-                                open_issue_pr(client, &state, &issue_id).await
-                            {
+                            if let Err(err) = open_issue_pr(client, &state, &issue_id).await {
                                 state.records_error = Some(format!(
                                     "Failed to open pull request for {issue_id}: {err}"
                                 ));
+                            }
+                        }
+                        if let Some(update) = outcome.status_update {
+                            let issue_id = update.issue_id.clone();
+                            if let Err(err) = update_issue_status(client, &update).await {
+                                state.records_error = Some(format!(
+                                    "Failed to update issue {issue_id}: {err}"
+                                ));
+                            } else if let Err(err) = refresh_records(client, &mut state).await {
+                                state.records_error =
+                                    Some(format!("Failed to refresh records: {err}"));
                             }
                         }
                         if let Some(submission) = outcome.submission {
@@ -540,15 +556,17 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: true,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
 
             if state.issue_details.is_open {
-                handle_issue_details_key(key, state);
+                let status_update = handle_issue_details_key(key, state);
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update,
                 };
             }
 
@@ -558,6 +576,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
 
@@ -567,6 +586,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
 
@@ -575,6 +595,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: selected_issue_id(state, PanelFocus::UserOwned),
+                    status_update: None,
                 };
             }
 
@@ -583,6 +604,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: Some(issue_id),
+                    status_update: None,
                 };
             }
 
@@ -592,6 +614,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
 
@@ -606,6 +629,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission,
                 open_issue_pr: None,
+                status_update: None,
             }
         }
         Event::Paste(text) => {
@@ -614,6 +638,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
             if state.issue_draft.is_submitting {
@@ -621,6 +646,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
 
@@ -635,6 +661,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                status_update: None,
             }
         }
         Event::Resize(width, height) => {
@@ -644,6 +671,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                status_update: None,
             }
         }
         Event::Mouse(mouse) => {
@@ -652,6 +680,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    status_update: None,
                 };
             }
             handle_mouse_scroll(mouse, state);
@@ -660,12 +689,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                status_update: None,
             }
         }
         _ => EventOutcome {
             should_quit: false,
             submission: None,
             open_issue_pr: None,
+            status_update: None,
         },
     }
 }
@@ -679,6 +710,13 @@ fn has_alt_modifier(modifiers: KeyModifiers) -> bool {
 fn is_alt_char_key(key: KeyEvent, target: char) -> bool {
     matches!(key.code, KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&target))
         && has_alt_modifier(key.modifiers)
+}
+
+fn is_simple_char_key(key: KeyEvent, target: char) -> bool {
+    matches!(key.code, KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&target))
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::META)
 }
 
 fn is_panel_focus_key(key: KeyEvent) -> bool {
@@ -764,6 +802,52 @@ fn selection_key_delta(key: KeyEvent) -> Option<i32> {
     }
 }
 
+fn issue_details_issue(state: &DashboardState) -> Option<&IssueRecord> {
+    let issue_id = state.issue_details.issue_id.as_ref()?;
+    state.issues.iter().find(|issue| &issue.id == issue_id)
+}
+
+fn is_issue_drop_key(key: KeyEvent, state: &DashboardState) -> bool {
+    if !is_alt_char_key(key, 'd') {
+        return false;
+    }
+
+    let Some(issue) = issue_details_issue(state) else {
+        return false;
+    };
+
+    issue.status != IssueStatus::Dropped
+}
+
+fn handle_issue_drop_confirmation_key(
+    key: KeyEvent,
+    state: &mut DashboardState,
+) -> Option<IssueStatusUpdate> {
+    if key.modifiers.is_empty() && key.code == KeyCode::Esc {
+        state.issue_details.confirm_drop = false;
+        return None;
+    }
+
+    if is_simple_char_key(key, 'n') {
+        state.issue_details.confirm_drop = false;
+        return None;
+    }
+
+    if key.code == KeyCode::Enter || is_simple_char_key(key, 'y') {
+        state.issue_details.confirm_drop = false;
+        return state
+            .issue_details
+            .issue_id
+            .clone()
+            .map(|issue_id| IssueStatusUpdate {
+                issue_id,
+                status: IssueStatus::Dropped,
+            });
+    }
+
+    None
+}
+
 fn handle_panel_focus_key(key: KeyEvent, state: &mut DashboardState) {
     state.selected_panel =
         if key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -844,17 +928,27 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     None
 }
 
-fn handle_issue_details_key(key: KeyEvent, state: &mut DashboardState) -> bool {
-    if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
-        close_issue_details(state);
-        return true;
+fn handle_issue_details_key(
+    key: KeyEvent,
+    state: &mut DashboardState,
+) -> Option<IssueStatusUpdate> {
+    if state.issue_details.confirm_drop {
+        return handle_issue_drop_confirmation_key(key, state);
     }
 
-    let Some(delta) = selection_key_delta(key) else {
-        return false;
-    };
+    if is_issue_drop_key(key, state) {
+        state.issue_details.confirm_drop = true;
+        return None;
+    }
 
-    scroll_issue_details(state, delta)
+    if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+        close_issue_details(state);
+        return None;
+    }
+
+    let delta = selection_key_delta(key)?;
+    scroll_issue_details(state, delta);
+    None
 }
 
 fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
@@ -1146,6 +1240,37 @@ async fn submit_issue(
     Ok(response.issue_id)
 }
 
+async fn update_issue_status(
+    client: &dyn MetisClientInterface,
+    update: &IssueStatusUpdate,
+) -> Result<IssueId> {
+    let current = client
+        .get_issue(&update.issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{}'", update.issue_id))?;
+    let issue = current.issue;
+    let updated_issue = Issue::new(
+        issue.issue_type,
+        issue.description,
+        issue.creator,
+        issue.progress,
+        update.status,
+        issue.assignee,
+        Some(issue.job_settings),
+        issue.todo_list,
+        issue.dependencies,
+        issue.patches,
+    );
+    let response = client
+        .update_issue(
+            &update.issue_id,
+            &UpsertIssueRequest::new(updated_issue, None),
+        )
+        .await
+        .with_context(|| format!("failed to update issue '{}'", update.issue_id))?;
+    Ok(response.issue_id)
+}
+
 fn render(frame: &mut Frame, state: &mut DashboardState) {
     let layout = dashboard_layout(frame.area());
     render_dashboard_header(
@@ -1158,6 +1283,9 @@ fn render(frame: &mut Frame, state: &mut DashboardState) {
     render_issue_sections(frame, layout.issue_sections, state);
     if state.issue_details.is_open {
         render_issue_details(frame, state);
+        if state.issue_details.confirm_drop {
+            render_issue_drop_confirmation(frame, state);
+        }
     }
 }
 
@@ -1376,6 +1504,65 @@ fn render_issue_details(frame: &mut Frame, state: &mut DashboardState) {
 
     let footer = Paragraph::new(view.keybinding_line).wrap(Wrap { trim: true });
     frame.render_widget(footer, view.layout.footer);
+}
+
+fn render_issue_drop_confirmation(frame: &mut Frame, state: &DashboardState) {
+    if !state.issue_details.confirm_drop {
+        return;
+    }
+
+    let Some(issue_id) = state.issue_details.issue_id.as_ref() else {
+        return;
+    };
+
+    let area = frame.area();
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let width = (area.width.saturating_mul(55) / 100)
+        .max(30)
+        .min(area.width);
+    let height = (area.height.saturating_mul(25) / 100)
+        .max(7)
+        .min(area.height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup = Rect::new(x, y, width, height);
+    let inner = popup.inner(Margin {
+        vertical: 1,
+        horizontal: 2,
+    });
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White))
+        .title("Confirm drop");
+    frame.render_widget(block, popup);
+
+    let content = vec![
+        Line::from(Span::styled(
+            format!("Drop issue {issue_id}?"),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from("This will set the status to dropped."),
+    ];
+    frame.render_widget(
+        Paragraph::new(content).wrap(Wrap { trim: true }),
+        sections[0],
+    );
+
+    let keybindings =
+        keybinding_line_from_labels(&[("y", "Drop"), ("n", "Cancel"), ("Esc", "Cancel")], true);
+    frame.render_widget(
+        Paragraph::new(keybindings).wrap(Wrap { trim: true }),
+        sections[1],
+    );
 }
 
 fn issue_list_title(title: &str, issue_lines: &IssueLines) -> String {
@@ -2338,7 +2525,11 @@ fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
 }
 
 fn issue_detail_keybinding_line() -> Line<'static> {
-    let bindings = [("j/k or Up/Down", "Scroll"), ("Esc/Enter", "Close")];
+    let bindings = [
+        ("j/k or Up/Down", "Scroll"),
+        ("Alt+d", "Drop"),
+        ("Esc/Enter", "Close"),
+    ];
     keybinding_line_from_labels(&bindings, true)
 }
 
@@ -3283,12 +3474,14 @@ fn open_issue_details(state: &mut DashboardState, issue_id: IssueId) {
     state.issue_details.is_open = true;
     state.issue_details.issue_id = Some(issue_id);
     state.issue_details.scroll = ListScrollState::default();
+    state.issue_details.confirm_drop = false;
 }
 
 fn close_issue_details(state: &mut DashboardState) {
     state.issue_details.is_open = false;
     state.issue_details.issue_id = None;
     state.issue_details.scroll = ListScrollState::default();
+    state.issue_details.confirm_drop = false;
 }
 
 fn scroll_issue_details(state: &mut DashboardState, delta: i32) -> bool {
@@ -3924,6 +4117,76 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(state.issue_details.issue_id.is_none());
         assert!(!state.issue_details.is_open);
+    }
+
+    #[test]
+    fn alt_d_opens_drop_confirmation() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        open_issue_details(&mut state, issue_id("i-0"));
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(outcome.status_update.is_none());
+        assert!(state.issue_details.confirm_drop);
+        assert!(state.issue_details.is_open);
+    }
+
+    #[test]
+    fn escape_cancels_drop_confirmation_without_closing_details() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        open_issue_details(&mut state, issue_id("i-0"));
+        state.issue_details.confirm_drop = true;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        assert!(outcome.status_update.is_none());
+        assert!(!state.issue_details.confirm_drop);
+        assert!(state.issue_details.is_open);
+    }
+
+    #[test]
+    fn confirm_drop_emits_status_update() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        open_issue_details(&mut state, issue_id("i-0"));
+        state.issue_details.confirm_drop = true;
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            &mut state,
+        );
+
+        let update = outcome.status_update.expect("missing status update");
+        assert_eq!(update.issue_id, issue_id("i-0"));
+        assert_eq!(update.status, IssueStatus::Dropped);
+        assert!(!state.issue_details.confirm_drop);
+        assert!(state.issue_details.is_open);
     }
 
     #[test]
