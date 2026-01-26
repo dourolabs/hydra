@@ -652,25 +652,22 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         .await?;
 
     let task_id = TaskId::new();
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_task_with_id(
-                task_id.clone(),
-                Task {
-                    prompt: "do work".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: Some(created.issue_id.clone()),
-                    image: Some(default_image()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store.mark_task_running(&task_id, Utc::now()).await?;
-    }
+    state
+        .add_task_with_id(
+            task_id.clone(),
+            Task {
+                prompt: "do work".to_string(),
+                context: BundleSpec::None,
+                spawned_from: Some(created.issue_id.clone()),
+                image: Some(default_image()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&task_id, Utc::now()).await?;
     engine.insert_job(&task_id, JobStatus::Running).await;
 
     client

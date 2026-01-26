@@ -388,8 +388,8 @@ impl AppState {
         store.add_task(task, created_at).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
         let mut store = self.store.write().await;
         store.add_patch(patch).await
     }
@@ -411,13 +411,13 @@ impl AppState {
         Ok(created.as_config())
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
         self.store = Arc::new(RwLock::new(store));
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
         self.agents = Arc::new(RwLock::new(agents));
     }
     pub async fn update_agent(
@@ -1298,18 +1298,32 @@ impl AppState {
         store.list_issues().await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
         let mut store = self.store.write().await;
         store.add_issue(issue).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn update_issue(
-        &self,
-        issue_id: &IssueId,
-        issue: Issue,
-    ) -> Result<(), StoreError> {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_user(&self, user: User) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_user(user).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_actor(actor).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_actors().await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn update_issue(&self, issue_id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         let mut store = self.store.write().await;
         store.update_issue(issue_id, issue).await
     }
@@ -1337,8 +1351,19 @@ impl AppState {
         store.get_tasks_for_issue(issue_id).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn mark_task_running(
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_task_with_id(
+        &self,
+        task_id: TaskId,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_task_with_id(task_id, task, created_at).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn mark_task_running(
         &self,
         task_id: &TaskId,
         started_at: DateTime<Utc>,
@@ -1347,8 +1372,8 @@ impl AppState {
         store.mark_task_running(task_id, started_at).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn mark_task_complete(
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn mark_task_complete(
         &self,
         task_id: &TaskId,
         result: Result<(), TaskError>,

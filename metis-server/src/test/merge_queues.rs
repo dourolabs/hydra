@@ -20,23 +20,20 @@ async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppStat
     commit_file(&repository, "README.md", "base\n", "base", &signature)?;
 
     let state = test_state();
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_repository(
-                repo.clone(),
-                RepositoryConfig::new(
-                    remote_dir
-                        .path()
-                        .to_str()
-                        .expect("tempdir path should be utf-8")
-                        .to_string(),
-                    None,
-                    None,
-                ),
-            )
-            .await?;
-    }
+    state
+        .create_repository(
+            repo.clone(),
+            RepositoryConfig::new(
+                remote_dir
+                    .path()
+                    .to_str()
+                    .expect("tempdir path should be utf-8")
+                    .to_string(),
+                None,
+                None,
+            ),
+        )
+        .await?;
 
     Ok((state, remote_dir))
 }
@@ -48,23 +45,20 @@ async fn state_with_repo_and_patch(
     let (remote_dir, diff) = create_repository_with_patch()?;
 
     let state = test_state();
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_repository(
-                repo.clone(),
-                RepositoryConfig::new(
-                    remote_dir
-                        .path()
-                        .to_str()
-                        .expect("tempdir path is valid utf-8")
-                        .to_string(),
-                    Some("main".to_string()),
-                    None,
-                ),
-            )
-            .await?;
-    }
+    state
+        .create_repository(
+            repo.clone(),
+            RepositoryConfig::new(
+                remote_dir
+                    .path()
+                    .to_str()
+                    .expect("tempdir path is valid utf-8")
+                    .to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
 
     let patch = Patch::new(
         "Test patch".to_string(),
@@ -78,10 +72,7 @@ async fn state_with_repo_and_patch(
         None,
     );
 
-    let patch_id = {
-        let mut store = state.store.write().await;
-        store.add_patch(patch).await?
-    };
+    let patch_id = state.add_patch(patch).await?;
 
     Ok((state, patch_id, remote_dir))
 }

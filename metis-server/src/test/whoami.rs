@@ -68,13 +68,10 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
     });
 
     let state = test_state_with_github_client(build_github_client(github_server.base_url()));
-    let token = {
-        let mut store = state.store.write().await;
-        let (_user, _actor, token) = store
-            .create_actor_for_github_token("gh-token".to_string(), "gh-refresh".to_string())
-            .await?;
-        token
-    };
+    let token = state
+        .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+        .await?
+        .login_token;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = client_with_token(&token);
