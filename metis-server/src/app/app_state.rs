@@ -2,16 +2,17 @@ use crate::{
     background::AgentQueue,
     config::{AgentQueueConfig, AppConfig},
     domain::{
+        actors::Actor,
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
-            UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
+            TodoItem, UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
         patches::{Patch, PatchStatus, UpsertPatchRequest},
-        users::UserSummary,
+        users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{Status, Store, StoreError, Task, TaskError},
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use chrono::{Duration, Utc};
 use metis_common::{
@@ -237,6 +238,72 @@ impl AppState {
         let user_summary: api::users::UserSummary = UserSummary::from(user).into();
 
         Ok(api::login::LoginResponse::new(login_token, user_summary))
+    }
+
+    pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
+        let store = self.store.read().await;
+        store.validate_auth_token(token).await
+    }
+
+    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
+        let store = self.store.read().await;
+        store.get_issue(issue_id).await
+    }
+
+    pub async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_issues().await
+    }
+
+    pub async fn search_issue_graph(
+        &self,
+        filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError> {
+        let store = self.store.read().await;
+        store.search_issue_graph(filters).await
+    }
+
+    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Patch, StoreError> {
+        let store = self.store.read().await;
+        store.get_patch(patch_id).await
+    }
+
+    pub async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_patches().await
+    }
+
+    pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
+        let store = self.store.read().await;
+        store.get_task(task_id).await
+    }
+
+    pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.list_tasks().await
+    }
+
+    pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+        let store = self.store.read().await;
+        store.get_status_log(task_id).await
+    }
+
+    pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        let store = self.store.read().await;
+        store.get_user(username).await
+    }
+
+    pub async fn set_user_github_token(
+        &self,
+        username: &Username,
+        github_token: String,
+        github_user_id: u64,
+        github_refresh_token: String,
+    ) -> Result<User, StoreError> {
+        let mut store = self.store.write().await;
+        store
+            .set_user_github_token(username, github_token, github_user_id, github_refresh_token)
+            .await
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {

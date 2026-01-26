@@ -29,11 +29,10 @@ pub async fn get_github_token(
 ) -> Result<Json<GithubTokenResponse>, ApiError> {
     info!(actor = %actor.name(), "get_github_token invoked");
     let (username, user) = {
-        let store = state.store.read().await;
         let username = match &actor.user_or_worker {
             UserOrWorker::Username(username) => username.clone(),
             UserOrWorker::Task(task_id) => {
-                let task = store.get_task(task_id).await.map_err(|err| match err {
+                let task = state.get_task(task_id).await.map_err(|err| match err {
                     StoreError::TaskNotFound(_) => {
                         error!(task_id = %task_id, "task not found");
                         ApiError::not_found(format!("task '{task_id}' not found"))
@@ -49,7 +48,7 @@ pub async fn get_github_token(
                     ApiError::not_found(format!("task '{task_id}' missing spawned_from issue"))
                 })?;
 
-                let issue = store.get_issue(&issue_id).await.map_err(|err| match err {
+                let issue = state.get_issue(&issue_id).await.map_err(|err| match err {
                     StoreError::IssueNotFound(_) => {
                         error!(issue_id = %issue_id, "issue not found");
                         ApiError::not_found(format!("issue '{issue_id}' not found"))
@@ -64,7 +63,7 @@ pub async fn get_github_token(
             }
         };
 
-        let user = store.get_user(&username).await.map_err(|err| match err {
+        let user = state.get_user(&username).await.map_err(|err| match err {
             StoreError::UserNotFound(missing) => {
                 error!(username = %missing, "user not found");
                 ApiError::not_found(format!("user '{missing}' not found"))
@@ -82,8 +81,7 @@ pub async fn get_github_token(
     if !github_token_is_valid(&state.config.github_app, &github_token).await? {
         let refreshed =
             refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
-        let mut store = state.store.write().await;
-        let updated = store
+        let updated = state
             .set_user_github_token(
                 &username,
                 refreshed.access_token.clone(),
