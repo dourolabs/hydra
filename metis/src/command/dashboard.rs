@@ -4077,6 +4077,47 @@ mod tests {
     }
 
     #[test]
+    fn default_issue_list_filter_is_all() {
+        let state = DashboardState::default();
+        assert_eq!(state.issue_list_filter, IssueListFilter::All);
+    }
+
+    #[test]
+    fn filter_issue_records_respects_creator_only_and_all() {
+        let issues = vec![
+            IssueRecord {
+                id: issue_id("i-user"),
+                issue_type: IssueType::Task,
+                description: "User issue".to_string(),
+                creator: Username::from("alice"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            },
+            IssueRecord {
+                id: issue_id("i-other"),
+                issue_type: IssueType::Task,
+                description: "Other issue".to_string(),
+                creator: Username::from("bob"),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: None,
+                dependencies: Vec::new(),
+                patches: Vec::new(),
+            },
+        ];
+
+        let all = filter_issue_records(&issues, "alice", IssueListFilter::All);
+        assert_eq!(all.len(), 2);
+
+        let creator_only = filter_issue_records(&issues, "  alice  ", IssueListFilter::CreatorOnly);
+        assert_eq!(creator_only.len(), 1);
+        assert_eq!(creator_only[0].creator, Username::from("alice"));
+    }
+
+    #[test]
     fn alt_f_toggles_issue_list_filter() {
         let issues = vec![
             IssueRecord {
@@ -4121,6 +4162,15 @@ mod tests {
         assert_eq!(state.issue_list_filter, IssueListFilter::CreatorOnly);
         assert_eq!(state.issue_lines.rows.len(), 1);
         assert_eq!(state.issue_lines.rows[0].creator, Username::from("alice"));
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert!(!outcome.should_quit);
+        assert_eq!(state.issue_list_filter, IssueListFilter::All);
+        assert_eq!(state.issue_lines.rows.len(), 2);
     }
 
     #[test]
