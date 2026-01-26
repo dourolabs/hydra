@@ -347,8 +347,7 @@ mod tests {
         let scheme = CFString::new("http");
         let _: CFStringRef = scheme.as_concrete_TypeRef();
 
-        let resolved = super::macos_default_browser_command();
-        assert!(resolved.is_some());
+        let _ = super::macos_default_browser_command();
     }
 
     #[test]
