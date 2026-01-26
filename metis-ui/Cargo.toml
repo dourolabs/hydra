@@ -10,3 +10,6 @@ path = "src/main.rs"
 [dependencies]
 dioxus = { version = "0.7.3", features = ["server"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "1443c71520c03f8ac8086b93ee68eda8c221c2ad", package = "dioxus-primitives" }
+
+[dev-dependencies]
+dioxus-html = { version = "0.7.3", features = ["serialize"] }
