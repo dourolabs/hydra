@@ -420,7 +420,6 @@ impl AppState {
     pub(crate) fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
         self.agents = Arc::new(RwLock::new(agents));
     }
-
     pub async fn update_agent(
         &self,
         agent_name: &str,
