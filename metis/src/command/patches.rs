@@ -7,7 +7,7 @@ use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     github::build_octocrab_client,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueType,
+        Issue, IssueDependency, IssueDependencyType, IssueId, IssueRecord, IssueStatus, IssueType,
         UpsertIssueRequest,
     },
     jobs::BundleSpec,
@@ -28,7 +28,9 @@ use crate::git::{
 };
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_patch_records, CommandContext, ResolvedOutputFormat},
+    command::output::{
+        render_issue_records, render_patch_records, CommandContext, ResolvedOutputFormat,
+    },
 };
 use git2::Repository;
 
@@ -43,10 +45,6 @@ pub enum PatchesCommand {
         /// Query string to filter patches.
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
-
-        /// Pretty-print the matching patch details.
-        #[arg(long = "pretty")]
-        pretty: bool,
     },
 
     /// Create a patch from the current git repository.
@@ -146,20 +144,18 @@ pub enum PatchesCommand {
         /// Patch id to enqueue onto the merge queue. Omit to only fetch the queue.
         #[arg(long = "patch-id", value_name = "PATCH_ID")]
         patch_id: Option<PatchId>,
-
-        /// Pretty-print the merge queue instead of emitting JSON.
-        #[arg(long = "pretty")]
-        pretty: bool,
     },
 }
 
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: PatchesCommand,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
     match command {
-        PatchesCommand::List { id, query, pretty } => list_patches(client, id, query, pretty).await,
+        PatchesCommand::List { id, query } => {
+            list_patches(client, id, query, context.output_format).await
+        }
         PatchesCommand::Create {
             title,
             description,
@@ -170,7 +166,7 @@ pub async fn run(
             commit_range,
             allow_uncommitted,
         } => {
-            create_patch(
+            let created = create_patch(
                 client,
                 title,
                 description,
@@ -182,7 +178,13 @@ pub async fn run(
                 allow_uncommitted,
                 None,
             )
-            .await
+            .await?;
+            write_patch_output(
+                context.output_format,
+                &created.patch,
+                created.merge_request_issue,
+            )?;
+            Ok(())
         }
         PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
         PatchesCommand::Review {
@@ -196,13 +198,16 @@ pub async fn run(
             title,
             description,
             status,
-        } => update_patch(client, id, title, description, status).await,
+        } => {
+            let patch = update_patch(client, id, title, description, status).await?;
+            write_patch_output(context.output_format, &patch, None)?;
+            Ok(())
+        }
         PatchesCommand::Merge {
             repo,
             branch,
             patch_id,
-            pretty,
-        } => merge_queue(client, repo, branch, patch_id, pretty).await,
+        } => merge_queue(client, repo, branch, patch_id, context.output_format).await,
     }
 }
 
@@ -210,10 +215,10 @@ async fn list_patches(
     client: &dyn MetisClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
-    pretty: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let mut buffer = Vec::new();
-    list_patches_with_writer(client, id, query, pretty, &mut buffer).await?;
+    list_patches_with_writer(client, id, query, output_format, &mut buffer).await?;
     std::io::stdout().write_all(&buffer)?;
     std::io::stdout().flush()?;
     Ok(())
@@ -223,7 +228,7 @@ async fn list_patches_with_writer(
     client: &dyn MetisClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
-    pretty: bool,
+    output_format: ResolvedOutputFormat,
     writer: &mut impl Write,
 ) -> Result<()> {
     if let Some(id) = id {
@@ -235,23 +240,13 @@ async fn list_patches_with_writer(
             .get_patch(&id)
             .await
             .with_context(|| format!("failed to fetch patch '{id}'"))?;
-        let format = if pretty {
-            ResolvedOutputFormat::Pretty
-        } else {
-            ResolvedOutputFormat::Jsonl
-        };
-        render_patch_records(format, &[patch], writer)?;
+        render_patch_records(output_format, &[patch], writer)?;
         return Ok(());
     }
 
     let patches = fetch_patches(client, query).await?;
 
-    let format = if pretty {
-        ResolvedOutputFormat::Pretty
-    } else {
-        ResolvedOutputFormat::Jsonl
-    };
-    render_patch_records(format, &patches, writer)?;
+    render_patch_records(output_format, &patches, writer)?;
 
     Ok(())
 }
@@ -267,6 +262,12 @@ async fn fetch_patches(
     Ok(response.patches)
 }
 
+#[derive(Debug)]
+struct CreatedPatch {
+    patch: PatchRecord,
+    merge_request_issue: Option<IssueRecord>,
+}
+
 async fn create_patch(
     client: &dyn MetisClientInterface,
     title: String,
@@ -278,7 +279,7 @@ async fn create_patch(
     commit_range: Option<String>,
     allow_uncommitted: bool,
     repo_root: Option<&Path>,
-) -> Result<()> {
+) -> Result<CreatedPatch> {
     let repo_root = match repo_root {
         Some(path) => path.to_path_buf(),
         None => git_repository_root()?,
@@ -322,36 +323,45 @@ async fn create_patch(
     )
     .await?;
 
-    let mut merge_request_issue_id = None;
-    if let Some(assignee) = assignee {
-        let merge_issue_id = create_merge_request_issue(
-            client,
-            response.patch_id.clone(),
-            assignee,
-            issue_id,
-            title,
-            description,
+    let patch = client
+        .get_patch(&response.patch_id)
+        .await
+        .with_context(|| format!("failed to fetch patch '{}'", response.patch_id))?;
+
+    let merge_request_issue = if let Some(assignee) = assignee {
+        Some(
+            create_merge_request_issue(
+                client,
+                response.patch_id.clone(),
+                assignee,
+                issue_id,
+                title,
+                description,
+            )
+            .await?,
         )
-        .await?;
-        merge_request_issue_id = Some(merge_issue_id);
+    } else {
+        None
+    };
+
+    Ok(CreatedPatch {
+        patch,
+        merge_request_issue,
+    })
+}
+
+fn write_patch_output(
+    output_format: ResolvedOutputFormat,
+    patch: &PatchRecord,
+    merge_request_issue: Option<IssueRecord>,
+) -> Result<()> {
+    let mut buffer = Vec::new();
+    render_patch_records(output_format, std::slice::from_ref(patch), &mut buffer)?;
+    if let Some(issue) = merge_request_issue {
+        render_issue_records(output_format, std::slice::from_ref(&issue), &mut buffer)?;
     }
-
-    let mut output = serde_json::json!({
-        "patch_id": response.patch_id,
-        "type": "patch"
-    });
-
-    if let Some(issue_id) = merge_request_issue_id {
-        if let Some(object) = output.as_object_mut() {
-            object.insert(
-                "merge_request_issue_id".to_string(),
-                serde_json::json!(issue_id),
-            );
-        }
-    }
-
-    println!("{}", serde_json::to_string(&output)?);
-
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
     Ok(())
 }
 
@@ -373,7 +383,7 @@ async fn update_patch(
     title: Option<String>,
     description: Option<String>,
     status: Option<PatchStatus>,
-) -> Result<()> {
+) -> Result<PatchRecord> {
     let description = match description {
         Some(value) => {
             let trimmed = value.trim();
@@ -418,13 +428,11 @@ async fn update_patch(
     }
 
     let response = client
-        .update_patch(&patch_id, &UpsertPatchRequest::new(updated_patch))
+        .update_patch(&patch_id, &UpsertPatchRequest::new(updated_patch.clone()))
         .await
         .with_context(|| format!("failed to update patch '{patch_id}'"))?;
 
-    println!("{}", response.patch_id);
-
-    Ok(())
+    Ok(PatchRecord::new(response.patch_id, updated_patch))
 }
 
 async fn merge_queue(
@@ -432,10 +440,10 @@ async fn merge_queue(
     repo: RepoName,
     branch: String,
     patch_id: Option<PatchId>,
-    pretty: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let mut buffer = Vec::new();
-    merge_queue_with_writer(client, repo, branch, patch_id, pretty, &mut buffer).await?;
+    merge_queue_with_writer(client, repo, branch, patch_id, output_format, &mut buffer).await?;
     std::io::stdout().write_all(&buffer)?;
     std::io::stdout().flush()?;
     Ok(())
@@ -446,7 +454,7 @@ async fn merge_queue_with_writer(
     repo: RepoName,
     branch: String,
     patch_id: Option<PatchId>,
-    pretty: bool,
+    output_format: ResolvedOutputFormat,
     writer: &mut impl Write,
 ) -> Result<()> {
     let queue = match patch_id {
@@ -464,11 +472,12 @@ async fn merge_queue_with_writer(
             .with_context(|| format!("failed to fetch merge queue for '{repo}:{branch}'"))?,
     };
 
-    if pretty {
-        print_merge_queue_pretty(&queue, &repo, &branch, writer)?;
-    } else {
-        serde_json::to_writer(&mut *writer, &queue)?;
-        writeln!(writer)?;
+    match output_format {
+        ResolvedOutputFormat::Pretty => print_merge_queue_pretty(&queue, &repo, &branch, writer)?,
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut *writer, &queue)?;
+            writeln!(writer)?;
+        }
     }
 
     Ok(())
@@ -498,7 +507,7 @@ async fn create_merge_request_issue(
     parent_issue_id: IssueId,
     patch_title: String,
     patch_description: String,
-) -> Result<IssueId> {
+) -> Result<IssueRecord> {
     let assignee = assignee.trim().to_string();
     if assignee.is_empty() {
         bail!("Assignee must not be empty.");
@@ -529,27 +538,25 @@ async fn create_merge_request_issue(
         )
     })?;
     let creator = parent_issue.issue.creator;
+    let issue = Issue::new(
+        IssueType::MergeRequest,
+        description,
+        creator,
+        String::new(),
+        IssueStatus::Open,
+        Some(assignee),
+        None,
+        Vec::new(),
+        dependencies,
+        vec![patch_id],
+    );
 
     let response = client
-        .create_issue(&UpsertIssueRequest::new(
-            Issue::new(
-                IssueType::MergeRequest,
-                description,
-                creator,
-                String::new(),
-                IssueStatus::Open,
-                Some(assignee),
-                None,
-                Vec::new(),
-                dependencies,
-                vec![patch_id],
-            ),
-            None,
-        ))
+        .create_issue(&UpsertIssueRequest::new(issue.clone(), None))
         .await
         .context("failed to create merge-request issue")?;
 
-    Ok(response.issue_id)
+    Ok(IssueRecord::new(response.issue_id, issue))
 }
 
 pub async fn resolve_service_repo_name(
@@ -860,6 +867,7 @@ async fn open_pull_request(
 mod tests {
     use super::*;
     use crate::client::MetisClient;
+    use crate::command::output::ResolvedOutputFormat;
     use crate::git::{
         commit_changes as git_commit_changes, configure_repo as git_configure_repo,
         resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
@@ -999,7 +1007,13 @@ mod tests {
                 .json_body_obj(&ListPatchesResponse::new(Vec::new()));
         });
 
-        list_patches(&client, None, Some("login".to_string()), false).await?;
+        list_patches(
+            &client,
+            None,
+            Some("login".to_string()),
+            ResolvedOutputFormat::Jsonl,
+        )
+        .await?;
 
         mock.assert();
         Ok(())
@@ -1016,7 +1030,14 @@ mod tests {
         });
 
         let mut output = Vec::new();
-        list_patches_with_writer(&client, None, None, false, &mut output).await?;
+        list_patches_with_writer(
+            &client,
+            None,
+            None,
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )
+        .await?;
 
         assert!(output.is_empty());
         mock.assert();
@@ -1051,7 +1072,7 @@ mod tests {
         let patch_description = "custom patch description".to_string();
         let job_id_clone = job_id.clone();
         let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
-        let expected_request = UpsertPatchRequest::new(Patch::new(
+        let patch = Patch::new(
             patch_title.clone(),
             patch_description.clone(),
             expected_diff.clone(),
@@ -1061,12 +1082,15 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
-        ));
+        );
+        let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"));
+        let patch_record = PatchRecord::new(patch_id("p-1"), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
+        let get_patch_mock = mock_get_patch(&server, patch_record);
         create_patch(
             &client,
             patch_title.clone(),
@@ -1083,6 +1107,7 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        get_patch_mock.assert();
 
         Ok(())
     }
@@ -1116,7 +1141,7 @@ mod tests {
         let issue_id = issue_id("i-job-1234");
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
-        let expected_request = UpsertPatchRequest::new(Patch::new(
+        let patch = Patch::new(
             title.clone(),
             description.clone(),
             expected_diff,
@@ -1126,12 +1151,15 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
-        ));
+        );
+        let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"));
+        let patch_record = PatchRecord::new(patch_id("p-2"), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
+        let get_patch_mock = mock_get_patch(&server, patch_record);
 
         create_patch(
             &client,
@@ -1149,6 +1177,7 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        get_patch_mock.assert();
 
         Ok(())
     }
@@ -1279,7 +1308,7 @@ mod tests {
         );
         let created_patch_id = patch_id("p-merge");
         let expected_diff = git_diff_commit_range(&repo_path, &format!("{base_branch}..HEAD"))?;
-        let expected_patch_request = UpsertPatchRequest::new(Patch::new(
+        let patch = Patch::new(
             "custom patch title".to_string(),
             "custom patch description".to_string(),
             expected_diff,
@@ -1289,7 +1318,8 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
-        ));
+        );
+        let expected_patch_request = UpsertPatchRequest::new(patch.clone());
         let parent_issue_record = IssueRecord::new(
             parent_issue.clone(),
             Issue::new(
@@ -1327,10 +1357,12 @@ mod tests {
             None,
         );
         let patch_response = UpsertPatchResponse::new(created_patch_id.clone());
+        let patch_record = PatchRecord::new(created_patch_id.clone(), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_patch_request, patch_response.clone());
+        let get_patch_mock = mock_get_patch(&server, patch_record);
         let parent_issue_mock = mock_get_issue(&server, parent_issue_record);
         let issue_mock = server.mock(|when, then| {
             when.method(POST)
@@ -1356,6 +1388,7 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        get_patch_mock.assert();
         parent_issue_mock.assert();
         issue_mock.assert();
 
@@ -1425,7 +1458,7 @@ mod tests {
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let issue_id = issue_id("i-service");
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
-        let expected_request = UpsertPatchRequest::new(Patch::new(
+        let patch = Patch::new(
             "backup patch".to_string(),
             "backup description".to_string(),
             expected_diff,
@@ -1435,12 +1468,15 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/api")?,
             None,
-        ));
+        );
+        let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"));
+        let patch_record = PatchRecord::new(patch_id("p-service"), patch);
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
+        let get_patch_mock = mock_get_patch(&server, patch_record);
 
         create_patch(
             &client,
@@ -1458,6 +1494,7 @@ mod tests {
 
         job_mock.assert();
         patch_mock.assert();
+        get_patch_mock.assert();
         Ok(())
     }
 
@@ -1669,7 +1706,7 @@ mod tests {
             repo.clone(),
             branch.clone(),
             None,
-            false,
+            ResolvedOutputFormat::Jsonl,
             &mut output,
         )
         .await?;
@@ -1704,7 +1741,7 @@ mod tests {
             repo.clone(),
             branch.clone(),
             Some(patch.clone()),
-            true,
+            ResolvedOutputFormat::Pretty,
             &mut output,
         )
         .await?;

@@ -33,10 +33,6 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_ID", conflicts_with = "query")]
         id: Option<IssueId>,
 
-        /// Pretty-print issues instead of emitting JSONL.
-        #[arg(long)]
-        pretty: bool,
-
         /// Filter by issue type.
         #[arg(long, value_name = "ISSUE_TYPE")]
         r#type: Option<IssueType>,
@@ -254,22 +250,17 @@ pub enum IssueCommands {
         /// Issue ID to describe.
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
-
-        /// Pretty-print the description instead of emitting JSON.
-        #[arg(long)]
-        pretty: bool,
     },
 }
 
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: IssueCommands,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
-            pretty,
             r#type,
             status,
             assignee,
@@ -278,15 +269,7 @@ pub async fn run(
         } => {
             let issues =
                 fetch_issues(client, id, r#type, status, assignee, query, graph_filters).await?;
-            let mut buffer = Vec::new();
-            let format = if pretty {
-                ResolvedOutputFormat::Pretty
-            } else {
-                ResolvedOutputFormat::Jsonl
-            };
-            render_issue_records(format, &issues, &mut buffer)?;
-            io::stdout().write_all(&buffer)?;
-            io::stdout().flush()?;
+            write_issue_records(context.output_format, &issues)?;
             Ok(())
         }
         IssueCommands::Create {
@@ -323,6 +306,7 @@ pub async fn run(
                 current_issue_id,
             )
             .await
+            .and_then(|issue| write_issue_records(context.output_format, &[issue]))
         }
         IssueCommands::Update {
             id,
@@ -343,38 +327,48 @@ pub async fn run(
             branch,
             max_retries,
             clear_job_settings,
-        } => {
-            update_issue(
-                client,
-                id,
-                r#type,
-                status,
-                assignee,
-                clear_assignee,
-                description,
-                dependencies,
-                clear_dependencies,
-                patches,
-                clear_patches,
-                progress,
-                clear_progress,
-                repo_name,
-                remote_url,
-                image,
-                branch,
-                max_retries,
-                clear_job_settings,
-            )
-            .await
-        }
+        } => update_issue(
+            client,
+            id,
+            r#type,
+            status,
+            assignee,
+            clear_assignee,
+            description,
+            dependencies,
+            clear_dependencies,
+            patches,
+            clear_patches,
+            progress,
+            clear_progress,
+            repo_name,
+            remote_url,
+            image,
+            branch,
+            max_retries,
+            clear_job_settings,
+        )
+        .await
+        .and_then(|issue| write_issue_records(context.output_format, &[issue])),
         IssueCommands::Todo {
             id,
             add,
             done,
             undone,
             replace,
-        } => manage_todo_list(client, id, add, done, undone, replace).await,
-        IssueCommands::Describe { id, pretty } => describe_issue(client, id, pretty).await,
+        } => {
+            manage_todo_list(
+                client,
+                id,
+                add,
+                done,
+                undone,
+                replace,
+                context.output_format,
+            )
+            .await
+        }
+        IssueCommands::Describe { id } => describe_issue(client, id, context.output_format).await,
     }
 }
 
@@ -391,19 +385,28 @@ struct IssueDescription {
     children: Vec<IssueWithPatches>,
 }
 
+#[derive(Debug, Serialize)]
+struct TodoListOutput<'a> {
+    issue_id: &'a IssueId,
+    todo_list: &'a [TodoItem],
+}
+
 async fn describe_issue(
     client: &dyn MetisClientInterface,
     id: IssueId,
-    pretty: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let description = collect_issue_description(client, id).await?;
 
     let mut buffer = Vec::new();
-    if pretty {
-        print_issue_description_pretty(&description, &mut buffer)?;
-    } else {
-        serde_json::to_writer(&mut buffer, &description)?;
-        buffer.write_all(b"\n")?;
+    match output_format {
+        ResolvedOutputFormat::Pretty => {
+            print_issue_description_pretty(&description, &mut buffer)?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut buffer, &description)?;
+            buffer.write_all(b"\n")?;
+        }
     }
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
@@ -722,7 +725,7 @@ async fn create_issue(
     branch: Option<String>,
     max_retries: Option<u32>,
     current_issue_id: Option<IssueId>,
-) -> Result<()> {
+) -> Result<IssueRecord> {
     let description = description.trim();
     if description.is_empty() {
         bail!("Issue description must not be empty.");
@@ -757,29 +760,26 @@ async fn create_issue(
     let job_settings =
         (job_settings_requested || !JobSettings::is_default(&job_settings)).then_some(job_settings);
 
-    let request = UpsertIssueRequest::new(
-        Issue::new(
-            issue_type,
-            description.to_string(),
-            creator,
-            progress,
-            status,
-            assignee,
-            job_settings,
-            Vec::new(),
-            dependencies,
-            patches,
-        ),
-        None,
+    let issue = Issue::new(
+        issue_type,
+        description.to_string(),
+        creator,
+        progress,
+        status,
+        assignee,
+        job_settings,
+        Vec::new(),
+        dependencies,
+        patches,
     );
+    let request = UpsertIssueRequest::new(issue.clone(), None);
 
     let response = client
         .create_issue(&request)
         .await
         .context("failed to create issue")?;
 
-    println!("{}", response.issue_id);
-    Ok(())
+    Ok(IssueRecord::new(response.issue_id, issue))
 }
 
 async fn update_issue(
@@ -802,7 +802,7 @@ async fn update_issue(
     branch: Option<String>,
     max_retries: Option<u32>,
     clear_job_settings: bool,
-) -> Result<()> {
+) -> Result<IssueRecord> {
     let issue_id = id;
 
     let description = match description {
@@ -903,12 +903,14 @@ async fn update_issue(
     );
 
     let response = client
-        .update_issue(&issue_id, &UpsertIssueRequest::new(updated_issue, None))
+        .update_issue(
+            &issue_id,
+            &UpsertIssueRequest::new(updated_issue.clone(), None),
+        )
         .await
         .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
-    println!("{}", response.issue_id);
-    Ok(())
+    Ok(IssueRecord::new(response.issue_id, updated_issue))
 }
 
 async fn resolve_creator_username(
@@ -952,9 +954,10 @@ async fn manage_todo_list(
     done: Option<usize>,
     undone: Option<usize>,
     replace: Option<Vec<String>>,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let todo_list = resolve_todo_list(client, &issue_id, add, done, undone, replace).await?;
-    print_todo_list(&issue_id, &todo_list)?;
+    print_todo_list(output_format, &issue_id, &todo_list)?;
     Ok(())
 }
 
@@ -1054,19 +1057,35 @@ fn parse_todo_item_input(raw: &str) -> Result<TodoItem> {
     Ok(TodoItem::new(description, is_done))
 }
 
-fn print_todo_list(issue_id: &IssueId, todo_list: &[TodoItem]) -> Result<()> {
+fn print_todo_list(
+    output_format: ResolvedOutputFormat,
+    issue_id: &IssueId,
+    todo_list: &[TodoItem],
+) -> Result<()> {
     let mut buffer = Vec::new();
-    render_todo_list(issue_id, todo_list, &mut buffer)?;
+    render_todo_list(output_format, issue_id, todo_list, &mut buffer)?;
     io::stdout().write_all(&buffer)?;
     io::stdout().flush()?;
     Ok(())
 }
 
 fn render_todo_list(
+    output_format: ResolvedOutputFormat,
     issue_id: &IssueId,
     todo_list: &[TodoItem],
     writer: &mut impl Write,
 ) -> Result<()> {
+    if output_format == ResolvedOutputFormat::Jsonl {
+        let output = TodoListOutput {
+            issue_id,
+            todo_list,
+        };
+        serde_json::to_writer(&mut *writer, &output)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
     writeln!(writer, "Todos for issue {issue_id}:")?;
     if todo_list.is_empty() {
         writeln!(writer, "  none")?;
@@ -1092,6 +1111,14 @@ fn render_todo_list(
     }
 
     writer.flush()?;
+    Ok(())
+}
+
+fn write_issue_records(format: ResolvedOutputFormat, issues: &[IssueRecord]) -> Result<()> {
+    let mut buffer = Vec::new();
+    render_issue_records(format, issues, &mut buffer)?;
+    io::stdout().write_all(&buffer)?;
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -2705,7 +2732,13 @@ mod tests {
             TodoItem::new("add tests\nwith details".into(), true),
         ];
         let mut output = Vec::new();
-        render_todo_list(&issue_id("i-render"), &todo_list, &mut output).unwrap();
+        render_todo_list(
+            ResolvedOutputFormat::Pretty,
+            &issue_id("i-render"),
+            &todo_list,
+            &mut output,
+        )
+        .unwrap();
         let rendered = String::from_utf8(output).unwrap();
 
         assert!(rendered.contains("Todos for issue i-render:"));
