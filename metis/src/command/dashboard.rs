@@ -385,10 +385,17 @@ struct IssueSubmission {
     repo_name: Option<RepoName>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IssueStatusChange {
+    issue_id: IssueId,
+    status: IssueStatus,
+}
+
 struct EventOutcome {
     should_quit: bool,
     submission: Option<IssueSubmission>,
     open_issue_pr: Option<IssueId>,
+    issue_status_change: Option<IssueStatusChange>,
 }
 
 pub async fn run(
@@ -491,6 +498,24 @@ async fn run_dashboard_loop(
                                 ));
                             }
                         }
+                        if let Some(change) = outcome.issue_status_change {
+                            let issue_id = change.issue_id.clone();
+                            match update_issue_status(client, &issue_id, change.status).await {
+                                Ok(()) => match refresh_records(client, &mut state).await {
+                                    Ok(_changed) => {
+                                        state.records_error = None;
+                                    }
+                                    Err(err) => {
+                                        state.records_error =
+                                            Some(format!("Failed to refresh records: {err}"));
+                                    }
+                                },
+                                Err(err) => {
+                                    state.records_error =
+                                        Some(format!("Failed to update issue {issue_id}: {err}"));
+                                }
+                            }
+                        }
                         if let Some(submission) = outcome.submission {
                             let assignee = submission.assignee.clone();
                             state.issue_draft.info_message =
@@ -539,15 +564,17 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: true,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
 
             if state.issue_details.is_open {
-                handle_issue_details_key(key, state);
+                let issue_status_change = handle_issue_details_key(key, state);
                 return EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change,
                 };
             }
 
@@ -557,6 +584,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
 
@@ -566,6 +594,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
 
@@ -574,6 +603,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: selected_issue_id(state, PanelFocus::UserOwned),
+                    issue_status_change: None,
                 };
             }
 
@@ -582,6 +612,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: Some(issue_id),
+                    issue_status_change: None,
                 };
             }
 
@@ -591,6 +622,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
 
@@ -605,6 +637,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission,
                 open_issue_pr: None,
+                issue_status_change: None,
             }
         }
         Event::Paste(text) => {
@@ -613,6 +646,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
             if state.issue_draft.is_submitting {
@@ -620,6 +654,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
 
@@ -634,6 +669,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                issue_status_change: None,
             }
         }
         Event::Resize(width, height) => {
@@ -643,6 +679,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                issue_status_change: None,
             }
         }
         Event::Mouse(mouse) => {
@@ -651,6 +688,7 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                     should_quit: false,
                     submission: None,
                     open_issue_pr: None,
+                    issue_status_change: None,
                 };
             }
             handle_mouse_scroll(mouse, state);
@@ -659,12 +697,14 @@ fn handle_event(event: Event, state: &mut DashboardState) -> EventOutcome {
                 should_quit: false,
                 submission: None,
                 open_issue_pr: None,
+                issue_status_change: None,
             }
         }
         _ => EventOutcome {
             should_quit: false,
             submission: None,
             open_issue_pr: None,
+            issue_status_change: None,
         },
     }
 }
@@ -843,17 +883,31 @@ fn handle_issue_draft_key(key: KeyEvent, state: &mut DashboardState) -> Option<I
     None
 }
 
-fn handle_issue_details_key(key: KeyEvent, state: &mut DashboardState) -> bool {
+fn handle_issue_details_key(
+    key: KeyEvent,
+    state: &mut DashboardState,
+) -> Option<IssueStatusChange> {
     if key.modifiers.is_empty() && matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
         close_issue_details(state);
-        return true;
+        return None;
     }
 
-    let Some(delta) = selection_key_delta(key) else {
-        return false;
-    };
+    if is_alt_char_key(key, 'd') {
+        let issue_id = state.issue_details.issue_id.clone()?;
+        let issue = state.issues.iter().find(|issue| issue.id == issue_id)?;
+        if issue.status == IssueStatus::Dropped {
+            return None;
+        }
+        return Some(IssueStatusChange {
+            issue_id,
+            status: IssueStatus::Dropped,
+        });
+    }
 
-    scroll_issue_details(state, delta)
+    let delta = selection_key_delta(key)?;
+
+    scroll_issue_details(state, delta);
+    None
 }
 
 fn handle_status_panel_key(key: KeyEvent, state: &mut DashboardState) -> bool {
@@ -1143,6 +1197,29 @@ async fn submit_issue(
         .await
         .context("failed to create issue")?;
     Ok(response.issue_id)
+}
+
+async fn update_issue_status(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+    status: IssueStatus,
+) -> Result<()> {
+    let record = client
+        .get_issue(issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
+    if record.issue.status == status {
+        return Ok(());
+    }
+
+    let mut updated = record.issue;
+    updated.status = status;
+
+    client
+        .update_issue(issue_id, &UpsertIssueRequest::new(updated, None))
+        .await
+        .with_context(|| format!("failed to update issue '{issue_id}'"))?;
+    Ok(())
 }
 
 fn render(frame: &mut Frame, state: &mut DashboardState) {
@@ -2091,7 +2168,12 @@ fn issue_details_layout(area: Rect) -> IssueDetailsLayout {
 
 fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
     let close_hint = "Esc/Enter to close";
-    Line::from(vec![
+    let drop_hint = if issue.status == IssueStatus::Dropped {
+        None
+    } else {
+        Some("Alt+d to drop")
+    };
+    let mut spans = vec![
         Span::styled(
             format!("Issue {}", issue.id),
             Style::default().add_modifier(Modifier::BOLD),
@@ -2100,7 +2182,14 @@ fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
             format!("  {close_hint}"),
             Style::default().fg(Color::DarkGray),
         ),
-    ])
+    ];
+    if let Some(drop_hint) = drop_hint {
+        spans.push(Span::styled(
+            format!("  {drop_hint}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn issue_detail_lines(issue: &IssueRecord, current_username: &str) -> Vec<Line<'static>> {
@@ -3684,6 +3773,33 @@ mod tests {
         assert!(!outcome.should_quit);
         assert!(state.issue_details.issue_id.is_none());
         assert!(!state.issue_details.is_open);
+    }
+
+    #[test]
+    fn alt_d_in_issue_details_requests_drop() {
+        let issue = issue("i-0", IssueStatus::Open, Vec::new());
+        let issue_lines = build_issue_lines(&[issue.clone()], &[], false);
+        let mut state = DashboardState {
+            issues: vec![issue],
+            issue_lines,
+            ..DashboardState::default()
+        };
+        state.selected_panel = PanelFocus::Running;
+        open_issue_details(&mut state, issue_id("i-0"));
+
+        let outcome = handle_event(
+            CrosstermEvent::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
+            &mut state,
+        );
+
+        assert_eq!(
+            outcome.issue_status_change,
+            Some(IssueStatusChange {
+                issue_id: issue_id("i-0"),
+                status: IssueStatus::Dropped,
+            })
+        );
+        assert!(state.issue_details.is_open);
     }
 
     #[test]
