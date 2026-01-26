@@ -338,6 +338,19 @@ mod tests {
         assert!(resolved.is_none());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_browser_command_uses_cfstringref() {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::{CFString, CFStringRef};
+
+        let scheme = CFString::new("http");
+        let _: CFStringRef = scheme.as_concrete_TypeRef();
+
+        let resolved = super::macos_default_browser_command();
+        assert!(resolved.is_some());
+    }
+
     #[test]
     fn load_config_missing_allows_server_url_override() {
         let cli = Cli {
