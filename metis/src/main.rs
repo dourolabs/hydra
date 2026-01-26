@@ -52,7 +52,7 @@ struct Cli {
     )]
     token: Option<String>,
 
-    /// Browser command for opening links (defaults to $BROWSER; on macOS uses default browser).
+    /// Browser command for opening links (defaults to $BROWSER).
     #[arg(long = "browser", value_name = "COMMAND", env = ENV_BROWSER, global = true)]
     browser: Option<String>,
 
@@ -150,9 +150,7 @@ async fn dispatch(
         Commands::Agents { command } => command::agents::run(client, command).await?,
         Commands::Patches { command } => command::patches::run(client, command).await?,
         Commands::Dashboard => {
-            let browser_command = resolve_browser_command(cli.browser);
-            command::dashboard::run(client, &app_config.server.url, browser_command.as_deref())
-                .await?
+            command::dashboard::run(client, &app_config.server.url, cli.browser.as_deref()).await?
         }
         Commands::Issues { command } => command::issues::run(client, command).await?,
         Commands::Repos { command } => command::repos::run(client, command).await?,
@@ -169,90 +167,6 @@ async fn dispatch(
 
 fn resolve_command(command: Option<Commands>) -> Commands {
     command.unwrap_or(Commands::Dashboard)
-}
-
-fn resolve_browser_command(browser: Option<String>) -> Option<String> {
-    let browser = browser
-        .as_deref()
-        .map(str::trim)
-        .filter(|command| !command.is_empty())
-        .map(str::to_string);
-    if browser.is_some() {
-        return browser;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return macos_default_browser_command();
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_default_browser_command() -> Option<String> {
-    use core_foundation::array::{CFArray, CFArrayRef};
-    use core_foundation::base::TCFType;
-    use core_foundation::bundle::CFBundle;
-    use core_foundation::error::{CFError, CFErrorRef};
-    use core_foundation::string::{CFString, CFStringRef};
-    use core_foundation::url::CFURL;
-
-    unsafe {
-        let scheme = CFString::new("http");
-        let handler_ref = LSCopyDefaultHandlerForURLScheme(scheme.as_concrete_TypeRef());
-        if handler_ref.is_null() {
-            return None;
-        }
-        let handler = CFString::wrap_under_create_rule(handler_ref);
-        let mut error: CFErrorRef = std::ptr::null_mut();
-        let app_urls_ref =
-            LSCopyApplicationURLsForBundleIdentifier(handler.as_concrete_TypeRef(), &mut error);
-        if app_urls_ref.is_null() {
-            if !error.is_null() {
-                let _ = CFError::wrap_under_create_rule(error);
-            }
-            return None;
-        }
-        let app_urls: CFArray<CFURL> = CFArray::wrap_under_create_rule(app_urls_ref);
-        let app_url = (*app_urls.get(0)?).clone();
-        let bundle = CFBundle::new(app_url.clone())?;
-        let exe_url = bundle.executable_url().unwrap_or(app_url);
-        let exe_path = exe_url.to_path()?;
-        Some(quote_browser_path(&exe_path))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn quote_browser_path(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-    if !path_str.contains([' ', '\t', '"', '\\']) {
-        return path_str.to_string();
-    }
-
-    let mut escaped = String::with_capacity(path_str.len() + 2);
-    escaped.push('"');
-    for ch in path_str.chars() {
-        if ch == '"' || ch == '\\' {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped.push('"');
-    escaped
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "CoreServices", kind = "framework")]
-extern "C" {
-    fn LSCopyDefaultHandlerForURLScheme(scheme: CFStringRef) -> CFStringRef;
-    fn LSCopyApplicationURLsForBundleIdentifier(
-        bundle_id: CFStringRef,
-        out_error: *mut CFErrorRef,
-    ) -> CFArrayRef;
 }
 
 fn load_app_config(cli: &Cli) -> Result<AppConfig> {
@@ -301,10 +215,7 @@ fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        load_app_config, read_token_from_path, resolve_browser_command, resolve_command, Cli,
-        Commands,
-    };
+    use super::{load_app_config, read_token_from_path, resolve_command, Cli, Commands};
     use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
     use clap::Parser;
     use metis::command::agents::AgentsCommand;
@@ -323,19 +234,6 @@ mod tests {
                 command: AgentsCommand::List { pretty: false },
             }),
         }
-    }
-
-    #[test]
-    fn resolve_browser_command_uses_trimmed_value() {
-        let resolved = resolve_browser_command(Some("  /usr/bin/firefox  ".to_string()));
-        assert_eq!(resolved, Some("/usr/bin/firefox".to_string()));
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn resolve_browser_command_none_on_non_macos_when_unset() {
-        let resolved = resolve_browser_command(None);
-        assert!(resolved.is_none());
     }
 
     #[test]
