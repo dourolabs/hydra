@@ -36,9 +36,30 @@ RUN apt-get update \
         git \
         gnupg \
         jq \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libcups2 \
+        libdbus-1-3 \
+        libdrm2 \
+        libgbm1 \
+        libgtk-3-0 \
+        libnss3 \
+        libx11-xcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxrandr2 \
+        libxss1 \
+        libxtst6 \
+        libxkbcommon0 \
+        libxshmfence1 \
+        libu2f-udev \
         nodejs \
         npm \
+        fonts-liberation \
+        fonts-noto-color-emoji \
         ripgrep \
+        xdg-utils \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
@@ -64,8 +85,8 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 # Set NVM environment variable for the worker user
 ENV NVM_DIR=/home/worker/.nvm
 
-# Install node and codex as the non-root user
-RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex"
+# Install node, codex, and puppeteer as the non-root user
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex puppeteer"
 
 # Ensure cargo is in PATH for the worker user's login shell
 # TODO: this is sort of a hacky spot for this. need to consolidate app-specific configuration somewhere.
