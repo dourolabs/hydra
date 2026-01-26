@@ -78,6 +78,7 @@ struct IssueRecord {
     id: IssueId,
     issue_type: IssueType,
     description: String,
+    creator: Username,
     progress: String,
     status: IssueStatus,
     assignee: Option<String>,
@@ -103,6 +104,7 @@ struct IssueLine {
     progress: Option<String>,
     status: IssueStatus,
     readiness: IssueReadiness,
+    creator: Username,
     assignee: Option<String>,
     task: Option<TaskIndicator>,
     depth: usize,
@@ -1224,6 +1226,7 @@ fn render_issue_sections(
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
             false,
+            state.username.as_str(),
             selection,
             focused,
         );
@@ -1239,6 +1242,7 @@ fn render_issue_sections(
         &state.issue_lines.rows,
         "No issues found",
         true,
+        state.username.as_str(),
         running_selection,
         running_focused,
     );
@@ -1258,6 +1262,7 @@ fn render_issue_sections(
         &completed_rows,
         "No completed issues",
         true,
+        state.username.as_str(),
         completed_selection,
         completed_focused,
     );
@@ -1486,6 +1491,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
                 false,
+                state.username.as_str(),
                 None,
                 false,
             );
@@ -1502,6 +1508,7 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
                 &state.issue_lines.rows,
                 "No issues found",
                 true,
+                state.username.as_str(),
                 None,
                 false,
             );
@@ -1515,7 +1522,14 @@ fn handle_mouse_scroll(mouse: MouseEvent, state: &mut DashboardState) -> bool {
         }
         PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
-            let lines = issue_line_lines(&rows, "No completed issues", true, None, false);
+            let lines = issue_line_lines(
+                &rows,
+                "No completed issues",
+                true,
+                state.username.as_str(),
+                None,
+                false,
+            );
             let (content_len, view_height) = panel_scroll_metrics(panels.completed, &lines);
             matches!(
                 state
@@ -1595,6 +1609,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
             &state.user_unowned_issue_lines.rows,
             "No open issues assigned to you",
             false,
+            state.username.as_str(),
             None,
             false,
         );
@@ -1610,6 +1625,7 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
         &state.issue_lines.rows,
         "No issues found",
         true,
+        state.username.as_str(),
         None,
         false,
     );
@@ -1619,8 +1635,14 @@ fn clamp_issue_scrolls(state: &mut DashboardState) {
         .sync_scroll(running_len, running_view_height);
 
     let completed_rows = completed_issue_rows(&state.completed_issue_lines);
-    let completed_lines =
-        issue_line_lines(&completed_rows, "No completed issues", true, None, false);
+    let completed_lines = issue_line_lines(
+        &completed_rows,
+        "No completed issues",
+        true,
+        state.username.as_str(),
+        None,
+        false,
+    );
     let (completed_len, completed_view_height) =
         panel_scroll_metrics(panels.completed, &completed_lines);
     state
@@ -1670,6 +1692,7 @@ fn scroll_selected_issue_into_view(state: &mut DashboardState) -> bool {
                 &state.user_unowned_issue_lines.rows,
                 "No open issues assigned to you",
                 false,
+                state.username.as_str(),
                 selection,
                 true,
             );
@@ -1687,6 +1710,7 @@ fn scroll_selected_issue_into_view(state: &mut DashboardState) -> bool {
                 &state.issue_lines.rows,
                 "No issues found",
                 true,
+                state.username.as_str(),
                 selection,
                 true,
             );
@@ -1700,7 +1724,14 @@ fn scroll_selected_issue_into_view(state: &mut DashboardState) -> bool {
         PanelFocus::Completed => {
             let rows = completed_issue_rows(&state.completed_issue_lines);
             let selection = selection_index(&state.completed_issue_selection, rows.len());
-            let lines = issue_line_lines(&rows, "No completed issues", true, selection, true);
+            let lines = issue_line_lines(
+                &rows,
+                "No completed issues",
+                true,
+                state.username.as_str(),
+                selection,
+                true,
+            );
             scroll_issue_panel_to_selection(
                 &mut state.completed_issue_panel,
                 panels.completed,
@@ -1732,6 +1763,7 @@ fn issue_line_lines(
     issue_lines: &[IssueLine],
     empty_message: &str,
     show_hierarchy: bool,
+    current_username: &str,
     selected: Option<usize>,
     focused: bool,
 ) -> Vec<Line<'static>> {
@@ -1761,6 +1793,13 @@ fn issue_line_lines(
                 format!("[{issue_status_label}]"),
                 issue_status_style,
             ));
+            if should_render_creator(current_username, &line.creator) {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!("@{}", line.creator.as_str()),
+                    issue_creator_style(),
+                ));
+            }
 
             if let Some(task) = &line.task {
                 if let Some(runtime) = &task.runtime {
@@ -1815,6 +1854,20 @@ fn highlight_line(mut line: Line<'static>) -> Line<'static> {
         .collect();
     line.style = line.style.patch(selection_style);
     line
+}
+
+fn should_render_creator(current_username: &str, creator: &Username) -> bool {
+    let current = current_username.trim();
+    if current.is_empty() {
+        return false;
+    }
+    creator.as_str().trim() != current
+}
+
+fn issue_creator_style() -> Style {
+    Style::default()
+        .fg(Color::Magenta)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn move_issue_selection(
@@ -1996,7 +2049,7 @@ fn issue_details_view(state: &mut DashboardState) -> Option<IssueDetailsView<'st
         return None;
     }
 
-    let lines = issue_detail_lines(issue);
+    let lines = issue_detail_lines(issue, state.username.as_str());
     let view_height = layout.content.height as usize;
     let content_len = wrapped_content_len(&lines, layout.content.width);
     let max_offset = max_scroll_offset(content_len, view_height);
@@ -2050,15 +2103,23 @@ fn issue_detail_title(issue: &IssueRecord) -> Line<'static> {
     ])
 }
 
-fn issue_detail_lines(issue: &IssueRecord) -> Vec<Line<'static>> {
+fn issue_detail_lines(issue: &IssueRecord, current_username: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    lines.push(Line::from(vec![
+    let mut status_spans = vec![
         Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled(
             issue_status_label(issue.status),
             issue_status_style(issue.status),
         ),
-    ]));
+    ];
+    if should_render_creator(current_username, &issue.creator) {
+        status_spans.push(Span::raw(" "));
+        status_spans.push(Span::styled(
+            format!("@{}", issue.creator.as_str()),
+            issue_creator_style(),
+        ));
+    }
+    lines.push(Line::from(status_spans));
     if let Some(assignee) = issue
         .assignee
         .as_deref()
@@ -2226,6 +2287,7 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
         id: record.id,
         issue_type: issue.issue_type,
         description: issue.description,
+        creator: issue.creator,
         progress: issue.progress,
         status: issue.status,
         assignee: issue.assignee,
@@ -2675,6 +2737,7 @@ fn append_issue(
         progress: issue_summary.progress,
         status: node.record.status,
         readiness,
+        creator: node.record.creator.clone(),
         assignee: node.record.assignee.clone(),
         task: node.task.clone(),
         depth,
@@ -2717,6 +2780,7 @@ fn collect_issue_lines(
         progress: issue_summary.progress,
         status: node.record.status,
         readiness,
+        creator: node.record.creator.clone(),
         assignee: node.record.assignee.clone(),
         task: node.task.clone(),
         depth,
@@ -2999,7 +3063,7 @@ fn scroll_issue_details(state: &mut DashboardState, delta: i32) -> bool {
         return false;
     };
     let layout = issue_details_layout(size);
-    let lines = issue_detail_lines(issue);
+    let lines = issue_detail_lines(issue, state.username.as_str());
     let view_height = layout.content.height as usize;
     let content_len = wrapped_content_len(&lines, layout.content.width);
     let max_offset = max_scroll_offset(content_len, view_height);
@@ -3108,6 +3172,7 @@ mod tests {
             id: issue_id(id),
             issue_type: IssueType::Task,
             description: id.to_string(),
+            creator: Username::from("alice"),
             progress: String::new(),
             status,
             assignee: None,
@@ -3121,6 +3186,7 @@ mod tests {
             id: issue_id(id),
             issue_type: IssueType::Task,
             description: id.to_string(),
+            creator: Username::from("alice"),
             progress: String::new(),
             status,
             assignee: assignee.map(str::to_string),
@@ -3139,6 +3205,7 @@ mod tests {
             id: issue_id(id),
             issue_type,
             description: id.to_string(),
+            creator: Username::from("alice"),
             progress: String::new(),
             status,
             assignee: None,
@@ -3374,6 +3441,7 @@ mod tests {
             id: issue_id("i-progress"),
             issue_type: IssueType::Task,
             description: "investigate logs".into(),
+            creator: Username::from("alice"),
             progress: "drafting tests".into(),
             status: IssueStatus::Open,
             assignee: None,
@@ -3394,6 +3462,7 @@ mod tests {
             id: issue_id("i-detail"),
             issue_type: IssueType::Task,
             description: "Investigate memory spike".into(),
+            creator: Username::from("alice"),
             progress: "Noted repro steps".into(),
             status: IssueStatus::InProgress,
             assignee: Some("alice".to_string()),
@@ -3401,7 +3470,7 @@ mod tests {
             patches: Vec::new(),
         };
 
-        let lines = issue_detail_lines(&issue);
+        let lines = issue_detail_lines(&issue, "alice");
         let text: String = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("Status:"));
@@ -3412,6 +3481,46 @@ mod tests {
         assert!(text.contains("Investigate memory spike"));
         assert!(text.contains("Issue log"));
         assert!(text.contains("Noted repro steps"));
+    }
+
+    #[test]
+    fn issue_detail_lines_show_creator_for_non_self() {
+        let issue = IssueRecord {
+            id: issue_id("i-detail"),
+            issue_type: IssueType::Task,
+            description: "Investigate memory spike".into(),
+            creator: Username::from("alice"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        };
+
+        let lines = issue_detail_lines(&issue, "bob");
+        let status_line = lines.first().expect("missing status line");
+
+        assert!(line_text(status_line).contains("@alice"));
+    }
+
+    #[test]
+    fn issue_detail_lines_skip_creator_for_self() {
+        let issue = IssueRecord {
+            id: issue_id("i-detail"),
+            issue_type: IssueType::Task,
+            description: "Investigate memory spike".into(),
+            creator: Username::from("alice"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        };
+
+        let lines = issue_detail_lines(&issue, "alice");
+        let status_line = lines.first().expect("missing status line");
+
+        assert!(!line_text(status_line).contains("@alice"));
     }
 
     fn dashboard_state_with_issues(issue_count: usize) -> DashboardState {
@@ -3700,6 +3809,7 @@ mod tests {
             &state.issue_lines.rows,
             "No issues found",
             true,
+            state.username.as_str(),
             None,
             false,
         );
@@ -4015,6 +4125,7 @@ mod tests {
                 id: issue_id("i-root"),
                 issue_type: IssueType::Task,
                 description: "i-root".to_string(),
+                creator: Username::from("alice"),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some("alice".to_string()),
@@ -4025,6 +4136,7 @@ mod tests {
                 id: issue_id("i-child"),
                 issue_type: IssueType::Task,
                 description: "i-child".to_string(),
+                creator: Username::from("alice"),
                 progress: String::new(),
                 status: IssueStatus::Open,
                 assignee: Some("alice".to_string()),
@@ -4094,7 +4206,7 @@ mod tests {
         collapsed.insert(issue_id("i-root"));
 
         let lines = build_issue_lines_with_collapsed(&issues, &[], false, &collapsed);
-        let rendered = issue_line_lines(&lines.rows, "No issues found", true, None, false);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, "alice", None, false);
 
         assert!(line_text(&rendered[0]).starts_with("|+ "));
     }
@@ -4107,9 +4219,27 @@ mod tests {
         ];
 
         let lines = build_issue_lines(&issues, &[], false);
-        let rendered = issue_line_lines(&lines.rows, "No issues found", true, None, false);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, "alice", None, false);
 
         assert!(line_text(&rendered[0]).starts_with("|- "));
+    }
+
+    #[test]
+    fn issue_line_shows_creator_for_non_self() {
+        let issues = vec![issue("i-root", IssueStatus::Open, vec![])];
+        let lines = build_issue_lines(&issues, &[], false);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, "bob", None, false);
+
+        assert!(line_text(&rendered[0]).contains("@alice"));
+    }
+
+    #[test]
+    fn issue_line_hides_creator_for_self() {
+        let issues = vec![issue("i-root", IssueStatus::Open, vec![])];
+        let lines = build_issue_lines(&issues, &[], false);
+        let rendered = issue_line_lines(&lines.rows, "No issues found", true, "alice", None, false);
+
+        assert!(!line_text(&rendered[0]).contains("@alice"));
     }
 
     #[test]
