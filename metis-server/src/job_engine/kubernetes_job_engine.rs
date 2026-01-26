@@ -517,10 +517,6 @@ impl JobEngine for KubernetesJobEngine {
         };
 
         container.resources = Some(ResourceRequirements {
-            requests: Some(BTreeMap::from([
-                ("cpu".to_string(), Quantity(cpu_limit.clone())),
-                ("memory".to_string(), Quantity(memory_limit.clone())),
-            ])),
             limits: Some(BTreeMap::from([
                 ("cpu".to_string(), Quantity(cpu_limit)),
                 ("memory".to_string(), Quantity(memory_limit)),
