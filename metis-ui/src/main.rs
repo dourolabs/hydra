@@ -1,3 +1,12 @@
+use dioxus::prelude::*;
+
 fn main() {
-    println!("metis-ui scaffold");
+    dioxus::launch(App);
+}
+
+#[component]
+fn App() -> Element {
+    rsx! {
+        main { "Hello World" }
+    }
 }

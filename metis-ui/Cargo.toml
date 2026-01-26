@@ -8,3 +8,4 @@ name = "metis-ui"
 path = "src/main.rs"
 
 [dependencies]
+dioxus = { version = "0.7.3", features = ["server"] }
