@@ -1,4 +1,6 @@
-use crate::{client::MetisClientInterface, worker_commands::CodexCommands};
+use crate::{
+    client::MetisClientInterface, command::output::CommandContext, worker_commands::CodexCommands,
+};
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{
@@ -102,7 +104,11 @@ pub enum JobsCommand {
     },
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: JobsCommand,
+    context: &CommandContext,
+) -> Result<()> {
     match command {
         JobsCommand::Create {
             wait,
@@ -112,14 +118,19 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             var,
             prompt,
             issue_id,
-        } => create::run(client, wait, repo, rev, image, var, prompt, issue_id).await?,
+        } => {
+            create::run(
+                client, wait, repo, rev, image, var, prompt, issue_id, context,
+            )
+            .await?
+        }
         JobsCommand::List {
             limit,
             json,
             spawned_from,
-        } => list::run(client, limit, spawned_from, json).await?,
-        JobsCommand::Logs { id, watch } => logs::run(client, id, watch).await?,
-        JobsCommand::Kill { job } => kill::run(client, job).await?,
+        } => list::run(client, limit, spawned_from, json, context).await?,
+        JobsCommand::Logs { id, watch } => logs::run(client, id, watch, context).await?,
+        JobsCommand::Kill { job } => kill::run(client, job, context).await?,
         JobsCommand::WorkerRun {
             job,
             path,
@@ -127,7 +138,16 @@ pub async fn run(client: &dyn MetisClientInterface, command: JobsCommand) -> Res
             issue_id,
         } => {
             let commands = CodexCommands;
-            worker_run::run(client, job, path, openai_api_key, issue_id, &commands).await?
+            worker_run::run(
+                client,
+                job,
+                path,
+                openai_api_key,
+                issue_id,
+                &commands,
+                context,
+            )
+            .await?
         }
     }
 

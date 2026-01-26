@@ -1,4 +1,7 @@
-use crate::client::MetisClientInterface;
+use crate::{
+    client::MetisClientInterface,
+    command::output::{render_issue_records, CommandContext, ResolvedOutputFormat},
+};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
@@ -258,7 +261,11 @@ pub enum IssueCommands {
     },
 }
 
-pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> Result<()> {
+pub async fn run(
+    client: &dyn MetisClientInterface,
+    command: IssueCommands,
+    _context: &CommandContext,
+) -> Result<()> {
     match command {
         IssueCommands::List {
             id,
@@ -272,11 +279,12 @@ pub async fn run(client: &dyn MetisClientInterface, command: IssueCommands) -> R
             let issues =
                 fetch_issues(client, id, r#type, status, assignee, query, graph_filters).await?;
             let mut buffer = Vec::new();
-            if pretty {
-                print_issues_pretty(&issues, &mut buffer)?;
+            let format = if pretty {
+                ResolvedOutputFormat::Pretty
             } else {
-                print_issues_jsonl(&issues, &mut buffer)?;
-            }
+                ResolvedOutputFormat::Jsonl
+            };
+            render_issue_records(format, &issues, &mut buffer)?;
             io::stdout().write_all(&buffer)?;
             io::stdout().flush()?;
             Ok(())
@@ -1105,70 +1113,6 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
     Ok(IssueDependency::new(dependency_type, issue_id))
 }
 
-fn print_issues_jsonl(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
-    for issue in issues {
-        serde_json::to_writer(&mut *writer, issue)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn print_issues_pretty(issues: &[IssueRecord], writer: &mut impl Write) -> Result<()> {
-    for (index, issue_record) in issues.iter().enumerate() {
-        let Issue {
-            issue_type,
-            description,
-            creator,
-            progress,
-            status,
-            assignee,
-            dependencies,
-            ..
-        } = &issue_record.issue;
-
-        writeln!(writer, "Issue {} ({issue_type}, {status})", issue_record.id)?;
-        writeln!(writer, "Creator: {}", creator.as_ref())?;
-        writeln!(writer, "Assignee: {}", assignee.as_deref().unwrap_or("-"))?;
-        writeln!(writer, "Description:")?;
-        if description.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in description.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        writeln!(writer, "Progress:")?;
-        if progress.trim().is_empty() {
-            writeln!(writer, "  -")?;
-        } else {
-            for line in progress.lines() {
-                writeln!(writer, "  {line}")?;
-            }
-        }
-
-        if dependencies.is_empty() {
-            writeln!(writer, "Dependencies: none")?;
-        } else {
-            writeln!(writer, "Dependencies:")?;
-            for dependency in dependencies {
-                writeln!(
-                    writer,
-                    "  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
-        }
-
-        if index + 1 < issues.len() {
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
 fn print_issue_description_pretty(
     description: &IssueDescription,
     writer: &mut impl Write,
@@ -1594,7 +1538,7 @@ mod tests {
         assert_eq!(list_mock.hits(), 1);
 
         let mut output = Vec::new();
-        print_issues_jsonl(&issues, &mut output).unwrap();
+        render_issue_records(ResolvedOutputFormat::Jsonl, &issues, &mut output).unwrap();
         let output = String::from_utf8(output).unwrap();
         let first_id = issue_id("i-1").to_string();
         let second_id = issue_id("i-2").to_string();
@@ -2593,7 +2537,7 @@ mod tests {
         ];
 
         let mut output = Vec::new();
-        print_issues_pretty(&issues, &mut output).unwrap();
+        render_issue_records(ResolvedOutputFormat::Pretty, &issues, &mut output).unwrap();
         let rendered = String::from_utf8(output).unwrap();
         let first_issue = issue_id("i-1").to_string();
         let dependency_id = issue_id("i-99").to_string();

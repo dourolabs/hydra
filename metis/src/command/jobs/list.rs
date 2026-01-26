@@ -1,4 +1,4 @@
-use crate::{client::MetisClientInterface, util::truncate_lines};
+use crate::{client::MetisClientInterface, command::output::CommandContext, util::truncate_lines};
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use metis_common::{
@@ -45,6 +45,7 @@ pub async fn run(
     limit: usize,
     spawned_from: Option<IssueId>,
     json: bool,
+    _context: &CommandContext,
 ) -> Result<()> {
     let response = client
         .list_jobs(&SearchJobsQuery::new(None, spawned_from))
@@ -285,6 +286,7 @@ mod tests {
     use super::*;
     use crate::{
         client::MetisClient,
+        command::output::{CommandContext, ResolvedOutputFormat},
         test_utils::ids::{issue_id, task_id},
     };
     use chrono::TimeZone;
@@ -429,7 +431,9 @@ mod tests {
             then.status(200).json_body_obj(&list_response);
         });
 
-        run(&client, 5, Some(spawned_from.clone()), false)
+        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
+
+        run(&client, 5, Some(spawned_from.clone()), false, &context)
             .await
             .expect("list jobs should succeed");
 

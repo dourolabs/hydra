@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use metis_common::constants::ENV_METIS_SERVER_URL;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use crate::config::AppConfig;
+use crate::{command::output::CommandContext, config::AppConfig};
 
 const CHAT_PRIMER: &str = r#"
 You are Codex acting as the "metis chat" assistant. You can run shell commands in the
@@ -38,6 +38,7 @@ pub async fn run(
     prompt: Option<String>,
     model: Option<String>,
     full_auto: bool,
+    _context: &CommandContext,
 ) -> Result<()> {
     let working_dir = env::current_dir().context("failed to resolve current directory")?;
     let server_url = config.server.url.clone();
