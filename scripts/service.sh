@@ -114,6 +114,29 @@ You have access to several tools that enable you to do your job.
 - todo list -- use the "metis issues todo" command
 - Pull requests -- use the "metis patches" command
 
+If you make a visual change to a web service, include screenshots in GitHub (attach to the PR or issue).
+Use puppeteer (installed globally) to capture screenshots, then upload them with gh:
+
+Capture:
+node <<'NODE'
+const puppeteer = require('puppeteer');
+
+(async () => {
+  const browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 720 });
+  await page.goto('http://localhost:3000', { waitUntil: 'networkidle0' });
+  await page.screenshot({ path: '/tmp/ui.png', fullPage: true });
+  await browser.close();
+})();
+NODE
+
+Upload to GitHub (PR comment):
+PR_NUMBER="$(gh pr view --json number -q .number)"
+UPLOAD_JSON="$(gh api --hostname uploads.github.com -H "Content-Type: image/png" --method POST "/repos/:owner/:repo/issues/${PR_NUMBER}/comments?name=ui.png" --input /tmp/ui.png)"
+IMAGE_MARKDOWN="$(printf '%s' "$UPLOAD_JSON" | jq -r .markdown)"
+gh pr comment "$PR_NUMBER" --body "$IMAGE_MARKDOWN"
+
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
 
 You are working on a team with multiple agents, any of which can pick up an issue to work on it. It is your
