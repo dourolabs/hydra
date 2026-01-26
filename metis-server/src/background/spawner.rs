@@ -9,7 +9,7 @@ use crate::{
         issues::{Issue, IssueDependencyType, IssueStatus},
         jobs::BundleSpec,
     },
-    store::{Status, Store, StoreError, Task},
+    store::{Status, StoreError, Task},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -166,9 +166,7 @@ impl Spawner for AgentQueue {
     }
 
     async fn spawn(&self, state: &AppState) -> anyhow::Result<Vec<Task>> {
-        let store = state.store.read().await;
-
-        let task_state = agent_task_state(store.as_ref(), &self.name)
+        let task_state = agent_task_state(state, &self.name)
             .await
             .context("failed to list tasks for agent queue")?;
 
@@ -184,7 +182,7 @@ impl Spawner for AgentQueue {
 
         let mut remaining_capacity = max_simultaneous - active_tasks;
 
-        let issues = store
+        let issues = state
             .list_issues()
             .await
             .context("failed to list issues for agent queue")?;
@@ -216,7 +214,7 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            if parent_has_running_task(store.as_ref(), &issue).await? {
+            if parent_has_running_task(state, &issue).await? {
                 continue;
             }
 
@@ -248,18 +246,18 @@ struct AgentTaskState {
 }
 
 async fn agent_task_state(
-    store: &dyn Store,
+    state: &AppState,
     agent_name: &str,
 ) -> Result<AgentTaskState, StoreError> {
-    let mut state = AgentTaskState {
+    let mut task_state = AgentTaskState {
         existing_issue_ids: HashSet::new(),
         running_tasks: 0,
         pending_tasks: 0,
     };
-    let task_ids = store.list_tasks().await?;
+    let task_ids = state.list_tasks().await?;
 
     for task_id in task_ids {
-        if let Ok(Task { env_vars, .. }) = store.get_task(&task_id).await {
+        if let Ok(Task { env_vars, .. }) = state.get_task(&task_id).await {
             if !matches!(
                 env_vars.get(AGENT_NAME_ENV_VAR),
                 Some(current) if current == agent_name
@@ -267,10 +265,10 @@ async fn agent_task_state(
                 continue;
             }
 
-            let status = store.get_status(&task_id).await?;
+            let status = state.get_task_status(&task_id).await?;
             match status {
-                Status::Pending => state.pending_tasks += 1,
-                Status::Running => state.running_tasks += 1,
+                Status::Pending => task_state.pending_tasks += 1,
+                Status::Running => task_state.running_tasks += 1,
                 _ => {}
             }
 
@@ -279,23 +277,23 @@ async fn agent_task_state(
                 .and_then(|value| value.parse::<IssueId>().ok())
             {
                 if matches!(status, Status::Pending | Status::Running) {
-                    state.existing_issue_ids.insert(issue_id);
+                    task_state.existing_issue_ids.insert(issue_id);
                 }
             }
         }
     }
 
-    Ok(state)
+    Ok(task_state)
 }
 
-async fn parent_has_running_task(store: &dyn Store, issue: &Issue) -> Result<bool, StoreError> {
+async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool, StoreError> {
     for dependency in issue
         .dependencies
         .iter()
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
     {
-        for task_id in store.get_tasks_for_issue(&dependency.issue_id).await? {
-            if matches!(store.get_status(&task_id).await?, Status::Running) {
+        for task_id in state.get_tasks_for_issue(&dependency.issue_id).await? {
+            if matches!(state.get_task_status(&task_id).await?, Status::Running) {
                 return Ok(true);
             }
         }
@@ -356,10 +354,9 @@ mod tests {
     }
 
     async fn record_completed_task(state: &AppState, task: Task) -> anyhow::Result<()> {
-        let mut store = state.store.write().await;
-        let task_id = store.add_task(task, Utc::now()).await?;
-        store.mark_task_running(&task_id, Utc::now()).await?;
-        store
+        let task_id = state.add_task(task, Utc::now()).await?;
+        state.mark_task_running(&task_id, Utc::now()).await?;
+        state
             .mark_task_complete(&task_id, Ok(()), None, Utc::now())
             .await?;
         Ok(())
@@ -407,44 +404,35 @@ mod tests {
     #[tokio::test]
     async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
-        let assigned_issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Fix login page",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let assigned_issue_id = state
+            .add_issue(issue(
+                "Fix login page",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
-        let in_progress_issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "In-progress but ready",
-                    IssueStatus::InProgress,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let in_progress_issue_id = state
+            .add_issue(issue(
+                "In-progress but ready",
+                IssueStatus::InProgress,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Ignore closed",
-                    IssueStatus::Closed,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?;
-        }
+        state
+            .add_issue(issue(
+                "Ignore closed",
+                IssueStatus::Closed,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
         let queue = queue("agent-a");
         let tasks = queue.spawn(&state).await?;
@@ -494,37 +482,31 @@ mod tests {
     #[tokio::test]
     async fn does_not_requeue_when_task_exists() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
-        let issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Already queued",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let issue_id = state
+            .add_issue(issue(
+                "Already queued",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_task(
-                    task(
-                        "Fix the issue",
-                        BundleSpec::None,
-                        Some(issue_id.clone()),
-                        Some("metis-worker:latest"),
-                        HashMap::from([
-                            (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
-                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                        ]),
-                    ),
-                    Utc::now(),
-                )
-                .await?;
-        }
+        state
+            .add_task(
+                task(
+                    "Fix the issue",
+                    BundleSpec::None,
+                    Some(issue_id.clone()),
+                    Some("metis-worker:latest"),
+                    HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                ),
+                Utc::now(),
+            )
+            .await?;
 
         let tasks = queue("agent-a").spawn(&state).await?;
         assert!(tasks.is_empty());
@@ -535,34 +517,28 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
-        let blocker_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Blocker",
-                    IssueStatus::Open,
-                    None,
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let blocker_id = state
+            .add_issue(issue(
+                "Blocker",
+                IssueStatus::Open,
+                None,
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Blocked issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![IssueDependency::new(
-                        IssueDependencyType::BlockedOn,
-                        blocker_id.clone(),
-                    )],
-                    &repo_name,
-                ))
-                .await?;
-        }
+        state
+            .add_issue(issue(
+                "Blocked issue",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    blocker_id.clone(),
+                )],
+                &repo_name,
+            ))
+            .await?;
 
         let tasks = queue("agent-a").spawn(&state).await?;
         assert!(tasks.is_empty());
@@ -573,54 +549,45 @@ mod tests {
     #[tokio::test]
     async fn does_not_spawn_when_parent_task_running() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
-        let parent_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Parent issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let parent_id = state
+            .add_issue(issue(
+                "Parent issue",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            let task_id = store
-                .add_task(
-                    task(
-                        "Parent task",
-                        BundleSpec::None,
-                        Some(parent_id.clone()),
-                        Some("metis-worker:latest"),
-                        HashMap::from([
-                            (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
-                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                        ]),
-                    ),
-                    Utc::now(),
-                )
-                .await?;
-            store.mark_task_running(&task_id, Utc::now()).await?;
-        }
+        let task_id = state
+            .add_task(
+                task(
+                    "Parent task",
+                    BundleSpec::None,
+                    Some(parent_id.clone()),
+                    Some("metis-worker:latest"),
+                    HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                ),
+                Utc::now(),
+            )
+            .await?;
+        state.mark_task_running(&task_id, Utc::now()).await?;
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Child issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![IssueDependency::new(
-                        IssueDependencyType::ChildOf,
-                        parent_id.clone(),
-                    )],
-                    &repo_name,
-                ))
-                .await?;
-        }
+        state
+            .add_issue(issue(
+                "Child issue",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )],
+                &repo_name,
+            ))
+            .await?;
 
         let queue = queue("agent-a");
         let tasks = queue.spawn(&state).await?;
@@ -632,54 +599,51 @@ mod tests {
     #[tokio::test]
     async fn skips_when_repo_missing_but_allows_missing_image() -> anyhow::Result<()> {
         let (state, repo_name) = state_with_repository().await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Missing repo".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: None,
-                        remote_url: None,
-                        image: Some("metis-worker:latest".to_string()),
-                        branch: None,
-                        max_retries: None,
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
+        state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Missing repo".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: None,
+                    remote_url: None,
+                    image: Some("metis-worker:latest".to_string()),
+                    branch: None,
+                    max_retries: None,
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
 
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Missing image".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: Some(repo_name.clone()),
-                        remote_url: None,
-                        image: None,
-                        branch: None,
-                        max_retries: None,
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
+        state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Missing image".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: Some(repo_name.clone()),
+                    remote_url: None,
+                    image: None,
+                    branch: None,
+                    max_retries: None,
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
 
         let tasks = queue("agent-a").spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -699,31 +663,28 @@ mod tests {
         queue.max_tries = 3;
 
         let (state, repo_name) = state_with_repository().await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Override retries".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: Some(repo_name),
-                        remote_url: None,
-                        image: Some("metis-worker:latest".to_string()),
-                        branch: Some("main".to_string()),
-                        max_retries: Some(1),
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?;
-        }
+        state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Override retries".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: Some(repo_name),
+                    remote_url: None,
+                    image: Some("metis-worker:latest".to_string()),
+                    branch: Some("main".to_string()),
+                    max_retries: Some(1),
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
 
         let mut tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -741,45 +702,39 @@ mod tests {
         queue.max_simultaneous = 1;
 
         let (state, repo_name) = state_with_repository().await?;
-        let issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Already running".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?
-        };
+        let issue_id = state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Already running".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            let task_id = store
-                .add_task(
-                    Task {
-                        prompt: "Existing".to_string(),
-                        context: BundleSpec::None,
-                        spawned_from: Some(issue_id.clone()),
-                        image: None,
-                        env_vars: HashMap::from([
-                            (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
-                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                        ]),
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    Utc::now(),
-                )
-                .await?;
-            store.mark_task_running(&task_id, Utc::now()).await?;
-        }
+        let task_id = state
+            .add_task(
+                Task {
+                    prompt: "Existing".to_string(),
+                    context: BundleSpec::None,
+                    spawned_from: Some(issue_id.clone()),
+                    image: None,
+                    env_vars: HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                Utc::now(),
+            )
+            .await?;
+        state.mark_task_running(&task_id, Utc::now()).await?;
 
         let tasks = queue.spawn(&state).await?;
         assert!(tasks.is_empty());
@@ -793,61 +748,52 @@ mod tests {
         queue.max_simultaneous = 2;
 
         let (state, repo_name) = state_with_repository().await?;
-        let first_issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "First issue".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?
-        };
-        let second_issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Second issue".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: job_settings(&repo_name),
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?
-        };
+        let first_issue_id = state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "First issue".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
+        let second_issue_id = state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Second issue".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
 
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_task(
-                    Task {
-                        prompt: "Pending work".to_string(),
-                        context: BundleSpec::None,
-                        spawned_from: Some(first_issue_id.clone()),
-                        image: None,
-                        env_vars: HashMap::from([
-                            (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
-                            (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                        ]),
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    Utc::now(),
-                )
-                .await?;
-        }
+        state
+            .add_task(
+                Task {
+                    prompt: "Pending work".to_string(),
+                    context: BundleSpec::None,
+                    spawned_from: Some(first_issue_id.clone()),
+                    image: None,
+                    env_vars: HashMap::from([
+                        (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
+                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                    ]),
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                Utc::now(),
+            )
+            .await?;
 
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -865,18 +811,15 @@ mod tests {
         queue.max_tries = 2;
 
         let (state, repo_name) = state_with_repository().await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "Retry limited",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?;
-        }
+        state
+            .add_issue(issue(
+                "Retry limited",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
         let mut tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -898,29 +841,23 @@ mod tests {
         queue.max_tries = 1;
 
         let (state, repo_name) = state_with_repository().await?;
-        let issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue(
-                    "State change reset",
-                    IssueStatus::Open,
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ))
-                .await?
-        };
+        let issue_id = state
+            .add_issue(issue(
+                "State change reset",
+                IssueStatus::Open,
+                Some("agent-a"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
 
         let first_run = queue.spawn(&state).await?;
         assert_eq!(first_run.len(), 1);
         assert!(queue.spawn(&state).await?.is_empty());
 
-        {
-            let mut store = state.store.write().await;
-            let mut issue = store.get_issue(&issue_id).await?;
-            issue.status = IssueStatus::InProgress;
-            store.update_issue(&issue_id, issue).await?;
-        }
+        let mut issue = state.get_issue(&issue_id).await?;
+        issue.status = IssueStatus::InProgress;
+        state.update_issue(&issue_id, issue).await?;
 
         let tasks = queue.spawn(&state).await?;
         assert_eq!(tasks.len(), 1);
@@ -954,31 +891,28 @@ mod tests {
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
         let state = test_state_with_repo(repo_name.clone(), repository.clone()).await?;
-        let issue_id = {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(Issue {
-                    issue_type: IssueType::Task,
-                    description: "Assigned".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: IssueStatus::Open,
-                    assignee: Some("agent-a".to_string()),
-                    job_settings: JobSettings {
-                        repo_name: Some(repo_name.clone()),
-                        remote_url: None,
-                        image: Some(default_image.clone()),
-                        branch: None,
-                        max_retries: None,
-                        cpu_limit: None,
-                        memory_limit: None,
-                    },
-                    todo_list: Vec::new(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                })
-                .await?
-        };
+        let issue_id = state
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Assigned".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: Some(repo_name.clone()),
+                    remote_url: None,
+                    image: Some(default_image.clone()),
+                    branch: None,
+                    max_retries: None,
+                    cpu_limit: None,
+                    memory_limit: None,
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+            })
+            .await?;
         let queue = queue("agent-a");
 
         let tasks = queue.spawn(&state).await?;

@@ -50,9 +50,8 @@ impl ScheduledWorker for RunSpawnersWorker {
                         "agent produced tasks"
                     );
 
-                    let mut store = self.state.store.write().await;
                     for task in tasks {
-                        match store.add_task(task, Utc::now()).await {
+                        match self.state.add_task(task, Utc::now()).await {
                             Ok(metis_id) => {
                                 processed += 1;
                                 info!(
@@ -130,7 +129,6 @@ mod tests {
     };
     use metis_common::RepoName;
     use std::{str::FromStr, sync::Arc};
-    use tokio::sync::RwLock;
 
     fn agent_queue_config(name: &str) -> AgentQueueConfig {
         AgentQueueConfig {
@@ -181,17 +179,14 @@ mod tests {
         let agent_name = "static";
         let repo_name = RepoName::from_str("dourolabs/metis")?;
 
-        state.agents = Arc::new(RwLock::new(vec![Arc::new(AgentQueue::from_config(
+        state.set_agents_for_tests(vec![Arc::new(AgentQueue::from_config(
             &agent_queue_config(agent_name),
-        ))]));
+        ))]);
 
         add_repository(&state, repo_name.clone(), repository(&repo_name)).await?;
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue_for_agent(agent_name, &repo_name))
-                .await?;
-        }
+        state
+            .add_issue(issue_for_agent(agent_name, &repo_name))
+            .await?;
 
         let worker = RunSpawnersWorker::new(state.clone());
 
@@ -205,8 +200,7 @@ mod tests {
             }
         );
 
-        let store = state.store.read().await;
-        let tasks = store.list_tasks().await?;
+        let tasks = state.list_tasks().await?;
         assert_eq!(tasks.len(), 1);
 
         Ok(())
@@ -218,15 +212,12 @@ mod tests {
         let agent_name = "failing";
         let repo_name = RepoName::from_str("missing/repo")?;
 
-        state.agents = Arc::new(RwLock::new(vec![Arc::new(AgentQueue::from_config(
+        state.set_agents_for_tests(vec![Arc::new(AgentQueue::from_config(
             &agent_queue_config(agent_name),
-        ))]));
-        {
-            let mut store = state.store.write().await;
-            store
-                .add_issue(issue_for_agent(agent_name, &repo_name))
-                .await?;
-        }
+        ))]);
+        state
+            .add_issue(issue_for_agent(agent_name, &repo_name))
+            .await?;
         let worker = RunSpawnersWorker::new(state);
 
         let outcome = worker.run_iteration().await;
