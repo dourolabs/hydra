@@ -19,9 +19,13 @@ use std::{
 };
 use tokio::{sync::RwLock, task::JoinHandle, time::sleep};
 
+pub mod github_test_utils;
 pub mod job_engine;
 pub mod store;
 
+pub use github_test_utils::{
+    github_user_response, test_state_with_github_api_base_url, test_state_with_github_urls,
+};
 pub use job_engine::MockJobEngine;
 pub use store::FailingStore;
 
@@ -97,20 +101,6 @@ pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow:
     let state = test_state();
     add_repository(&state, name, config).await?;
     Ok(state)
-}
-
-pub fn test_state_with_github_api_base_url(api_base_url: String) -> AppState {
-    let mut config = test_app_config();
-    config.github_app.api_base_url = api_base_url;
-
-    AppState::new(
-        Arc::new(config),
-        None,
-        Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new()),
-        Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(Vec::new())),
-    )
 }
 
 fn test_auth() -> (Actor, String) {

@@ -1,37 +1,10 @@
 use crate::test::{
-    spawn_test_server, spawn_test_server_with_state, test_auth_token, test_client,
-    test_state_with_github_api_base_url,
+    github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
+    test_client, test_state_with_github_api_base_url,
 };
 use httpmock::prelude::*;
 use metis_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
 use reqwest::{Client, StatusCode, header};
-use serde_json::json;
-
-fn github_user_response(login: &str, id: u64) -> serde_json::Value {
-    json!({
-        "login": login,
-        "id": id,
-        "node_id": "NODEID",
-        "avatar_url": "https://example.com/avatar",
-        "gravatar_id": "gravatar",
-        "url": "https://example.com/user",
-        "html_url": "https://example.com/user",
-        "followers_url": "https://example.com/followers",
-        "following_url": "https://example.com/following",
-        "gists_url": "https://example.com/gists",
-        "starred_url": "https://example.com/starred",
-        "subscriptions_url": "https://example.com/subscriptions",
-        "organizations_url": "https://example.com/orgs",
-        "repos_url": "https://example.com/repos",
-        "events_url": "https://example.com/events",
-        "received_events_url": "https://example.com/received_events",
-        "type": "User",
-        "site_admin": false,
-        "name": null,
-        "patch_url": null,
-        "email": null
-    })
-}
 
 fn client_with_token(token: &str) -> Client {
     let mut headers = header::HeaderMap::new();

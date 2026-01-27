@@ -1,23 +1,20 @@
 use crate::{
-    app::{AppState, ServiceState},
     domain::{
         actors::Actor,
         issues::{Issue, IssueStatus, IssueType},
         jobs::{BundleSpec, Task},
         users::{User, Username},
     },
-    store::MemoryStore,
     test_utils::{
-        MockJobEngine, spawn_test_server_with_state, test_app_config, test_client_without_auth,
-        test_state,
+        github_user_response, spawn_test_server_with_state, test_client_without_auth, test_state,
+        test_state_with_github_urls,
     },
 };
 use chrono::Utc;
 use httpmock::prelude::*;
 use metis_common::{TaskId, github::GithubTokenResponse};
 use reqwest::{Client, header};
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::collections::HashMap;
 
 fn auth_client(token: &str) -> Client {
     let mut headers = header::HeaderMap::new();
@@ -31,47 +28,6 @@ fn auth_client(token: &str) -> Client {
         .default_headers(headers)
         .build()
         .expect("failed to build test client")
-}
-
-fn github_user_response(login: &str, id: u64) -> serde_json::Value {
-    serde_json::json!({
-        "login": login,
-        "id": id,
-        "node_id": "NODEID",
-        "avatar_url": "https://example.com/avatar",
-        "gravatar_id": "gravatar",
-        "url": "https://example.com/user",
-        "html_url": "https://example.com/user",
-        "followers_url": "https://example.com/followers",
-        "following_url": "https://example.com/following",
-        "gists_url": "https://example.com/gists",
-        "starred_url": "https://example.com/starred",
-        "subscriptions_url": "https://example.com/subscriptions",
-        "organizations_url": "https://example.com/orgs",
-        "repos_url": "https://example.com/repos",
-        "events_url": "https://example.com/events",
-        "received_events_url": "https://example.com/received_events",
-        "type": "User",
-        "site_admin": false,
-        "name": null,
-        "patch_url": null,
-        "email": null
-    })
-}
-
-fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> AppState {
-    let mut config = test_app_config();
-    config.github_app.api_base_url = api_base_url;
-    config.github_app.oauth_base_url = oauth_base_url;
-
-    AppState::new(
-        Arc::new(config),
-        None,
-        Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new()),
-        Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(Vec::new())),
-    )
 }
 
 #[tokio::test]
