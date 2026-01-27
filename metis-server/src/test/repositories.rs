@@ -18,12 +18,9 @@ use tempfile::TempDir;
 async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let state = test_state();
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_repository(name.clone(), repository.clone())
-            .await?;
-    }
+    state
+        .create_repository(name.clone(), repository.clone())
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -48,7 +45,7 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
 async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result<()> {
     let state = test_state();
     let service_state = state.service_state.clone();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
@@ -84,10 +81,7 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
         Some("ghcr.io/example/new-repo:main")
     );
 
-    let stored = {
-        let store_lock = store.read().await;
-        store_lock.get_repository(&name).await?
-    };
+    let stored = check_state.repository_from_store(&name).await?;
     assert_eq!(stored.remote_url, remote_url);
 
     let merge_queues = service_state.merge_queues.read().await;
@@ -116,19 +110,16 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let updated_remote = create_remote_repository()?;
 
     let state = test_state();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let service_state = state.service_state.clone();
     let repository = Repository::new(
         repo_url(&original_remote),
         Some("develop".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
     );
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_repository(name.clone(), repository.clone())
-            .await?;
-    }
+    state
+        .create_repository(name.clone(), repository.clone())
+        .await?;
     service_state.ensure_cached(&name, &repository).await?;
     let service_state = state.service_state.clone();
     let server = spawn_test_server_with_state(state).await?;
@@ -158,10 +149,7 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     assert!(body.repository.repository.default_branch.is_none());
     assert!(body.repository.repository.default_image.is_none());
 
-    let stored = {
-        let store = store.read().await;
-        store.get_repository(&name).await?
-    };
+    let stored = check_state.repository_from_store(&name).await?;
     assert_eq!(stored.remote_url, repo_url(&updated_remote));
     assert!(stored.default_branch.is_none());
     assert!(stored.default_image.is_none());
@@ -204,19 +192,16 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
 async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
     let state = test_state();
-    {
-        let mut store = state.store.write().await;
-        store
-            .add_repository(
-                name.clone(),
-                Repository::new(
-                    repository.remote_url.clone(),
-                    repository.default_branch.clone(),
-                    repository.default_image.clone(),
-                ),
-            )
-            .await?;
-    }
+    state
+        .create_repository(
+            name.clone(),
+            Repository::new(
+                repository.remote_url.clone(),
+                repository.default_branch.clone(),
+                repository.default_image.clone(),
+            ),
+        )
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
 
