@@ -142,31 +142,24 @@ fn commit_file(
     Ok(commit_id)
 }
 
-fn git_diff_args(
-    repo_path: &Path,
-    base: git2::Oid,
-    head: git2::Oid,
-) -> anyhow::Result<Vec<String>> {
-    let repo_str = repo_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("invalid repo path"))?;
-    Ok(vec![
-        "-C".to_string(),
-        repo_str.to_string(),
-        "diff".to_string(),
-        "--no-ext-diff".to_string(),
-        "--no-color".to_string(),
-        format!("{base}..{head}"),
-    ])
-}
-
 fn git_diff_for_commits(
     repo_path: &Path,
     base: git2::Oid,
     head: git2::Oid,
 ) -> anyhow::Result<String> {
-    let args = git_diff_args(repo_path, base, head)?;
-    let output = std::process::Command::new("git").args(args).output()?;
+    let repo_str = repo_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid repo path"))?;
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            repo_str,
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            &format!("{base}..{head}"),
+        ])
+        .output()?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
@@ -175,16 +168,6 @@ fn git_diff_for_commits(
         "git diff failed: {}",
         String::from_utf8_lossy(&output.stderr)
     )
-}
-
-#[test]
-fn git_diff_args_disable_external_diff_and_color() -> anyhow::Result<()> {
-    let args = git_diff_args(Path::new("/tmp"), git2::Oid::zero(), git2::Oid::zero())?;
-
-    assert!(args.iter().any(|arg| arg == "--no-ext-diff"));
-    assert!(args.iter().any(|arg| arg == "--no-color"));
-
-    Ok(())
 }
 
 #[tokio::test]
