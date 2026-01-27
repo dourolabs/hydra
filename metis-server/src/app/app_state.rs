@@ -40,7 +40,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
-    store: Arc<RwLock<Box<dyn Store>>>,
+    store: Arc<dyn Store>,
     pub job_engine: Arc<dyn JobEngine>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
@@ -225,7 +225,7 @@ impl AppState {
         config: Arc<AppConfig>,
         github_app: Option<Octocrab>,
         service_state: Arc<ServiceState>,
-        store: Arc<RwLock<Box<dyn Store>>>,
+        store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
@@ -244,7 +244,7 @@ impl AppState {
         github_token: String,
         github_refresh_token: String,
     ) -> Result<api::login::LoginResponse, LoginError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         let (user, _actor, login_token) = store
             .create_actor_for_github_token(github_token, github_refresh_token)
             .await
@@ -259,12 +259,12 @@ impl AppState {
     }
 
     pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.validate_auth_token(token).await
     }
 
     pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_issue(issue_id).await
     }
 
@@ -272,27 +272,27 @@ impl AppState {
         &self,
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.search_issue_graph(filters).await
     }
 
     pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Patch, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_patch(patch_id).await
     }
 
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.list_patches().await
     }
 
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_status_log(task_id).await
     }
 
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_user(username).await
     }
 
@@ -303,14 +303,14 @@ impl AppState {
         github_user_id: u64,
         github_refresh_token: String,
     ) -> Result<User, StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store
             .set_user_github_token(username, github_token, github_user_id, github_refresh_token)
             .await
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         let repositories = store
             .list_repositories()
             .await
@@ -328,7 +328,7 @@ impl AppState {
         config: Repository,
     ) -> Result<RepositoryRecord, RepositoryError> {
         {
-            let mut store = self.store.write().await;
+            let store = self.store.as_ref();
             store
                 .add_repository(name.clone(), config.clone())
                 .await
@@ -349,7 +349,7 @@ impl AppState {
         config: Repository,
     ) -> Result<RepositoryRecord, RepositoryError> {
         {
-            let mut store = self.store.write().await;
+            let store = self.store.as_ref();
             store
                 .update_repository(name.clone(), config.clone())
                 .await
@@ -394,7 +394,7 @@ impl AppState {
         &self,
         status: Status,
     ) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.list_tasks_with_status(status).await
     }
 
@@ -404,13 +404,13 @@ impl AppState {
         task: Task,
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_task(task, created_at).await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_patch(patch).await
     }
 
@@ -433,7 +433,7 @@ impl AppState {
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
-        self.store = Arc::new(RwLock::new(store));
+        self.store = Arc::from(store);
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -487,7 +487,7 @@ impl AppState {
 
         let issue = match request.issue_id.as_ref() {
             Some(issue_id) => {
-                let store = self.store.read().await;
+                let store = self.store.as_ref();
                 Some(store.get_issue(issue_id).await.map_err(|source| {
                     CreateJobError::IssueLookup {
                         source,
@@ -555,7 +555,7 @@ impl AppState {
 
         self.resolve_task(&task).await?;
 
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store
             .add_task_with_id(job_id.clone(), task, Utc::now())
             .await
@@ -573,7 +573,7 @@ impl AppState {
         status: JobStatusUpdate,
     ) -> Result<SetJobStatusResponse, SetJobStatusError> {
         {
-            let mut store = self.store.write().await;
+            let store = self.store.as_ref();
 
             store
                 .get_task(&job_id)
@@ -603,7 +603,7 @@ impl AppState {
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
         let (resolved, cpu_limit, memory_limit) = {
-            let store = self.store.read().await;
+            let store = self.store.as_ref();
             match store.get_task(&task_id).await {
                 Ok(task) => match self.resolve_task(&task).await {
                     Ok(resolved) => (resolved, task.cpu_limit.clone(), task.memory_limit.clone()),
@@ -642,7 +642,7 @@ impl AppState {
             .await
         {
             Ok(()) => {
-                let mut store = self.store.write().await;
+                let store = self.store.as_ref();
                 match store.mark_task_running(&task_id, Utc::now()).await {
                     Ok(()) => {
                         info!(
@@ -660,7 +660,7 @@ impl AppState {
                 }
             }
             Err(err) => {
-                let mut store = self.store.write().await;
+                let store = self.store.as_ref();
                 let failure_reason = format!("Failed to create Kubernetes job: {err}");
                 if let Err(update_err) = store
                     .mark_task_complete(
@@ -702,7 +702,7 @@ impl AppState {
         }
 
         let store_task_ids = {
-            let store = self.store.read().await;
+            let store = self.store.as_ref();
             match store.list_tasks().await {
                 Ok(ids) => ids,
                 Err(err) => {
@@ -758,7 +758,7 @@ impl AppState {
                     let failure_reason =
                         "Job completed without submitting results (timeout after 1 minute)"
                             .to_string();
-                    let mut store = self.store.write().await;
+                    let store = self.store.as_ref();
                     match store
                         .mark_task_complete(
                             &task_id,
@@ -779,7 +779,7 @@ impl AppState {
                     }
                 }
                 JobStatus::Failed => {
-                    let mut store = self.store.write().await;
+                    let store = self.store.as_ref();
                     let end_time = job.completion_time.unwrap_or_else(Utc::now);
                     let failure_reason = job
                         .failure_message
@@ -810,7 +810,7 @@ impl AppState {
                     "job not found in job engine, marking as failed"
                 );
 
-                let mut store = self.store.write().await;
+                let store = self.store.as_ref();
                 let failure_reason = "Job not found in job engine".to_string();
                 if let Err(update_err) = store
                     .mark_task_complete(
@@ -844,7 +844,7 @@ impl AppState {
         let UpsertPatchRequest { mut patch, .. } = request;
 
         let mut should_close_merge_requests = false;
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         let patch_id = match patch_id {
             Some(id) => {
                 let existing_patch = store.get_patch(&id).await.map_err(|source| match source {
@@ -976,7 +976,7 @@ impl AppState {
         } = request;
         let mut tasks_to_kill = Vec::new();
 
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
 
         let issue_id = match issue_id {
             Some(id) => {
@@ -991,7 +991,7 @@ impl AppState {
                 let is_dropping = updated_issue.status == IssueStatus::Dropped;
 
                 if let Err(source) =
-                    validate_issue_lifecycle(store.as_ref(), Some(&id), &updated_issue).await
+                    validate_issue_lifecycle(store, Some(&id), &updated_issue).await
                 {
                     return Err(match source {
                         StoreError::IssueNotFound(_) => UpsertIssueError::IssueNotFound {
@@ -1014,14 +1014,15 @@ impl AppState {
                 match store.update_issue(&id, updated_issue).await {
                     Ok(()) => {
                         if is_dropping {
-                            tasks_to_kill = active_tasks_for_issue(store.as_ref(), &id)
-                                .await
-                                .map_err(|source| UpsertIssueError::TaskLookup {
-                                    source,
-                                    issue_id: id.clone(),
+                            tasks_to_kill =
+                                active_tasks_for_issue(store, &id).await.map_err(|source| {
+                                    UpsertIssueError::TaskLookup {
+                                        source,
+                                        issue_id: id.clone(),
+                                    }
                                 })?;
 
-                            let child_tasks = drop_issue_children(store.as_mut(), &id).await?;
+                            let child_tasks = drop_issue_children(store, &id).await?;
                             tasks_to_kill.extend(child_tasks);
                         }
                         id
@@ -1097,7 +1098,7 @@ impl AppState {
                     return Err(UpsertIssueError::MissingCreator);
                 }
 
-                if let Err(source) = validate_issue_lifecycle(store.as_ref(), None, &issue).await {
+                if let Err(source) = validate_issue_lifecycle(store, None, &issue).await {
                     return Err(match source {
                         StoreError::InvalidDependency(dependency_id) => {
                             UpsertIssueError::MissingDependency {
@@ -1129,8 +1130,6 @@ impl AppState {
                     })?
             }
         };
-
-        drop(store);
 
         for job_id in tasks_to_kill {
             match self.job_engine.kill_job(&job_id).await {
@@ -1164,7 +1163,7 @@ impl AppState {
         issue_id: IssueId,
         item: TodoItem,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
@@ -1190,7 +1189,7 @@ impl AppState {
         issue_id: IssueId,
         todo_list: Vec<TodoItem>,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
@@ -1216,7 +1215,7 @@ impl AppState {
         item_number: usize,
         is_done: bool,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
@@ -1309,18 +1308,18 @@ impl AppState {
     }
 
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
-        let store = self.store.read().await;
-        issue_ready(store.as_ref(), issue_id).await
+        let store = self.store.as_ref();
+        issue_ready(store, issue_id).await
     }
 
     pub(crate) async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.list_issues().await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_issue(issue).await
     }
 
@@ -1329,46 +1328,46 @@ impl AppState {
         &self,
         task_id: TaskId,
     ) -> Result<(Actor, String), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.create_actor_for_task(task_id).await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_user(user).await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_actor(actor).await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.list_actors().await
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn update_issue(&self, issue_id: &IssueId, issue: Issue) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.update_issue(issue_id, issue).await
     }
 
     pub(crate) async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.list_tasks().await
     }
 
     pub(crate) async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_task(task_id).await
     }
 
     pub(crate) async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_status(task_id).await
     }
 
@@ -1376,7 +1375,7 @@ impl AppState {
         &self,
         issue_id: &IssueId,
     ) -> Result<Vec<TaskId>, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_tasks_for_issue(issue_id).await
     }
 
@@ -1387,7 +1386,7 @@ impl AppState {
         task: Task,
         created_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.add_task_with_id(task_id, task, created_at).await
     }
 
@@ -1397,7 +1396,7 @@ impl AppState {
         task_id: &TaskId,
         started_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store.mark_task_running(task_id, started_at).await
     }
 
@@ -1409,7 +1408,7 @@ impl AppState {
         last_message: Option<String>,
         completed_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut store = self.store.write().await;
+        let store = self.store.as_ref();
         store
             .mark_task_complete(task_id, result, last_message, completed_at)
             .await
@@ -1419,12 +1418,12 @@ impl AppState {
         &self,
         name: &RepoName,
     ) -> Result<Repository, StoreError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         store.get_repository(name).await
     }
 
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
-        let store = self.store.read().await;
+        let store = self.store.as_ref();
         match store.get_patch(&patch_id).await {
             Ok(patch) => Ok(patch),
             Err(StoreError::PatchNotFound(_)) => Err(MergeQueueError::PatchNotFound { patch_id }),
@@ -1551,7 +1550,7 @@ async fn validate_issue_lifecycle(
 }
 
 async fn drop_issue_children(
-    store: &mut dyn Store,
+    store: &dyn Store,
     issue_id: &IssueId,
 ) -> Result<Vec<TaskId>, UpsertIssueError> {
     let mut tasks_to_kill = Vec::new();
@@ -1751,7 +1750,7 @@ mod tests {
         assert!(!response.login_token.is_empty());
         assert_eq!(response.user.username.as_str(), "octo");
 
-        let store_read = state.store.read().await;
+        let store_read = state.store.as_ref();
         let user = store_read.get_user(&Username::from("octo")).await?;
         let actors = store_read.list_actors().await?;
         assert_eq!(actors.len(), 1);
@@ -1783,7 +1782,7 @@ mod tests {
         let state = test_state();
 
         let issue_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("open", IssueStatus::Open, vec![]))
                 .await
@@ -1798,7 +1797,7 @@ mod tests {
         let state = test_state();
 
         let (blocker_id, blocked_issue_id) = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let blocker_id = store
                 .add_issue(issue_with_status("blocker", IssueStatus::Open, vec![]))
                 .await
@@ -1821,7 +1820,7 @@ mod tests {
         assert!(!state.is_issue_ready(&blocked_issue_id).await.unwrap());
 
         {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .update_issue(
                     &blocker_id,
@@ -1839,7 +1838,7 @@ mod tests {
         let state = test_state();
 
         let (parent_id, child_id, child_dependencies) = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let parent_id = store
                 .add_issue(issue_with_status("parent", IssueStatus::InProgress, vec![]))
                 .await
@@ -1863,7 +1862,7 @@ mod tests {
         assert!(!state.is_issue_ready(&parent_id).await.unwrap());
 
         {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .update_issue(
                     &child_id,
@@ -1881,7 +1880,7 @@ mod tests {
         let state = test_state();
 
         let issue_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("dropped", IssueStatus::Dropped, vec![]))
                 .await
@@ -1896,7 +1895,7 @@ mod tests {
         let state = test_state();
 
         let blocked_issue_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let blocker_id = store
                 .add_issue(issue_with_status("blocker", IssueStatus::Dropped, vec![]))
                 .await
@@ -1922,7 +1921,7 @@ mod tests {
         let state = test_state();
 
         let issue_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .add_issue(issue_with_status("closed", IssueStatus::Closed, vec![]))
                 .await
@@ -1940,14 +1939,14 @@ mod tests {
         let task = sample_task();
 
         let task_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store.add_task(task, Utc::now()).await.unwrap()
         };
 
         state.start_pending_task(task_id.clone()).await;
 
         {
-            let store = state.store.read().await;
+            let store = state.store.as_ref();
             let status = store.get_status(&task_id).await.unwrap();
             assert_eq!(status, Status::Running);
         }
@@ -1976,7 +1975,7 @@ mod tests {
         };
 
         let issue_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store
                 .add_issue(Issue {
                     issue_type: IssueType::Task,
@@ -1995,7 +1994,7 @@ mod tests {
         };
 
         let task_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let mut task = task_for_issue(&issue_id);
             task.cpu_limit = job_settings.cpu_limit.clone();
             task.memory_limit = job_settings.memory_limit.clone();
@@ -2015,7 +2014,7 @@ mod tests {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let tracked_task_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             store.add_task(sample_task(), Utc::now()).await.unwrap()
         };
         let orphan_task_id = TaskId::new();
@@ -2049,7 +2048,7 @@ mod tests {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine);
         let task_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             store
                 .mark_task_running(&task_id, Utc::now())
@@ -2060,7 +2059,7 @@ mod tests {
 
         state.reconcile_running_task(task_id.clone()).await;
 
-        let store = state.store.read().await;
+        let store = state.store.as_ref();
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
 
         let status_log = store.get_status_log(&task_id).await.unwrap();
@@ -2079,7 +2078,7 @@ mod tests {
         let completion_time = Utc::now() - Duration::seconds(90);
 
         let task_id = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             store
                 .mark_task_running(&task_id, Utc::now())
@@ -2094,7 +2093,7 @@ mod tests {
 
         state.reconcile_running_task(task_id.clone()).await;
 
-        let store = state.store.read().await;
+        let store = state.store.as_ref();
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
         let status_log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(status_log.end_time(), Some(completion_time));
@@ -2144,7 +2143,7 @@ mod tests {
             .unwrap();
 
         let (parent_task_id, child_task_id, grandchild_task_id) = {
-            let mut store = state.store.write().await;
+            let store = state.store.as_ref();
             let parent_task_id = store
                 .add_task(task_for_issue(&parent_id), Utc::now())
                 .await
@@ -2181,7 +2180,7 @@ mod tests {
             .unwrap();
 
         {
-            let store = state.store.read().await;
+            let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id).await.unwrap().status,
                 IssueStatus::Dropped
@@ -2400,7 +2399,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store = state.store.read().await;
+        let store = state.store.as_ref();
         let stored_child = store.get_issue(&child_id).await.unwrap();
         assert_eq!(stored_child.creator, Username::from("parent-creator"));
     }
@@ -2426,7 +2425,7 @@ mod tests {
             .await
             .unwrap();
 
-        let store = state.store.read().await;
+        let store = state.store.as_ref();
         let stored_child = store.get_issue(&child_id).await.unwrap();
         assert_eq!(stored_child.creator, Username::from("explicit-creator"));
     }

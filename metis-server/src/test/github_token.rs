@@ -78,7 +78,7 @@ fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> 
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
         Arc::new(RwLock::new(Vec::new())),
     )

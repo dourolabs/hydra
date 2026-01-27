@@ -22,11 +22,7 @@ fn fail<T>() -> Result<T, StoreError> {
 
 #[async_trait]
 impl Store for FailingStore {
-    async fn add_repository(
-        &mut self,
-        _name: RepoName,
-        _config: Repository,
-    ) -> Result<(), StoreError> {
+    async fn add_repository(&self, _name: RepoName, _config: Repository) -> Result<(), StoreError> {
         fail()
     }
 
@@ -35,7 +31,7 @@ impl Store for FailingStore {
     }
 
     async fn update_repository(
-        &mut self,
+        &self,
         _name: RepoName,
         _config: Repository,
     ) -> Result<(), StoreError> {
@@ -46,7 +42,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_issue(&mut self, _issue: Issue) -> Result<IssueId, StoreError> {
+    async fn add_issue(&self, _issue: Issue) -> Result<IssueId, StoreError> {
         fail()
     }
 
@@ -54,7 +50,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_issue(&mut self, _id: &IssueId, _issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&self, _id: &IssueId, _issue: Issue) -> Result<(), StoreError> {
         fail()
     }
 
@@ -69,7 +65,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_patch(&mut self, _patch: Patch) -> Result<PatchId, StoreError> {
+    async fn add_patch(&self, _patch: Patch) -> Result<PatchId, StoreError> {
         fail()
     }
 
@@ -77,7 +73,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_patch(&mut self, _id: &PatchId, _patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&self, _id: &PatchId, _patch: Patch) -> Result<(), StoreError> {
         fail()
     }
 
@@ -102,7 +98,7 @@ impl Store for FailingStore {
     }
 
     async fn add_task(
-        &mut self,
+        &self,
         _task: Task,
         _creation_time: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
@@ -110,7 +106,7 @@ impl Store for FailingStore {
     }
 
     async fn add_task_with_id(
-        &mut self,
+        &self,
         _metis_id: TaskId,
         _task: Task,
         _creation_time: DateTime<Utc>,
@@ -118,7 +114,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_task(&mut self, _metis_id: &TaskId, _task: Task) -> Result<(), StoreError> {
+    async fn update_task(&self, _metis_id: &TaskId, _task: Task) -> Result<(), StoreError> {
         fail()
     }
 
@@ -143,7 +139,7 @@ impl Store for FailingStore {
     }
 
     async fn mark_task_running(
-        &mut self,
+        &self,
         _id: &TaskId,
         _start_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
@@ -151,7 +147,7 @@ impl Store for FailingStore {
     }
 
     async fn mark_task_complete(
-        &mut self,
+        &self,
         _id: &TaskId,
         _result: Result<(), TaskError>,
         _last_message: Option<String>,
@@ -161,21 +157,18 @@ impl Store for FailingStore {
     }
 
     async fn create_actor_for_github_token(
-        &mut self,
+        &self,
         _github_token: String,
         _github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
         fail()
     }
 
-    async fn create_actor_for_task(
-        &mut self,
-        _task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError> {
+    async fn create_actor_for_task(&self, _task_id: TaskId) -> Result<(Actor, String), StoreError> {
         fail()
     }
 
-    async fn add_actor(&mut self, _actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, _actor: Actor) -> Result<(), StoreError> {
         fail()
     }
 
@@ -188,12 +181,12 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_user(&mut self, _user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, _user: User) -> Result<(), StoreError> {
         fail()
     }
 
     async fn set_user_github_token(
-        &mut self,
+        &self,
         _username: &Username,
         _github_token: String,
         _github_user_id: u64,

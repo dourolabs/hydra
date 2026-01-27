@@ -77,7 +77,7 @@ impl MemoryStore {
 
     /// Updates issue adjacency indexes to match the provided dependency list.
     fn apply_issue_dependency_delta(
-        &mut self,
+        &self,
         issue_id: &IssueId,
         previous: &[IssueDependency],
         updated: &[IssueDependency],
@@ -130,7 +130,7 @@ impl MemoryStore {
     }
 
     fn apply_issue_patch_delta(
-        &mut self,
+        &self,
         issue_id: &IssueId,
         previous: &[PatchId],
         updated: &[PatchId],
@@ -153,14 +153,14 @@ impl MemoryStore {
         }
     }
 
-    fn index_task_for_issue(&mut self, issue_id: &IssueId, task_id: TaskId) {
+    fn index_task_for_issue(&self, issue_id: &IssueId, task_id: TaskId) {
         let mut tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
         if !tasks.contains(&task_id) {
             tasks.push(task_id);
         }
     }
 
-    fn remove_task_from_issue_index(&mut self, issue_id: &IssueId, task_id: &TaskId) {
+    fn remove_task_from_issue_index(&self, issue_id: &IssueId, task_id: &TaskId) {
         if let Some(mut tasks) = self.issue_tasks.get_mut(issue_id) {
             tasks.retain(|id| id != task_id);
             if tasks.is_empty() {
@@ -189,11 +189,7 @@ impl Default for MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn add_repository(
-        &mut self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
         if self.repositories.contains_key(&name) {
             return Err(StoreError::RepositoryAlreadyExists(name));
         }
@@ -210,7 +206,7 @@ impl Store for MemoryStore {
     }
 
     async fn update_repository(
-        &mut self,
+        &self,
         name: RepoName,
         config: Repository,
     ) -> Result<(), StoreError> {
@@ -232,7 +228,7 @@ impl Store for MemoryStore {
         Ok(repositories)
     }
 
-    async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
         let id = IssueId::new();
         let new_dependencies = issue.dependencies.clone();
         let new_patches = issue.patches.clone();
@@ -256,7 +252,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
-    async fn update_issue(&mut self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         if !self.issues.contains_key(id) {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
@@ -344,7 +340,7 @@ impl Store for MemoryStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
         let id = PatchId::new();
         self.patches.insert(id.clone(), patch);
         Ok(id)
@@ -357,7 +353,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
-    async fn update_patch(&mut self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
         if !self.patches.contains_key(id) {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
@@ -419,7 +415,7 @@ impl Store for MemoryStore {
     }
 
     async fn add_task(
-        &mut self,
+        &self,
         task: Task,
         creation_time: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
@@ -444,7 +440,7 @@ impl Store for MemoryStore {
     }
 
     async fn add_task_with_id(
-        &mut self,
+        &self,
         metis_id: TaskId,
         task: Task,
         creation_time: DateTime<Utc>,
@@ -473,7 +469,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn update_task(&mut self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
         if !self.tasks.contains_key(metis_id) {
             return Err(StoreError::TaskNotFound(metis_id.clone()));
         }
@@ -533,7 +529,7 @@ impl Store for MemoryStore {
     }
 
     async fn mark_task_running(
-        &mut self,
+        &self,
         id: &TaskId,
         start_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
@@ -558,7 +554,7 @@ impl Store for MemoryStore {
     }
 
     async fn mark_task_complete(
-        &mut self,
+        &self,
         id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
@@ -595,7 +591,7 @@ impl Store for MemoryStore {
     }
 
     async fn create_actor_for_github_token(
-        &mut self,
+        &self,
         github_token: String,
         github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
@@ -626,16 +622,13 @@ impl Store for MemoryStore {
         Ok((user, actor, auth_token))
     }
 
-    async fn create_actor_for_task(
-        &mut self,
-        task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError> {
+    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
         let (actor, auth_token) = Actor::new_for_task(task_id);
         self.add_actor(actor.clone()).await?;
         Ok((actor, auth_token))
     }
 
-    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         if self.actors.contains_key(&name) {
             return Err(StoreError::ActorAlreadyExists(name));
@@ -663,7 +656,7 @@ impl Store for MemoryStore {
         Ok(actors)
     }
 
-    async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, user: User) -> Result<(), StoreError> {
         if self.users.contains_key(&user.username) {
             return Err(StoreError::UserAlreadyExists(user.username.clone()));
         }
@@ -673,7 +666,7 @@ impl Store for MemoryStore {
     }
 
     async fn set_user_github_token(
-        &mut self,
+        &self,
         username: &Username,
         github_token: String,
         github_user_id: u64,
@@ -698,7 +691,7 @@ impl Store for MemoryStore {
 }
 
 impl MemoryStore {
-    async fn upsert_user_and_actor(&mut self, user: User, actor: Actor) -> Result<(), StoreError> {
+    async fn upsert_user_and_actor(&self, user: User, actor: Actor) -> Result<(), StoreError> {
         if let Err(err) = self.add_user(user.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
@@ -836,7 +829,7 @@ mod tests {
 
     #[tokio::test]
     async fn repository_crud_round_trip() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let name = RepoName::from_str("dourolabs/metis").unwrap();
         let config = sample_repository_config();
 
@@ -864,7 +857,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_repository_rejects_duplicates() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let name = RepoName::from_str("dourolabs/metis").unwrap();
 
         store
@@ -895,7 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_issue_rejects_missing_dependencies() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let missing_dependency = IssueId::new();
 
         let err = store
@@ -914,7 +907,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_issue_rejects_missing_dependencies() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let missing_dependency = IssueId::new();
@@ -938,7 +931,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_and_get_patch_assigns_id() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let patch = sample_patch();
         let id = store.add_patch(patch.clone()).await.unwrap();
@@ -948,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_patch_overwrites_existing_value() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let id = store.add_patch(sample_patch()).await.unwrap();
         let updated = Patch::new(
@@ -970,7 +963,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_missing_patch_returns_error() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let missing: PatchId = "p-miss".parse().unwrap();
 
         let err = store
@@ -996,7 +989,7 @@ mod tests {
 
     #[tokio::test]
     async fn issue_dependency_indexes_populated_on_create() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let parent_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let blocker_id = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1021,7 +1014,7 @@ mod tests {
 
     #[tokio::test]
     async fn issue_dependency_indexes_updated_on_update_and_removal() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let original_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let new_parent = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1102,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_filter_returns_children() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
@@ -1128,7 +1121,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_filter_returns_transitive_children() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
@@ -1154,7 +1147,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_filter_returns_ancestors_for_right_wildcards() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root = store.add_issue(sample_issue(vec![])).await.unwrap();
         let child = store
@@ -1180,7 +1173,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_filters_intersect_multiple_constraints() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1233,7 +1226,7 @@ mod tests {
 
     #[tokio::test]
     async fn graph_filter_errors_when_literal_missing() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let missing = IssueId::new();
 
         store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1246,7 +1239,7 @@ mod tests {
 
     #[tokio::test]
     async fn patch_issue_indexes_updated_on_issue_changes() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let patch_a = store.add_patch(sample_patch()).await.unwrap();
         let patch_b = store.add_patch(sample_patch()).await.unwrap();
 
@@ -1285,7 +1278,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_and_retrieve_tasks() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let task = spawn_task();
         let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
@@ -1299,7 +1292,7 @@ mod tests {
 
     #[tokio::test]
     async fn tasks_for_issue_uses_index() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let other_issue = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1361,7 +1354,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_starts_as_pending() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1371,7 +1364,7 @@ mod tests {
 
     #[tokio::test]
     async fn mark_task_running_transitions_from_pending() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1384,7 +1377,7 @@ mod tests {
 
     #[tokio::test]
     async fn mark_task_complete_transitions_from_running() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1405,7 +1398,7 @@ mod tests {
 
     #[tokio::test]
     async fn mark_task_failed_transitions_from_running() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1433,7 +1426,7 @@ mod tests {
 
     #[tokio::test]
     async fn mark_task_complete_from_pending_fails() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1448,7 +1441,7 @@ mod tests {
 
     #[tokio::test]
     async fn mark_task_failed_from_pending_fails() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1470,7 +1463,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_user_github_token_overwrites_existing_value() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let username = Username::from("alice");
 
         store
@@ -1505,7 +1498,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_and_get_actor_by_name() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
@@ -1521,7 +1514,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_actor_rejects_duplicate_name() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let actor = Actor {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
@@ -1549,7 +1542,7 @@ mod tests {
         });
 
         let github_client = build_github_client(server.base_url());
-        let mut store = MemoryStore::new_with_github_client(github_client);
+        let store = MemoryStore::new_with_github_client(github_client);
         let (user, actor, auth_token) = store
             .create_actor_for_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await
@@ -1567,7 +1560,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_task_actor_persists_and_verifies_token() {
-        let mut store = MemoryStore::new();
+        let store = MemoryStore::new();
         let task_id = TaskId::new();
 
         let (actor, token) = store.create_actor_for_task(task_id.clone()).await.unwrap();

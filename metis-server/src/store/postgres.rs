@@ -395,11 +395,7 @@ fn ensure_schema_version(
 
 #[async_trait]
 impl Store for PostgresStore {
-    async fn add_repository(
-        &mut self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError> {
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
         let name_str = name.as_str();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_REPOSITORIES} WHERE id = $1"
@@ -436,7 +432,7 @@ impl Store for PostgresStore {
     }
 
     async fn update_repository(
-        &mut self,
+        &self,
         name: RepoName,
         config: Repository,
     ) -> Result<(), StoreError> {
@@ -477,7 +473,7 @@ impl Store for PostgresStore {
         Ok(rows)
     }
 
-    async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError> {
+    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
         let id = IssueId::new();
@@ -500,7 +496,7 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
-    async fn update_issue(&mut self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         self.get_issue(id).await?;
 
         self.validate_issue_dependencies(&issue.dependencies)
@@ -540,7 +536,7 @@ impl Store for PostgresStore {
         context.apply_filters(filters)
     }
 
-    async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError> {
+    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
         let id = PatchId::new();
         self.insert_payload(
             TABLE_PATCHES,
@@ -559,7 +555,7 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
-    async fn update_patch(&mut self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
         self.get_patch(id).await?;
 
         self.update_payload(
@@ -651,7 +647,7 @@ impl Store for PostgresStore {
     }
 
     async fn add_task(
-        &mut self,
+        &self,
         task: Task,
         creation_time: chrono::DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
@@ -662,7 +658,7 @@ impl Store for PostgresStore {
     }
 
     async fn add_task_with_id(
-        &mut self,
+        &self,
         metis_id: TaskId,
         task: Task,
         creation_time: chrono::DateTime<Utc>,
@@ -707,7 +703,7 @@ impl Store for PostgresStore {
         Ok(())
     }
 
-    async fn update_task(&mut self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
         self.ensure_task_exists(metis_id).await?;
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
@@ -780,7 +776,7 @@ impl Store for PostgresStore {
     }
 
     async fn mark_task_running(
-        &mut self,
+        &self,
         id: &TaskId,
         start_time: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
@@ -803,7 +799,7 @@ impl Store for PostgresStore {
     }
 
     async fn mark_task_complete(
-        &mut self,
+        &self,
         id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
@@ -838,7 +834,7 @@ impl Store for PostgresStore {
     }
 
     async fn create_actor_for_github_token(
-        &mut self,
+        &self,
         github_token: String,
         github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError> {
@@ -876,16 +872,13 @@ impl Store for PostgresStore {
         Ok((user, actor, auth_token))
     }
 
-    async fn create_actor_for_task(
-        &mut self,
-        task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError> {
+    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
         let (actor, auth_token) = Actor::new_for_task(task_id);
         self.add_actor(actor.clone()).await?;
         Ok((actor, auth_token))
     }
 
-    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError> {
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_ACTORS} WHERE id = $1"
@@ -918,7 +911,7 @@ impl Store for PostgresStore {
         Ok(actors)
     }
 
-    async fn add_user(&mut self, user: User) -> Result<(), StoreError> {
+    async fn add_user(&self, user: User) -> Result<(), StoreError> {
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_USERS} WHERE id = $1"
         ))
@@ -942,7 +935,7 @@ impl Store for PostgresStore {
     }
 
     async fn set_user_github_token(
-        &mut self,
+        &self,
         username: &Username,
         github_token: String,
         github_user_id: u64,
@@ -1044,7 +1037,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn repository_round_trip(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let name = RepoName::from_str("dourolabs/metis").unwrap();
         let config = sample_repository_config();
 
@@ -1073,7 +1066,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn repository_add_rejects_duplicate(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let name = RepoName::from_str("dourolabs/metis").unwrap();
 
         store
@@ -1137,7 +1130,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn issue_round_trip(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
 
         let parent = store.add_issue(sample_issue(vec![])).await.unwrap();
         let issue = store
@@ -1181,7 +1174,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn add_issue_rejects_missing_dependency(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let missing = IssueId::new();
 
         let err = store
@@ -1212,7 +1205,7 @@ mod tests {
     #[ignore]
     async fn errors_on_schema_mismatch(pool: PgStorePool) {
         let pool_for_update = pool.clone();
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
 
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
@@ -1232,7 +1225,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn migrates_outdated_payloads(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool.clone());
+        let store = PostgresStore::new(pool.clone());
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let migration = PayloadTable {
@@ -1257,7 +1250,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn issue_graph_searches_blockers(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let blocker = store.add_issue(sample_issue(vec![])).await.unwrap();
         let blocked = store
             .add_issue(sample_issue(vec![IssueDependency::new(
@@ -1278,7 +1271,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn patch_associations_round_trip(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let patch_id = store.add_patch(sample_patch()).await.unwrap();
         let mut issue = sample_issue(vec![]);
         issue.patches = vec![patch_id.clone()];
@@ -1299,7 +1292,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let mut task = sample_task();
@@ -1352,7 +1345,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn user_management_round_trip(pool: PgStorePool) {
-        let mut store = PostgresStore::new(pool);
+        let store = PostgresStore::new(pool);
         let user = User {
             username: Username::from("alice"),
             github_user_id: 101,

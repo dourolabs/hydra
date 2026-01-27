@@ -70,7 +70,7 @@ pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
         Arc::new(test_app_config()),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        Arc::new(MemoryStore::new()),
         job_engine,
         Arc::new(RwLock::new(Vec::new())),
     )
@@ -103,9 +103,7 @@ pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
         Arc::new(test_app_config()),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(RwLock::new(Box::new(MemoryStore::new_with_github_client(
-            github_client,
-        )))),
+        Arc::new(MemoryStore::new_with_github_client(github_client)),
         Arc::new(MockJobEngine::new()),
         Arc::new(RwLock::new(Vec::new())),
     )

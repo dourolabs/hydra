@@ -176,9 +176,9 @@ pub async fn run() -> anyhow::Result<()> {
         info!("no Postgres database configured; using in-memory store");
     }
 
-    let store: Arc<RwLock<Box<dyn Store>>> = match postgres_pool.clone() {
-        Some(pool) => Arc::new(RwLock::new(Box::new(PostgresStore::new(pool)))),
-        None => Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+    let store: Arc<dyn Store> = match postgres_pool.clone() {
+        Some(pool) => Arc::new(PostgresStore::new(pool)),
+        None => Arc::new(MemoryStore::new()),
     };
 
     // Create job engine

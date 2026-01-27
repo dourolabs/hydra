@@ -83,11 +83,7 @@ pub trait Store: Send + Sync {
     /// Adds a repository configuration under the provided name.
     ///
     /// Returns an error if a repository with the same name already exists.
-    async fn add_repository(
-        &mut self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError>;
+    async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
 
     /// Retrieves a repository configuration by name.
     async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError>;
@@ -95,11 +91,8 @@ pub trait Store: Send + Sync {
     /// Updates an existing repository configuration.
     ///
     /// Returns an error if the repository does not exist.
-    async fn update_repository(
-        &mut self,
-        name: RepoName,
-        config: Repository,
-    ) -> Result<(), StoreError>;
+    async fn update_repository(&self, name: RepoName, config: Repository)
+    -> Result<(), StoreError>;
 
     /// Lists all repository configurations keyed by name.
     async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError>;
@@ -107,7 +100,7 @@ pub trait Store: Send + Sync {
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
     /// Returns an error if any declared dependencies reference missing issues.
-    async fn add_issue(&mut self, issue: Issue) -> Result<IssueId, StoreError>;
+    async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError>;
 
     /// Retrieves an issue by its IssueId.
     async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError>;
@@ -116,7 +109,7 @@ pub trait Store: Send + Sync {
     ///
     /// Returns an error if the issue does not exist or if any dependencies
     /// reference missing issues.
-    async fn update_issue(&mut self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
+    async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
 
     /// Lists all issues in the store with their corresponding IDs.
     async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError>;
@@ -131,13 +124,13 @@ pub trait Store: Send + Sync {
     ) -> Result<HashSet<IssueId>, StoreError>;
 
     /// Adds a new patch to the store and assigns it a PatchId.
-    async fn add_patch(&mut self, patch: Patch) -> Result<PatchId, StoreError>;
+    async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError>;
 
     /// Retrieves a patch by its PatchId.
     async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError>;
 
     /// Updates an existing patch in the store.
-    async fn update_patch(&mut self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
+    async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
 
     /// Lists all patches in the store with their corresponding IDs.
     async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError>;
@@ -164,7 +157,7 @@ pub trait Store: Send + Sync {
     /// * `task` - The task to add
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task(
-        &mut self,
+        &self,
         task: Task,
         creation_time: DateTime<Utc>,
     ) -> Result<TaskId, StoreError>;
@@ -187,7 +180,7 @@ pub trait Store: Send + Sync {
     /// * `task` - The task to add
     /// * `creation_time` - The timestamp when the task is being created
     async fn add_task_with_id(
-        &mut self,
+        &self,
         metis_id: TaskId,
         task: Task,
         creation_time: DateTime<Utc>,
@@ -204,7 +197,7 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// Ok(()) if successful, or an error if the task doesn't exist
     #[allow(dead_code)]
-    async fn update_task(&mut self, metis_id: &TaskId, task: Task) -> Result<(), StoreError>;
+    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError>;
 
     /// Gets a task by its TaskId.
     ///
@@ -269,7 +262,7 @@ pub trait Store: Send + Sync {
     /// * `id` - The TaskId of the task to update
     /// * `start_time` - The timestamp when the task started running
     async fn mark_task_running(
-        &mut self,
+        &self,
         id: &TaskId,
         start_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
@@ -292,7 +285,7 @@ pub trait Store: Send + Sync {
     /// - The task doesn't exist
     /// - The task is not in Running state
     async fn mark_task_complete(
-        &mut self,
+        &self,
         id: &TaskId,
         result: Result<(), TaskError>,
         last_message: Option<String>,
@@ -301,19 +294,16 @@ pub trait Store: Send + Sync {
 
     /// Creates and persists a user-backed actor from a GitHub token.
     async fn create_actor_for_github_token(
-        &mut self,
+        &self,
         github_token: String,
         github_refresh_token: String,
     ) -> Result<(User, Actor, String), StoreError>;
 
     /// Creates and persists a task-backed actor for the given task.
-    async fn create_actor_for_task(
-        &mut self,
-        task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError>;
+    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError>;
 
     /// Adds a new actor to the store.
-    async fn add_actor(&mut self, actor: Actor) -> Result<(), StoreError>;
+    async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
 
     /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Actor, StoreError>;
@@ -336,11 +326,11 @@ pub trait Store: Send + Sync {
     }
 
     /// Adds a new user to the store.
-    async fn add_user(&mut self, user: User) -> Result<(), StoreError>;
+    async fn add_user(&self, user: User) -> Result<(), StoreError>;
 
     /// Updates the GitHub token for the requested user.
     async fn set_user_github_token(
-        &mut self,
+        &self,
         username: &Username,
         github_token: String,
         github_user_id: u64,

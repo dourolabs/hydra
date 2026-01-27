@@ -24,10 +24,7 @@ use kube::{
 use metis_common::constants::{
     ENV_METIS_ID, ENV_METIS_SERVER_URL, ENV_METIS_TOKEN, ENV_OPENAI_API_KEY,
 };
-use tokio::{
-    sync::RwLock,
-    time::{Duration, sleep},
-};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
@@ -39,7 +36,7 @@ pub struct KubernetesJobEngine {
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secrets: Vec<String>,
-    pub store: Arc<RwLock<Box<dyn Store>>>,
+    pub store: Arc<dyn Store>,
 }
 
 fn merge_env_vars(
@@ -505,10 +502,7 @@ impl JobEngine for KubernetesJobEngine {
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
         let metadata_labels = Self::build_metadata_labels(metis_id);
 
-        let (actor, auth_token) = {
-            let mut store = self.store.write().await;
-            store.create_actor_for_task(metis_id.clone()).await?
-        };
+        let (actor, auth_token) = self.store.create_actor_for_task(metis_id.clone()).await?;
         info!(
             metis_id = %metis_id,
             actor = %actor.name(),
