@@ -17,6 +17,11 @@ pub enum BuildCacheError {
         field: &'static str,
         message: String,
     },
+    #[error("storage error while {context}: {message}")]
+    Storage {
+        context: &'static str,
+        message: String,
+    },
 }
 
 impl BuildCacheError {
@@ -34,6 +39,13 @@ impl BuildCacheError {
     pub fn config(field: &'static str, message: impl Into<String>) -> Self {
         Self::Config {
             field,
+            message: message.into(),
+        }
+    }
+
+    pub fn storage(context: &'static str, message: impl Into<String>) -> Self {
+        Self::Storage {
+            context,
             message: message.into(),
         }
     }

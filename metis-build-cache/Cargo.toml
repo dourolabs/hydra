@@ -10,7 +10,11 @@ globset = "0.4"
 walkdir = "2"
 tar = "0.4"
 zstd = "0.13"
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls", "sigv4a"] }
+aws-credential-types = "1"
+aws-types = "1"
+tempfile = "3"
+async-trait = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
