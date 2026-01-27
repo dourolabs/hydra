@@ -6,6 +6,7 @@ pub mod github;
 pub mod ids;
 pub mod repo_name;
 pub mod util;
+pub mod versioning;
 
 pub use api::v1::{
     agents, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
@@ -18,6 +19,7 @@ pub use repositories::{
     UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub use util::EnvGuard;
+pub use versioning::{VersionNumber, Versioned};
 
 #[cfg(test)]
 pub mod test_helpers {
