@@ -18,7 +18,7 @@ use chrono::{DateTime, Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
     api::v1 as api,
-    constants::ENV_METIS_ID,
+    constants::{ENV_METIS_ID, ENV_METIS_TOKEN},
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
@@ -39,6 +39,7 @@ use super::{
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
+    github_user_client: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
     store: Arc<dyn Store>,
     pub job_engine: Arc<dyn JobEngine>,
@@ -224,6 +225,7 @@ impl AppState {
     pub fn new(
         config: Arc<AppConfig>,
         github_app: Option<Octocrab>,
+        github_user_client: Option<Octocrab>,
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
@@ -232,6 +234,7 @@ impl AppState {
         Self {
             config,
             github_app,
+            github_user_client,
             service_state,
             store,
             job_engine,
@@ -244,8 +247,7 @@ impl AppState {
         github_token: String,
         github_refresh_token: String,
     ) -> Result<api::login::LoginResponse, LoginError> {
-        let store = self.store.as_ref();
-        let (user, _actor, login_token) = store
+        let (user, _actor, login_token) = self
             .create_actor_for_github_token(github_token, github_refresh_token)
             .await
             .map_err(|source| match source {
@@ -261,6 +263,53 @@ impl AppState {
     pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
         let store = self.store.as_ref();
         store.validate_auth_token(token).await
+    }
+
+    pub async fn create_actor_for_github_token(
+        &self,
+        github_token: String,
+        github_refresh_token: String,
+    ) -> Result<(User, Actor, String), StoreError> {
+        let (user, actor, auth_token) = match self.github_user_client.as_ref() {
+            Some(github_client) => Actor::new_for_github_token_with_client(
+                github_token,
+                github_refresh_token,
+                github_client,
+            )
+            .await
+            .map_err(crate::store::map_actor_error)?,
+            None => Actor::new_for_github_token(github_token, github_refresh_token)
+                .await
+                .map_err(crate::store::map_actor_error)?,
+        };
+
+        let store = self.store.as_ref();
+        if let Err(err) = store.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    store
+                        .set_user_github_token(
+                            &user.username,
+                            user.github_token.clone(),
+                            user.github_user_id,
+                            user.github_refresh_token.clone(),
+                        )
+                        .await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        if let Err(err) = store.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    store.update_actor(actor.clone()).await?;
+                }
+                other => return Err(other),
+            }
+        }
+
+        Ok((user, actor, auth_token))
     }
 
     pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
@@ -602,7 +651,7 @@ impl AppState {
 
     pub async fn start_pending_task(&self, task_id: TaskId) {
         let job_config = self.config.job.clone();
-        let (resolved, cpu_limit, memory_limit) = {
+        let (mut resolved, cpu_limit, memory_limit) = {
             let store = self.store.as_ref();
             match store.get_task(&task_id).await {
                 Ok(task) => match self.resolve_task(&task).await {
@@ -629,6 +678,41 @@ impl AppState {
 
         let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
         let memory_limit = memory_limit.unwrap_or_else(|| job_config.memory_limit.clone());
+
+        let auth_token = match self.create_actor_for_task(task_id.clone()).await {
+            Ok((_actor, auth_token)) => auth_token,
+            Err(err) => {
+                let store = self.store.as_ref();
+                let failure_reason = format!("Failed to create task actor: {err}");
+                if let Err(update_err) = store
+                    .mark_task_complete(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                        Utc::now(),
+                    )
+                    .await
+                {
+                    error!(
+                        metis_id = %task_id,
+                        error = %update_err,
+                        "failed to set task status to Failed (actor creation failed)"
+                    );
+                } else {
+                    info!(
+                        metis_id = %task_id,
+                        "set task status to Failed (actor creation failed)"
+                    );
+                }
+                return;
+            }
+        };
+
+        resolved
+            .env_vars
+            .insert(ENV_METIS_TOKEN.to_string(), auth_token);
 
         match self
             .job_engine
@@ -1323,13 +1407,14 @@ impl AppState {
         store.add_issue(issue).await
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
     pub async fn create_actor_for_task(
         &self,
         task_id: TaskId,
     ) -> Result<(Actor, String), StoreError> {
+        let (actor, auth_token) = Actor::new_for_task(task_id);
         let store = self.store.as_ref();
-        store.create_actor_for_task(task_id).await
+        store.add_actor(actor.clone()).await?;
+        Ok((actor, auth_token))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -1633,6 +1718,7 @@ mod tests {
     use super::{LoginError, UpsertIssueError};
     use crate::{
         domain::{
+            actors::UserOrWorker,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
                 TodoItem, UpsertIssueRequest,
@@ -1774,6 +1860,23 @@ mod tests {
             .expect_err("login should fail for invalid token");
 
         assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_actor_for_task_persists_actor() -> anyhow::Result<()> {
+        let state = test_state();
+        let task_id = TaskId::new();
+
+        let (actor, token) = state.create_actor_for_task(task_id.clone()).await?;
+
+        assert_eq!(actor.user_or_worker, UserOrWorker::Task(task_id));
+        assert!(actor.verify_auth_token(&token));
+
+        let store = state.store.as_ref();
+        let fetched = store.get_actor(&actor.name()).await?;
+        assert_eq!(fetched, actor);
+
         Ok(())
     }
 

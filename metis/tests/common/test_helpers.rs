@@ -328,7 +328,7 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
 
 async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(AppState, String)> {
     let server_config = test_app_config();
-    let store: Box<dyn Store> = Box::new(MemoryStore::new());
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
     store
         .add_repository(
             repo_name.clone(),
@@ -340,24 +340,23 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
         )
         .await?;
 
-    let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
     let user = User::new(
         Username::from("test-user"),
         1,
-        auth_token.clone(),
+        "gh-token".to_string(),
         "gh-refresh-token".to_string(),
     );
-    store.add_user(user.into()).await?;
+    let state = AppState::new(
+        Arc::new(server_config),
+        None,
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        Arc::new(RwLock::new(Vec::new())),
+    );
+    state.add_user(user.into()).await?;
+    let (_actor, auth_token) = state.create_actor_for_task(TaskId::new()).await?;
 
-    Ok((
-        AppState::new(
-            Arc::new(server_config),
-            None,
-            Arc::new(ServiceState::default()),
-            Arc::from(store),
-            Arc::new(MockJobEngine::new()),
-            Arc::new(RwLock::new(Vec::new())),
-        ),
-        auth_token,
-    ))
+    Ok((state, auth_token))
 }

@@ -27,6 +27,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
     AppState::new(
         Arc::new(config),
         None,
+        None,
         Arc::new(ServiceState::default()),
         Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),

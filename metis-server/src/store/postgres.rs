@@ -833,51 +833,6 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), StoreError> {
-        let (user, actor, auth_token) =
-            Actor::new_for_github_token(github_token, github_refresh_token)
-                .await
-                .map_err(super::map_actor_error)?;
-
-        if let Err(err) = self.add_user(user.clone()).await {
-            match err {
-                StoreError::UserAlreadyExists(_) => {
-                    self.set_user_github_token(
-                        &user.username,
-                        user.github_token.clone(),
-                        user.github_user_id,
-                        user.github_refresh_token.clone(),
-                    )
-                    .await?;
-                }
-                other => return Err(other),
-            }
-        }
-
-        if let Err(err) = self.add_actor(actor.clone()).await {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    let name = actor.name();
-                    self.update_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
-                        .await?;
-                }
-                other => return Err(other),
-            }
-        }
-
-        Ok((user, actor, auth_token))
-    }
-
-    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
-        let (actor, auth_token) = Actor::new_for_task(task_id);
-        self.add_actor(actor.clone()).await?;
-        Ok((actor, auth_token))
-    }
-
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -894,6 +849,27 @@ impl Store for PostgresStore {
 
         self.insert_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
             .await
+    }
+
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        let payload_value = serde_json::to_value(&actor).map_err(map_serde_error("actor"))?;
+
+        let query =
+            format!("UPDATE {TABLE_ACTORS} SET schema_version = $1, payload = $2 WHERE id = $3");
+        let result = sqlx::query(&query)
+            .bind(ACTOR_SCHEMA_VERSION)
+            .bind(payload_value)
+            .bind(&name)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StoreError::ActorNotFound(name));
+        }
+
+        Ok(())
     }
 
     async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {

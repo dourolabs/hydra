@@ -15,6 +15,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
     let state = AppState::new(
         Arc::new(config),
         None,
+        None,
         Arc::new(ServiceState::default()),
         Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),

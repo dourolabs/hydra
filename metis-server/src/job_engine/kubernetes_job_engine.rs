@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -28,7 +25,6 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
-use crate::store::Store;
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -36,7 +32,6 @@ pub struct KubernetesJobEngine {
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secrets: Vec<String>,
-    pub store: Arc<dyn Store>,
 }
 
 fn merge_env_vars(
@@ -502,13 +497,10 @@ impl JobEngine for KubernetesJobEngine {
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
         let metadata_labels = Self::build_metadata_labels(metis_id);
 
-        let (actor, auth_token) = self.store.create_actor_for_task(metis_id.clone()).await?;
-        info!(
-            metis_id = %metis_id,
-            actor = %actor.name(),
-            job_name = %job_name,
-            "created actor for job"
-        );
+        let auth_token = env_vars
+            .get(ENV_METIS_TOKEN)
+            .ok_or_else(|| JobEngineError::Internal("missing METIS_TOKEN in env vars".to_string()))?
+            .to_string();
 
         let mut container = Container {
             name: "metis-worker".to_string(),

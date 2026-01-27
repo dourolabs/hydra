@@ -3,9 +3,6 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
-#[cfg(any(test, feature = "test-utils"))]
-use octocrab::Octocrab;
-
 use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
 use crate::domain::{
@@ -44,8 +41,6 @@ pub struct MemoryStore {
     users: DashMap<Username, User>,
     /// Maps actor names to their Actor data
     actors: DashMap<String, Actor>,
-    #[cfg(any(test, feature = "test-utils"))]
-    github_client: Option<Octocrab>,
 }
 
 impl MemoryStore {
@@ -63,16 +58,7 @@ impl MemoryStore {
             status_logs: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
-            #[cfg(any(test, feature = "test-utils"))]
-            github_client: None,
         }
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn new_with_github_client(github_client: Octocrab) -> Self {
-        let mut store = Self::new();
-        store.github_client = Some(github_client);
-        store
     }
 
     /// Updates issue adjacency indexes to match the provided dependency list.
@@ -590,48 +576,20 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), StoreError> {
-        #[cfg(test)]
-        if let Some(github_client) = self.github_client.as_ref() {
-            let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
-                github_token,
-                github_refresh_token,
-                github_client,
-            )
-            .await
-            .map_err(super::map_actor_error)?;
-
-            self.upsert_user_and_actor(user.clone(), actor.clone())
-                .await?;
-
-            return Ok((user, actor, auth_token));
-        }
-
-        let (user, actor, auth_token) =
-            Actor::new_for_github_token(github_token, github_refresh_token)
-                .await
-                .map_err(super::map_actor_error)?;
-
-        self.upsert_user_and_actor(user.clone(), actor.clone())
-            .await?;
-
-        Ok((user, actor, auth_token))
-    }
-
-    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
-        let (actor, auth_token) = Actor::new_for_task(task_id);
-        self.add_actor(actor.clone()).await?;
-        Ok((actor, auth_token))
-    }
-
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         if self.actors.contains_key(&name) {
             return Err(StoreError::ActorAlreadyExists(name));
+        }
+
+        self.actors.insert(name, actor);
+        Ok(())
+    }
+
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let name = actor.name();
+        if !self.actors.contains_key(&name) {
+            return Err(StoreError::ActorNotFound(name));
         }
 
         self.actors.insert(name, actor);
@@ -690,36 +648,6 @@ impl Store for MemoryStore {
     }
 }
 
-impl MemoryStore {
-    async fn upsert_user_and_actor(&self, user: User, actor: Actor) -> Result<(), StoreError> {
-        if let Err(err) = self.add_user(user.clone()).await {
-            match err {
-                StoreError::UserAlreadyExists(_) => {
-                    self.set_user_github_token(
-                        &user.username,
-                        user.github_token.clone(),
-                        user.github_user_id,
-                        user.github_refresh_token.clone(),
-                    )
-                    .await?;
-                }
-                other => return Err(other),
-            }
-        }
-
-        if let Err(err) = self.add_actor(actor.clone()).await {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    self.actors.insert(actor.name(), actor);
-                }
-                other => return Err(other),
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,10 +661,7 @@ mod tests {
         users::{User, Username},
     };
     use chrono::Utc;
-    use httpmock::prelude::*;
     use metis_common::{RepoName, TaskId, repositories::Repository};
-    use octocrab::Octocrab;
-    use serde_json::json;
     use std::{collections::HashSet, str::FromStr};
 
     fn sample_repository_config() -> Repository {
@@ -790,41 +715,6 @@ mod tests {
             dependencies,
             Vec::new(),
         )
-    }
-
-    fn github_user_response(login: &str, id: u64) -> serde_json::Value {
-        json!({
-            "login": login,
-            "id": id,
-            "node_id": "NODEID",
-            "avatar_url": "https://example.com/avatar",
-            "gravatar_id": "gravatar",
-            "url": "https://example.com/user",
-            "html_url": "https://example.com/user",
-            "followers_url": "https://example.com/followers",
-            "following_url": "https://example.com/following",
-            "gists_url": "https://example.com/gists",
-            "starred_url": "https://example.com/starred",
-            "subscriptions_url": "https://example.com/subscriptions",
-            "organizations_url": "https://example.com/orgs",
-            "repos_url": "https://example.com/repos",
-            "events_url": "https://example.com/events",
-            "received_events_url": "https://example.com/received_events",
-            "type": "User",
-            "site_admin": false,
-            "name": null,
-            "patch_url": null,
-            "email": null
-        })
-    }
-
-    fn build_github_client(base_url: String) -> Octocrab {
-        Octocrab::builder()
-            .base_uri(base_url)
-            .unwrap()
-            .personal_token("gh-token".to_string())
-            .build()
-            .unwrap()
     }
 
     #[tokio::test]
@@ -1529,48 +1419,6 @@ mod tests {
             err,
             StoreError::ActorAlreadyExists(existing) if existing == name
         ));
-    }
-
-    #[tokio::test]
-    async fn create_github_actor_persists_user_and_actor() {
-        let server = MockServer::start_async().await;
-        let _mock = server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-
-        let github_client = build_github_client(server.base_url());
-        let store = MemoryStore::new_with_github_client(github_client);
-        let (user, actor, auth_token) = store
-            .create_actor_for_github_token("gh-token".to_string(), "gh-refresh".to_string())
-            .await
-            .unwrap();
-
-        assert!(!auth_token.is_empty());
-        assert_eq!(user.username, Username::from("octo"));
-
-        let fetched_user = store.get_user(&user.username).await.unwrap();
-        let fetched_actor = store.get_actor(&actor.name()).await.unwrap();
-
-        assert_eq!(fetched_user, user);
-        assert_eq!(fetched_actor, actor);
-    }
-
-    #[tokio::test]
-    async fn create_task_actor_persists_and_verifies_token() {
-        let store = MemoryStore::new();
-        let task_id = TaskId::new();
-
-        let (actor, token) = store.create_actor_for_task(task_id.clone()).await.unwrap();
-
-        assert_eq!(actor.user_or_worker, UserOrWorker::Task(task_id));
-        assert!(!actor.auth_token_salt.is_empty());
-        assert!(actor.verify_auth_token(&token));
-
-        let fetched = store.get_actor(&actor.name()).await.unwrap();
-        assert_eq!(fetched, actor);
     }
 
     #[tokio::test]
