@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, VersionNumber, repositories::Repository};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -270,7 +270,9 @@ impl PostgresStore {
             payload: Value,
         }
 
-        let query = format!("SELECT schema_version, payload FROM {table} WHERE id = $1");
+        let query = format!(
+            "SELECT schema_version, payload FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+        );
         let row = sqlx::query_as::<_, PayloadRow>(&query)
             .bind(id)
             .fetch_optional(&self.pool)
@@ -301,7 +303,9 @@ impl PostgresStore {
             payload: Value,
         }
 
-        let query = format!("SELECT id, schema_version, payload FROM {table}");
+        let query = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload FROM {table} ORDER BY id, version_number DESC"
+        );
         let rows = sqlx::query_as::<_, PayloadWithId>(&query)
             .fetch_all(&self.pool)
             .await
@@ -324,16 +328,22 @@ impl PostgresStore {
         table: &str,
         object_type: &str,
         id: &str,
-        version: i32,
+        schema_version: i32,
+        version_number: VersionNumber,
         payload: &T,
     ) -> Result<(), StoreError> {
         let payload_value = serde_json::to_value(payload).map_err(map_serde_error(object_type))?;
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for {object_type} '{id}'"))
+        })?;
 
-        let query =
-            format!("INSERT INTO {table} (id, schema_version, payload) VALUES ($1, $2, $3)");
+        let query = format!(
+            "INSERT INTO {table} (id, version_number, schema_version, payload) VALUES ($1, $2, $3, $4)"
+        );
         sqlx::query(&query)
             .bind(id)
-            .bind(version)
+            .bind(version_number)
+            .bind(schema_version)
             .bind(payload_value)
             .execute(&self.pool)
             .await
@@ -347,27 +357,50 @@ impl PostgresStore {
         table: &str,
         object_type: &str,
         id: &str,
-        version: i32,
+        schema_version: i32,
         payload: &T,
     ) -> Result<(), StoreError> {
-        let payload_value = serde_json::to_value(payload).map_err(map_serde_error(object_type))?;
+        let latest_version = self
+            .fetch_latest_version_number(table, id)
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!("{object_type} '{id}' was missing during update"))
+            })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for {object_type} '{id}'"))
+        })?;
 
-        let query = format!("UPDATE {table} SET schema_version = $1, payload = $2 WHERE id = $3");
-        let result = sqlx::query(&query)
-            .bind(version)
-            .bind(payload_value)
+        self.insert_payload(
+            table,
+            object_type,
+            id,
+            schema_version,
+            next_version,
+            payload,
+        )
+        .await
+    }
+
+    async fn fetch_latest_version_number(
+        &self,
+        table: &str,
+        id: &str,
+    ) -> Result<Option<VersionNumber>, StoreError> {
+        let query = format!(
+            "SELECT version_number FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+        );
+        let version = sqlx::query_scalar::<_, i64>(&query)
             .bind(id)
-            .execute(&self.pool)
+            .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
-        if result.rows_affected() == 0 {
-            return Err(StoreError::Internal(format!(
-                "{object_type} '{id}' was missing during update"
-            )));
+        match version {
+            Some(value) => VersionNumber::try_from(value).map(Some).map_err(|_| {
+                StoreError::Internal(format!("invalid version number stored for {table} '{id}'"))
+            }),
+            None => Ok(None),
         }
-
-        Ok(())
     }
 }
 
@@ -414,6 +447,7 @@ impl Store for PostgresStore {
             "repository",
             name_str.as_str(),
             REPOSITORY_SCHEMA_VERSION,
+            1,
             &config,
         )
         .await
@@ -483,6 +517,7 @@ impl Store for PostgresStore {
             "issue",
             id.as_ref(),
             ISSUE_SCHEMA_VERSION,
+            1,
             &issue,
         )
         .await?;
@@ -543,6 +578,7 @@ impl Store for PostgresStore {
             "patch",
             id.as_ref(),
             PATCH_SCHEMA_VERSION,
+            1,
             &patch,
         )
         .await?;
@@ -686,6 +722,7 @@ impl Store for PostgresStore {
             "task",
             metis_id.as_ref(),
             TASK_SCHEMA_VERSION,
+            1,
             &task,
         )
         .await?;
@@ -696,6 +733,7 @@ impl Store for PostgresStore {
             "task_status_log",
             metis_id.as_ref(),
             TASK_STATUS_LOG_SCHEMA_VERSION,
+            1,
             &status_log,
         )
         .await?;
@@ -847,8 +885,15 @@ impl Store for PostgresStore {
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
-        self.insert_payload(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION, &actor)
-            .await
+        self.insert_payload(
+            TABLE_ACTORS,
+            "actor",
+            &name,
+            ACTOR_SCHEMA_VERSION,
+            1,
+            &actor,
+        )
+        .await
     }
 
     async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
@@ -902,6 +947,7 @@ impl Store for PostgresStore {
             "user",
             user.username.as_str(),
             USER_SCHEMA_VERSION,
+            1,
             &user,
         )
         .await
@@ -1028,6 +1074,15 @@ mod tests {
             .update_repository(name.clone(), updated.clone())
             .await
             .unwrap();
+
+        let versions: Vec<i64> = sqlx::query_scalar(&format!(
+            "SELECT version_number FROM {TABLE_REPOSITORIES} WHERE id = $1 ORDER BY version_number"
+        ))
+        .bind(name.as_str())
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(versions, vec![1, 2]);
 
         let list = store.list_repositories().await.unwrap();
         assert_eq!(list, vec![(name.clone(), updated.clone())]);
