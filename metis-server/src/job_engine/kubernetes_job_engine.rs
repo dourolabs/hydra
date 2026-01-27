@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -28,7 +25,7 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use super::{JobEngine, JobEngineError, JobStatus, MetisJob, TaskId};
-use crate::store::Store;
+use crate::domain::actors::Actor;
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -36,7 +33,6 @@ pub struct KubernetesJobEngine {
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secrets: Vec<String>,
-    pub store: Arc<dyn Store>,
 }
 
 fn merge_env_vars(
@@ -490,6 +486,8 @@ impl JobEngine for KubernetesJobEngine {
     async fn create_job(
         &self,
         metis_id: &TaskId,
+        actor: &Actor,
+        auth_token: &str,
         image: &str,
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
@@ -502,12 +500,11 @@ impl JobEngine for KubernetesJobEngine {
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &self.namespace);
         let metadata_labels = Self::build_metadata_labels(metis_id);
 
-        let (actor, auth_token) = self.store.create_actor_for_task(metis_id.clone()).await?;
         info!(
             metis_id = %metis_id,
             actor = %actor.name(),
             job_name = %job_name,
-            "created actor for job"
+            "using actor for job"
         );
 
         let mut container = Container {
@@ -515,7 +512,7 @@ impl JobEngine for KubernetesJobEngine {
             image: Some(image.to_string()),
             image_pull_policy: Some("IfNotPresent".into()),
             args: None,
-            env: Some(self.build_env_vars(metis_id, env_vars, &auth_token)),
+            env: Some(self.build_env_vars(metis_id, env_vars, auth_token)),
             ..Default::default()
         };
 

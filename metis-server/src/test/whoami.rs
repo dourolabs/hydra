@@ -1,10 +1,9 @@
 use crate::test::{
     spawn_test_server, spawn_test_server_with_state, test_auth_token, test_client,
-    test_state_with_github_client,
+    test_state_with_github_api_base_url,
 };
 use httpmock::prelude::*;
 use metis_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
-use octocrab::Octocrab;
 use reqwest::{Client, StatusCode, header};
 use serde_json::json;
 
@@ -34,15 +33,6 @@ fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     })
 }
 
-fn build_github_client(base_url: String) -> Octocrab {
-    Octocrab::builder()
-        .base_uri(base_url)
-        .unwrap()
-        .personal_token("gh-token".to_string())
-        .build()
-        .unwrap()
-}
-
 fn client_with_token(token: &str) -> Client {
     let mut headers = header::HeaderMap::new();
     let auth_value = format!("Bearer {token}");
@@ -67,7 +57,7 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+    let state = test_state_with_github_api_base_url(github_server.base_url());
     let token = state
         .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
         .await?

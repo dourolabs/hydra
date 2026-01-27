@@ -11,7 +11,6 @@ use crate::{
 };
 use anyhow::Context;
 use metis_common::{RepoName, TaskId};
-use octocrab::Octocrab;
 use reqwest::{Client, header};
 use std::{
     sync::Arc,
@@ -98,12 +97,15 @@ pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow:
     Ok(state)
 }
 
-pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
+pub fn test_state_with_github_api_base_url(api_base_url: String) -> AppState {
+    let mut config = test_app_config();
+    config.github_app.api_base_url = api_base_url;
+
     AppState::new(
-        Arc::new(test_app_config()),
+        Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new_with_github_client(github_client)),
+        Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
         Arc::new(RwLock::new(Vec::new())),
     )

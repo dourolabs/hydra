@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-use crate::store::StoreError;
+use crate::{domain::actors::Actor, store::StoreError};
 
 mod kubernetes_job_engine;
 
@@ -81,6 +81,8 @@ pub trait JobEngine: Send + Sync {
     ///
     /// # Arguments
     /// * `metis_id` - The Metis ID to use for the job
+    /// * `actor` - The actor assigned to the job
+    /// * `auth_token` - The raw auth token for the actor
     /// * `image` - The container image the job should run
     /// * `env_vars` - Environment variables to inject into the job container
     /// * `cpu_limit` - CPU request for the job container
@@ -91,6 +93,8 @@ pub trait JobEngine: Send + Sync {
     async fn create_job(
         &self,
         metis_id: &TaskId,
+        actor: &Actor,
+        auth_token: &str,
         image: &str,
         env_vars: &HashMap<String, String>,
         cpu_limit: String,

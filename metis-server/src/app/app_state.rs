@@ -248,18 +248,82 @@ impl AppState {
         github_token: String,
         github_refresh_token: String,
     ) -> Result<api::login::LoginResponse, LoginError> {
-        let store = self.store.as_ref();
-        let (user, _actor, login_token) = store
+        let (user, _actor, login_token) = self
             .create_actor_for_github_token(github_token, github_refresh_token)
-            .await
-            .map_err(|source| match source {
-                StoreError::GithubTokenInvalid(message) => LoginError::InvalidGithubToken(message),
-                other => LoginError::Store { source: other },
-            })?;
+            .await?;
 
         let user_summary: api::users::UserSummary = UserSummary::from(user).into();
 
         Ok(api::login::LoginResponse::new(login_token, user_summary))
+    }
+
+    async fn create_actor_for_github_token(
+        &self,
+        github_token: String,
+        github_refresh_token: String,
+    ) -> Result<(User, Actor, String), LoginError> {
+        let github_client = Octocrab::builder()
+            .base_uri(self.config.github_app.api_base_url().to_string())
+            .map_err(|err| LoginError::Store {
+                source: StoreError::Internal(format!("failed to parse github api base url: {err}")),
+            })?
+            .personal_token(github_token.clone())
+            .build()
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+        let github_user = github_client
+            .current()
+            .user()
+            .await
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+        let username = Username::from(github_user.login);
+        let user = User {
+            username: username.clone(),
+            github_user_id: github_user.id.into_inner(),
+            github_token,
+            github_refresh_token,
+        };
+
+        let (actor, auth_token) = Actor::new_for_user(username);
+
+        let store = self.store.as_ref();
+        if let Err(err) = store.add_user(user.clone()).await {
+            match err {
+                StoreError::UserAlreadyExists(_) => {
+                    store
+                        .set_user_github_token(
+                            &user.username,
+                            user.github_token.clone(),
+                            user.github_user_id,
+                            user.github_refresh_token.clone(),
+                        )
+                        .await
+                        .map_err(|source| LoginError::Store { source })?;
+                }
+                other => return Err(LoginError::Store { source: other }),
+            }
+        }
+
+        if let Err(err) = store.add_actor(actor.clone()).await {
+            match err {
+                StoreError::ActorAlreadyExists(_) => {
+                    store
+                        .update_actor(actor.clone())
+                        .await
+                        .map_err(|source| LoginError::Store { source })?;
+                }
+                other => return Err(LoginError::Store { source: other }),
+            }
+        }
+
+        Ok((user, actor, auth_token))
+    }
+
+    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
+        let (actor, auth_token) = Actor::new_for_task(task_id);
+        let store = self.store.as_ref();
+        store.add_actor(actor.clone()).await?;
+        Ok((actor, auth_token))
     }
 
     pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
@@ -616,10 +680,43 @@ impl AppState {
         let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
         let memory_limit = memory_limit.unwrap_or_else(|| job_config.memory_limit.clone());
 
+        let (actor, auth_token) = match self.create_actor_for_task(task_id.clone()).await {
+            Ok(values) => values,
+            Err(err) => {
+                let store = self.store.as_ref();
+                let failure_reason = format!("Failed to create actor for task: {err}");
+                if let Err(update_err) = store
+                    .mark_task_complete(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                        Utc::now(),
+                    )
+                    .await
+                {
+                    error!(
+                        metis_id = %task_id,
+                        error = %update_err,
+                        "failed to set task status to Failed (actor creation failed)"
+                    );
+                } else {
+                    info!(
+                        metis_id = %task_id,
+                        "set task status to Failed (actor creation failed)"
+                    );
+                }
+                return;
+            }
+        };
+
         match self
             .job_engine
             .create_job(
                 &task_id,
+                &actor,
+                &auth_token,
                 &resolved.image,
                 &resolved.env_vars,
                 cpu_limit,
@@ -1549,13 +1646,12 @@ mod tests {
         job_engine::{JobEngine, JobStatus},
         store::{Status, StoreError, TaskError},
         test_utils::{
-            MockJobEngine, test_state, test_state_with_engine, test_state_with_github_client,
+            MockJobEngine, test_state, test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
     use httpmock::prelude::*;
     use metis_common::{IssueId, TaskId};
-    use octocrab::Octocrab;
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
 
@@ -1628,15 +1724,6 @@ mod tests {
         })
     }
 
-    fn build_github_client(base_url: String) -> Octocrab {
-        Octocrab::builder()
-            .base_uri(base_url)
-            .unwrap()
-            .personal_token("gh-token".to_string())
-            .build()
-            .unwrap()
-    }
-
     #[tokio::test]
     async fn login_persists_user_and_actor() -> anyhow::Result<()> {
         let github_server = MockServer::start_async().await;
@@ -1647,7 +1734,7 @@ mod tests {
                 .json_body(github_user_response("octo", 42));
         });
 
-        let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+        let state = test_state_with_github_api_base_url(github_server.base_url());
         let response = state
             .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await
@@ -1673,7 +1760,7 @@ mod tests {
             then.status(401);
         });
 
-        let state = test_state_with_github_client(build_github_client(github_server.base_url()));
+        let state = test_state_with_github_api_base_url(github_server.base_url());
         let err = state
             .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
             .await

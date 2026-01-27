@@ -15,7 +15,6 @@ use crate::{
 use chrono::Utc;
 use httpmock::prelude::*;
 use metis_common::{TaskId, github::GithubTokenResponse};
-use octocrab::Octocrab;
 use reqwest::{Client, header};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -60,15 +59,6 @@ fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     })
 }
 
-fn build_github_client(base_url: String) -> Octocrab {
-    Octocrab::builder()
-        .base_uri(base_url)
-        .unwrap()
-        .personal_token("gh-token".to_string())
-        .build()
-        .unwrap()
-}
-
 fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> AppState {
     let mut config = test_app_config();
     config.github_app.api_base_url = api_base_url;
@@ -94,17 +84,11 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let github_client = build_github_client(server.base_url());
-    let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
-        "gh-token".to_string(),
-        "gh-refresh".to_string(),
-        &github_client,
-    )
-    .await?;
-
     let state = test_state_with_github_urls(server.base_url(), server.base_url());
-    state.add_user(user).await?;
-    state.add_actor(actor).await?;
+    let auth_token = state
+        .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
+        .await?
+        .login_token;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);
@@ -199,23 +183,8 @@ async fn github_token_requires_auth() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()> {
-    let server = MockServer::start_async().await;
-    let _mock = server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_user_response("octo", 42));
-    });
-
-    let github_client = build_github_client(server.base_url());
-    let (_user, actor, auth_token) = Actor::new_for_github_token_with_client(
-        "gh-token".to_string(),
-        "gh-refresh".to_string(),
-        &github_client,
-    )
-    .await?;
-
     let state = test_state();
+    let (actor, auth_token) = Actor::new_for_user(Username::from("octo"));
     state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;

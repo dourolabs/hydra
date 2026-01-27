@@ -28,14 +28,6 @@ impl AppState {
         store.add_issue(issue).await
     }
 
-    pub async fn create_actor_for_task(
-        &self,
-        task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError> {
-        let store = self.store.as_ref();
-        store.create_actor_for_task(task_id).await
-    }
-
     pub async fn add_user(&self, user: User) -> Result<(), StoreError> {
         let store = self.store.as_ref();
         store.add_user(user).await
