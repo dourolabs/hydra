@@ -37,6 +37,17 @@ fn map_login_error(error: LoginError) -> ApiError {
             error!(error = %message, "login failed with invalid token");
             ApiError::bad_request("invalid GitHub token")
         }
+        LoginError::Unauthorized(message) => {
+            error!(error = %message, "login rejected due to organization membership");
+            ApiError::unauthorized(message)
+        }
+        LoginError::GithubOrganizationLookupFailed(message) => {
+            error!(
+                error = %message,
+                "login failed to verify GitHub organization membership"
+            );
+            ApiError::internal("failed to verify GitHub organization membership")
+        }
         LoginError::Store { source } => {
             error!(error = %source, "login failed to store actor");
             ApiError::internal(format!("failed to login: {source}"))
