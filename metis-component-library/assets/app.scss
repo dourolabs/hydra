@@ -97,8 +97,8 @@ h1 {
 .theme-card,
 .status-card {
   background: var(--panel-bg);
-  border: theme.spacing(0.25) solid var(--panel-border);
-  border-radius: theme.spacing(4.5);
+  border: 1px solid var(--panel-border);
+  border-radius: theme.border-radius("2xl");
   padding: theme.spacing(4.5);
   display: grid;
   gap: theme.spacing(2.5);
@@ -130,7 +130,7 @@ h1 {
 
 .theme-toggle {
   border: none;
-  border-radius: theme.spacing(249.75);
+  border-radius: theme.border-radius("full");
   padding: theme.spacing(2.5) theme.spacing(4);
   background: var(--accent);
   color: #041019;
@@ -152,8 +152,8 @@ h1 {
 
 .panel {
   background: var(--panel-bg);
-  border-radius: theme.spacing(5.5);
-  border: theme.spacing(0.25) solid var(--panel-border);
+  border-radius: theme.border-radius("3xl");
+  border: 1px solid var(--panel-border);
   padding: clamp(theme.spacing(4.5), 3vw, theme.spacing(7));
   box-shadow: 0 theme.spacing(4) theme.spacing(10) rgba(15, 23, 42, 0.1);
   animation: panel-rise 520ms ease-out both;
