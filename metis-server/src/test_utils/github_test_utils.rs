@@ -6,7 +6,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::{MockJobEngine, test_app_config};
+use super::{MockJobEngine, TestStateHandles, test_app_config};
 
 pub fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     json!({
@@ -34,21 +34,32 @@ pub fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     })
 }
 
-pub fn test_state_with_github_api_base_url(api_base_url: String) -> AppState {
+pub fn test_state_with_github_api_base_url(api_base_url: String) -> TestStateHandles {
     test_state_with_github_urls(api_base_url, "https://github.com".to_string())
 }
 
-pub fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> AppState {
+pub fn test_state_with_github_urls(
+    api_base_url: String,
+    oauth_base_url: String,
+) -> TestStateHandles {
     let mut config = test_app_config();
     config.github_app.api_base_url = api_base_url;
     config.github_app.oauth_base_url = oauth_base_url;
 
-    AppState::new(
+    let store = Arc::new(MemoryStore::new());
+    let agents = Arc::new(RwLock::new(Vec::new()));
+    let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new()),
+        store.clone(),
         Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(Vec::new())),
-    )
+        agents.clone(),
+    );
+
+    TestStateHandles {
+        state,
+        store,
+        agents,
+    }
 }

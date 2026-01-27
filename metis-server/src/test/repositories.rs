@@ -1,6 +1,6 @@
 use crate::{
     app::Repository,
-    test::{spawn_test_server_with_state, test_client, test_state},
+    test::{spawn_test_server_with_state, test_client, test_state_handles},
 };
 use git2::{Repository as GitRepository, Signature};
 use metis_common::{
@@ -17,11 +17,12 @@ use tempfile::TempDir;
 #[tokio::test]
 async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
-    let state = test_state();
-    state
+    let handles = test_state_handles();
+    handles
+        .state
         .create_repository(name.clone(), repository.clone())
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let response = client
@@ -43,10 +44,10 @@ async fn list_repositories_returns_config_without_secrets() -> anyhow::Result<()
 
 #[tokio::test]
 async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result<()> {
-    let state = test_state();
-    let service_state = state.service_state.clone();
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_handles();
+    let service_state = handles.state.service_state.clone();
+    let check_state = handles.state.clone();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let remote_dir = create_remote_repository()?;
@@ -109,20 +110,21 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
     let original_remote = create_remote_repository()?;
     let updated_remote = create_remote_repository()?;
 
-    let state = test_state();
-    let check_state = state.clone();
-    let service_state = state.service_state.clone();
+    let handles = test_state_handles();
+    let check_state = handles.state.clone();
+    let service_state = handles.state.service_state.clone();
     let repository = Repository::new(
         repo_url(&original_remote),
         Some("develop".to_string()),
         Some("ghcr.io/example/repo:main".to_string()),
     );
-    state
+    handles
+        .state
         .create_repository(name.clone(), repository.clone())
         .await?;
     service_state.ensure_cached(&name, &repository).await?;
-    let service_state = state.service_state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let service_state = handles.state.service_state.clone();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let payload =
@@ -165,8 +167,8 @@ async fn update_repository_replaces_config_and_clears_optionals() -> anyhow::Res
 
 #[tokio::test]
 async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
-    let state = test_state();
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let remote_dir = create_remote_repository()?;
 
@@ -191,8 +193,9 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
 #[tokio::test]
 async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::Result<()> {
     let (name, repository) = crate::test::common::service_repository();
-    let state = test_state();
-    state
+    let handles = test_state_handles();
+    handles
+        .state
         .create_repository(
             name.clone(),
             Repository::new(
@@ -202,7 +205,7 @@ async fn create_repository_rejects_empty_remote_and_duplicate_name() -> anyhow::
             ),
         )
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let bad_payload = CreateRepositoryRequest::new(

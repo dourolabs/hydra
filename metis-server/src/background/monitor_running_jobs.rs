@@ -80,15 +80,18 @@ mod tests {
         domain::jobs::BundleSpec,
         job_engine::JobStatus,
         store::{Status, Task},
-        test_utils::{FailingStore, MockJobEngine, test_state, test_state_with_engine},
+        test_utils::{
+            FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
+            test_state_with_store,
+        },
     };
     use chrono::Utc;
     use std::{collections::HashMap, sync::Arc};
 
     #[tokio::test]
     async fn returns_idle_when_no_running_tasks_exist() {
-        let state = test_state();
-        let worker = MonitorRunningJobsWorker::new(state);
+        let handles = test_state_handles();
+        let worker = MonitorRunningJobsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 
@@ -98,7 +101,7 @@ mod tests {
     #[tokio::test]
     async fn reconciles_running_jobs_and_reports_progress() {
         let engine = Arc::new(MockJobEngine::new());
-        let state = test_state_with_engine(engine.clone());
+        let handles = test_state_with_engine_handles(engine.clone());
         let task = Task::new(
             "observe".to_string(),
             BundleSpec::None,
@@ -108,18 +111,20 @@ mod tests {
             None,
             None,
         );
-        let task_id = state
+        let task_id = handles
+            .store
             .add_task(task, Utc::now())
             .await
             .expect("task should be added");
-        state
+        handles
+            .store
             .mark_task_running(&task_id, Utc::now())
             .await
             .expect("task should be marked running");
 
         engine.insert_job(&task_id, JobStatus::Running).await;
 
-        let worker = MonitorRunningJobsWorker::new(state.clone());
+        let worker = MonitorRunningJobsWorker::new(handles.state.clone());
         let outcome = worker.run_iteration().await;
 
         assert_eq!(
@@ -131,7 +136,8 @@ mod tests {
         );
 
         assert_eq!(
-            state
+            handles
+                .state
                 .get_task_status(&task_id)
                 .await
                 .expect("status should exist"),
@@ -141,9 +147,8 @@ mod tests {
 
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
-        let mut state = test_state();
-        state.set_store_for_tests(Box::new(FailingStore));
-        let worker = MonitorRunningJobsWorker::new(state);
+        let handles = test_state_with_store(Arc::new(FailingStore));
+        let worker = MonitorRunningJobsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 

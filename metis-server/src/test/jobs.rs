@@ -11,7 +11,7 @@ use crate::{
     store::{Status, Task, TaskError},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
-        test_client, test_state, test_state_with_engine,
+        test_client, test_state_handles, test_state_with_engine_handles,
     },
 };
 use chrono::{Duration, Utc};
@@ -21,10 +21,11 @@ use std::{collections::HashMap, sync::Arc};
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let resolver_state = state.clone();
     let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -55,12 +56,13 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -98,10 +100,11 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_respects_image_override() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let resolver_state = state.clone();
     let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -125,12 +128,13 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
     let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -154,9 +158,10 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -180,7 +185,8 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
@@ -196,7 +202,8 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         memory_limit: Some("512Mi".to_string()),
     };
 
-    let issue_id = state
+    let issue_id = handles
+        .store
         .add_issue(Issue {
             issue_type: IssueType::Task,
             description: "use overrides".to_string(),
@@ -211,7 +218,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         })
         .await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
     let response = client
         .post(format!("{}/v1/jobs", server.base_url()))
@@ -259,7 +266,8 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
 
 #[tokio::test]
 async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
@@ -275,7 +283,8 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         memory_limit: None,
     };
 
-    let issue_id = state
+    let issue_id = handles
+        .store
         .add_issue(Issue {
             issue_type: IssueType::Task,
             description: "use repo override".to_string(),
@@ -290,7 +299,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         })
         .await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
     let response = client
         .post(format!("{}/v1/jobs", server.base_url()))
@@ -377,16 +386,16 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
 #[tokio::test]
 async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
-    let state = test_state_with_engine(engine);
+    let handles = test_state_with_engine_handles(engine);
     let default_image = default_image();
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store.clone()).await?;
 
     let oldest_id = task_id("t-oldest");
     let middle_id = task_id("t-middle");
     let newest_id = task_id("t-newest");
     let now = Utc::now();
-    check_state
+    handles
+        .store
         .add_task_with_id(
             oldest_id.clone(),
             Task {
@@ -401,7 +410,8 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(30),
         )
         .await?;
-    check_state
+    handles
+        .store
         .add_task_with_id(
             middle_id.clone(),
             Task {
@@ -416,7 +426,8 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(20),
         )
         .await?;
-    check_state
+    handles
+        .store
         .add_task_with_id(
             newest_id.clone(),
             Task {
@@ -431,10 +442,12 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(10),
         )
         .await?;
-    check_state
+    handles
+        .store
         .mark_task_running(&middle_id, now - Duration::seconds(15))
         .await?;
-    check_state
+    handles
+        .store
         .mark_task_running(&newest_id, now - Duration::seconds(5))
         .await?;
 
@@ -453,13 +466,14 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let job_id = task_id("t-jobab");
     let now = Utc::now();
-    check_state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -474,7 +488,8 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
             now - Duration::seconds(20),
         )
         .await?;
-    check_state
+    handles
+        .store
         .mark_task_running(&job_id, now - Duration::seconds(10))
         .await?;
 
@@ -515,13 +530,14 @@ async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let job_id = task_id("t-trim");
     let now = Utc::now();
-    check_state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -536,7 +552,8 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
             now - Duration::seconds(30),
         )
         .await?;
-    check_state
+    handles
+        .store
         .mark_task_running(&job_id, now - Duration::seconds(10))
         .await?;
 
@@ -598,8 +615,8 @@ async fn get_job_logs_returns_bad_request_when_multiple_jobs_found() -> anyhow::
     let job_id = task_id("t-jobaa");
     engine.insert_job(&job_id, JobStatus::Running).await;
     engine.insert_job(&job_id, JobStatus::Failed).await;
-    let state = test_state_with_engine(engine);
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_engine_handles(engine);
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
 
     let client = test_client();
     let response = client
@@ -646,8 +663,8 @@ async fn get_job_logs_streams_when_watching_running_job() -> anyhow::Result<()> 
             vec!["first chunk".to_string(), "second chunk".to_string()],
         )
         .await;
-    let state = test_state_with_engine(engine);
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_engine_handles(engine);
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
 
     let client = test_client();
     let response = client
@@ -709,8 +726,8 @@ async fn kill_job_handles_multiple_matches_conflict() -> anyhow::Result<()> {
     let job_id = task_id("t-dupe");
     engine.insert_job(&job_id, JobStatus::Running).await;
     engine.insert_job(&job_id, JobStatus::Running).await;
-    let state = test_state_with_engine(engine);
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_engine_handles(engine);
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
 
     let client = test_client();
     let response = client
@@ -765,11 +782,13 @@ async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()
 
 #[tokio::test]
 async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
     let check_state = state.clone();
     let job_id = task_id("t-spawn");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -784,8 +803,9 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
-    let patch_id = state
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    let patch_id = handles
+        .store
         .add_patch(Patch {
             title: "done".to_string(),
             description: "done".to_string(),
@@ -798,7 +818,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             github: None,
         })
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -826,10 +846,12 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn set_job_status_records_last_message() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
     let job_id = task_id("t-lastmsg");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -844,8 +866,8 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let response = client
@@ -876,9 +898,11 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let job_id = task_id("t-fail");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -893,8 +917,8 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let response = client
@@ -922,9 +946,11 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let job_id = task_id("t-status");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -939,12 +965,13 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
-    state
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    handles
+        .store
         .mark_task_complete(&job_id, Ok(()), None, Utc::now())
         .await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
 
     let response = client
@@ -966,10 +993,12 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
     let job_id = task_id("t-output");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -984,8 +1013,9 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
-    let patch_id = state
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    let patch_id = handles
+        .store
         .add_patch(Patch {
             title: "all good".to_string(),
             description: "all good".to_string(),
@@ -998,10 +1028,11 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             github: None,
         })
         .await?;
-    state
+    handles
+        .store
         .mark_task_complete(&job_id, Ok(()), None, Utc::now())
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -1072,7 +1103,8 @@ async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<(
 
 #[tokio::test]
 async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
     let context_spec = BundleSpec::GitRepository {
         url: "https://example.com/repo.git".to_string(),
@@ -1080,7 +1112,8 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
     };
     let parent_job_id = task_id("t-parentjob");
     let ctx_job_id = task_id("t-ctxjob");
-    state
+    handles
+        .store
         .add_task_with_id(
             parent_job_id.clone(),
             Task {
@@ -1095,8 +1128,12 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&parent_job_id, Utc::now()).await?;
-    let _parent_patch_id = state
+    handles
+        .store
+        .mark_task_running(&parent_job_id, Utc::now())
+        .await?;
+    let _parent_patch_id = handles
+        .store
         .add_patch(Patch {
             title: "done".to_string(),
             description: "done".to_string(),
@@ -1109,10 +1146,12 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             github: None,
         })
         .await?;
-    state
+    handles
+        .store
         .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
         .await?;
-    state
+    handles
+        .store
         .add_task_with_id(
             ctx_job_id.clone(),
             Task {
@@ -1127,7 +1166,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             Utc::now(),
         )
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client
@@ -1153,10 +1192,12 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
 
 #[tokio::test]
 async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
+    let state = handles.state;
     let default_image = default_image();
     let job_id = task_id("t-envjob");
-    state
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -1171,7 +1212,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
     let response = client

@@ -12,7 +12,9 @@ use crate::{
         users::Username,
     },
     store::Task,
-    test_utils::{spawn_test_server, spawn_test_server_with_state, test_client, test_state},
+    test_utils::{
+        spawn_test_server, spawn_test_server_with_state, test_client, test_state_handles,
+    },
 };
 use chrono::Utc;
 use std::collections::HashMap;
@@ -61,11 +63,12 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
     let default_image = default_image();
     let job_id = super::common::task_id("t-emit");
-    let check_state = state.clone();
-    state
+    let check_state = handles.state.clone();
+    handles
+        .store
         .add_task_with_id(
             job_id.clone(),
             Task {
@@ -80,9 +83,9 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&job_id, Utc::now()).await?;
+    handles.store.mark_task_running(&job_id, Utc::now()).await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))

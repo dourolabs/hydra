@@ -145,8 +145,8 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let (state, auth_token) = app_state_with_repo(&remote_url, &service_repo_name).await?;
-    let server = spawn_test_server_with_state(state)
+    let (state, store, auth_token) = app_state_with_repo(&remote_url, &service_repo_name).await?;
+    let server = spawn_test_server_with_state(state, store)
         .await
         .context("failed to start test server")?;
     let server_url = server.base_url();
@@ -326,9 +326,12 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
     Ok(remote_dir_str.to_string())
 }
 
-async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(AppState, String)> {
+async fn app_state_with_repo(
+    remote_url: &str,
+    repo_name: &RepoName,
+) -> Result<(AppState, Arc<dyn Store>, String)> {
     let server_config = test_app_config();
-    let store: Box<dyn Store> = Box::new(MemoryStore::new());
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
     store
         .add_repository(
             repo_name.clone(),
@@ -355,10 +358,11 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
             Arc::new(server_config),
             None,
             Arc::new(ServiceState::default()),
-            Arc::from(store),
+            store.clone(),
             Arc::new(MockJobEngine::new()),
             Arc::new(RwLock::new(Vec::new())),
         ),
+        store,
         auth_token,
     ))
 }

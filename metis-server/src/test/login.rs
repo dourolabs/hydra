@@ -20,9 +20,9 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_api_base_url(github_server.base_url());
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let check_store = handles.store.clone();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
@@ -49,12 +49,12 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
         Some(42)
     );
 
-    let user = check_state.get_user(&Username::from("octo")).await?;
+    let user = check_store.get_user(&Username::from("octo")).await?;
     assert_eq!(user.username.as_str(), "octo");
     assert_eq!(user.github_user_id, 42);
     assert_eq!(user.github_refresh_token, "gh-refresh");
 
-    let actors = check_state.list_actors().await?;
+    let actors = check_store.list_actors().await?;
     assert!(
         actors.iter().any(|(name, _)| name == "u-octo"),
         "expected login actor to be created"
@@ -73,9 +73,9 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_api_base_url(github_server.base_url());
-    let check_state = state.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let check_store = handles.store.clone();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
@@ -87,7 +87,7 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let user = check_state.get_user(&Username::from("octo")).await?;
+    let user = check_store.get_user(&Username::from("octo")).await?;
     assert_eq!(user.github_refresh_token, "gh-refresh");
 
     Ok(())
@@ -95,8 +95,8 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn login_rejects_empty_token() -> anyhow::Result<()> {
-    let state = test_state_with_github_api_base_url("https://example.invalid".to_string());
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_github_api_base_url("https://example.invalid".to_string());
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let payload = LoginRequest::new("  ".to_string(), "gh-refresh".to_string());
@@ -118,8 +118,8 @@ async fn login_returns_bad_request_for_invalid_token() -> anyhow::Result<()> {
         then.status(401);
     });
 
-    let state = test_state_with_github_api_base_url(github_server.base_url());
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let payload = LoginRequest::new("bad-token".to_string(), "gh-refresh".to_string());

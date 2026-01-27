@@ -6,8 +6,8 @@ use crate::{
         users::{User, Username},
     },
     test_utils::{
-        github_user_response, spawn_test_server_with_state, test_client_without_auth, test_state,
-        test_state_with_github_urls,
+        github_user_response, spawn_test_server_with_state, test_client_without_auth,
+        test_state_handles, test_state_with_github_urls,
     },
 };
 use chrono::Utc;
@@ -40,13 +40,14 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_urls(server.base_url(), server.base_url());
-    let auth_token = state
+    let handles = test_state_with_github_urls(server.base_url(), server.base_url());
+    let auth_token = handles
+        .state
         .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
         .await?
         .login_token;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -70,7 +71,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_urls(server.base_url(), server.base_url());
+    let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
     let user = User::new(
         username.clone(),
@@ -79,8 +80,9 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         "refresh-token".to_string(),
     );
 
-    state.add_user(user).await?;
-    let issue_id = state
+    handles.store.add_user(user).await?;
+    let issue_id = handles
+        .store
         .add_issue(Issue::new(
             IssueType::Task,
             "task".to_string(),
@@ -106,10 +108,13 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    state.add_task_with_id(task_id, task, Utc::now()).await?;
-    state.add_actor(actor).await?;
+    handles
+        .store
+        .add_task_with_id(task_id, task, Utc::now())
+        .await?;
+    handles.store.add_actor(actor).await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -125,8 +130,8 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn github_token_requires_auth() -> anyhow::Result<()> {
-    let state = test_state();
-    let server = spawn_test_server_with_state(state).await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client_without_auth();
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -139,11 +144,11 @@ async fn github_token_requires_auth() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
     let (actor, auth_token) = Actor::new_for_user(Username::from("octo"));
-    state.add_actor(actor).await?;
+    handles.store.add_actor(actor).await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -177,7 +182,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
             }));
     });
 
-    let state = test_state_with_github_urls(server.base_url(), server.base_url());
+    let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
@@ -186,8 +191,9 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         github_refresh_token: "refresh-token".to_string(),
     };
 
-    state.add_user(user).await?;
-    let issue_id = state
+    handles.store.add_user(user).await?;
+    let issue_id = handles
+        .store
         .add_issue(Issue::new(
             IssueType::Task,
             "task".to_string(),
@@ -213,10 +219,13 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    state.add_task_with_id(task_id, task, Utc::now()).await?;
-    state.add_actor(actor).await?;
+    handles
+        .store
+        .add_task_with_id(task_id, task, Utc::now())
+        .await?;
+    handles.store.add_actor(actor).await?;
 
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -227,7 +236,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let body: GithubTokenResponse = response.json().await?;
     assert_eq!(body.github_token, "new-token");
 
-    let updated = state.get_user(&username).await?;
+    let updated = handles.store.get_user(&username).await?;
     assert_eq!(updated.github_token, "new-token");
     assert_eq!(updated.github_refresh_token, "new-refresh");
     refresh_mock.assert();
@@ -258,7 +267,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
             }));
     });
 
-    let state = test_state_with_github_urls(server.base_url(), server.base_url());
+    let handles = test_state_with_github_urls(server.base_url(), server.base_url());
     let username = Username::from("creator");
     let user = User {
         username: username.clone(),
@@ -267,8 +276,9 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         github_refresh_token: "bad-refresh".to_string(),
     };
 
-    state.add_user(user).await?;
-    let issue_id = state
+    handles.store.add_user(user).await?;
+    let issue_id = handles
+        .store
         .add_issue(Issue::new(
             IssueType::Task,
             "task".to_string(),
@@ -294,10 +304,13 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    state.add_task_with_id(task_id, task, Utc::now()).await?;
-    state.add_actor(actor).await?;
+    handles
+        .store
+        .add_task_with_id(task_id, task, Utc::now())
+        .await?;
+    handles.store.add_actor(actor).await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))
@@ -311,12 +324,12 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
 
 #[tokio::test]
 async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()> {
-    let state = test_state();
+    let handles = test_state_handles();
     let task_id = TaskId::new();
     let (actor, auth_token) = Actor::new_for_task(task_id);
-    state.add_actor(actor).await?;
+    handles.store.add_actor(actor).await?;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = auth_client(&auth_token);
     let response = client
         .get(format!("{}/v1/github/token", server.base_url()))

@@ -310,7 +310,8 @@ mod tests {
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::test_state_with_repo,
+        store::Store,
+        test::{TestStateHandles, test_state_with_repo_handles},
     };
     use chrono::Utc;
 
@@ -347,16 +348,16 @@ mod tests {
         }
     }
 
-    async fn state_with_repository() -> anyhow::Result<(AppState, RepoName)> {
+    async fn state_with_repository() -> anyhow::Result<(TestStateHandles, RepoName)> {
         let (repo_name, repository) = repository();
-        let state = test_state_with_repo(repo_name.clone(), repository).await?;
-        Ok((state, repo_name))
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository).await?;
+        Ok((handles, repo_name))
     }
 
-    async fn record_completed_task(state: &AppState, task: Task) -> anyhow::Result<()> {
-        let task_id = state.add_task(task, Utc::now()).await?;
-        state.mark_task_running(&task_id, Utc::now()).await?;
-        state
+    async fn record_completed_task(store: &dyn Store, task: Task) -> anyhow::Result<()> {
+        let task_id = store.add_task(task, Utc::now()).await?;
+        store.mark_task_running(&task_id, Utc::now()).await?;
+        store
             .mark_task_complete(&task_id, Ok(()), None, Utc::now())
             .await?;
         Ok(())
@@ -403,8 +404,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawns_tasks_for_ready_assigned_issues() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        let assigned_issue_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let assigned_issue_id = handles
+            .store
             .add_issue(issue(
                 "Fix login page",
                 IssueStatus::Open,
@@ -414,7 +416,8 @@ mod tests {
             ))
             .await?;
 
-        let in_progress_issue_id = state
+        let in_progress_issue_id = handles
+            .store
             .add_issue(issue(
                 "In-progress but ready",
                 IssueStatus::InProgress,
@@ -424,7 +427,8 @@ mod tests {
             ))
             .await?;
 
-        state
+        handles
+            .store
             .add_issue(issue(
                 "Ignore closed",
                 IssueStatus::Closed,
@@ -435,7 +439,7 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 2);
 
         let mut issue_ids = HashSet::new();
@@ -481,8 +485,9 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_requeue_when_task_exists() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        let issue_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let issue_id = handles
+            .store
             .add_issue(issue(
                 "Already queued",
                 IssueStatus::Open,
@@ -492,7 +497,8 @@ mod tests {
             ))
             .await?;
 
-        state
+        handles
+            .store
             .add_task(
                 task(
                     "Fix the issue",
@@ -508,7 +514,7 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue("agent-a").spawn(&state).await?;
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -516,8 +522,9 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        let blocker_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let blocker_id = handles
+            .store
             .add_issue(issue(
                 "Blocker",
                 IssueStatus::Open,
@@ -527,7 +534,8 @@ mod tests {
             ))
             .await?;
 
-        state
+        handles
+            .store
             .add_issue(issue(
                 "Blocked issue",
                 IssueStatus::Open,
@@ -540,7 +548,7 @@ mod tests {
             ))
             .await?;
 
-        let tasks = queue("agent-a").spawn(&state).await?;
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -548,8 +556,9 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_spawn_when_parent_task_running() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        let parent_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let parent_id = handles
+            .store
             .add_issue(issue(
                 "Parent issue",
                 IssueStatus::Open,
@@ -559,7 +568,8 @@ mod tests {
             ))
             .await?;
 
-        let task_id = state
+        let task_id = handles
+            .store
             .add_task(
                 task(
                     "Parent task",
@@ -574,9 +584,13 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        state.mark_task_running(&task_id, Utc::now()).await?;
+        handles
+            .store
+            .mark_task_running(&task_id, Utc::now())
+            .await?;
 
-        state
+        handles
+            .store
             .add_issue(issue(
                 "Child issue",
                 IssueStatus::Open,
@@ -590,7 +604,7 @@ mod tests {
             .await?;
 
         let queue = queue("agent-a");
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -598,8 +612,9 @@ mod tests {
 
     #[tokio::test]
     async fn skips_when_repo_missing_but_allows_missing_image() -> anyhow::Result<()> {
-        let (state, repo_name) = state_with_repository().await?;
-        state
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Missing repo".to_string(),
@@ -622,7 +637,8 @@ mod tests {
             })
             .await?;
 
-        state
+        handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Missing image".to_string(),
@@ -645,7 +661,7 @@ mod tests {
             })
             .await?;
 
-        let tasks = queue("agent-a").spawn(&state).await?;
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
         let task = tasks.first().expect("task should exist");
         assert!(matches!(
@@ -662,8 +678,9 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_tries = 3;
 
-        let (state, repo_name) = state_with_repository().await?;
-        state
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Override retries".to_string(),
@@ -686,11 +703,11 @@ mod tests {
             })
             .await?;
 
-        let mut tasks = queue.spawn(&state).await?;
+        let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(&state, tasks.remove(0)).await?;
+        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -701,8 +718,9 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_simultaneous = 1;
 
-        let (state, repo_name) = state_with_repository().await?;
-        let issue_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let issue_id = handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Already running".to_string(),
@@ -717,7 +735,8 @@ mod tests {
             })
             .await?;
 
-        let task_id = state
+        let task_id = handles
+            .store
             .add_task(
                 Task {
                     prompt: "Existing".to_string(),
@@ -734,9 +753,12 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        state.mark_task_running(&task_id, Utc::now()).await?;
+        handles
+            .store
+            .mark_task_running(&task_id, Utc::now())
+            .await?;
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -747,8 +769,9 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_simultaneous = 2;
 
-        let (state, repo_name) = state_with_repository().await?;
-        let first_issue_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let first_issue_id = handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "First issue".to_string(),
@@ -762,7 +785,8 @@ mod tests {
                 patches: Vec::new(),
             })
             .await?;
-        let second_issue_id = state
+        let second_issue_id = handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Second issue".to_string(),
@@ -777,7 +801,8 @@ mod tests {
             })
             .await?;
 
-        state
+        handles
+            .store
             .add_task(
                 Task {
                     prompt: "Pending work".to_string(),
@@ -795,7 +820,7 @@ mod tests {
             )
             .await?;
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(
             tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
@@ -810,8 +835,9 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_tries = 2;
 
-        let (state, repo_name) = state_with_repository().await?;
-        state
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
             .add_issue(issue(
                 "Retry limited",
                 IssueStatus::Open,
@@ -821,15 +847,15 @@ mod tests {
             ))
             .await?;
 
-        let mut tasks = queue.spawn(&state).await?;
+        let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(&state, tasks.remove(0)).await?;
+        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
 
-        let mut tasks = queue.spawn(&state).await?;
+        let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(&state, tasks.remove(0)).await?;
+        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
@@ -840,8 +866,9 @@ mod tests {
         let mut queue = queue("agent-a");
         queue.max_tries = 1;
 
-        let (state, repo_name) = state_with_repository().await?;
-        let issue_id = state
+        let (handles, repo_name) = state_with_repository().await?;
+        let issue_id = handles
+            .store
             .add_issue(issue(
                 "State change reset",
                 IssueStatus::Open,
@@ -851,15 +878,15 @@ mod tests {
             ))
             .await?;
 
-        let first_run = queue.spawn(&state).await?;
+        let first_run = queue.spawn(&handles.state).await?;
         assert_eq!(first_run.len(), 1);
-        assert!(queue.spawn(&state).await?.is_empty());
+        assert!(queue.spawn(&handles.state).await?.is_empty());
 
-        let mut issue = state.get_issue(&issue_id).await?;
+        let mut issue = handles.store.get_issue(&issue_id).await?;
         issue.status = IssueStatus::InProgress;
-        state.update_issue(&issue_id, issue).await?;
+        handles.store.update_issue(&issue_id, issue).await?;
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
 
         Ok(())
@@ -890,8 +917,9 @@ mod tests {
             .clone()
             .unwrap_or_else(|| "main".into());
         let default_image = "agent-image".to_string();
-        let state = test_state_with_repo(repo_name.clone(), repository.clone()).await?;
-        let issue_id = state
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        let issue_id = handles
+            .store
             .add_issue(Issue {
                 issue_type: IssueType::Task,
                 description: "Assigned".to_string(),
@@ -915,10 +943,10 @@ mod tests {
             .await?;
         let queue = queue("agent-a");
 
-        let tasks = queue.spawn(&state).await?;
+        let tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
 
-        let resolved = state.resolve_task(&tasks[0]).await?;
+        let resolved = handles.state.resolve_task(&tasks[0]).await?;
         assert_eq!(
             tasks[0].context,
             BundleSpec::ServiceRepository {
