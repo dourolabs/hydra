@@ -8,6 +8,7 @@ use crate::{
     domain::{
         issues::{Issue, IssueDependencyType, IssueStatus},
         jobs::BundleSpec,
+        patches::{PatchStatus, Review},
     },
     store::{Status, StoreError, Task},
 };
@@ -104,6 +105,11 @@ impl AgentQueue {
             _ => return Ok(None),
         };
 
+        let prompt = self
+            .build_prompt_for_issue(state, issue)
+            .await
+            .context("failed to build task prompt")?;
+
         let image = issue
             .job_settings
             .image
@@ -117,7 +123,7 @@ impl AgentQueue {
         env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.name.clone());
 
         Ok(Some(Task::new(
-            self.prompt.clone(),
+            prompt,
             bundle,
             Some(issue_id.clone()),
             image,
@@ -125,6 +131,33 @@ impl AgentQueue {
             issue.job_settings.cpu_limit.clone(),
             issue.job_settings.memory_limit.clone(),
         )))
+    }
+
+    async fn build_prompt_for_issue(
+        &self,
+        state: &AppState,
+        issue: &Issue,
+    ) -> anyhow::Result<String> {
+        let mut prompt = self.prompt.trim_end().to_string();
+
+        if issue.issue_type == crate::domain::issues::IssueType::MergeRequest {
+            if let Some(patch_id) = issue.patches.last() {
+                if let Ok(patch) = state.get_patch(patch_id).await {
+                    if patch.status == PatchStatus::ChangesRequested {
+                        if let Some(review_summary) = build_review_summary(&patch.reviews) {
+                            if !prompt.is_empty() {
+                                prompt.push_str("\n\n");
+                            }
+                            prompt.push_str(&format!(
+                                "Merge request follow-up:\nPatch {patch_id} has changes requested. Address the review feedback below and update the existing patch/branch (do not open a new patch).\n{review_summary}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(prompt)
     }
 
     async fn register_spawn_attempt(
@@ -157,6 +190,33 @@ impl AgentQueue {
     fn max_tries_for_issue(&self, issue: &Issue) -> u32 {
         issue.job_settings.max_retries.unwrap_or(self.max_tries)
     }
+}
+
+fn build_review_summary(reviews: &[Review]) -> Option<String> {
+    let mut lines = Vec::new();
+    for review in reviews.iter().filter(|review| !review.is_approved) {
+        let contents = review.contents.trim();
+        if contents.is_empty() {
+            continue;
+        }
+        let when = review
+            .submitted_at
+            .map(|timestamp| format!(" @ {}", timestamp.to_rfc3339()))
+            .unwrap_or_default();
+        lines.push(format!("{}{}: {}", review.author, when, contents));
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut summary = String::from("Review feedback:\n");
+    for line in lines {
+        summary.push_str("- ");
+        summary.push_str(&line);
+        summary.push('\n');
+    }
+    Some(summary.trim_end().to_string())
 }
 
 #[async_trait]
@@ -307,6 +367,7 @@ mod tests {
     use super::*;
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
+    use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
@@ -516,6 +577,55 @@ mod tests {
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_request_changes_requested_includes_review_summary_in_prompt()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let review_time = Utc::now();
+        let patch = Patch::new(
+            "Review patch".to_string(),
+            "Review patch description".to_string(),
+            "diff --git a/file b/file\n".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            vec![Review::new(
+                "Please handle the edge case.".to_string(),
+                false,
+                "alex".to_string(),
+                Some(review_time),
+            )],
+            repo_name.clone(),
+            None,
+        );
+        let patch_id = handles.store.add_patch(patch).await?;
+        handles
+            .store
+            .add_issue(Issue {
+                issue_type: IssueType::MergeRequest,
+                description: "Review patch".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: vec![patch_id.clone()],
+            })
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        let prompt = &tasks[0].prompt;
+        assert!(prompt.contains("Merge request follow-up:"));
+        assert!(prompt.contains(&patch_id.to_string()));
+        assert!(prompt.contains("Please handle the edge case."));
+        assert!(prompt.contains("Review feedback:"));
 
         Ok(())
     }
