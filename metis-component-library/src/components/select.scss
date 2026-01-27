@@ -19,13 +19,13 @@
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border: 1px solid dark-light(#d1d5db, #3b4148);
-  border-radius: 0.5rem;
+  padding: theme.spacing(2) theme.spacing(3);
+  border: theme.spacing(0.25) solid dark-light(#d1d5db, #3b4148);
+  border-radius: theme.spacing(2);
   background: dark-light(#f8fafc, #1f2328);
   color: dark-light(#111827, #e5e7eb);
   cursor: pointer;
-  gap: 0.25rem;
+  gap: theme.spacing(1);
   transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
@@ -38,8 +38,8 @@
 }
 
 .metis-select-expand-icon {
-  width: 20px;
-  height: 20px;
+  width: theme.spacing(5);
+  height: theme.spacing(5);
   fill: none;
   stroke: dark-light(#4b5563, #cbd5f5);
   stroke-linecap: round;
@@ -48,8 +48,8 @@
 }
 
 .metis-select-check-icon {
-  width: 1rem;
-  height: 1rem;
+  width: theme.spacing(4);
+  height: theme.spacing(4);
   fill: none;
   stroke: dark-light(#111827, #f8fafc);
   stroke-linecap: round;
@@ -77,12 +77,13 @@
   left: 0;
   min-width: 100%;
   box-sizing: border-box;
-  padding: 0.25rem;
-  border-radius: 0.5rem;
-  margin-top: 0.25rem;
+  padding: theme.spacing(1);
+  border-radius: theme.spacing(2);
+  margin-top: theme.spacing(1);
   background: dark-light(#f8fafc, #1f2328);
-  border: 1px solid dark-light(#d1d5db, #3b4148);
-  box-shadow: 0 8px 20px dark-light(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.6));
+  border: theme.spacing(0.25) solid dark-light(#d1d5db, #3b4148);
+  box-shadow: 0 theme.spacing(2) theme.spacing(5)
+    dark-light(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.6));
   opacity: 0;
   pointer-events: none;
   transform-origin: top;
@@ -102,7 +103,7 @@
 
   100% {
     opacity: 0;
-    transform: scale(0.97) translateY(-2px);
+    transform: scale(0.97) translateY(theme.spacing(-0.5));
   }
 }
 
@@ -114,7 +115,7 @@
 @keyframes metis-select-list-animate-in {
   0% {
     opacity: 0;
-    transform: scale(0.97) translateY(-2px);
+    transform: scale(0.97) translateY(theme.spacing(-0.5));
   }
 
   100% {
@@ -127,8 +128,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-radius: 0.375rem;
+  padding: theme.spacing(2) theme.spacing(3);
+  border-radius: theme.spacing(1.5);
   cursor: pointer;
   font-size: 14px;
   color: inherit;
@@ -147,7 +148,7 @@
 }
 
 .metis-select-group-label {
-  padding: 4px 12px;
+  padding: theme.spacing(1) theme.spacing(3);
   color: dark-light(#6b7280, #9ca3af);
   font-size: 0.75rem;
   text-transform: uppercase;
