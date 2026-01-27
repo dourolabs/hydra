@@ -1,1 +1,3 @@
-// Placeholder module for component exports.
+pub mod input;
+
+pub use input::*;
