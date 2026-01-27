@@ -350,14 +350,14 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
     store.add_user(user.into()).await?;
 
     Ok((
-        AppState {
-            config: Arc::new(server_config),
-            github_app: None,
-            service_state: Arc::new(ServiceState::default()),
-            store: Arc::new(RwLock::new(store)),
-            job_engine: Arc::new(MockJobEngine::new()),
-            agents: Arc::new(RwLock::new(Vec::new())),
-        },
+        AppState::new(
+            Arc::new(server_config),
+            None,
+            Arc::new(ServiceState::default()),
+            Arc::new(RwLock::new(store)),
+            Arc::new(MockJobEngine::new()),
+            Arc::new(RwLock::new(Vec::new())),
+        ),
         auth_token,
     ))
 }

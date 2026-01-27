@@ -193,14 +193,14 @@ pub async fn run() -> anyhow::Result<()> {
 
     let agents = build_agents(&app_config);
 
-    let state = AppState {
-        config: Arc::new(app_config),
+    let state = AppState::new(
+        Arc::new(app_config),
         github_app,
-        service_state: Arc::new(service_state),
+        Arc::new(service_state),
         store,
-        job_engine: Arc::new(job_engine),
+        Arc::new(job_engine),
         agents,
-    };
+    );
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 

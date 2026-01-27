@@ -24,19 +24,19 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
         .collect();
     config.background.agent_queues = agents.clone();
 
-    AppState {
-        config: Arc::new(config),
-        github_app: None,
-        service_state: Arc::new(ServiceState::default()),
-        store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
-        job_engine: Arc::new(MockJobEngine::new()),
-        agents: Arc::new(RwLock::new(
+    AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        Arc::new(MockJobEngine::new()),
+        Arc::new(RwLock::new(
             agents
                 .iter()
                 .map(|queue| Arc::new(AgentQueue::from_config(queue)))
                 .collect(),
         )),
-    }
+    )
 }
 
 fn agent_request(name: &str) -> UpsertAgentRequest {

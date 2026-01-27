@@ -66,14 +66,14 @@ pub fn test_app_config() -> AppConfig {
 }
 
 pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
-    AppState {
-        config: Arc::new(test_app_config()),
-        github_app: None,
-        service_state: Arc::new(ServiceState::default()),
-        store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+    AppState::new(
+        Arc::new(test_app_config()),
+        None,
+        Arc::new(ServiceState::default()),
+        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
         job_engine,
-        agents: Arc::new(RwLock::new(Vec::new())),
-    }
+        Arc::new(RwLock::new(Vec::new())),
+    )
 }
 
 pub fn test_state() -> AppState {
@@ -99,16 +99,16 @@ pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow:
 }
 
 pub fn test_state_with_github_client(github_client: Octocrab) -> AppState {
-    AppState {
-        config: Arc::new(test_app_config()),
-        github_app: None,
-        service_state: Arc::new(ServiceState::default()),
-        store: Arc::new(RwLock::new(Box::new(MemoryStore::new_with_github_client(
+    AppState::new(
+        Arc::new(test_app_config()),
+        None,
+        Arc::new(ServiceState::default()),
+        Arc::new(RwLock::new(Box::new(MemoryStore::new_with_github_client(
             github_client,
         )))),
-        job_engine: Arc::new(MockJobEngine::new()),
-        agents: Arc::new(RwLock::new(Vec::new())),
-    }
+        Arc::new(MockJobEngine::new()),
+        Arc::new(RwLock::new(Vec::new())),
+    )
 }
 
 fn test_auth() -> (Actor, String) {

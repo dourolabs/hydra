@@ -74,14 +74,14 @@ fn test_state_with_github_urls(api_base_url: String, oauth_base_url: String) -> 
     config.github_app.api_base_url = api_base_url;
     config.github_app.oauth_base_url = oauth_base_url;
 
-    AppState {
-        config: Arc::new(config),
-        github_app: None,
-        service_state: Arc::new(ServiceState::default()),
-        store: Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
-        job_engine: Arc::new(MockJobEngine::new()),
-        agents: Arc::new(RwLock::new(Vec::new())),
-    }
+    AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        Arc::new(MockJobEngine::new()),
+        Arc::new(RwLock::new(Vec::new())),
+    )
 }
 
 #[tokio::test]
