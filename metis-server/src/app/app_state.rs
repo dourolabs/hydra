@@ -2,21 +2,22 @@ use crate::{
     background::AgentQueue,
     config::{AgentQueueConfig, AppConfig},
     domain::{
+        actors::Actor,
         issues::{
-            Issue, IssueDependencyType, IssueStatus, IssueType, JobSettings, TodoItem,
-            UpsertIssueRequest,
+            Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
+            TodoItem, UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
-        login::LoginResponse,
         patches::{Patch, PatchStatus, UpsertPatchRequest},
-        users::UserSummary,
+        users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{Status, Store, StoreError, Task, TaskError},
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use metis_common::{
     PatchId, RepoName, TaskId,
+    api::v1 as api,
     constants::ENV_METIS_ID,
     issues::IssueId,
     job_status::{JobStatusUpdate, SetJobStatusResponse},
@@ -224,7 +225,7 @@ impl AppState {
         &self,
         github_token: String,
         github_refresh_token: String,
-    ) -> Result<LoginResponse, LoginError> {
+    ) -> Result<api::login::LoginResponse, LoginError> {
         let mut store = self.store.write().await;
         let (user, _actor, login_token) = store
             .create_actor_for_github_token(github_token, github_refresh_token)
@@ -234,7 +235,60 @@ impl AppState {
                 other => LoginError::Store { source: other },
             })?;
 
-        Ok(LoginResponse::new(login_token, UserSummary::from(user)))
+        let user_summary: api::users::UserSummary = UserSummary::from(user).into();
+
+        Ok(api::login::LoginResponse::new(login_token, user_summary))
+    }
+
+    pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
+        let store = self.store.read().await;
+        store.validate_auth_token(token).await
+    }
+
+    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
+        let store = self.store.read().await;
+        store.get_issue(issue_id).await
+    }
+
+    pub async fn search_issue_graph(
+        &self,
+        filters: &[IssueGraphFilter],
+    ) -> Result<HashSet<IssueId>, StoreError> {
+        let store = self.store.read().await;
+        store.search_issue_graph(filters).await
+    }
+
+    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Patch, StoreError> {
+        let store = self.store.read().await;
+        store.get_patch(patch_id).await
+    }
+
+    pub async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_patches().await
+    }
+
+    pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+        let store = self.store.read().await;
+        store.get_status_log(task_id).await
+    }
+
+    pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+        let store = self.store.read().await;
+        store.get_user(username).await
+    }
+
+    pub async fn set_user_github_token(
+        &self,
+        username: &Username,
+        github_token: String,
+        github_user_id: u64,
+        github_refresh_token: String,
+    ) -> Result<User, StoreError> {
+        let mut store = self.store.write().await;
+        store
+            .set_user_github_token(username, github_token, github_user_id, github_refresh_token)
+            .await
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
@@ -317,6 +371,31 @@ impl AppState {
         self.agents.read().await.clone()
     }
 
+    #[allow(unused)]
+    pub(crate) async fn list_tasks_with_status(
+        &self,
+        status: Status,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.list_tasks_with_status(status).await
+    }
+
+    #[allow(unused)]
+    pub(crate) async fn add_task(
+        &self,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<TaskId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_task(task, created_at).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_patch(patch).await
+    }
+
     pub async fn create_agent(
         &self,
         agent: AgentQueueConfig,
@@ -334,6 +413,15 @@ impl AppState {
         Ok(created.as_config())
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
+        self.store = Arc::new(RwLock::new(store));
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
+        self.agents = Arc::new(RwLock::new(agents));
+    }
     pub async fn update_agent(
         &self,
         agent_name: &str,
@@ -1207,6 +1295,99 @@ impl AppState {
         issue_ready(store.as_ref(), issue_id).await
     }
 
+    pub(crate) async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_issues().await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
+        let mut store = self.store.write().await;
+        store.add_issue(issue).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_user(&self, user: User) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_user(user).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_actor(actor).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+        let store = self.store.read().await;
+        store.list_actors().await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn update_issue(&self, issue_id: &IssueId, issue: Issue) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.update_issue(issue_id, issue).await
+    }
+
+    pub(crate) async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.list_tasks().await
+    }
+
+    pub(crate) async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
+        let store = self.store.read().await;
+        store.get_task(task_id).await
+    }
+
+    pub(crate) async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
+        let store = self.store.read().await;
+        store.get_status(task_id).await
+    }
+
+    pub(crate) async fn get_tasks_for_issue(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.read().await;
+        store.get_tasks_for_issue(issue_id).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn add_task_with_id(
+        &self,
+        task_id: TaskId,
+        task: Task,
+        created_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.add_task_with_id(task_id, task, created_at).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn mark_task_running(
+        &self,
+        task_id: &TaskId,
+        started_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store.mark_task_running(task_id, started_at).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn mark_task_complete(
+        &self,
+        task_id: &TaskId,
+        result: Result<(), TaskError>,
+        last_message: Option<String>,
+        completed_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.store.write().await;
+        store
+            .mark_task_complete(task_id, result, last_message, completed_at)
+            .await
+    }
+
     pub(crate) async fn repository_from_store(
         &self,
         name: &RepoName,
@@ -1544,10 +1725,10 @@ mod tests {
         assert_eq!(response.user.username.as_str(), "octo");
 
         let store_read = state.store.read().await;
-        let users = store_read.list_users().await?;
+        let user = store_read.get_user(&Username::from("octo")).await?;
         let actors = store_read.list_actors().await?;
-        assert_eq!(users.len(), 1);
         assert_eq!(actors.len(), 1);
+        assert_eq!(user.username.as_str(), "octo");
 
         Ok(())
     }
