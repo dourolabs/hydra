@@ -114,6 +114,43 @@ You have access to several tools that enable you to do your job.
 - todo list -- use the "metis issues todo" command
 - Pull requests -- use the "metis patches" command
 
+If you make visual changes to a GUI service (web or native app), include screenshots in your PR or issue comments. Use puppeteer + GitHub CLI to capture and upload them. Example flow:
+
+1) Capture a screenshot with puppeteer:
+```
+cat > /tmp/screenshot.js <<'SCREENSHOT_SCRIPT'
+const puppeteer = require('puppeteer');
+
+const [url, outPath] = process.argv.slice(2);
+if (!url || !outPath) {
+  console.error('Usage: node /tmp/screenshot.js <url> <output>');
+  process.exit(1);
+}
+
+(async () => {
+  const browser = await puppeteer.launch({
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1280, height: 720 });
+  await page.goto(url, { waitUntil: 'networkidle2' });
+  await page.screenshot({ path: outPath, fullPage: true });
+  await browser.close();
+})();
+SCREENSHOT_SCRIPT
+
+node /tmp/screenshot.js "http://localhost:3000" "/tmp/ui.png"
+```
+
+2) Upload and comment on the PR with GitHub CLI:
+```
+gh auth status
+gist_url=\$(gh gist create --public /tmp/ui.png -d "UI screenshot")
+gist_id="\${gist_url##*/}"
+raw_url=\$(gh api "gists/\${gist_id}" -q '.files["ui.png"].raw_url')
+gh pr comment "\$PR_NUMBER" --body "Screenshot:\n\n![ui](\${raw_url})"
+```
+
 **Your issue id is stored in the METIS_ISSUE_ID environment variable.**
 
 You are working on a team with multiple agents, any of which can pick up an issue to work on it. It is your
