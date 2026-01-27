@@ -1,7 +1,7 @@
 use crate::{
     app::Repository as RepositoryConfig,
     domain::patches::{Patch, PatchStatus},
-    test::{spawn_test_server_with_state, test_client, test_state},
+    test::{TestStateHandles, spawn_test_server_with_state, test_client, test_state_handles},
 };
 use git2::{Repository as GitRepository, Signature, build::CheckoutBuilder};
 use metis_common::{
@@ -12,15 +12,16 @@ use reqwest::StatusCode;
 use std::{path::Path, str::FromStr};
 use tempfile::TempDir;
 
-async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppState, TempDir)> {
+async fn state_with_repo(repo_name: &str) -> anyhow::Result<(TestStateHandles, TempDir)> {
     let repo = RepoName::from_str(repo_name).expect("repo name should be valid");
     let remote_dir = TempDir::new()?;
     let repository = GitRepository::init(remote_dir.path())?;
     let signature = Signature::now("Tester", "tester@example.com")?;
     commit_file(&repository, "README.md", "base\n", "base", &signature)?;
 
-    let state = test_state();
-    state
+    let handles = test_state_handles();
+    handles
+        .state
         .create_repository(
             repo.clone(),
             RepositoryConfig::new(
@@ -35,17 +36,18 @@ async fn state_with_repo(repo_name: &str) -> anyhow::Result<(crate::app::AppStat
         )
         .await?;
 
-    Ok((state, remote_dir))
+    Ok((handles, remote_dir))
 }
 
 async fn state_with_repo_and_patch(
     repo_name: &str,
-) -> anyhow::Result<(crate::app::AppState, PatchId, TempDir)> {
+) -> anyhow::Result<(TestStateHandles, PatchId, TempDir)> {
     let repo = RepoName::from_str(repo_name)?;
     let (remote_dir, diff) = create_repository_with_patch()?;
 
-    let state = test_state();
-    state
+    let handles = test_state_handles();
+    handles
+        .state
         .create_repository(
             repo.clone(),
             RepositoryConfig::new(
@@ -72,9 +74,9 @@ async fn state_with_repo_and_patch(
         None,
     );
 
-    let patch_id = state.add_patch(patch).await?;
+    let patch_id = handles.store.add_patch(patch).await?;
 
-    Ok((state, patch_id, remote_dir))
+    Ok((handles, patch_id, remote_dir))
 }
 
 fn create_repository_with_patch() -> anyhow::Result<(TempDir, String)> {
@@ -163,8 +165,8 @@ fn git_diff_for_commits(
 
 #[tokio::test]
 async fn get_merge_queue_returns_empty_for_new_branch() -> anyhow::Result<()> {
-    let (state, _remote_dir) = state_with_repo("dourolabs/api").await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let (handles, _remote_dir) = state_with_repo("dourolabs/api").await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let response = client
@@ -184,8 +186,8 @@ async fn get_merge_queue_returns_empty_for_new_branch() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
-    let (state, patch_id, _remote_dir) = state_with_repo_and_patch("dourolabs/api").await?;
-    let server = spawn_test_server_with_state(state).await?;
+    let (handles, patch_id, _remote_dir) = state_with_repo_and_patch("dourolabs/api").await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let response = client
@@ -218,7 +220,8 @@ async fn enqueue_patch_appends_to_queue() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn merge_queue_requires_known_repository() -> anyhow::Result<()> {
-    let server = spawn_test_server_with_state(test_state()).await?;
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
 
     let response = client

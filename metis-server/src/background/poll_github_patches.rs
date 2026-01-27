@@ -581,9 +581,9 @@ mod tests {
     use chrono::TimeZone;
     use metis_common::RepoName;
     use serde_json::json;
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Arc};
 
-    use crate::test_utils::{FailingStore, test_state};
+    use crate::test_utils::{FailingStore, test_state, test_state_handles, test_state_with_store};
 
     fn sample_diff() -> String {
         "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
@@ -599,31 +599,30 @@ mod tests {
     #[tokio::test]
     async fn github_worker_reports_progress_for_github_patches_without_token() -> anyhow::Result<()>
     {
-        let state = test_state();
-        {
-            state
-                .add_patch(Patch::new(
-                    "test".to_string(),
-                    "desc".to_string(),
-                    sample_diff(),
-                    PatchStatus::Open,
-                    false,
+        let handles = test_state_handles();
+        handles
+            .store
+            .add_patch(Patch::new(
+                "test".to_string(),
+                "desc".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Vec::new(),
+                RepoName::from_str("dourolabs/api")?,
+                Some(GithubPr::new(
+                    "octo".to_string(),
+                    "repo".to_string(),
+                    1,
                     None,
-                    Vec::new(),
-                    RepoName::from_str("dourolabs/api")?,
-                    Some(GithubPr::new(
-                        "octo".to_string(),
-                        "repo".to_string(),
-                        1,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )),
-                ))
-                .await?;
-        }
-        let worker = GithubPollerWorker::new(state, 60);
+                    None,
+                    None,
+                    None,
+                )),
+            ))
+            .await?;
+        let worker = GithubPollerWorker::new(handles.state, 60);
 
         let outcome = worker.run_iteration().await;
 
@@ -640,9 +639,8 @@ mod tests {
 
     #[tokio::test]
     async fn github_worker_surfaces_store_errors() {
-        let mut state = test_state();
-        state.set_store_for_tests(Box::new(FailingStore));
-        let worker = GithubPollerWorker::new(state, 60);
+        let handles = test_state_with_store(Arc::new(FailingStore));
+        let worker = GithubPollerWorker::new(handles.state, 60);
 
         let outcome = worker.run_iteration().await;
 

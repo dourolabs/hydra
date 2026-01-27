@@ -125,7 +125,7 @@ mod tests {
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         domain::issues::{Issue, IssueStatus, IssueType, JobSettings},
         domain::users::Username,
-        test::{add_repository, test_state},
+        test::{add_repository, test_state_handles},
     };
     use metis_common::RepoName;
     use std::{str::FromStr, sync::Arc};
@@ -168,27 +168,32 @@ mod tests {
 
     #[tokio::test]
     async fn returns_idle_when_no_agents_configured() {
-        let worker = RunSpawnersWorker::new(test_state());
+        let handles = test_state_handles();
+        let worker = RunSpawnersWorker::new(handles.state);
 
         assert_eq!(worker.run_iteration().await, WorkerOutcome::Idle);
     }
 
     #[tokio::test]
     async fn enqueues_tasks_and_reports_progress() -> anyhow::Result<()> {
-        let mut state = test_state();
+        let handles = test_state_handles();
         let agent_name = "static";
         let repo_name = RepoName::from_str("dourolabs/metis")?;
 
-        state.set_agents_for_tests(vec![Arc::new(AgentQueue::from_config(
-            &agent_queue_config(agent_name),
-        ))]);
+        {
+            let mut agents = handles.agents.write().await;
+            *agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
+                agent_name,
+            )))];
+        }
 
-        add_repository(&state, repo_name.clone(), repository(&repo_name)).await?;
-        state
+        add_repository(&handles.state, repo_name.clone(), repository(&repo_name)).await?;
+        handles
+            .store
             .add_issue(issue_for_agent(agent_name, &repo_name))
             .await?;
 
-        let worker = RunSpawnersWorker::new(state.clone());
+        let worker = RunSpawnersWorker::new(handles.state.clone());
 
         let outcome = worker.run_iteration().await;
 
@@ -200,7 +205,7 @@ mod tests {
             }
         );
 
-        let tasks = state.list_tasks().await?;
+        let tasks = handles.state.list_tasks().await?;
         assert_eq!(tasks.len(), 1);
 
         Ok(())
@@ -208,17 +213,21 @@ mod tests {
 
     #[tokio::test]
     async fn surfaces_errors_from_agents() -> anyhow::Result<()> {
-        let mut state = test_state();
+        let handles = test_state_handles();
         let agent_name = "failing";
         let repo_name = RepoName::from_str("missing/repo")?;
 
-        state.set_agents_for_tests(vec![Arc::new(AgentQueue::from_config(
-            &agent_queue_config(agent_name),
-        ))]);
-        state
+        {
+            let mut agents = handles.agents.write().await;
+            *agents = vec![Arc::new(AgentQueue::from_config(&agent_queue_config(
+                agent_name,
+            )))];
+        }
+        handles
+            .store
             .add_issue(issue_for_agent(agent_name, &repo_name))
             .await?;
-        let worker = RunSpawnersWorker::new(state);
+        let worker = RunSpawnersWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 

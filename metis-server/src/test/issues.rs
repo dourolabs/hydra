@@ -14,7 +14,7 @@ use crate::{
     store::Task,
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client,
-        test_state_with_engine,
+        test_state_with_engine_handles,
     },
 };
 use chrono::Utc;
@@ -627,8 +627,8 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
 #[tokio::test]
 async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
-    let state = test_state_with_engine(engine.clone());
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    let handles = test_state_with_engine_handles(engine.clone());
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
     let base_issue = issue(
@@ -652,7 +652,8 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
         .await?;
 
     let task_id = TaskId::new();
-    state
+    handles
+        .store
         .add_task_with_id(
             task_id.clone(),
             Task {
@@ -667,7 +668,10 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    state.mark_task_running(&task_id, Utc::now()).await?;
+    handles
+        .store
+        .mark_task_running(&task_id, Utc::now())
+        .await?;
     engine.insert_job(&task_id, JobStatus::Running).await;
 
     client

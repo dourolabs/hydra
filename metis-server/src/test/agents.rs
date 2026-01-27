@@ -3,7 +3,9 @@ use crate::{
     background::AgentQueue,
     config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
     store::MemoryStore,
-    test_utils::{MockJobEngine, spawn_test_server_with_state, test_app_config, test_client},
+    test_utils::{
+        MockJobEngine, TestStateHandles, spawn_test_server_with_state, test_app_config, test_client,
+    },
 };
 use metis_common::agents::{
     AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest,
@@ -11,7 +13,7 @@ use metis_common::agents::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-fn test_state_with_agents(agent_names: &[&str]) -> AppState {
+fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
     let mut config = test_app_config();
     let agents: Vec<AgentQueueConfig> = agent_names
         .iter()
@@ -24,19 +26,27 @@ fn test_state_with_agents(agent_names: &[&str]) -> AppState {
         .collect();
     config.background.agent_queues = agents.clone();
 
-    AppState::new(
+    let store = Arc::new(MemoryStore::new());
+    let agents = Arc::new(RwLock::new(
+        agents
+            .iter()
+            .map(|queue| Arc::new(AgentQueue::from_config(queue)))
+            .collect(),
+    ));
+    let state = AppState::new(
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new()),
+        store.clone(),
         Arc::new(MockJobEngine::new()),
-        Arc::new(RwLock::new(
-            agents
-                .iter()
-                .map(|queue| Arc::new(AgentQueue::from_config(queue)))
-                .collect(),
-        )),
-    )
+        agents.clone(),
+    );
+
+    TestStateHandles {
+        state,
+        store,
+        agents,
+    }
 }
 
 fn agent_request(name: &str) -> UpsertAgentRequest {
@@ -47,7 +57,7 @@ fn agent_request(name: &str) -> UpsertAgentRequest {
 #[tokio::test]
 async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha", "beta"]);
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 
     let response = client
@@ -71,7 +81,7 @@ async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
 #[tokio::test]
 async fn get_agent_returns_single_queue() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha"]);
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 
     let response = client
@@ -90,7 +100,7 @@ async fn get_agent_returns_single_queue() -> anyhow::Result<()> {
 #[tokio::test]
 async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     let state = test_state_with_agents(&[]);
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
     let request = agent_request("gamma");
@@ -104,7 +114,7 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     let body: AgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "gamma");
 
-    let agents = state.list_agent_configs().await;
+    let agents = state.state.list_agent_configs().await;
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "gamma");
     assert_eq!(agents[0].prompt, "prompt for gamma");
@@ -114,7 +124,7 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
 #[tokio::test]
 async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha"]);
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
     let request = UpsertAgentRequest::new("alpha", "updated prompt").with_limits(7, 11);
@@ -130,7 +140,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     assert_eq!(body.agent.max_tries, 7);
     assert_eq!(body.agent.max_simultaneous, 11);
 
-    let agents = state.list_agent_configs().await;
+    let agents = state.state.list_agent_configs().await;
     assert_eq!(agents[0].prompt, "updated prompt");
     assert_eq!(agents[0].max_tries, 7);
     assert_eq!(agents[0].max_simultaneous, 11);
@@ -140,7 +150,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
 #[tokio::test]
 async fn delete_agent_removes_queue() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha"]);
-    let server = spawn_test_server_with_state(state.clone()).await?;
+    let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
     let response = client
@@ -152,7 +162,7 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
     let body: DeleteAgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "alpha");
 
-    let agents = state.list_agent_configs().await;
+    let agents = state.state.list_agent_configs().await;
     assert!(agents.is_empty());
     Ok(())
 }
@@ -160,7 +170,7 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
 #[tokio::test]
 async fn update_agent_rejects_name_mismatch() -> anyhow::Result<()> {
     let state = test_state_with_agents(&["alpha"]);
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(state.state, state.store).await?;
     let client = test_client();
 
     let request = agent_request("beta");

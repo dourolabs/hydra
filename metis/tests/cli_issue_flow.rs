@@ -15,10 +15,11 @@ use tempfile::tempdir;
 
 #[tokio::test]
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
-    let state = test_utils::test_state();
+    let handles = test_utils::test_state_handles();
+    let state = handles.state;
     let (auth_token, parent_id) = {
         let (actor, auth_token) = metis_server::domain::actors::Actor::new_for_task(TaskId::new());
-        state.add_actor(actor).await?;
+        handles.store.add_actor(actor).await?;
         let mut parent_job_settings = JobSettings::default();
         parent_job_settings.repo_name = Some(RepoName::from_str("acme/cli-flow").unwrap());
         parent_job_settings.remote_url = Some("https://example.com/cli-flow.git".into());
@@ -36,10 +37,10 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             Vec::new(),
             Vec::new(),
         );
-        let parent_id = state.add_issue(parent_issue.into()).await?;
+        let parent_id = handles.store.add_issue(parent_issue.into()).await?;
         (auth_token, parent_id)
     };
-    let server = test_utils::spawn_test_server_with_state(state).await?;
+    let server = test_utils::spawn_test_server_with_state(state, handles.store).await?;
     let app_config = AppConfig {
         server: ServerSection {
             url: server.base_url(),

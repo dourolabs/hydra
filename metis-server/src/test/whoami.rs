@@ -30,13 +30,14 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
             .json_body(github_user_response("octo", 42));
     });
 
-    let state = test_state_with_github_api_base_url(github_server.base_url());
-    let token = state
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let token = handles
+        .state
         .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
         .await?
         .login_token;
 
-    let server = spawn_test_server_with_state(state).await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(&token);
     let response = client
         .get(format!("{}/v1/whoami", server.base_url()))

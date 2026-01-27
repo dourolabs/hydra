@@ -1,5 +1,6 @@
 use crate::{
     app::{AppState, Repository, ServiceState},
+    background::AgentQueue,
     config::{
         AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
         KubernetesSection, MetisSection,
@@ -7,7 +8,7 @@ use crate::{
     domain::actors::Actor,
     job_engine::JobEngine,
     run_with_state,
-    store::{MemoryStore, StoreError},
+    store::{MemoryStore, Store, StoreError},
 };
 use anyhow::Context;
 use metis_common::{RepoName, TaskId};
@@ -28,6 +29,12 @@ pub use github_test_utils::{
 };
 pub use job_engine::MockJobEngine;
 pub use store::FailingStore;
+
+pub struct TestStateHandles {
+    pub state: AppState,
+    pub store: Arc<dyn Store>,
+    pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+}
 
 pub struct TestServer {
     pub address: String,
@@ -71,18 +78,44 @@ pub fn test_app_config() -> AppConfig {
 }
 
 pub fn test_state_with_engine(job_engine: Arc<dyn JobEngine>) -> AppState {
-    AppState::new(
-        Arc::new(test_app_config()),
-        None,
-        Arc::new(ServiceState::default()),
-        Arc::new(MemoryStore::new()),
-        job_engine,
-        Arc::new(RwLock::new(Vec::new())),
-    )
+    test_state_with_engine_handles(job_engine).state
+}
+
+pub fn test_state_with_engine_handles(job_engine: Arc<dyn JobEngine>) -> TestStateHandles {
+    test_state_with_store_and_engine(Arc::new(MemoryStore::new()), job_engine)
 }
 
 pub fn test_state() -> AppState {
     test_state_with_engine(Arc::new(MockJobEngine::new()))
+}
+
+pub fn test_state_handles() -> TestStateHandles {
+    test_state_with_engine_handles(Arc::new(MockJobEngine::new()))
+}
+
+pub fn test_state_with_store_and_engine(
+    store: Arc<dyn Store>,
+    job_engine: Arc<dyn JobEngine>,
+) -> TestStateHandles {
+    let agents = Arc::new(RwLock::new(Vec::new()));
+    let state = AppState::new(
+        Arc::new(test_app_config()),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        job_engine,
+        agents.clone(),
+    );
+
+    TestStateHandles {
+        state,
+        store,
+        agents,
+    }
+}
+
+pub fn test_state_with_store(store: Arc<dyn Store>) -> TestStateHandles {
+    test_state_with_store_and_engine(store, Arc::new(MockJobEngine::new()))
 }
 
 pub async fn add_repository(
@@ -98,9 +131,17 @@ pub async fn add_repository(
 }
 
 pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow::Result<AppState> {
-    let state = test_state();
-    add_repository(&state, name, config).await?;
-    Ok(state)
+    let handles = test_state_with_repo_handles(name, config).await?;
+    Ok(handles.state)
+}
+
+pub async fn test_state_with_repo_handles(
+    name: RepoName,
+    config: Repository,
+) -> anyhow::Result<TestStateHandles> {
+    let handles = test_state_handles();
+    add_repository(&handles.state, name, config).await?;
+    Ok(handles)
 }
 
 fn test_auth() -> (Actor, String) {
@@ -134,11 +175,15 @@ pub fn test_client_without_auth() -> Client {
 }
 
 pub async fn spawn_test_server() -> anyhow::Result<TestServer> {
-    spawn_test_server_with_state(test_state()).await
+    let handles = test_state_handles();
+    spawn_test_server_with_state(handles.state, handles.store).await
 }
 
-pub async fn spawn_test_server_with_state(state: AppState) -> anyhow::Result<TestServer> {
-    seed_test_actor(&state).await?;
+pub async fn spawn_test_server_with_state(
+    state: AppState,
+    store: Arc<dyn Store>,
+) -> anyhow::Result<TestServer> {
+    seed_test_actor(store.as_ref()).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let server_state = state.clone();
@@ -152,9 +197,9 @@ pub async fn spawn_test_server_with_state(state: AppState) -> anyhow::Result<Tes
     Ok(server)
 }
 
-async fn seed_test_actor(state: &AppState) -> anyhow::Result<()> {
+async fn seed_test_actor(store: &dyn Store) -> anyhow::Result<()> {
     let (actor, _) = test_auth();
-    match state.add_actor(actor).await {
+    match store.add_actor(actor).await {
         Ok(_) => Ok(()),
         Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
         Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),

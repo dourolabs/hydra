@@ -75,10 +75,10 @@ mod tests {
     use crate::{
         domain::jobs::BundleSpec,
         store::{Status, Task},
-        test_utils::{FailingStore, test_state},
+        test_utils::{FailingStore, test_state, test_state_with_store},
     };
     use chrono::Utc;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::Arc};
 
     #[tokio::test]
     async fn returns_idle_when_no_pending_tasks_exist() {
@@ -140,9 +140,8 @@ mod tests {
 
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
-        let mut state = test_state();
-        state.set_store_for_tests(Box::new(FailingStore));
-        let worker = ProcessPendingJobsWorker::new(state);
+        let handles = test_state_with_store(Arc::new(FailingStore));
+        let worker = ProcessPendingJobsWorker::new(handles.state);
 
         let outcome = worker.run_iteration().await;
 

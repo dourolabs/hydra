@@ -34,10 +34,6 @@ use super::{
     TaskResolutionError,
 };
 
-#[cfg(any(test, feature = "test-utils"))]
-#[path = "app_state_test_utils.rs"]
-mod app_state_test_utils;
-
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
 pub struct AppState {
@@ -1715,8 +1711,9 @@ mod tests {
                 .json_body(github_user_response("octo", 42));
         });
 
-        let state = test_state_with_github_api_base_url(github_server.base_url());
-        let response = state
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let response = handles
+            .state
             .login_with_github_token("gh-token".to_string(), "gh-refresh".to_string())
             .await
             .expect("login should succeed");
@@ -1724,7 +1721,7 @@ mod tests {
         assert!(!response.login_token.is_empty());
         assert_eq!(response.user.username.as_str(), "octo");
 
-        let store_read = state.store.as_ref();
+        let store_read = handles.store.as_ref();
         let user = store_read.get_user(&Username::from("octo")).await?;
         let actors = store_read.list_actors().await?;
         assert_eq!(actors.len(), 1);
@@ -1741,8 +1738,9 @@ mod tests {
             then.status(401);
         });
 
-        let state = test_state_with_github_api_base_url(github_server.base_url());
-        let err = state
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let err = handles
+            .state
             .login_with_github_token("bad-token".to_string(), "gh-refresh".to_string())
             .await
             .expect_err("login should fail for invalid token");
