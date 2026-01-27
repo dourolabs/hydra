@@ -1,11 +1,14 @@
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{render_repository_records, CommandContext},
+};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
     CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
-use std::io::{self, Write};
+use std::io;
 
 #[derive(Debug, Subcommand)]
 pub enum ReposCommand {
@@ -90,23 +93,21 @@ pub struct UpdateRepositoryArgs {
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: ReposCommand,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
+    let mut stdout = io::stdout().lock();
     match command {
         ReposCommand::List => {
             let repositories = fetch_repositories(client).await?;
-            let mut stdout = io::stdout().lock();
-            print_repositories(&repositories, &mut stdout)?;
+            render_repository_records(context.output_format, &repositories, &mut stdout)?;
         }
         ReposCommand::Create(args) => {
             let repository = create_repository(client, args).await?;
-            let mut stdout = io::stdout().lock();
-            print_single_repository("Created repository", &repository, &mut stdout)?;
+            render_repository_records(context.output_format, &[repository], &mut stdout)?;
         }
         ReposCommand::Update(args) => {
             let repository = update_repository(client, args).await?;
-            let mut stdout = io::stdout().lock();
-            print_single_repository("Updated repository", &repository, &mut stdout)?;
+            render_repository_records(context.output_format, &[repository], &mut stdout)?;
         }
     }
 
@@ -251,57 +252,13 @@ fn parse_optional(
     }
 }
 
-fn print_repositories(repositories: &[RepositoryRecord], writer: &mut impl Write) -> Result<()> {
-    if repositories.is_empty() {
-        writeln!(writer, "No repositories configured.")?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    writeln!(writer, "Configured repositories:")?;
-    for repository in repositories {
-        write_repository_details(repository, "  ", writer)?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
-fn print_single_repository(
-    action: &str,
-    repository: &RepositoryRecord,
-    writer: &mut impl Write,
-) -> Result<()> {
-    writeln!(writer, "{action}:")?;
-    write_repository_details(repository, "  ", writer)?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_repository_details(
-    repository: &RepositoryRecord,
-    indent: &str,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let config = &repository.repository;
-    writeln!(writer, "{indent}- {}", repository.name)?;
-    writeln!(writer, "{indent}  remote_url: {}", config.remote_url)?;
-    writeln!(
-        writer,
-        "{indent}  default_branch: {}",
-        config.default_branch.as_deref().unwrap_or("<none>")
-    )?;
-    writeln!(
-        writer,
-        "{indent}  default_image: {}",
-        config.default_image.as_deref().unwrap_or("<none>")
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::MetisClient;
+    use crate::{
+        client::MetisClient,
+        command::output::{render_repository_records, ResolvedOutputFormat},
+    };
     use httpmock::prelude::*;
     use metis_common::repositories::{ListRepositoriesResponse, UpsertRepositoryResponse};
     use reqwest::Client as HttpClient;
@@ -367,10 +324,10 @@ mod tests {
 
         let repositories = fetch_repositories(&client).await.unwrap();
         let mut output = Vec::new();
-        print_repositories(&repositories, &mut output).unwrap();
+        render_repository_records(ResolvedOutputFormat::Pretty, &repositories, &mut output)
+            .unwrap();
         let output = String::from_utf8(output).unwrap();
 
-        assert!(output.contains("Configured repositories:"));
         assert!(output.contains("dourolabs/metis"));
         assert!(output.contains("remote_url: https://example.com/metis.git"));
         assert!(output.contains("default_branch: main"));
@@ -418,9 +375,9 @@ mod tests {
         let repository = create_repository(&client, args.clone()).await.unwrap();
 
         let mut output = Vec::new();
-        print_single_repository("Created repository", &repository, &mut output).unwrap();
+        render_repository_records(ResolvedOutputFormat::Pretty, &[repository], &mut output)
+            .unwrap();
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Created repository:"));
         assert!(output.contains("dourolabs/metis"));
 
         create_mock.assert();
@@ -470,9 +427,9 @@ mod tests {
         let repository = update_repository(&client, args.clone()).await.unwrap();
 
         let mut output = Vec::new();
-        print_single_repository("Updated repository", &repository, &mut output).unwrap();
+        render_repository_records(ResolvedOutputFormat::Pretty, &[repository], &mut output)
+            .unwrap();
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Updated repository:"));
         assert!(output.contains("default_branch: <none>"));
 
         update_mock.assert();

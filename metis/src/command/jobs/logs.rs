@@ -1,5 +1,8 @@
-use super::create::stream_job_logs_via_server;
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use super::create::{stream_job_logs_via_server, LogOutputTarget};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{CommandContext, ResolvedOutputFormat},
+};
 use anyhow::{bail, Context, Result};
 use metis_common::{jobs::SearchJobsQuery, IssueId, MetisId, TaskId};
 
@@ -7,14 +10,14 @@ pub async fn run(
     client: &dyn MetisClientInterface,
     id: MetisId,
     watch: bool,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
     if let Some(job_id) = id.as_task_id() {
-        return stream_logs_for_job(client, job_id, watch).await;
+        return stream_logs_for_job(client, job_id, watch, context.output_format).await;
     }
 
     if let Some(issue_id) = id.as_issue_id() {
-        return stream_logs_for_issue(client, issue_id, watch).await;
+        return stream_logs_for_issue(client, issue_id, watch, context.output_format).await;
     }
 
     bail!("id '{id}' must be a job or issue id");
@@ -24,17 +27,21 @@ async fn stream_logs_for_job(
     client: &dyn MetisClientInterface,
     id: TaskId,
     watch: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let action = if watch { "Streaming" } else { "Fetching" };
-    println!("{action} logs for job '{id}' via metis-server…");
+    if output_format == ResolvedOutputFormat::Pretty {
+        eprintln!("{action} logs for job '{id}' via metis-server…");
+    }
 
-    stream_job_logs_via_server(client, &id, watch).await
+    stream_job_logs_via_server(client, &id, watch, LogOutputTarget::Stdout).await
 }
 
 async fn stream_logs_for_issue(
     client: &dyn MetisClientInterface,
     issue_id: IssueId,
     watch: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let mut jobs = client
         .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone())))
@@ -60,11 +67,13 @@ async fn stream_logs_for_issue(
         .collect::<Vec<_>>()
         .join(", ");
 
-    println!(
-        "Looking for jobs spawned from issue '{issue_id}'… found tasks: {found_jobs}. Using most recent job '{chosen_job}' for logs."
-    );
+    if output_format == ResolvedOutputFormat::Pretty {
+        eprintln!(
+            "Looking for jobs spawned from issue '{issue_id}'… found tasks: {found_jobs}. Using most recent job '{chosen_job}' for logs."
+        );
+    }
 
-    stream_logs_for_job(client, chosen_job, watch).await
+    stream_logs_for_job(client, chosen_job, watch, output_format).await
 }
 
 #[cfg(test)]

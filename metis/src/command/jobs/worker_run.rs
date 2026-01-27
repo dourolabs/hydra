@@ -185,16 +185,16 @@ async fn submit_job_status(
     job: &TaskId,
     status: JobStatusUpdate,
 ) -> Result<()> {
-    println!("Updating status for job '{job}' via metis-server…");
+    log_status(format!("Updating status for job '{job}' via metis-server…"));
     let response = client.set_job_status(job, &status).await?;
     let last_message_length = status
         .last_message()
         .map(|message| message.len())
         .unwrap_or(0);
-    println!(
+    log_status(format!(
         "Status updated for job '{}'. Stored last message length: {}",
         response.job_id, last_message_length,
-    );
+    ));
     Ok(())
 }
 
@@ -211,12 +211,16 @@ async fn submit_patch_artifact_if_present(
     let is_automatic_backup = true;
 
     let Some(_) = base_commit else {
-        println!("No git repository detected; skipping patch submission for job '{job}'.");
+        log_status(format!(
+            "No git repository detected; skipping patch submission for job '{job}'."
+        ));
         return Ok(());
     };
     let diff = workdir_diff(dest)?;
     if diff.trim().is_empty() {
-        println!("No uncommitted changes detected; skipping patch submission for job '{job}'.");
+        log_status(format!(
+            "No uncommitted changes detected; skipping patch submission for job '{job}'."
+        ));
         return Ok(());
     }
 
@@ -234,7 +238,10 @@ async fn submit_patch_artifact_if_present(
     )
     .await?;
 
-    println!("Submitted patch '{}' for job '{}'.", response.patch_id, job);
+    log_status(format!(
+        "Submitted patch '{}' for job '{}'.",
+        response.patch_id, job
+    ));
 
     Ok(())
 }
@@ -266,9 +273,9 @@ fn initialize_tracking_branches(
     task_head_branch_override: Option<&str>,
 ) -> Result<()> {
     let issue_label = issue_id.unwrap_or("unknown");
-    println!(
+    log_status(format!(
         "Ensuring git tracking branches exist (issue: {issue_label}, task: {task_id}) before starting work…"
-    );
+    ));
     let repo = Repository::open(repo_root)
         .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
     let head_commit = repo
@@ -414,7 +421,9 @@ fn finalize_task_run(
     github_token: Option<&str>,
     task_head_branch_override: Option<&str>,
 ) -> Result<()> {
-    println!("Auto-committing worker changes for task '{task_id}' and syncing tracking branches…");
+    log_status(format!(
+        "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
+    ));
     let diff = workdir_diff(repo_root)?;
     let has_changes = !diff.trim().is_empty();
 
@@ -424,9 +433,9 @@ fn finalize_task_run(
         commit_changes(repo_root, &message)
             .context("failed to auto-commit worker changes to git")?;
     } else {
-        println!(
+        log_status(format!(
             "No uncommitted changes detected after worker run for task '{task_id}'; skipping auto-commit."
-        );
+        ));
     }
 
     let repo = Repository::open(repo_root)
@@ -583,6 +592,10 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
     )
     .with_context(|| format!("failed to update branch '{branch}' to latest commit"))?;
     Ok(())
+}
+
+fn log_status(message: impl std::fmt::Display) {
+    println!("{message}");
 }
 
 #[cfg(test)]

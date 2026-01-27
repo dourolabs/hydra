@@ -15,7 +15,7 @@ const CHAT_PRIMER: &str = r#"
 You are Codex acting as the "metis chat" assistant. You can run shell commands in the
 current workspace and should use the `metis` CLI as your primary tool. Helpful commands:
 
-- `metis jobs list --limit N [--json]` lists recent jobs in the current namespace (add `--json` for machine-readable output).
+- `metis --output-format jsonl jobs list --limit N` lists recent jobs with machine-readable output.
 - `metis jobs logs <JOB_ID> [--watch]` streams job logs.
 - `metis jobs create ...` launches new jobs (confirm with the user before running destructive work).
 - `metis jobs kill <JOB_ID>` stops jobs.
