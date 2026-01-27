@@ -51,6 +51,8 @@ pub fn test_app_config() -> AppConfig {
             default_image: "metis-worker:latest".to_string(),
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
+            cpu_request: "500m".to_string(),
+            memory_request: "1Gi".to_string(),
         },
         database: DatabaseSection::default(),
         github_app: GithubAppSection {

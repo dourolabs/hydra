@@ -83,8 +83,10 @@ pub trait JobEngine: Send + Sync {
     /// * `metis_id` - The Metis ID to use for the job
     /// * `image` - The container image the job should run
     /// * `env_vars` - Environment variables to inject into the job container
-    /// * `cpu_limit` - CPU request for the job container
-    /// * `memory_limit` - Memory request for the job container
+    /// * `cpu_limit` - CPU limit for the job container
+    /// * `memory_limit` - Memory limit for the job container
+    /// * `cpu_request` - CPU request for the job container
+    /// * `memory_request` - Memory request for the job container
     ///
     /// # Returns
     /// Ok(()) if successful, or an error if creation fails
@@ -95,6 +97,8 @@ pub trait JobEngine: Send + Sync {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
+        cpu_request: String,
+        memory_request: String,
     ) -> Result<(), JobEngineError>;
 
     /// Lists all jobs matching the given label selector.

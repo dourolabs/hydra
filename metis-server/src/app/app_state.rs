@@ -615,6 +615,8 @@ impl AppState {
 
         let cpu_limit = cpu_limit.unwrap_or_else(|| job_config.cpu_limit.clone());
         let memory_limit = memory_limit.unwrap_or_else(|| job_config.memory_limit.clone());
+        let cpu_request = job_config.cpu_request.clone();
+        let memory_request = job_config.memory_request.clone();
 
         match self
             .job_engine
@@ -624,6 +626,8 @@ impl AppState {
                 &resolved.env_vars,
                 cpu_limit,
                 memory_limit,
+                cpu_request,
+                memory_request,
             )
             .await
         {
