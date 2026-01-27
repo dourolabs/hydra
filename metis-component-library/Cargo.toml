@@ -2,6 +2,7 @@
 name = "metis-component-library"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [[bin]]
 name = "metis-component-library"
@@ -10,3 +11,6 @@ path = "src/main.rs"
 [dependencies]
 dioxus = { version = "0.7.3", features = ["server"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "1443c71520c03f8ac8086b93ee68eda8c221c2ad", package = "dioxus-primitives" }
+
+[build-dependencies]
+grass = "0.13.4"
