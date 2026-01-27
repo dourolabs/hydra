@@ -21,7 +21,10 @@ use crate::git::{
     workdir_diff,
 };
 use crate::worker_commands::WorkerCommands;
-use crate::{client::MetisClientInterface, command::output::CommandContext};
+use crate::{
+    client::MetisClientInterface,
+    command::output::{CommandContext, ResolvedOutputFormat},
+};
 
 pub async fn run(
     client: &dyn MetisClientInterface,
@@ -30,8 +33,9 @@ pub async fn run(
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
-    _context: &CommandContext,
+    context: &CommandContext,
 ) -> Result<()> {
+    let output_format = context.output_format;
     let WorkerContext {
         request_context,
         variables,
@@ -68,6 +72,7 @@ pub async fn run(
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
+            output_format,
         )
         .context("failed to initialize tracking branches")?;
     }
@@ -105,6 +110,7 @@ pub async fn run(
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
+            output_format,
         ) {
             errors.push(err.context("failed to finalize task output branches"));
         }
@@ -117,6 +123,7 @@ pub async fn run(
         &last_message,
         &service_repo_name,
         base_commit,
+        output_format,
     )
     .await
     {
@@ -136,7 +143,7 @@ pub async fn run(
         }
     };
 
-    if let Err(err) = submit_job_status(client, &job, status_update).await {
+    if let Err(err) = submit_job_status(client, &job, status_update, output_format).await {
         errors.push(err);
     }
 
@@ -177,16 +184,23 @@ async fn submit_job_status(
     client: &dyn MetisClientInterface,
     job: &TaskId,
     status: JobStatusUpdate,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
-    println!("Updating status for job '{job}' via metis-server…");
+    log_status(
+        output_format,
+        format!("Updating status for job '{job}' via metis-server…"),
+    );
     let response = client.set_job_status(job, &status).await?;
     let last_message_length = status
         .last_message()
         .map(|message| message.len())
         .unwrap_or(0);
-    println!(
-        "Status updated for job '{}'. Stored last message length: {}",
-        response.job_id, last_message_length,
+    log_status(
+        output_format,
+        format!(
+            "Status updated for job '{}'. Stored last message length: {}",
+            response.job_id, last_message_length,
+        ),
     );
     Ok(())
 }
@@ -198,18 +212,25 @@ async fn submit_patch_artifact_if_present(
     last_message: &str,
     service_repo_name: &RepoName,
     base_commit: Option<GitOid>,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let (title, description) = patch_metadata(job, last_message);
     let create_github_pr = false;
     let is_automatic_backup = true;
 
     let Some(_) = base_commit else {
-        println!("No git repository detected; skipping patch submission for job '{job}'.");
+        log_status(
+            output_format,
+            format!("No git repository detected; skipping patch submission for job '{job}'."),
+        );
         return Ok(());
     };
     let diff = workdir_diff(dest)?;
     if diff.trim().is_empty() {
-        println!("No uncommitted changes detected; skipping patch submission for job '{job}'.");
+        log_status(
+            output_format,
+            format!("No uncommitted changes detected; skipping patch submission for job '{job}'."),
+        );
         return Ok(());
     }
 
@@ -227,7 +248,10 @@ async fn submit_patch_artifact_if_present(
     )
     .await?;
 
-    println!("Submitted patch '{}' for job '{}'.", response.patch_id, job);
+    log_status(
+        output_format,
+        format!("Submitted patch '{}' for job '{}'.", response.patch_id, job),
+    );
 
     Ok(())
 }
@@ -256,10 +280,14 @@ fn initialize_tracking_branches(
     issue_id: Option<&str>,
     task_id: &TaskId,
     github_token: Option<&str>,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let issue_label = issue_id.unwrap_or("unknown");
-    println!(
-        "Ensuring git tracking branches exist (issue: {issue_label}, task: {task_id}) before starting work…"
+    log_status(
+        output_format,
+        format!(
+            "Ensuring git tracking branches exist (issue: {issue_label}, task: {task_id}) before starting work…"
+        ),
     );
     let repo = Repository::open(repo_root)
         .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
@@ -356,8 +384,14 @@ fn finalize_task_run(
     issue_id: Option<&str>,
     task_id: &TaskId,
     github_token: Option<&str>,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
-    println!("Auto-committing worker changes for task '{task_id}' and syncing tracking branches…");
+    log_status(
+        output_format,
+        format!(
+            "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
+        ),
+    );
     let diff = workdir_diff(repo_root)?;
     let has_changes = !diff.trim().is_empty();
 
@@ -367,8 +401,11 @@ fn finalize_task_run(
         commit_changes(repo_root, &message)
             .context("failed to auto-commit worker changes to git")?;
     } else {
-        println!(
-            "No uncommitted changes detected after worker run for task '{task_id}'; skipping auto-commit."
+        log_status(
+            output_format,
+            format!(
+                "No uncommitted changes detected after worker run for task '{task_id}'; skipping auto-commit."
+            ),
         );
     }
 
@@ -490,11 +527,18 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
     Ok(())
 }
 
+fn log_status(output_format: ResolvedOutputFormat, message: impl std::fmt::Display) {
+    if output_format == ResolvedOutputFormat::Pretty {
+        eprintln!("{message}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         client::MetisClient,
+        command::output::ResolvedOutputFormat,
         git::{
             clone_repo as git_clone_repo, commit_changes as git_commit_changes,
             configure_repo as git_configure_repo, current_branch as git_current_branch,
@@ -650,6 +694,7 @@ mod tests {
             "final output line",
             &repo_name,
             Some(base_commit),
+            ResolvedOutputFormat::Pretty,
         )
         .await?;
 
@@ -691,6 +736,7 @@ mod tests {
             "done",
             &repo_name,
             Some(base_commit),
+            ResolvedOutputFormat::Pretty,
         )
         .await?;
 
@@ -707,7 +753,13 @@ mod tests {
 
         let issue_id = "i-worker-123";
         let job_id = task_id("t-worker-123");
-        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
+        initialize_tracking_branches(
+            clone_dir.path(),
+            Some(issue_id),
+            &job_id,
+            None,
+            ResolvedOutputFormat::Pretty,
+        )?;
 
         let base_branch = format!("metis/{issue_id}/base");
         let head_branch = format!("metis/{issue_id}/head");
@@ -762,7 +814,13 @@ mod tests {
         let job_id = task_id("t-worker-456");
         let first_clone = tempfile::tempdir().context("failed to create first clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", first_clone.path(), None)?;
-        initialize_tracking_branches(first_clone.path(), Some(issue_id), &job_id, None)?;
+        initialize_tracking_branches(
+            first_clone.path(),
+            Some(issue_id),
+            &job_id,
+            None,
+            ResolvedOutputFormat::Pretty,
+        )?;
 
         let remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repo for initial base ref")?;
@@ -778,7 +836,13 @@ mod tests {
         let next_job = task_id("t-worker-456b");
         let second_clone = tempfile::tempdir().context("failed to create second clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", second_clone.path(), None)?;
-        initialize_tracking_branches(second_clone.path(), Some(issue_id), &next_job, None)?;
+        initialize_tracking_branches(
+            second_clone.path(),
+            Some(issue_id),
+            &next_job,
+            None,
+            ResolvedOutputFormat::Pretty,
+        )?;
 
         let repo = Repository::open(second_clone.path())
             .context("failed to open second clone for assertions")?;
@@ -837,7 +901,13 @@ mod tests {
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
         configure_repo(clone_dir.path(), "Metis Worker", "metis-worker@example.com")
             .context("failed to configure git repository")?;
-        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
+        initialize_tracking_branches(
+            clone_dir.path(),
+            Some(issue_id),
+            &job_id,
+            None,
+            ResolvedOutputFormat::Pretty,
+        )?;
 
         std::fs::write(clone_dir.path().join("README.md"), "updated content\n")
             .context("failed to edit README during finalize test")?;
@@ -847,7 +917,13 @@ mod tests {
         )
         .context("failed to write new file during finalize test")?;
 
-        finalize_task_run(clone_dir.path(), Some(issue_id), &job_id, None)?;
+        finalize_task_run(
+            clone_dir.path(),
+            Some(issue_id),
+            &job_id,
+            None,
+            ResolvedOutputFormat::Pretty,
+        )?;
 
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for finalize assertions")?;
