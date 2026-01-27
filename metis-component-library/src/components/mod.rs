@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 pub mod input;
 pub mod select;
 
