@@ -132,6 +132,41 @@ $color-pallette: (
 
 $color: (
   "shadow": rgb(from pallette-color("black") r g b / 50%),
+  "input": (
+    "border": light-dark(#d6dbe4, #2f3746),
+    "background": light-dark(pallette-color("white"), #151922),
+    "text": light-dark(pallette-color("gray", 800), pallette-color("slate", 200)),
+    "placeholder": light-dark(pallette-color("gray", 500), pallette-color("slate", 400)),
+    "focus-border": light-dark(pallette-color("blue", 600), pallette-color("blue", 400)),
+    "focus-shadow": light-dark(
+      rgb(from pallette-color("blue", 600) r g b / 20%),
+      rgb(from pallette-color("blue", 400) r g b / 25%)
+    ),
+    "focus-background": light-dark(pallette-color("slate", 50), #0f141c),
+    "disabled-text": light-dark(#9aa3af, pallette-color("slate", 500)),
+    "disabled-background": light-dark(pallette-color("gray", 100), pallette-color("gray", 900)),
+  ),
+  "select": (
+    "border": light-dark(pallette-color("gray", 300), #3b4148),
+    "background": light-dark(pallette-color("slate", 50), #1f2328),
+    "text": light-dark(pallette-color("gray", 900), pallette-color("gray", 200)),
+    "placeholder": light-dark(pallette-color("gray", 500), pallette-color("gray", 400)),
+    "expand-icon": light-dark(pallette-color("gray", 600), #cbd5f5),
+    "check-icon": light-dark(pallette-color("gray", 900), pallette-color("slate", 50)),
+    "disabled-text": light-dark(pallette-color("gray", 400), pallette-color("gray", 500)),
+    "trigger-hover-background": light-dark(pallette-color("slate", 200), #2b3138),
+    "trigger-hover-border": light-dark(pallette-color("gray", 400), pallette-color("gray", 600)),
+    "trigger-hover-text": light-dark(pallette-color("slate", 900), pallette-color("gray", 50)),
+    "list-background": light-dark(pallette-color("slate", 50), #1f2328),
+    "list-border": light-dark(pallette-color("gray", 300), #3b4148),
+    "list-shadow": light-dark(
+      rgb(from pallette-color("slate", 900) r g b / 12%),
+      rgb(from pallette-color("slate", 900) r g b / 60%)
+    ),
+    "option-hover-background": light-dark(pallette-color("slate", 200), #2b3138),
+    "option-hover-text": light-dark(pallette-color("slate", 900), pallette-color("gray", 50)),
+    "group-label": light-dark(pallette-color("gray", 500), pallette-color("gray", 400)),
+  ),
 );
 
 @function color($color-path...) {
