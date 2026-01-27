@@ -8,6 +8,16 @@ pub struct BuildCacheConfig {
     pub exclude: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3StorageConfig {
+    pub endpoint_url: String,
+    pub bucket: String,
+    pub region: String,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    pub session_token: Option<String>,
+}
+
 impl Default for BuildCacheConfig {
     fn default() -> Self {
         Self {
@@ -32,6 +42,36 @@ impl BuildCacheConfig {
             exclude,
             include_is_empty: self.include.is_empty(),
         })
+    }
+}
+
+impl S3StorageConfig {
+    pub fn validate(&self) -> Result<(), BuildCacheError> {
+        validate_required("endpoint_url", &self.endpoint_url)?;
+        validate_required("bucket", &self.bucket)?;
+        validate_required("region", &self.region)?;
+        validate_optional_non_empty("access_key_id", &self.access_key_id)?;
+        validate_optional_non_empty("secret_access_key", &self.secret_access_key)?;
+        validate_optional_non_empty("session_token", &self.session_token)?;
+
+        let has_access = self.access_key_id.as_ref().is_some();
+        let has_secret = self.secret_access_key.as_ref().is_some();
+
+        if has_access ^ has_secret {
+            return Err(BuildCacheError::config(
+                "credentials",
+                "access_key_id and secret_access_key must be provided together",
+            ));
+        }
+
+        if self.session_token.is_some() && !(has_access && has_secret) {
+            return Err(BuildCacheError::config(
+                "session_token",
+                "session_token requires access_key_id and secret_access_key",
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -92,6 +132,25 @@ fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+fn validate_required(field: &'static str, value: &str) -> Result<(), BuildCacheError> {
+    if value.trim().is_empty() {
+        return Err(BuildCacheError::config(field, "must not be empty"));
+    }
+    Ok(())
+}
+
+fn validate_optional_non_empty(
+    field: &'static str,
+    value: &Option<String>,
+) -> Result<(), BuildCacheError> {
+    if let Some(value) = value {
+        if value.trim().is_empty() {
+            return Err(BuildCacheError::config(field, "must not be empty"));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +197,99 @@ mod tests {
 
         assert!(matcher.is_included(Path::new("target/output.o")));
         assert!(!matcher.is_included(Path::new("target/tmp/output.o")));
+    }
+
+    #[test]
+    fn s3_config_accepts_empty_credentials() {
+        let config = S3StorageConfig {
+            endpoint_url: "https://s3.example.com".to_string(),
+            bucket: "metis-cache".to_string(),
+            region: "us-east-1".to_string(),
+            access_key_id: None,
+            secret_access_key: None,
+            session_token: None,
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn s3_config_rejects_missing_required_fields() {
+        let config = S3StorageConfig {
+            endpoint_url: "".to_string(),
+            bucket: "metis-cache".to_string(),
+            region: "us-east-1".to_string(),
+            access_key_id: None,
+            secret_access_key: None,
+            session_token: None,
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(BuildCacheError::Config {
+                field: "endpoint_url",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn s3_config_requires_full_credentials() {
+        let config = S3StorageConfig {
+            endpoint_url: "https://s3.example.com".to_string(),
+            bucket: "metis-cache".to_string(),
+            region: "us-east-1".to_string(),
+            access_key_id: Some("access".to_string()),
+            secret_access_key: None,
+            session_token: None,
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(BuildCacheError::Config {
+                field: "credentials",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn s3_config_rejects_empty_optional_values() {
+        let config = S3StorageConfig {
+            endpoint_url: "https://s3.example.com".to_string(),
+            bucket: "metis-cache".to_string(),
+            region: "us-east-1".to_string(),
+            access_key_id: Some("".to_string()),
+            secret_access_key: Some("secret".to_string()),
+            session_token: None,
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(BuildCacheError::Config {
+                field: "access_key_id",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn s3_config_rejects_session_token_without_credentials() {
+        let config = S3StorageConfig {
+            endpoint_url: "https://s3.example.com".to_string(),
+            bucket: "metis-cache".to_string(),
+            region: "us-east-1".to_string(),
+            access_key_id: None,
+            secret_access_key: None,
+            session_token: Some("token".to_string()),
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(BuildCacheError::Config {
+                field: "session_token",
+                ..
+            })
+        ));
     }
 }
