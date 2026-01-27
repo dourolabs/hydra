@@ -6,6 +6,6 @@ mod error;
 mod key;
 
 pub use client::BuildCacheClient;
-pub use config::{BuildCacheConfig, BuildCacheMatcher};
+pub use config::{BuildCacheConfig, BuildCacheMatcher, S3StorageConfig};
 pub use error::BuildCacheError;
 pub use key::BuildCacheKey;

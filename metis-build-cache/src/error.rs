@@ -12,6 +12,11 @@ pub enum BuildCacheError {
         pattern: String,
         source: globset::Error,
     },
+    #[error("invalid config for {field}: {message}")]
+    Config {
+        field: &'static str,
+        message: String,
+    },
 }
 
 impl BuildCacheError {
@@ -23,6 +28,13 @@ impl BuildCacheError {
         Self::Glob {
             pattern: pattern.into(),
             source,
+        }
+    }
+
+    pub fn config(field: &'static str, message: impl Into<String>) -> Self {
+        Self::Config {
+            field,
+            message: message.into(),
         }
     }
 }
