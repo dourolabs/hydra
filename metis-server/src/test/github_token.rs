@@ -237,8 +237,8 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     assert_eq!(body.github_token, "new-token");
 
     let updated = handles.store.get_user(&username).await?;
-    assert_eq!(updated.github_token, "new-token");
-    assert_eq!(updated.github_refresh_token, "new-refresh");
+    assert_eq!(updated.item.github_token, "new-token");
+    assert_eq!(updated.item.github_refresh_token, "new-refresh");
     refresh_mock.assert();
 
     Ok(())

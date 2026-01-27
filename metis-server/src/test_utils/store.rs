@@ -9,7 +9,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository};
 use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
@@ -26,7 +26,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_repository(&self, _name: &RepoName) -> Result<Repository, StoreError> {
+    async fn get_repository(&self, _name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
         fail()
     }
 
@@ -38,7 +38,9 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError> {
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         fail()
     }
 
@@ -164,12 +166,12 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_actor(&self, _name: &str) -> Result<Actor, StoreError> {
+    async fn get_actor(&self, _name: &str) -> Result<Versioned<Actor>, StoreError> {
         crate::store::validate_actor_name(_name)?;
         fail()
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         fail()
     }
 
@@ -183,11 +185,11 @@ impl Store for FailingStore {
         _github_token: String,
         _github_user_id: u64,
         _github_refresh_token: String,
-    ) -> Result<User, StoreError> {
+    ) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 
-    async fn get_user(&self, _username: &Username) -> Result<User, StoreError> {
+    async fn get_user(&self, _username: &Username) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 }

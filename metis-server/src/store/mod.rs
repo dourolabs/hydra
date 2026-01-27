@@ -6,7 +6,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository};
+use metis_common::{IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository};
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -76,7 +76,7 @@ pub trait Store: Send + Sync {
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
 
     /// Retrieves a repository configuration by name.
-    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError>;
+    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError>;
 
     /// Updates an existing repository configuration.
     ///
@@ -85,7 +85,8 @@ pub trait Store: Send + Sync {
     -> Result<(), StoreError>;
 
     /// Lists all repository configurations keyed by name.
-    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError>;
+    async fn list_repositories(&self)
+    -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
@@ -289,10 +290,10 @@ pub trait Store: Send + Sync {
     async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
 
     /// Gets an actor by its canonical name.
-    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError>;
+    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
 
     /// Lists all actors with their canonical names.
-    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError>;
+    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
 
     /// Validates an auth token and returns the associated actor.
     async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
@@ -301,8 +302,8 @@ pub trait Store: Send + Sync {
             .filter(|(name, token)| !name.is_empty() && !token.is_empty())
             .ok_or(StoreError::InvalidAuthToken)?;
         let actor = self.get_actor(actor_name).await?;
-        if actor.verify_auth_token(token) {
-            Ok(actor)
+        if actor.item.verify_auth_token(token) {
+            Ok(actor.item)
         } else {
             Err(StoreError::InvalidAuthToken)
         }
@@ -318,10 +319,10 @@ pub trait Store: Send + Sync {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
-    ) -> Result<User, StoreError>;
+    ) -> Result<Versioned<User>, StoreError>;
 
     /// Gets a user by their username.
-    async fn get_user(&self, username: &Username) -> Result<User, StoreError>;
+    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError>;
 }
 
 pub use memory_store::MemoryStore;

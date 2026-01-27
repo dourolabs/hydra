@@ -12,7 +12,9 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use metis_common::{IssueId, PatchId, RepoName, TaskId, VersionNumber, repositories::Repository};
+use metis_common::{
+    IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
@@ -290,6 +292,43 @@ impl PostgresStore {
             .map_err(map_serde_error(object_type))
     }
 
+    async fn fetch_versioned_payload<T: DeserializeOwned>(
+        &self,
+        table: &str,
+        object_type: &str,
+        id: &str,
+        target_version: i32,
+    ) -> Result<Option<Versioned<T>>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct VersionedPayloadRow {
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+        }
+
+        let query = format!(
+            "SELECT schema_version, payload, version_number FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, VersionedPayloadRow>(&query)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        ensure_schema_version(object_type, row.schema_version, target_version)?;
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for {object_type} '{id}'"
+            ))
+        })?;
+        let item = serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
+        Ok(Some(Versioned::new(item, version)))
+    }
+
     async fn fetch_payloads_with_ids<T: DeserializeOwned>(
         &self,
         table: &str,
@@ -318,6 +357,45 @@ impl PostgresStore {
             let value: T =
                 serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
             results.push((row.id, value));
+        }
+
+        Ok(results)
+    }
+
+    async fn fetch_versioned_payloads_with_ids<T: DeserializeOwned>(
+        &self,
+        table: &str,
+        object_type: &str,
+        target_version: i32,
+    ) -> Result<Vec<(String, Versioned<T>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct VersionedPayloadWithId {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+        }
+
+        let query = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number FROM {table} ORDER BY id, version_number DESC"
+        );
+        let rows = sqlx::query_as::<_, VersionedPayloadWithId>(&query)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version(object_type, row.schema_version, target_version)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for {object_type} '{}'",
+                    row.id
+                ))
+            })?;
+            let value: T =
+                serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
+            results.push((row.id, Versioned::new(value, version)));
         }
 
         Ok(results)
@@ -453,9 +531,9 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError> {
+    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
-        self.fetch_payload(
+        self.fetch_versioned_payload(
             TABLE_REPOSITORIES,
             "repository",
             name_str.as_str(),
@@ -483,9 +561,11 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError> {
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let mut rows = self
-            .fetch_payloads_with_ids::<Repository>(
+            .fetch_versioned_payloads_with_ids::<Repository>(
                 TABLE_REPOSITORIES,
                 "repository",
                 REPOSITORY_SCHEMA_VERSION,
@@ -914,16 +994,16 @@ impl Store for PostgresStore {
             .await
     }
 
-    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
-        self.fetch_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
+        self.fetch_versioned_payload(TABLE_ACTORS, "actor", name, ACTOR_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let mut actors = self
-            .fetch_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
+            .fetch_versioned_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
             .await?;
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
@@ -959,7 +1039,7 @@ impl Store for PostgresStore {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
-    ) -> Result<User, StoreError> {
+    ) -> Result<Versioned<User>, StoreError> {
         let mut user: User = self
             .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
@@ -978,11 +1058,20 @@ impl Store for PostgresStore {
         )
         .await?;
 
-        Ok(user)
+        let version = self
+            .fetch_latest_version_number(TABLE_USERS, username.as_str())
+            .await?
+            .ok_or_else(|| {
+                StoreError::Internal(format!(
+                    "user '{}' missing after github token update",
+                    username.as_str()
+                ))
+            })?;
+        Ok(Versioned::new(user, version))
     }
 
-    async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
-        self.fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
+    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
+        self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
@@ -997,7 +1086,7 @@ mod tests {
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
-    use metis_common::{RepoName, repositories::Repository};
+    use metis_common::{RepoName, Versioned, repositories::Repository};
     use std::{collections::HashSet, str::FromStr};
 
     #[allow(dead_code)]
@@ -1066,7 +1155,8 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_repository(&name).await.unwrap();
-        assert_eq!(fetched, config);
+        assert_eq!(fetched.item, config);
+        assert_eq!(fetched.version, 1);
 
         let mut updated = config.clone();
         updated.default_image = Some("other:latest".to_string());
@@ -1085,10 +1175,14 @@ mod tests {
         assert_eq!(versions, vec![1, 2]);
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(list, vec![(name.clone(), updated.clone())]);
+        assert_eq!(
+            list,
+            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
+        );
 
         let fetched_again = store.get_repository(&name).await.unwrap();
-        assert_eq!(fetched_again, updated);
+        assert_eq!(fetched_again.item, updated);
+        assert_eq!(fetched_again.version, 2);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -1383,7 +1477,8 @@ mod tests {
         store.add_user(user.clone()).await.unwrap();
 
         let fetched = store.get_user(&Username::from("alice")).await.unwrap();
-        assert_eq!(fetched, user);
+        assert_eq!(fetched.item, user);
+        assert_eq!(fetched.version, 1);
 
         let username = Username::from("alice");
         let updated = store
@@ -1395,7 +1490,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(updated.github_token, "new-token");
-        assert_eq!(updated.github_user_id, 202);
+        assert_eq!(updated.item.github_token, "new-token");
+        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.version, 2);
     }
 }

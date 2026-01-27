@@ -67,6 +67,10 @@ impl MemoryStore {
         versions.last().map(|entry| entry.item.clone())
     }
 
+    fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
+        versions.last().cloned()
+    }
+
     fn next_version<T>(versions: &[Versioned<T>]) -> VersionNumber {
         versions
             .last()
@@ -198,10 +202,10 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError> {
+    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
         self.repositories
             .get(name)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
     }
 
@@ -220,12 +224,14 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_repositories(&self) -> Result<Vec<(RepoName, Repository)>, StoreError> {
+    async fn list_repositories(
+        &self,
+    ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
         let mut repositories: Vec<_> = self
             .repositories
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_item(entry.value())?;
+                let latest = Self::latest_versioned(entry.value())?;
                 Some((entry.key().clone(), latest))
             })
             .collect();
@@ -649,20 +655,20 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         self.actors
             .get(name)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
+    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let mut actors: Vec<_> = self
             .actors
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_item(entry.value())?;
+                let latest = Self::latest_versioned(entry.value())?;
                 Some((entry.key().clone(), latest))
             })
             .collect();
@@ -686,7 +692,7 @@ impl Store for MemoryStore {
         github_token: String,
         github_user_id: u64,
         github_refresh_token: String,
-    ) -> Result<User, StoreError> {
+    ) -> Result<Versioned<User>, StoreError> {
         let mut versions = self
             .users
             .get_mut(username)
@@ -699,14 +705,15 @@ impl Store for MemoryStore {
         updated.github_user_id = github_user_id;
         updated.github_refresh_token = github_refresh_token;
         let next_version = Self::next_version(&versions);
-        versions.push(Versioned::new(updated.clone(), next_version));
-        Ok(updated)
+        let versioned = Versioned::new(updated, next_version);
+        versions.push(versioned.clone());
+        Ok(versioned)
     }
 
-    async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
+    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
         self.users
             .get(username)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
 }
@@ -796,7 +803,8 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_repository(&name).await.unwrap();
-        assert_eq!(fetched, config);
+        assert_eq!(fetched.item, config);
+        assert_eq!(fetched.version, 1);
 
         let mut updated = config.clone();
         updated.default_branch = Some("develop".to_string());
@@ -806,10 +814,14 @@ mod tests {
             .unwrap();
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(list, vec![(name.clone(), updated.clone())]);
+        assert_eq!(
+            list,
+            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
+        );
 
         let fetched_again = store.get_repository(&name).await.unwrap();
-        assert_eq!(fetched_again, updated);
+        assert_eq!(fetched_again.item, updated);
+        assert_eq!(fetched_again.version, 2);
     }
 
     #[tokio::test]
@@ -830,7 +842,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.get_repository(&name).await.unwrap(), updated);
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert_eq!(fetched.item, updated);
+        assert_eq!(fetched.version, 2);
 
         let versions = store.repositories.get(&name).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
@@ -1522,14 +1536,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(updated.github_token, "new-token");
-        assert_eq!(updated.github_user_id, 202);
-        assert_eq!(updated.github_refresh_token, "new-refresh");
+        assert_eq!(updated.item.github_token, "new-token");
+        assert_eq!(updated.item.github_user_id, 202);
+        assert_eq!(updated.item.github_refresh_token, "new-refresh");
+        assert_eq!(updated.version, 2);
 
         let user = store.get_user(&username).await.unwrap();
-        assert_eq!(user.github_token, "new-token");
-        assert_eq!(user.github_user_id, 202);
-        assert_eq!(user.github_refresh_token, "new-refresh");
+        assert_eq!(user.item.github_token, "new-token");
+        assert_eq!(user.item.github_user_id, 202);
+        assert_eq!(user.item.github_refresh_token, "new-refresh");
+        assert_eq!(user.version, 2);
     }
 
     #[tokio::test]
@@ -1545,7 +1561,8 @@ mod tests {
         store.add_actor(actor.clone()).await.unwrap();
 
         let fetched = store.get_actor(&name).await.unwrap();
-        assert_eq!(fetched, actor);
+        assert_eq!(fetched.item, actor);
+        assert_eq!(fetched.version, 1);
     }
 
     #[tokio::test]
@@ -1583,7 +1600,8 @@ mod tests {
         store.update_actor(updated.clone()).await.unwrap();
 
         let fetched = store.get_actor(&updated.name()).await.unwrap();
-        assert_eq!(fetched, updated);
+        assert_eq!(fetched.item, updated);
+        assert_eq!(fetched.version, 2);
     }
 
     #[tokio::test]
