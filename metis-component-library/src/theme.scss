@@ -1,0 +1,250 @@
+@use "sass:map";
+
+// Shared Sass utilities for spacing, typography, and color usage.
+// Prefer these helpers over hard-coded values in component styles.
+
+@function map-get-strict($map, $key...) {
+  @if map.has-key($map, $key...) {
+    @return map.get($map, $key...);
+  } @else {
+    @error "ERROR: Specified index does not exist in the mapping";
+  }
+}
+
+// spacing(2) == 0.5rem
+@function spacing($increment) {
+  @return $increment * 0.25rem;
+}
+
+$font-weight: (
+  "thin": 100,
+  "extralight": 200,
+  "light": 300,
+  "normal": 400,
+  "medium": 500,
+  "semibold": 600,
+  "bold": 700,
+  "extrabold": 800,
+  "black": 900,
+);
+
+@function font-weight($weight) {
+  @return map-get-strict($font-weight, $weight);
+}
+
+$font-size: (
+  "xxs": 0.6875rem,
+  "xs": 0.75rem,
+  "sm": 0.875rem,
+  "base": 1rem,
+  "lg": 1.125rem,
+  "xl": 1.25rem,
+  "2xl": 1.5rem,
+  "3xl": 1.875rem,
+  "4xl": 2.25rem,
+  "5xl": 3rem,
+  "6xl": 3.75rem,
+  "7xl": 4.5rem,
+  "8xl": 6rem,
+  "9xl": 8rem,
+);
+
+@function font-size($size: "base") {
+  @return map-get-strict($font-size, $size);
+}
+
+$letter-spacing: (
+  "tighter": -0.05em,
+  "tight": -0.025em,
+  "normal": 0em,
+  "wide": 0.025em,
+  "wider": 0.05em,
+  "widest": 0.1em,
+);
+
+@function letter-spacing($spacing: "normal") {
+  @return map-get-strict($letter-spacing, $spacing);
+}
+
+$border-radius: (
+  "none": 0px,
+  "sm": 0.125rem,
+  "base": 0.25rem,
+  "md": 0.375rem,
+  "lg": 0.5rem,
+  "xl": 0.75rem,
+  "2xl": 1rem,
+  "3xl": 1.5rem,
+  "full": 9999px,
+);
+
+@function border-radius($radius: "base") {
+  @return map-get-strict($border-radius, $radius);
+}
+
+$color-pallette: (
+  "black": #000,
+  "white": #fff,
+  "slate": (
+    50: #f8fafc,
+    100: #f1f5f9,
+    200: #e2e8f0,
+    300: #cbd5e1,
+    400: #94a3b8,
+    500: #64748b,
+    600: #475569,
+    700: #334155,
+    800: #1e293b,
+    900: #0f172a,
+    950: #020617,
+  ),
+  "gray": (
+    50: #f9fafb,
+    100: #f3f4f6,
+    200: #e5e7eb,
+    300: #d1d5db,
+    400: #9ca3af,
+    500: #6b7280,
+    600: #4b5563,
+    700: #374151,
+    800: #1f2937,
+    900: #111827,
+    950: #030712,
+  ),
+  "blue": (
+    50: #eff6ff,
+    100: #dbeafe,
+    200: #bfdbfe,
+    300: #93c5fd,
+    400: #60a5fa,
+    500: #3b82f6,
+    600: #2563eb,
+    700: #1d4ed8,
+    800: #1e40af,
+    900: #1e3a8a,
+    950: #172554,
+  ),
+);
+
+@function pallette-color($color...) {
+  @return map-get-strict($color-pallette, $color...);
+}
+
+$color: (
+  "shadow": rgb(from pallette-color("black") r g b / 50%),
+);
+
+@function color($color-path...) {
+  @return map-get-strict($color, $color-path...);
+}
+
+$breakpoints: (
+  "sm": 640px,
+  "md": 768px,
+  "lg": 1024px,
+  "xl": 1280px,
+  "2xl": 1536px,
+);
+
+@mixin breakpoint($point) {
+  @media (min-width: map-get-strict($breakpoints, $point)) {
+    @content;
+  }
+}
+
+$max-width: spacing(372);
+$max-width-padding: var(--max-width-padding);
+
+@mixin max-width {
+  & {
+    --max-width-padding: #{spacing(4)};
+
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: $max-width-padding;
+    padding-right: $max-width-padding;
+    width: 100%;
+    max-width: $max-width;
+  }
+
+  @include breakpoint("sm") {
+    --max-width-padding: #{spacing(6)};
+  }
+}
+
+$shadow: (
+  "base": 0 4px 12px 0 color("shadow"),
+);
+
+@function shadow($size: "base") {
+  @return map-get-strict($shadow, $size);
+}
+
+@mixin sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+// text("sm", "medium") sets size + weight and resets margins.
+@mixin text($size: "base", $weight: "normal") {
+  font-size: font-size($size);
+  font-weight: font-weight($weight);
+  margin: 0;
+  font-style: normal;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+
+@mixin pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.5;
+    }
+  }
+}
+
+$elevations: (
+  primary: (
+    3: (
+      0 1122px 250px 0 rgba(0, 0, 0, 0.00),
+      0 718px 250px 0 rgba(0, 0, 0, 0.01),
+      0 404px 242px 0 rgba(0, 0, 0, 0.05),
+      0 180px 180px 0 rgba(0, 0, 0, 0.09),
+      0 45px 99px 0 rgba(0, 0, 0, 0.10),
+    ),
+  ),
+  default: (
+    1: (
+      0px 4px 6px -4px rgb(from black r g b / 10%),
+      0px 10px 15px -3px rgb(from black r g b / 10%),
+    ),
+    2: (
+      0px 29px 12px 0px
+        light-dark(rgb(from #564848 r g b / 2%), rgb(from black r g b / 8%)),
+      0px 16px 10px 0px
+        light-dark(rgb(from #564848 r g b / 6%), rgb(from black r g b / 12%)),
+      0px 7px 7px 0px
+        light-dark(rgb(from #564848 r g b / 12%), rgb(from black r g b / 20%)),
+      0px 2px 4px 0px
+        light-dark(rgb(from #564848 r g b / 14%), rgb(from black r g b / 30%)),
+    ),
+  ),
+);
+
+@mixin elevation($elevation...) {
+  box-shadow: map-get-strict($elevations, $elevation...);
+}
