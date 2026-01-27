@@ -7,7 +7,7 @@ use dioxus_primitives::select::{
 #[component]
 pub fn Select<T: Clone + PartialEq + 'static>(props: SelectProps<T>) -> Element {
     rsx! {
-        document::Link { rel: "stylesheet", href: asset!("./select.css") }
+        document::Link { rel: "stylesheet", href: asset!("./select.scss") }
         select::Select {
             class: "metis-select",
             value: props.value,
