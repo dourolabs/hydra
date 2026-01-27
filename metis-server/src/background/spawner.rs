@@ -631,6 +631,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn merge_request_requeues_after_changes_requested_patch_update() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let patch = Patch::new(
+            "Review patch".to_string(),
+            "Review patch description".to_string(),
+            "diff --git a/file b/file\n".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name.clone(),
+            None,
+        );
+        let patch_id = handles.store.add_patch(patch).await?;
+        handles
+            .store
+            .add_issue(Issue {
+                issue_type: IssueType::MergeRequest,
+                description: "Review patch".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: vec![patch_id.clone()],
+            })
+            .await?;
+
+        let mut tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
+
+        let mut updated_patch = handles.store.get_patch(&patch_id).await?;
+        updated_patch.status = PatchStatus::ChangesRequested;
+        updated_patch.diff = "diff --git a/file b/file\n+change\n".to_string();
+        updated_patch.reviews = vec![Review::new(
+            "needs adjustments".to_string(),
+            false,
+            "reviewer".to_string(),
+            None,
+        )];
+        handles.store.update_patch(&patch_id, updated_patch).await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        let prompt = &tasks[0].prompt;
+        assert!(prompt.contains("Merge request follow-up:"));
+        assert!(prompt.contains(&patch_id.to_string()));
+        assert!(prompt.contains("needs adjustments"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn does_not_spawn_when_issue_not_ready() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         let blocker_id = handles
