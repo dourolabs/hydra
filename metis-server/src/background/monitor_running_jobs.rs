@@ -30,20 +30,17 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         // Kill any jobs that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
-        let running_ids = {
-            let store = self.state.store.read().await;
-            match store.list_tasks_with_status(Status::Running).await {
-                Ok(ids) => ids,
-                Err(err) => {
-                    error!(error = %err, "failed to list running tasks");
-                    info!(
-                        worker = WORKER_NAME,
-                        "worker iteration completed with transient error"
-                    );
-                    return WorkerOutcome::TransientError {
-                        reason: err.to_string(),
-                    };
-                }
+        let running_ids = match self.state.list_tasks_with_status(Status::Running).await {
+            Ok(ids) => ids,
+            Err(err) => {
+                error!(error = %err, "failed to list running tasks");
+                info!(
+                    worker = WORKER_NAME,
+                    "worker iteration completed with transient error"
+                );
+                return WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                };
             }
         };
 
@@ -87,7 +84,6 @@ mod tests {
     };
     use chrono::Utc;
     use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::RwLock;
 
     #[tokio::test]
     async fn returns_idle_when_no_running_tasks_exist() {
@@ -103,7 +99,6 @@ mod tests {
     async fn reconciles_running_jobs_and_reports_progress() {
         let engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(engine.clone());
-        let mut store = state.store.write().await;
         let task = Task::new(
             "observe".to_string(),
             BundleSpec::None,
@@ -113,15 +108,14 @@ mod tests {
             None,
             None,
         );
-        let task_id = store
+        let task_id = state
             .add_task(task, Utc::now())
             .await
             .expect("task should be added");
-        store
+        state
             .mark_task_running(&task_id, Utc::now())
             .await
             .expect("task should be marked running");
-        drop(store);
 
         engine.insert_job(&task_id, JobStatus::Running).await;
 
@@ -136,10 +130,9 @@ mod tests {
             }
         );
 
-        let store = state.store.read().await;
         assert_eq!(
-            store
-                .get_status(&task_id)
+            state
+                .get_task_status(&task_id)
                 .await
                 .expect("status should exist"),
             Status::Running
@@ -149,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
         let mut state = test_state();
-        state.store = Arc::new(RwLock::new(Box::new(FailingStore)));
+        state.set_store_for_tests(Box::new(FailingStore));
         let worker = MonitorRunningJobsWorker::new(state);
 
         let outcome = worker.run_iteration().await;

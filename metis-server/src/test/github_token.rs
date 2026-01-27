@@ -103,11 +103,8 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
     .await?;
 
     let state = test_state_with_github_urls(server.base_url(), server.base_url());
-    {
-        let mut store = state.store.write().await;
-        store.add_user(user).await?;
-        store.add_actor(actor).await?;
-    }
+    state.add_user(user).await?;
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);
@@ -142,24 +139,21 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         "refresh-token".to_string(),
     );
 
-    let issue_id = {
-        let mut store = state.store.write().await;
-        store.add_user(user).await?;
-        store
-            .add_issue(Issue::new(
-                IssueType::Task,
-                "task".to_string(),
-                username.clone(),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ))
-            .await?
-    };
+    state.add_user(user).await?;
+    let issue_id = state
+        .add_issue(Issue::new(
+            IssueType::Task,
+            "task".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await?;
 
     let task_id = TaskId::new();
     let task = Task::new(
@@ -172,11 +166,8 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    {
-        let mut store = state.store.write().await;
-        store.add_task_with_id(task_id, task, Utc::now()).await?;
-        store.add_actor(actor).await?;
-    }
+    state.add_task_with_id(task_id, task, Utc::now()).await?;
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);
@@ -225,10 +216,7 @@ async fn github_token_returns_not_found_for_missing_user() -> anyhow::Result<()>
     .await?;
 
     let state = test_state();
-    {
-        let mut store = state.store.write().await;
-        store.add_actor(actor).await?;
-    }
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);
@@ -273,24 +261,21 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         github_refresh_token: "refresh-token".to_string(),
     };
 
-    let issue_id = {
-        let mut store = state.store.write().await;
-        store.add_user(user).await?;
-        store
-            .add_issue(Issue::new(
-                IssueType::Task,
-                "task".to_string(),
-                username.clone(),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ))
-            .await?
-    };
+    state.add_user(user).await?;
+    let issue_id = state
+        .add_issue(Issue::new(
+            IssueType::Task,
+            "task".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await?;
 
     let task_id = TaskId::new();
     let task = Task::new(
@@ -303,11 +288,8 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    {
-        let mut store = state.store.write().await;
-        store.add_task_with_id(task_id, task, Utc::now()).await?;
-        store.add_actor(actor).await?;
-    }
+    state.add_task_with_id(task_id, task, Utc::now()).await?;
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state.clone()).await?;
     let client = auth_client(&auth_token);
@@ -320,8 +302,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let body: GithubTokenResponse = response.json().await?;
     assert_eq!(body.github_token, "new-token");
 
-    let store = state.store.read().await;
-    let updated = store.get_user(&username).await?;
+    let updated = state.get_user(&username).await?;
     assert_eq!(updated.github_token, "new-token");
     assert_eq!(updated.github_refresh_token, "new-refresh");
     refresh_mock.assert();
@@ -361,24 +342,21 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         github_refresh_token: "bad-refresh".to_string(),
     };
 
-    let issue_id = {
-        let mut store = state.store.write().await;
-        store.add_user(user).await?;
-        store
-            .add_issue(Issue::new(
-                IssueType::Task,
-                "task".to_string(),
-                username.clone(),
-                String::new(),
-                IssueStatus::Open,
-                None,
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ))
-            .await?
-    };
+    state.add_user(user).await?;
+    let issue_id = state
+        .add_issue(Issue::new(
+            IssueType::Task,
+            "task".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await?;
 
     let task_id = TaskId::new();
     let task = Task::new(
@@ -391,11 +369,8 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
-    {
-        let mut store = state.store.write().await;
-        store.add_task_with_id(task_id, task, Utc::now()).await?;
-        store.add_actor(actor).await?;
-    }
+    state.add_task_with_id(task_id, task, Utc::now()).await?;
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);
@@ -414,10 +389,7 @@ async fn github_token_returns_not_found_for_missing_task() -> anyhow::Result<()>
     let state = test_state();
     let task_id = TaskId::new();
     let (actor, auth_token) = Actor::new_for_task(task_id);
-    {
-        let mut store = state.store.write().await;
-        store.add_actor(actor).await?;
-    }
+    state.add_actor(actor).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = auth_client(&auth_token);

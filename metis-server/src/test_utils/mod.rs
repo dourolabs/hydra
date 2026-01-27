@@ -85,11 +85,11 @@ pub async fn add_repository(
     name: RepoName,
     config: Repository,
 ) -> anyhow::Result<()> {
-    let mut store = state.store.write().await;
-    store
-        .add_repository(name, config)
+    state
+        .create_repository(name, config)
         .await
-        .context("failed to add repository to test state")
+        .context("failed to add repository to test state")?;
+    Ok(())
 }
 
 pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow::Result<AppState> {
@@ -162,8 +162,7 @@ pub async fn spawn_test_server_with_state(state: AppState) -> anyhow::Result<Tes
 
 async fn seed_test_actor(state: &AppState) -> anyhow::Result<()> {
     let (actor, _) = test_auth();
-    let mut store = state.store.write().await;
-    match store.add_actor(actor).await {
+    match state.add_actor(actor).await {
         Ok(_) => Ok(()),
         Err(StoreError::ActorAlreadyExists(_)) => Ok(()),
         Err(err) => Err(anyhow::anyhow!("failed to seed test actor: {err}")),

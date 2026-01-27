@@ -61,9 +61,9 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
     let worker_result: Result<Vec<common::bash_commands::CommandOutput>, _> = env.run_as_worker(
         vec![
             format!(
-                "metis issues create --deps child-of:{grandparent_id} \"parent issue\" | tee parent_id.txt"
+                "metis --output-format jsonl issues create --deps child-of:{grandparent_id} \"parent issue\" | sed -n 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/p' | tee parent_id.txt"
             ),
-            "metis issues create --deps child-of:$(cat parent_id.txt) \"open child\" | tee child_id.txt"
+            "metis --output-format jsonl issues create --deps child-of:$(cat parent_id.txt) \"open child\" | sed -n 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/p' | tee child_id.txt"
                 .to_string(),
             format!(
                 "metis issues update $(cat parent_id.txt) --status closed --deps child-of:{grandparent_id}"
@@ -150,7 +150,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
         .run_as_worker(
             vec![
                 format!(
-                    "metis issues create --deps child-of:{grandparent_id} \"issue with todos\" | tee issue_id.txt"
+                    "metis --output-format jsonl issues create --deps child-of:{grandparent_id} \"issue with todos\" | sed -n 's/.*\"id\":\"\\([^\"]*\\)\".*/\\1/p' | tee issue_id.txt"
                 ),
                 "metis issues todo $(cat issue_id.txt) --add \"write more tests\"".to_string(),
                 format!(

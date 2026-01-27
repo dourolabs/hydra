@@ -27,20 +27,17 @@ impl ProcessPendingJobsWorker {
 impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        let pending_ids = {
-            let store = self.state.store.read().await;
-            match store.list_tasks_with_status(Status::Pending).await {
-                Ok(ids) => ids,
-                Err(err) => {
-                    error!(error = %err, "failed to list pending tasks");
-                    info!(
-                        worker = WORKER_NAME,
-                        "worker iteration completed with transient error"
-                    );
-                    return WorkerOutcome::TransientError {
-                        reason: err.to_string(),
-                    };
-                }
+        let pending_ids = match self.state.list_tasks_with_status(Status::Pending).await {
+            Ok(ids) => ids,
+            Err(err) => {
+                error!(error = %err, "failed to list pending tasks");
+                info!(
+                    worker = WORKER_NAME,
+                    "worker iteration completed with transient error"
+                );
+                return WorkerOutcome::TransientError {
+                    reason: err.to_string(),
+                };
             }
         };
 
@@ -81,8 +78,7 @@ mod tests {
         test_utils::{FailingStore, test_state},
     };
     use chrono::Utc;
-    use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::RwLock;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn returns_idle_when_no_pending_tasks_exist() {
@@ -97,7 +93,6 @@ mod tests {
     #[tokio::test]
     async fn starts_pending_tasks_and_reports_progress() {
         let state = test_state();
-        let mut store = state.store.write().await;
         let task = Task::new(
             "do work".to_string(),
             BundleSpec::None,
@@ -107,15 +102,14 @@ mod tests {
             None,
             None,
         );
-        let first_id = store
+        let first_id = state
             .add_task(task.clone(), Utc::now())
             .await
             .expect("first task should be added");
-        let second_id = store
+        let second_id = state
             .add_task(task, Utc::now())
             .await
             .expect("second task should be added");
-        drop(store);
 
         let worker = ProcessPendingJobsWorker::new(state.clone());
         let outcome = worker.run_iteration().await;
@@ -128,17 +122,16 @@ mod tests {
             }
         );
 
-        let store = state.store.read().await;
         assert_eq!(
-            store
-                .get_status(&first_id)
+            state
+                .get_task_status(&first_id)
                 .await
                 .expect("status should exist"),
             Status::Running
         );
         assert_eq!(
-            store
-                .get_status(&second_id)
+            state
+                .get_task_status(&second_id)
                 .await
                 .expect("status should exist"),
             Status::Running
@@ -148,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn returns_transient_error_when_store_fails() {
         let mut state = test_state();
-        state.store = Arc::new(RwLock::new(Box::new(FailingStore)));
+        state.set_store_for_tests(Box::new(FailingStore));
         let worker = ProcessPendingJobsWorker::new(state);
 
         let outcome = worker.run_iteration().await;

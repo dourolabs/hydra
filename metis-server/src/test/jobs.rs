@@ -23,7 +23,7 @@ use std::{collections::HashMap, sync::Arc};
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
     let state = test_state();
     let resolver_state = state.clone();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -37,8 +37,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     let body: CreateJobResponse = response.json().await?;
     assert!(!body.job_id.as_ref().trim().is_empty());
 
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     let Task {
         context, prompt, ..
@@ -49,7 +48,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
-    let status = store_read.get_status(&body.job_id).await?;
+    let status = check_state.get_task_status(&body.job_id).await?;
     assert_eq!(status, Status::Pending);
     Ok(())
 }
@@ -60,7 +59,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -75,8 +74,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     let Task { context, .. } = task;
     assert_eq!(
@@ -102,7 +100,7 @@ async fn create_job_allows_service_repository_bundle() -> anyhow::Result<()> {
 async fn create_job_respects_image_override() -> anyhow::Result<()> {
     let state = test_state();
     let resolver_state = state.clone();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -117,8 +115,7 @@ async fn create_job_respects_image_override() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(task.image, Some("ghcr.io/example/custom:dev".to_string()));
     assert_eq!(resolved.image, "ghcr.io/example/custom:dev");
@@ -132,7 +129,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -148,8 +145,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(resolved.image, "ghcr.io/example/override:main");
 
@@ -159,7 +155,7 @@ async fn create_job_image_override_beats_repo_default() -> anyhow::Result<()> {
 #[tokio::test]
 async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
     let state = test_state();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -174,8 +170,7 @@ async fn create_job_stores_provided_variables() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
+    let task = check_state.get_task(&body.job_id).await?;
     let Task { env_vars, .. } = task;
     assert_eq!(env_vars.get("FOO"), Some(&"bar".to_string()));
     assert_eq!(env_vars.get("PROMPT"), Some(&"custom prompt".to_string()));
@@ -189,8 +184,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
-    let store = state.store.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let check_state = state.clone();
 
     let job_settings = JobSettings {
         repo_name: Some(repo_name.clone()),
@@ -202,24 +196,22 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         memory_limit: Some("512Mi".to_string()),
     };
 
-    let issue_id = {
-        let mut store_write = store.write().await;
-        store_write
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "use overrides".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                job_settings: job_settings.clone(),
-                todo_list: Vec::new(),
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-            })
-            .await?
-    };
+    let issue_id = state
+        .add_issue(Issue {
+            issue_type: IssueType::Task,
+            description: "use overrides".to_string(),
+            creator: Username::from("tester"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: job_settings.clone(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        })
+        .await?;
 
+    let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
     let response = client
         .post(format!("{}/v1/jobs", server.base_url()))
@@ -234,9 +226,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
 
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
-    drop(store_read);
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
@@ -273,8 +263,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
     let (repo_name, repo) = service_repository();
     add_repository(&state, repo_name.clone(), repo.clone()).await?;
     let resolver_state = state.clone();
-    let store = state.store.clone();
-    let server = spawn_test_server_with_state(state).await?;
+    let check_state = state.clone();
 
     let job_settings = JobSettings {
         repo_name: Some(repo_name.clone()),
@@ -286,24 +275,22 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         memory_limit: None,
     };
 
-    let issue_id = {
-        let mut store_write = store.write().await;
-        store_write
-            .add_issue(Issue {
-                issue_type: IssueType::Task,
-                description: "use repo override".to_string(),
-                creator: Username::from("tester"),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: None,
-                job_settings: job_settings.clone(),
-                todo_list: Vec::new(),
-                dependencies: Vec::new(),
-                patches: Vec::new(),
-            })
-            .await?
-    };
+    let issue_id = state
+        .add_issue(Issue {
+            issue_type: IssueType::Task,
+            description: "use repo override".to_string(),
+            creator: Username::from("tester"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: job_settings.clone(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        })
+        .await?;
 
+    let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
     let response = client
         .post(format!("{}/v1/jobs", server.base_url()))
@@ -318,9 +305,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
     assert!(response.status().is_success());
     let body: CreateJobResponse = response.json().await?;
 
-    let store_read = store.read().await;
-    let task = store_read.get_task(&body.job_id).await?;
-    drop(store_read);
+    let task = check_state.get_task(&body.job_id).await?;
     let resolved = resolver_state.resolve_task(&task).await?;
     assert_eq!(
         resolved.context.bundle,
@@ -394,67 +379,64 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
     let engine = Arc::new(MockJobEngine::new());
     let state = test_state_with_engine(engine);
     let default_image = default_image();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
 
     let oldest_id = task_id("t-oldest");
     let middle_id = task_id("t-middle");
     let newest_id = task_id("t-newest");
     let now = Utc::now();
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                oldest_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                now - Duration::seconds(30),
-            )
-            .await?;
-        store_write
-            .add_task_with_id(
-                middle_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                now - Duration::seconds(20),
-            )
-            .await?;
-        store_write
-            .add_task_with_id(
-                newest_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                now - Duration::seconds(10),
-            )
-            .await?;
-        store_write
-            .mark_task_running(&middle_id, now - Duration::seconds(15))
-            .await?;
-        store_write
-            .mark_task_running(&newest_id, now - Duration::seconds(5))
-            .await?;
-    }
+    check_state
+        .add_task_with_id(
+            oldest_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            now - Duration::seconds(30),
+        )
+        .await?;
+    check_state
+        .add_task_with_id(
+            middle_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            now - Duration::seconds(20),
+        )
+        .await?;
+    check_state
+        .add_task_with_id(
+            newest_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            now - Duration::seconds(10),
+        )
+        .await?;
+    check_state
+        .mark_task_running(&middle_id, now - Duration::seconds(15))
+        .await?;
+    check_state
+        .mark_task_running(&newest_id, now - Duration::seconds(5))
+        .await?;
 
     let client = test_client();
     let response = client
@@ -473,31 +455,28 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
 async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
     let job_id = task_id("t-jobab");
     let now = Utc::now();
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                now - Duration::seconds(20),
-            )
-            .await?;
-        store_write
-            .mark_task_running(&job_id, now - Duration::seconds(10))
-            .await?;
-    }
+    check_state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            now - Duration::seconds(20),
+        )
+        .await?;
+    check_state
+        .mark_task_running(&job_id, now - Duration::seconds(10))
+        .await?;
 
     let client = test_client();
     let response = client
@@ -538,31 +517,28 @@ async fn get_job_rejects_empty_job_id() -> anyhow::Result<()> {
 async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
+    let check_state = state.clone();
     let server = spawn_test_server_with_state(state).await?;
     let job_id = task_id("t-trim");
     let now = Utc::now();
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                now - Duration::seconds(30),
-            )
-            .await?;
-        store_write
-            .mark_task_running(&job_id, now - Duration::seconds(10))
-            .await?;
-    }
+    check_state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            now - Duration::seconds(30),
+        )
+        .await?;
+    check_state
+        .mark_task_running(&job_id, now - Duration::seconds(10))
+        .await?;
 
     let client = test_client();
     let response = client
@@ -791,41 +767,37 @@ async fn set_job_status_returns_not_found_for_missing_job() -> anyhow::Result<()
 async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
-    let patch_id;
+    let check_state = state.clone();
     let job_id = task_id("t-spawn");
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-        patch_id = store_write
-            .add_patch(Patch {
-                title: "done".to_string(),
-                description: "done".to_string(),
-                diff: patch_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: Some(job_id.clone()),
-                reviews: Vec::new(),
-                service_repo_name: service_repo_name(),
-                github: None,
-            })
-            .await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
+    let patch_id = state
+        .add_patch(Patch {
+            title: "done".to_string(),
+            description: "done".to_string(),
+            diff: patch_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: Some(job_id.clone()),
+            reviews: Vec::new(),
+            service_repo_name: service_repo_name(),
+            github: None,
+        })
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -842,12 +814,11 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
         json!({ "job_id": job_id.as_ref(), "status": "complete" })
     );
 
-    let store_read = store.read().await;
-    let status = store_read.get_status(&job_id).await?;
+    let status = check_state.get_task_status(&job_id).await?;
     assert_eq!(status, Status::Complete);
-    let status_log = store_read.get_status_log(&job_id).await?;
+    let status_log = check_state.get_status_log(&job_id).await?;
     assert!(matches!(status_log.result(), Some(Ok(()))));
-    let patch = store_read.get_patch(&patch_id).await?;
+    let patch = check_state.get_patch(&patch_id).await?;
     assert_eq!(patch.created_by, Some(job_id));
 
     Ok(())
@@ -858,25 +829,22 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
     let job_id = task_id("t-lastmsg");
-    {
-        let mut store_write = state.store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
     let server = spawn_test_server_with_state(state.clone()).await?;
     let client = test_client();
 
@@ -895,8 +863,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
 
-    let store_read = state.store.read().await;
-    let status_log = store_read.get_status_log(&job_id).await?;
+    let status_log = state.get_status_log(&job_id).await?;
     match status_log.events.last() {
         Some(Event::Completed { last_message, .. }) => {
             assert_eq!(last_message.as_deref(), Some("all done"))
@@ -911,25 +878,22 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
 async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
     let state = test_state();
     let job_id = task_id("t-fail");
-    {
-        let mut store_write = state.store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
     let server = spawn_test_server_with_state(state.clone()).await?;
     let client = test_client();
 
@@ -946,10 +910,9 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         json!({ "job_id": job_id.as_ref(), "status": "failed" })
     );
 
-    let store_read = state.store.read().await;
-    let status = store_read.get_status(&job_id).await?;
+    let status = state.get_task_status(&job_id).await?;
     assert_eq!(status, Status::Failed);
-    let status_log = store_read.get_status_log(&job_id).await?;
+    let status_log = state.get_status_log(&job_id).await?;
     assert!(matches!(
         status_log.result(),
         Some(Err(TaskError::JobEngineError { reason })) if reason == "boom"
@@ -961,28 +924,25 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
 async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
     let state = test_state();
     let job_id = task_id("t-status");
-    {
-        let mut store_write = state.store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-        store_write
-            .mark_task_complete(&job_id, Ok(()), None, Utc::now())
-            .await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
+    state
+        .mark_task_complete(&job_id, Ok(()), None, Utc::now())
+        .await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
@@ -1008,44 +968,39 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
 async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
     let job_id = task_id("t-output");
-    let patch_id;
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-        patch_id = store_write
-            .add_patch(Patch {
-                title: "all good".to_string(),
-                description: "all good".to_string(),
-                diff: patch_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: Some(job_id.clone()),
-                reviews: Vec::new(),
-                service_repo_name: service_repo_name(),
-                github: None,
-            })
-            .await?;
-        store_write
-            .mark_task_complete(&job_id, Ok(()), None, Utc::now())
-            .await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
+    let patch_id = state
+        .add_patch(Patch {
+            title: "all good".to_string(),
+            description: "all good".to_string(),
+            diff: patch_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: Some(job_id.clone()),
+            reviews: Vec::new(),
+            service_repo_name: service_repo_name(),
+            github: None,
+        })
+        .await?;
+    state
+        .mark_task_complete(&job_id, Ok(()), None, Utc::now())
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -1119,65 +1074,59 @@ async fn get_job_context_returns_not_found_for_unknown_job() -> anyhow::Result<(
 async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
     let context_spec = BundleSpec::GitRepository {
         url: "https://example.com/repo.git".to_string(),
         rev: "main".to_string(),
     };
     let parent_job_id = task_id("t-parentjob");
     let ctx_job_id = task_id("t-ctxjob");
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                parent_job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write
-            .mark_task_running(&parent_job_id, Utc::now())
-            .await?;
-        let _parent_patch_id = store_write
-            .add_patch(Patch {
-                title: "done".to_string(),
-                description: "done".to_string(),
-                diff: patch_diff(),
-                status: PatchStatus::Open,
-                is_automatic_backup: false,
-                created_by: Some(parent_job_id.clone()),
-                reviews: Vec::new(),
-                service_repo_name: service_repo_name(),
-                github: None,
-            })
-            .await?;
-        store_write
-            .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
-            .await?;
-        store_write
-            .add_task_with_id(
-                ctx_job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: context_spec.clone(),
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-    }
+    state
+        .add_task_with_id(
+            parent_job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&parent_job_id, Utc::now()).await?;
+    let _parent_patch_id = state
+        .add_patch(Patch {
+            title: "done".to_string(),
+            description: "done".to_string(),
+            diff: patch_diff(),
+            status: PatchStatus::Open,
+            is_automatic_backup: false,
+            created_by: Some(parent_job_id.clone()),
+            reviews: Vec::new(),
+            service_repo_name: service_repo_name(),
+            github: None,
+        })
+        .await?;
+    state
+        .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
+        .await?;
+    state
+        .add_task_with_id(
+            ctx_job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: context_spec.clone(),
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();
@@ -1206,29 +1155,22 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
 async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
-    let store = state.store.clone();
     let job_id = task_id("t-envjob");
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image.clone()),
-                    env_vars: HashMap::from([(
-                        "SECRET_VALUE".to_string(),
-                        "keep-me-safe".to_string(),
-                    )]),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-    }
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image.clone()),
+                env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
     let server = spawn_test_server_with_state(state).await?;
 
     let client = test_client();

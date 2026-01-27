@@ -64,26 +64,23 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let state = test_state();
     let default_image = default_image();
     let job_id = super::common::task_id("t-emit");
-    let store = state.store.clone();
-    {
-        let mut store_write = store.write().await;
-        store_write
-            .add_task_with_id(
-                job_id.clone(),
-                Task {
-                    prompt: "0".to_string(),
-                    context: BundleSpec::None,
-                    spawned_from: None,
-                    image: Some(default_image),
-                    env_vars: HashMap::new(),
-                    cpu_limit: None,
-                    memory_limit: None,
-                },
-                Utc::now(),
-            )
-            .await?;
-        store_write.mark_task_running(&job_id, Utc::now()).await?;
-    }
+    let check_state = state.clone();
+    state
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: None,
+                image: Some(default_image),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    state.mark_task_running(&job_id, Utc::now()).await?;
 
     let server = spawn_test_server_with_state(state).await?;
     let client = test_client();
@@ -106,10 +103,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let created: UpsertPatchResponse = response.json().await?;
 
-    let patch = {
-        let store_read = store.read().await;
-        store_read.get_patch(&created.patch_id).await?
-    };
+    let patch = check_state.get_patch(&created.patch_id).await?;
     assert_eq!(patch.created_by, Some(job_id));
     Ok(())
 }

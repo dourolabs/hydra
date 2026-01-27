@@ -113,16 +113,13 @@ async fn sync_open_patches(
     max_per_cycle: usize,
     start_from: &mut usize,
 ) -> anyhow::Result<SyncStats> {
-    let open_patches: Vec<(PatchId, Patch)> = {
-        let store = state.store.read().await;
-        store
-            .list_patches()
-            .await?
-            .into_iter()
-            .filter(|(_, patch)| matches!(patch.status, PatchStatus::Open))
-            .filter(|(_, patch)| patch.github.is_some())
-            .collect()
-    };
+    let open_patches: Vec<(PatchId, Patch)> = state
+        .list_patches()
+        .await?
+        .into_iter()
+        .filter(|(_, patch)| matches!(patch.status, PatchStatus::Open))
+        .filter(|(_, patch)| patch.github.is_some())
+        .collect();
 
     if open_patches.is_empty() {
         *start_from = 0;
@@ -242,10 +239,7 @@ async fn sync_patch_from_github(
         );
     }
 
-    let mut latest_patch = {
-        let store = state.store.read().await;
-        store.get_patch(patch_id).await?
-    };
+    let mut latest_patch = state.get_patch(patch_id).await?;
     if !matches!(latest_patch.status, PatchStatus::Open) {
         debug!(patch_id = %patch_id, "skipping GitHub sync for non-open patch");
         return Ok(());
@@ -686,8 +680,7 @@ mod tests {
     use chrono::TimeZone;
     use metis_common::RepoName;
     use serde_json::json;
-    use std::{str::FromStr, sync::Arc};
-    use tokio::sync::RwLock;
+    use std::str::FromStr;
 
     use crate::test_utils::{FailingStore, test_state};
 
@@ -707,8 +700,7 @@ mod tests {
     {
         let state = test_state();
         {
-            let mut store = state.store.write().await;
-            store
+            state
                 .add_patch(Patch::new(
                     "test".to_string(),
                     "desc".to_string(),
@@ -748,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn github_worker_surfaces_store_errors() {
         let mut state = test_state();
-        state.store = Arc::new(RwLock::new(Box::new(FailingStore)));
+        state.set_store_for_tests(Box::new(FailingStore));
         let worker = GithubPollerWorker::new(state, 60);
 
         let outcome = worker.run_iteration().await;
