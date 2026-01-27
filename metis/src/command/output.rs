@@ -234,6 +234,7 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
         PatchStatus::Open => "open",
         PatchStatus::Closed => "closed",
         PatchStatus::Merged => "merged",
+        PatchStatus::ChangesRequested => "changes requested",
         _ => "unknown",
     }
 }

@@ -942,8 +942,11 @@ impl AppState {
                     other => UpsertPatchError::Store { source: other },
                 })?;
                 let new_status = patch.status;
-                should_close_merge_requests = matches!(existing_patch.status, PatchStatus::Open)
-                    && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
+                should_close_merge_requests =
+                    matches!(
+                        existing_patch.status,
+                        PatchStatus::Open | PatchStatus::ChangesRequested
+                    ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
                 patch.created_by = existing_patch.created_by;
                 store
