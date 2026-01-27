@@ -1,4 +1,4 @@
-use crate::{PatchId, RepoName, TaskId};
+use crate::{MetisId, PatchId, RepoName, TaskId};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -81,6 +81,74 @@ impl Review {
             submitted_at,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ReviewV2 {
+    /// GitHub review id as provided by octocrab.
+    pub review_id: MetisId,
+    /// Login/handle of the reviewer who submitted the review.
+    pub author: String,
+    /// Review state from GitHub (e.g. "approved", "changes_requested", "commented").
+    pub review_state: String,
+    /// Timestamp for when the review was submitted, if known.
+    pub submitted_at: Option<DateTime<Utc>>,
+    /// Review body/message supplied with the review.
+    pub review_message: Option<String>,
+    /// Commit SHA the review is associated with, when GitHub provides it.
+    pub commit_id: Option<String>,
+    /// API URL for the review resource.
+    pub url: Option<String>,
+    /// HTML URL for the review in the GitHub UI.
+    pub html_url: Option<String>,
+    /// API URL for the pull request the review belongs to.
+    pub pull_request_url: Option<String>,
+    /// Review comments attached to this review submission.
+    pub comments: Vec<ReviewCommentV2>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ReviewCommentV2 {
+    /// GitHub review comment id as provided by octocrab.
+    pub comment_id: MetisId,
+    /// Review id that the comment belongs to.
+    pub review_id: MetisId,
+    /// Login/handle of the comment author, when known.
+    pub author: Option<String>,
+    /// Comment body text.
+    pub body: String,
+    /// API URL for the comment resource.
+    pub url: Option<String>,
+    /// HTML URL for the comment in the GitHub UI.
+    pub html_url: Option<String>,
+    /// File path in the diff that the comment refers to.
+    pub path: String,
+    /// Line number in the diff that the comment is attached to.
+    pub line: Option<u32>,
+    /// Original line number for the comment, if GitHub provides it.
+    pub original_line: Option<u32>,
+    /// Starting line number for multi-line comments, when present.
+    pub start_line: Option<u32>,
+    /// Original starting line number for multi-line comments, when present.
+    pub original_start_line: Option<u32>,
+    /// Side of the diff ("LEFT" or "RIGHT") for the selected line, when provided.
+    pub side: Option<String>,
+    /// Side of the diff ("LEFT" or "RIGHT") for the start line, when provided.
+    pub start_side: Option<String>,
+    /// Commit SHA the comment applies to, when GitHub provides it.
+    pub commit_id: Option<String>,
+    /// Original commit SHA for the comment, when GitHub provides it.
+    pub original_commit_id: Option<String>,
+    /// The diff hunk snippet included with the comment, when available.
+    pub diff_hunk: Option<String>,
+    /// Comment id this comment replies to, when present.
+    pub in_reply_to: Option<MetisId>,
+    /// Timestamp for when the comment was created, if known.
+    pub created_at: Option<DateTime<Utc>>,
+    /// Timestamp for when the comment was last updated, if known.
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
