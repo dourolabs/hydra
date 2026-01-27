@@ -1,1 +1,6 @@
-// Placeholder module for component exports.
+pub mod select;
+
+pub use select::{
+    Select, SelectGroup, SelectGroupLabel, SelectItemIndicator, SelectList, SelectOption,
+    SelectTrigger, SelectValue,
+};

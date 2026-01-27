@@ -1,0 +1,158 @@
+:root[color-theme="light"] {
+  color-scheme: light;
+}
+
+:root[color-theme="dark"] {
+  color-scheme: dark;
+}
+
+.metis-select {
+  position: relative;
+}
+
+.metis-select-trigger {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid dark-light(#d1d5db, #3b4148);
+  border-radius: 0.5rem;
+  background: dark-light(#f8fafc, #1f2328);
+  color: dark-light(#111827, #e5e7eb);
+  cursor: pointer;
+  gap: 0.25rem;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.metis-select-trigger span[data-placeholder="true"] {
+  color: dark-light(#6b7280, #9ca3af);
+}
+
+.metis-select[data-state="open"] .metis-select-trigger {
+  pointer-events: none;
+}
+
+.metis-select-expand-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: dark-light(#4b5563, #cbd5f5);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.metis-select-check-icon {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: dark-light(#111827, #f8fafc);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.metis-select[data-disabled="true"] .metis-select-trigger {
+  color: dark-light(#9ca3af, #6b7280);
+  cursor: not-allowed;
+}
+
+.metis-select-trigger:hover:not([data-disabled="true"]),
+.metis-select-trigger:focus-visible {
+  background: dark-light(#e2e8f0, #2b3138);
+  border-color: dark-light(#9ca3af, #4b5563);
+  color: dark-light(#0f172a, #f9fafb);
+  outline: none;
+}
+
+.metis-select-list {
+  position: absolute;
+  z-index: 1000;
+  top: 100%;
+  left: 0;
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  margin-top: 0.25rem;
+  background: dark-light(#f8fafc, #1f2328);
+  border: 1px solid dark-light(#d1d5db, #3b4148);
+  box-shadow: 0 8px 20px dark-light(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.6));
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: top;
+  will-change: transform, opacity;
+}
+
+.metis-select-list[data-state="closed"] {
+  animation: metis-select-list-animate-out 140ms ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes metis-select-list-animate-out {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+}
+
+.metis-select-list[data-state="open"] {
+  animation: metis-select-list-animate-in 140ms ease-out forwards;
+  pointer-events: auto;
+}
+
+@keyframes metis-select-list-animate-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.metis-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 14px;
+  color: inherit;
+}
+
+.metis-select-option[data-disabled="true"] {
+  color: dark-light(#9ca3af, #6b7280);
+  cursor: not-allowed;
+}
+
+.metis-select-option:hover:not([data-disabled="true"]),
+.metis-select-option:focus-visible {
+  background: dark-light(#e2e8f0, #2b3138);
+  color: dark-light(#0f172a, #f9fafb);
+  outline: none;
+}
+
+.metis-select-group-label {
+  padding: 4px 12px;
+  color: dark-light(#6b7280, #9ca3af);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
