@@ -16,7 +16,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
         Arc::new(config),
         None,
         Arc::new(ServiceState::default()),
-        Arc::new(RwLock::new(Box::new(MemoryStore::new()))),
+        Arc::new(MemoryStore::new()),
         Arc::new(MockJobEngine::new()),
         Arc::new(RwLock::new(Vec::new())),
     );

@@ -328,7 +328,7 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
 
 async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(AppState, String)> {
     let server_config = test_app_config();
-    let mut store: Box<dyn Store> = Box::new(MemoryStore::new());
+    let store: Box<dyn Store> = Box::new(MemoryStore::new());
     store
         .add_repository(
             repo_name.clone(),
@@ -354,7 +354,7 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
             Arc::new(server_config),
             None,
             Arc::new(ServiceState::default()),
-            Arc::new(RwLock::new(store)),
+            Arc::from(store),
             Arc::new(MockJobEngine::new()),
             Arc::new(RwLock::new(Vec::new())),
         ),
