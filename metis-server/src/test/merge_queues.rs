@@ -151,7 +151,14 @@ fn git_diff_for_commits(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("invalid repo path"))?;
     let output = std::process::Command::new("git")
-        .args(["-C", repo_str, "diff", &format!("{base}..{head}")])
+        .args([
+            "-C",
+            repo_str,
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            &format!("{base}..{head}"),
+        ])
         .output()?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
