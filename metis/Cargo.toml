@@ -3,6 +3,13 @@ name = "metis"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+vendored-openssl = [
+    "git2/vendored-openssl",
+    "openssl-sys/vendored",
+    "metis-common/vendored-openssl",
+]
+
 [[bin]]
 name = "metis"
 path = "src/main.rs"

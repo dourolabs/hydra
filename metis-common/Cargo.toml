@@ -3,6 +3,12 @@ name = "metis-common"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+vendored-openssl = [
+    "git2/vendored-openssl",
+    "openssl-sys/vendored",
+]
+
 [dependencies]
 indexmap = { version = "2", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
