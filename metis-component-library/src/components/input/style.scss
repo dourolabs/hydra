@@ -5,27 +5,27 @@
   box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid dark-light(#d6dbe4, #2f3746);
-  background: dark-light(#ffffff, #151922);
-  color: dark-light(#1f2937, #e2e8f0);
+  border: 1px solid theme.color("input", "border");
+  background: theme.color("input", "background");
+  color: theme.color("input", "text");
   font: inherit;
   line-height: 1.2;
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .metis-input::placeholder {
-  color: dark-light(#6b7280, #94a3b8);
+  color: theme.color("input", "placeholder");
 }
 
 .metis-input:focus-visible {
   outline: none;
-  border-color: dark-light(#2563eb, #60a5fa);
-  box-shadow: 0 0 0 3px dark-light(rgba(37, 99, 235, 0.2), rgba(96, 165, 250, 0.25));
-  background: dark-light(#f8fafc, #0f141c);
+  border-color: theme.color("input", "focus-border");
+  box-shadow: 0 0 0 3px theme.color("input", "focus-shadow");
+  background: theme.color("input", "focus-background");
 }
 
 .metis-input:disabled {
   cursor: not-allowed;
-  color: dark-light(#9aa3af, #64748b);
-  background: dark-light(#f3f4f6, #111827);
+  color: theme.color("input", "disabled-text");
+  background: theme.color("input", "disabled-background");
 }
