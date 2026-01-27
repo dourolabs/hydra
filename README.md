@@ -186,4 +186,5 @@ For local development with a kind (Kubernetes in Docker) cluster:
   kind delete cluster --name local-dev
   ```
 
-hello world
+hello
+world
