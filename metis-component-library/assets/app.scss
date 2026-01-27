@@ -46,7 +46,7 @@ body {
 
 .demo-shell {
   min-height: 100vh;
-  padding: clamp(24px, 4vw, 56px);
+  padding: clamp(theme.spacing(6), 4vw, theme.spacing(14));
   background:
     radial-gradient(120% 90% at 10% 10%, var(--bg-sheen) 0%, transparent 60%),
     radial-gradient(80% 80% at 90% 20%, rgba(14, 165, 233, 0.08), transparent 65%),
@@ -56,14 +56,14 @@ body {
 
 .hero {
   display: flex;
-  gap: clamp(24px, 5vw, 48px);
+  gap: clamp(theme.spacing(6), 5vw, theme.spacing(12));
   align-items: stretch;
   justify-content: space-between;
-  margin-bottom: clamp(24px, 4vw, 48px);
+  margin-bottom: clamp(theme.spacing(6), 4vw, theme.spacing(12));
 }
 
 .hero-copy {
-  max-width: 520px;
+  max-width: theme.spacing(130);
   animation: hero-rise 500ms ease-out both;
 }
 
@@ -72,13 +72,13 @@ body {
   letter-spacing: 0.2em;
   font-size: 0.7rem;
   color: var(--text-muted);
-  margin: 0 0 12px;
+  margin: 0 0 theme.spacing(3);
 }
 
 h1 {
   font-family: "Source Serif 4", "Times New Roman", serif;
   font-size: clamp(2.4rem, 4vw, 3.6rem);
-  margin: 0 0 12px;
+  margin: 0 0 theme.spacing(3);
 }
 
 .lede {
@@ -90,19 +90,19 @@ h1 {
 
 .hero-controls {
   display: grid;
-  gap: 16px;
-  min-width: 220px;
+  gap: theme.spacing(4);
+  min-width: theme.spacing(55);
 }
 
 .theme-card,
 .status-card {
   background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  padding: 18px;
+  border: theme.spacing(0.25) solid var(--panel-border);
+  border-radius: theme.spacing(4.5);
+  padding: theme.spacing(4.5);
   display: grid;
-  gap: 10px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  gap: theme.spacing(2.5);
+  box-shadow: 0 theme.spacing(3) theme.spacing(7.5) rgba(15, 23, 42, 0.08);
   animation: panel-rise 520ms ease-out both;
 }
 
@@ -130,8 +130,8 @@ h1 {
 
 .theme-toggle {
   border: none;
-  border-radius: 999px;
-  padding: 10px 16px;
+  border-radius: theme.spacing(249.75);
+  padding: theme.spacing(2.5) theme.spacing(4);
   background: var(--accent);
   color: #041019;
   font-weight: 600;
@@ -140,22 +140,22 @@ h1 {
 }
 
 .theme-toggle:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px rgba(14, 165, 233, 0.3);
+  transform: translateY(theme.spacing(-0.25));
+  box-shadow: 0 theme.spacing(2.5) theme.spacing(5) rgba(14, 165, 233, 0.3);
 }
 
 .demo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: clamp(20px, 3vw, 32px);
+  grid-template-columns: repeat(auto-fit, minmax(theme.spacing(70), 1fr));
+  gap: clamp(theme.spacing(5), 3vw, theme.spacing(8));
 }
 
 .panel {
   background: var(--panel-bg);
-  border-radius: 22px;
-  border: 1px solid var(--panel-border);
-  padding: clamp(18px, 3vw, 28px);
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.1);
+  border-radius: theme.spacing(5.5);
+  border: theme.spacing(0.25) solid var(--panel-border);
+  padding: clamp(theme.spacing(4.5), 3vw, theme.spacing(7));
+  box-shadow: 0 theme.spacing(4) theme.spacing(10) rgba(15, 23, 42, 0.1);
   animation: panel-rise 520ms ease-out both;
 }
 
@@ -164,24 +164,24 @@ h1 {
 }
 
 .panel-header h2 {
-  margin: 0 0 6px;
+  margin: 0 0 theme.spacing(1.5);
   font-size: 1.4rem;
 }
 
 .panel-header p {
-  margin: 0 0 18px;
+  margin: 0 0 theme.spacing(4.5);
   color: var(--text-muted);
   line-height: 1.5;
 }
 
 .field-stack {
   display: grid;
-  gap: 18px;
+  gap: theme.spacing(4.5);
 }
 
 .field {
   display: grid;
-  gap: 8px;
+  gap: theme.spacing(2);
 }
 
 label {
@@ -207,7 +207,7 @@ label {
 @keyframes hero-rise {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(theme.spacing(3));
   }
   to {
     opacity: 1;
@@ -218,7 +218,7 @@ label {
 @keyframes panel-rise {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.98);
+    transform: translateY(theme.spacing(4)) scale(0.98);
   }
   to {
     opacity: 1;
@@ -232,6 +232,6 @@ label {
   }
 
   .hero-controls {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(theme.spacing(45), 1fr));
   }
 }

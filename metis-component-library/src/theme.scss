@@ -67,15 +67,15 @@ $letter-spacing: (
 }
 
 $border-radius: (
-  "none": 0px,
-  "sm": 0.125rem,
-  "base": 0.25rem,
-  "md": 0.375rem,
-  "lg": 0.5rem,
-  "xl": 0.75rem,
-  "2xl": 1rem,
-  "3xl": 1.5rem,
-  "full": 9999px,
+  "none": 0,
+  "sm": spacing(0.5),
+  "base": spacing(1),
+  "md": spacing(1.5),
+  "lg": spacing(2),
+  "xl": spacing(3),
+  "2xl": spacing(4),
+  "3xl": spacing(6),
+  "full": spacing(2499.75),
 );
 
 @function border-radius($radius: "base") {
@@ -208,7 +208,7 @@ $max-width-padding: var(--max-width-padding);
 }
 
 $shadow: (
-  "base": 0 4px 12px 0 color("shadow"),
+  "base": 0 spacing(1) spacing(3) 0 color("shadow"),
 );
 
 @function shadow($size: "base") {
@@ -217,10 +217,10 @@ $shadow: (
 
 @mixin sr-only {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  width: spacing(0.25);
+  height: spacing(0.25);
   padding: 0;
-  margin: -1px;
+  margin: spacing(-0.25);
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -255,26 +255,26 @@ $shadow: (
 $elevations: (
   primary: (
     3: (
-      0 1122px 250px 0 rgba(0, 0, 0, 0.00),
-      0 718px 250px 0 rgba(0, 0, 0, 0.01),
-      0 404px 242px 0 rgba(0, 0, 0, 0.05),
-      0 180px 180px 0 rgba(0, 0, 0, 0.09),
-      0 45px 99px 0 rgba(0, 0, 0, 0.10),
+      0 spacing(280.5) spacing(62.5) 0 rgba(0, 0, 0, 0.00),
+      0 spacing(179.5) spacing(62.5) 0 rgba(0, 0, 0, 0.01),
+      0 spacing(101) spacing(60.5) 0 rgba(0, 0, 0, 0.05),
+      0 spacing(45) spacing(45) 0 rgba(0, 0, 0, 0.09),
+      0 spacing(11.25) spacing(24.75) 0 rgba(0, 0, 0, 0.10),
     ),
   ),
   default: (
     1: (
-      0px 4px 6px -4px rgb(from black r g b / 10%),
-      0px 10px 15px -3px rgb(from black r g b / 10%),
+      0 spacing(1) spacing(1.5) spacing(-1) rgb(from black r g b / 10%),
+      0 spacing(2.5) spacing(3.75) spacing(-0.75) rgb(from black r g b / 10%),
     ),
     2: (
-      0px 29px 12px 0px
+      0 spacing(7.25) spacing(3) 0
         light-dark(rgb(from #564848 r g b / 2%), rgb(from black r g b / 8%)),
-      0px 16px 10px 0px
+      0 spacing(4) spacing(2.5) 0
         light-dark(rgb(from #564848 r g b / 6%), rgb(from black r g b / 12%)),
-      0px 7px 7px 0px
+      0 spacing(1.75) spacing(1.75) 0
         light-dark(rgb(from #564848 r g b / 12%), rgb(from black r g b / 20%)),
-      0px 2px 4px 0px
+      0 spacing(0.5) spacing(1) 0
         light-dark(rgb(from #564848 r g b / 14%), rgb(from black r g b / 30%)),
     ),
   ),
