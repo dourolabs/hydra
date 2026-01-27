@@ -296,6 +296,43 @@ async fn create_patch(
     }
 
     let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
+    let issue_record = client
+        .get_issue(&issue_id)
+        .await
+        .with_context(|| format!("failed to fetch issue '{issue_id}' to inspect patches"))?;
+    let existing_patch_id = (issue_record.issue.issue_type == IssueType::MergeRequest)
+        .then(|| issue_record.issue.patches.last().cloned())
+        .flatten();
+
+    if let Some(existing_patch_id) = existing_patch_id {
+        let existing_patch = client
+            .get_patch(&existing_patch_id)
+            .await
+            .with_context(|| format!("failed to fetch patch '{existing_patch_id}'"))?;
+        if matches!(
+            existing_patch.patch.status,
+            PatchStatus::Open | PatchStatus::ChangesRequested
+        ) {
+            let mut updated_patch = existing_patch.patch;
+            updated_patch.title = title.clone();
+            updated_patch.description = description.clone();
+            updated_patch.diff = diff.clone();
+
+            let response = client
+                .update_patch(
+                    &existing_patch_id,
+                    &UpsertPatchRequest::new(updated_patch.clone()),
+                )
+                .await
+                .with_context(|| format!("failed to update patch '{existing_patch_id}'"))?;
+
+            let patch = PatchRecord::new(response.patch_id, updated_patch);
+            return Ok(CreatedPatch {
+                patch,
+                merge_request_issue: None,
+            });
+        }
+    }
     let github_token = if create_github_pr {
         Some(
             client
@@ -1086,9 +1123,25 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"));
         let patch_record = PatchRecord::new(patch_id("p-1"), patch);
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "issue for patch diff".to_string(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
+        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
         create_patch(
@@ -1106,6 +1159,7 @@ mod tests {
         .await?;
 
         job_mock.assert();
+        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
 
@@ -1155,9 +1209,25 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"));
         let patch_record = PatchRecord::new(patch_id("p-2"), patch);
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "issue with job patch".to_string(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
+        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
 
@@ -1176,6 +1246,7 @@ mod tests {
         .await?;
 
         job_mock.assert();
+        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
 
@@ -1252,6 +1323,22 @@ mod tests {
         ));
         let patch_response = UpsertPatchResponse::new(patch_id("p-gh-token"));
         let _patch_mock = mock_create_patch(&server, expected_patch_request, patch_response);
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "issue requiring github token".to_string(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        let issue_mock = mock_get_issue(&server, issue_record);
 
         let result = create_patch(
             &client,
@@ -1278,6 +1365,7 @@ mod tests {
             "error should reference GitHub token or PR creation: {error}"
         );
         job_mock.assert();
+        issue_mock.assert();
 
         Ok(())
     }
@@ -1389,8 +1477,109 @@ mod tests {
         job_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
-        parent_issue_mock.assert();
+        parent_issue_mock.assert_hits(2);
         issue_mock.assert();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_updates_merge_request_patch_when_present() -> Result<()> {
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let job_id = task_id("t-job-review");
+        let job_record = JobRecord::new(
+            job_id.clone(),
+            Task::new(
+                "0".to_string(),
+                BundleSpec::ServiceRepository {
+                    name: sample_repo_name(),
+                    rev: None,
+                },
+                None,
+                None,
+                Default::default(),
+                None,
+                None,
+            ),
+            None,
+            TaskStatusLog::from_events(Vec::new()),
+        );
+        let issue_id = issue_id("i-review");
+        let patch_id = patch_id("p-review");
+        let commit_range = Some(format!("{base_commit}..{head_commit}"));
+        let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
+        let reviews = vec![Review::new(
+            "needs adjustments".to_string(),
+            false,
+            "reviewer".to_string(),
+            None,
+        )];
+        let existing_patch = Patch::new(
+            "old title".to_string(),
+            "old description".to_string(),
+            sample_diff(),
+            PatchStatus::ChangesRequested,
+            false,
+            Some(job_id.clone()),
+            reviews.clone(),
+            sample_repo_name(),
+            None,
+        );
+        let patch_record = PatchRecord::new(patch_id.clone(), existing_patch);
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::MergeRequest,
+                "review patch".to_string(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                Some("agent-a".to_string()),
+                None,
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            ),
+        );
+        let updated_patch = Patch::new(
+            "updated title".to_string(),
+            "updated description".to_string(),
+            expected_diff.clone(),
+            PatchStatus::ChangesRequested,
+            false,
+            Some(job_id.clone()),
+            reviews,
+            sample_repo_name(),
+            None,
+        );
+        let expected_request = UpsertPatchRequest::new(updated_patch);
+        let patch_response = UpsertPatchResponse::new(patch_id.clone());
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let job_mock = mock_get_job(&server, job_record);
+        let issue_mock = mock_get_issue(&server, issue_record);
+        let patch_mock = mock_get_patch(&server, patch_record);
+        let update_mock =
+            mock_update_patch(&server, patch_id.clone(), expected_request, patch_response);
+
+        create_patch(
+            &client,
+            "updated title".to_string(),
+            "updated description".to_string(),
+            Some(job_id),
+            false,
+            None,
+            issue_id,
+            commit_range,
+            false,
+            Some(repo_path.as_path()),
+        )
+        .await?;
+
+        job_mock.assert();
+        issue_mock.assert();
+        patch_mock.assert();
+        update_mock.assert();
 
         Ok(())
     }
@@ -1472,9 +1661,25 @@ mod tests {
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"));
         let patch_record = PatchRecord::new(patch_id("p-service"), patch);
+        let issue_record = IssueRecord::new(
+            issue_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "issue with service repo".to_string(),
+                Username::from("creator-a"),
+                String::new(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_mock = mock_get_job(&server, job_record.clone());
+        let issue_mock = mock_get_issue(&server, issue_record);
         let patch_mock = mock_create_patch(&server, expected_request, patch_response.clone());
         let get_patch_mock = mock_get_patch(&server, patch_record);
 
@@ -1493,6 +1698,7 @@ mod tests {
         .await?;
 
         job_mock.assert();
+        issue_mock.assert();
         patch_mock.assert();
         get_patch_mock.assert();
         Ok(())
