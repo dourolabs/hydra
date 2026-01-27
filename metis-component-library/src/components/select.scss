@@ -20,17 +20,17 @@
   align-items: center;
   justify-content: space-between;
   padding: theme.spacing(2) theme.spacing(3);
-  border: theme.spacing(0.25) solid dark-light(#d1d5db, #3b4148);
+  border: theme.spacing(0.25) solid theme.color("select", "border");
   border-radius: theme.spacing(2);
-  background: dark-light(#f8fafc, #1f2328);
-  color: dark-light(#111827, #e5e7eb);
+  background: theme.color("select", "background");
+  color: theme.color("select", "text");
   cursor: pointer;
   gap: theme.spacing(1);
   transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
 .metis-select-trigger span[data-placeholder="true"] {
-  color: dark-light(#6b7280, #9ca3af);
+  color: theme.color("select", "placeholder");
 }
 
 .metis-select[data-state="open"] .metis-select-trigger {
@@ -41,7 +41,7 @@
   width: theme.spacing(5);
   height: theme.spacing(5);
   fill: none;
-  stroke: dark-light(#4b5563, #cbd5f5);
+  stroke: theme.color("select", "expand-icon");
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
@@ -51,22 +51,22 @@
   width: theme.spacing(4);
   height: theme.spacing(4);
   fill: none;
-  stroke: dark-light(#111827, #f8fafc);
+  stroke: theme.color("select", "check-icon");
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
 }
 
 .metis-select[data-disabled="true"] .metis-select-trigger {
-  color: dark-light(#9ca3af, #6b7280);
+  color: theme.color("select", "disabled-text");
   cursor: not-allowed;
 }
 
 .metis-select-trigger:hover:not([data-disabled="true"]),
 .metis-select-trigger:focus-visible {
-  background: dark-light(#e2e8f0, #2b3138);
-  border-color: dark-light(#9ca3af, #4b5563);
-  color: dark-light(#0f172a, #f9fafb);
+  background: theme.color("select", "trigger-hover-background");
+  border-color: theme.color("select", "trigger-hover-border");
+  color: theme.color("select", "trigger-hover-text");
   outline: none;
 }
 
@@ -80,10 +80,10 @@
   padding: theme.spacing(1);
   border-radius: theme.spacing(2);
   margin-top: theme.spacing(1);
-  background: dark-light(#f8fafc, #1f2328);
-  border: theme.spacing(0.25) solid dark-light(#d1d5db, #3b4148);
+  background: theme.color("select", "list-background");
+  border: theme.spacing(0.25) solid theme.color("select", "list-border");
   box-shadow: 0 theme.spacing(2) theme.spacing(5)
-    dark-light(rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0.6));
+    theme.color("select", "list-shadow");
   opacity: 0;
   pointer-events: none;
   transform-origin: top;
@@ -131,26 +131,26 @@
   padding: theme.spacing(2) theme.spacing(3);
   border-radius: theme.spacing(1.5);
   cursor: pointer;
-  font-size: 14px;
+  @include theme.text("sm");
   color: inherit;
 }
 
 .metis-select-option[data-disabled="true"] {
-  color: dark-light(#9ca3af, #6b7280);
+  color: theme.color("select", "disabled-text");
   cursor: not-allowed;
 }
 
 .metis-select-option:hover:not([data-disabled="true"]),
 .metis-select-option:focus-visible {
-  background: dark-light(#e2e8f0, #2b3138);
-  color: dark-light(#0f172a, #f9fafb);
+  background: theme.color("select", "option-hover-background");
+  color: theme.color("select", "option-hover-text");
   outline: none;
 }
 
 .metis-select-group-label {
   padding: theme.spacing(1) theme.spacing(3);
-  color: dark-light(#6b7280, #9ca3af);
-  font-size: 0.75rem;
+  color: theme.color("select", "group-label");
+  @include theme.text("xs");
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
