@@ -74,6 +74,10 @@ pub struct JobSection {
     pub cpu_limit: String,
     #[serde(default = "default_memory_limit")]
     pub memory_limit: String,
+    #[serde(default = "default_cpu_request")]
+    pub cpu_request: String,
+    #[serde(default = "default_memory_request")]
+    pub memory_request: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -396,6 +400,14 @@ fn default_cpu_limit() -> String {
 
 fn default_memory_limit() -> String {
     "1Gi".to_string()
+}
+
+fn default_cpu_request() -> String {
+    default_cpu_limit()
+}
+
+fn default_memory_request() -> String {
+    default_memory_limit()
 }
 
 #[cfg(test)]

@@ -494,6 +494,8 @@ impl JobEngine for KubernetesJobEngine {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
+        cpu_request: String,
+        memory_request: String,
     ) -> Result<(), JobEngineError> {
         let job_name = format!("metis-worker-{metis_id}");
 
@@ -523,6 +525,10 @@ impl JobEngine for KubernetesJobEngine {
             limits: Some(BTreeMap::from([
                 ("cpu".to_string(), Quantity(cpu_limit)),
                 ("memory".to_string(), Quantity(memory_limit)),
+            ])),
+            requests: Some(BTreeMap::from([
+                ("cpu".to_string(), Quantity(cpu_request)),
+                ("memory".to_string(), Quantity(memory_request)),
             ])),
             ..Default::default()
         });

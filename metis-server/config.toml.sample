@@ -13,6 +13,10 @@ default_image = "metis-worker:latest"
 cpu_limit = "500m"
 # Memory limit for worker pods (e.g., "1Gi", "512Mi", "2G").
 memory_limit = "1Gi"
+# CPU request for worker pods (e.g., "500m", "1", "2.5").
+cpu_request = "500m"
+# Memory request for worker pods (e.g., "1Gi", "512Mi", "2G").
+memory_request = "1Gi"
 
 [database]
 # PostgreSQL connection string. Leave empty to use the in-memory store; environment

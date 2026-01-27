@@ -13,6 +13,7 @@ pub struct MockJobEngine {
     logs: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
     env_vars: Arc<Mutex<HashMap<TaskId, HashMap<String, String>>>>,
     resource_limits: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
+    resource_requests: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
 }
 
 impl MockJobEngine {
@@ -64,6 +65,11 @@ impl MockJobEngine {
         let limits = self.resource_limits.lock().unwrap();
         limits.get(metis_id).cloned()
     }
+
+    pub fn resource_requests_for_job(&self, metis_id: &TaskId) -> Option<(String, String)> {
+        let requests = self.resource_requests.lock().unwrap();
+        requests.get(metis_id).cloned()
+    }
 }
 
 #[async_trait]
@@ -75,6 +81,8 @@ impl JobEngine for MockJobEngine {
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
         memory_limit: String,
+        cpu_request: String,
+        memory_request: String,
     ) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
@@ -97,6 +105,10 @@ impl JobEngine for MockJobEngine {
             .lock()
             .unwrap()
             .insert(metis_id.clone(), (cpu_limit, memory_limit));
+        self.resource_requests
+            .lock()
+            .unwrap()
+            .insert(metis_id.clone(), (cpu_request, memory_request));
         Ok(())
     }
 
@@ -222,6 +234,8 @@ mod tests {
                 &env_vars,
                 "250m".to_string(),
                 "128Mi".to_string(),
+                "100m".to_string(),
+                "64Mi".to_string(),
             )
             .await
             .expect("job creation should succeed");
@@ -235,5 +249,10 @@ mod tests {
             .resource_limits_for_job(&metis_id)
             .expect("resource limits should be recorded");
         assert_eq!(limits, ("250m".to_string(), "128Mi".to_string()));
+
+        let requests = engine
+            .resource_requests_for_job(&metis_id)
+            .expect("resource requests should be recorded");
+        assert_eq!(requests, ("100m".to_string(), "64Mi".to_string()));
     }
 }
