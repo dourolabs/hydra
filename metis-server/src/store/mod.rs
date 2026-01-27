@@ -94,7 +94,7 @@ pub trait Store: Send + Sync {
     async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError>;
 
     /// Retrieves an issue by its IssueId.
-    async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError>;
+    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError>;
 
     /// Updates an existing issue in the store.
     ///
@@ -103,7 +103,7 @@ pub trait Store: Send + Sync {
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
 
     /// Lists all issues in the store with their corresponding IDs.
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError>;
+    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
 
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
@@ -118,13 +118,13 @@ pub trait Store: Send + Sync {
     async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError>;
 
     /// Retrieves a patch by its PatchId.
-    async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError>;
+    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError>;
 
     /// Updates an existing patch in the store.
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
 
     /// Lists all patches in the store with their corresponding IDs.
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError>;
+    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;

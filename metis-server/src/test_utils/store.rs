@@ -48,7 +48,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_issue(&self, _id: &IssueId) -> Result<Issue, StoreError> {
+    async fn get_issue(&self, _id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
         fail()
     }
 
@@ -56,7 +56,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         fail()
     }
 
@@ -71,7 +71,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_patch(&self, _id: &PatchId) -> Result<Patch, StoreError> {
+    async fn get_patch(&self, _id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
         fail()
     }
 
@@ -79,7 +79,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         fail()
     }
 

@@ -78,7 +78,7 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch).into();
+    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch.item).into();
     Ok(Json(response))
 }
 
@@ -102,8 +102,8 @@ pub async fn list_patches(
 
     let filtered = patches
         .into_iter()
-        .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, patch))
-        .map(|(id, patch)| PatchRecord::new(id, patch))
+        .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, &patch.item))
+        .map(|(id, patch)| PatchRecord::new(id, patch.item))
         .collect();
 
     let response: v1::patches::ListPatchesResponse = ListPatchesResponse::new(filtered).into();

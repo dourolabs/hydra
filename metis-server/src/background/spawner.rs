@@ -143,6 +143,7 @@ impl AgentQueue {
         if issue.issue_type == crate::domain::issues::IssueType::MergeRequest {
             if let Some(patch_id) = issue.patches.last() {
                 if let Ok(patch) = state.get_patch(patch_id).await {
+                    let patch = patch.item;
                     if patch.status == PatchStatus::ChangesRequested {
                         if let Some(review_summary) = build_review_summary(&patch.reviews) {
                             if !prompt.is_empty() {
@@ -249,6 +250,7 @@ impl Spawner for AgentQueue {
 
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
+            let issue = issue.item;
             if issue.assignee.as_deref() != Some(self.name.as_str()) {
                 continue;
             }
@@ -665,7 +667,8 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
 
-        let mut updated_patch = handles.store.get_patch(&patch_id).await?;
+        let updated_patch = handles.store.get_patch(&patch_id).await?;
+        let mut updated_patch = updated_patch.item;
         updated_patch.status = PatchStatus::ChangesRequested;
         updated_patch.diff = "diff --git a/file b/file\n+change\n".to_string();
         updated_patch.reviews = vec![Review::new(
@@ -1048,7 +1051,8 @@ mod tests {
         assert_eq!(first_run.len(), 1);
         assert!(queue.spawn(&handles.state).await?.is_empty());
 
-        let mut issue = handles.store.get_issue(&issue_id).await?;
+        let issue = handles.store.get_issue(&issue_id).await?;
+        let mut issue = issue.item;
         issue.status = IssueStatus::InProgress;
         handles.store.update_issue(&issue_id, issue).await?;
 

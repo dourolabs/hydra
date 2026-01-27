@@ -107,7 +107,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let created: UpsertPatchResponse = response.json().await?;
 
     let patch = check_state.get_patch(&created.patch_id).await?;
-    assert_eq!(patch.created_by, Some(job_id));
+    assert_eq!(patch.item.created_by, Some(job_id));
     Ok(())
 }
 

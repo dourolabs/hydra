@@ -257,10 +257,10 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError> {
+    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
         self.issues
             .get(id)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
@@ -293,12 +293,12 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         Ok(self
             .issues
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_item(entry.value())?;
+                let latest = Self::latest_versioned(entry.value())?;
                 Some((entry.key().clone(), latest))
             })
             .collect())
@@ -362,10 +362,10 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError> {
+    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
         self.patches
             .get(id)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
@@ -379,12 +379,12 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         Ok(self
             .patches
             .iter()
             .filter_map(|entry| {
-                let latest = Self::latest_item(entry.value())?;
+                let latest = Self::latest_versioned(entry.value())?;
                 Some((entry.key().clone(), latest))
             })
             .collect())
@@ -936,7 +936,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(store.get_issue(&issue_id).await.unwrap(), updated);
+        let fetched = store.get_issue(&issue_id).await.unwrap();
+        assert_eq!(fetched.item, updated);
+        assert_eq!(fetched.version, 2);
 
         let versions = store.issues.get(&issue_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
@@ -949,7 +951,9 @@ mod tests {
         let patch = sample_patch();
         let id = store.add_patch(patch.clone()).await.unwrap();
 
-        assert_eq!(store.get_patch(&id).await.unwrap(), patch);
+        let fetched = store.get_patch(&id).await.unwrap();
+        assert_eq!(fetched.item, patch);
+        assert_eq!(fetched.version, 1);
     }
 
     #[tokio::test]
@@ -971,7 +975,9 @@ mod tests {
 
         store.update_patch(&id, updated.clone()).await.unwrap();
 
-        assert_eq!(store.get_patch(&id).await.unwrap(), updated);
+        let fetched = store.get_patch(&id).await.unwrap();
+        assert_eq!(fetched.item, updated);
+        assert_eq!(fetched.version, 2);
 
         let versions = store.patches.get(&id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);

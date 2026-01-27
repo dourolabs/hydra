@@ -106,7 +106,7 @@ pub async fn get_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     info!(issue_id = %issue_id, "get_issue completed");
-    let response: v1::issues::IssueRecord = IssueRecord::new(issue_id, issue).into();
+    let response: v1::issues::IssueRecord = IssueRecord::new(issue_id, issue.item).into();
     Ok(Json(response))
 }
 
@@ -142,7 +142,7 @@ pub async fn list_issues(
 
     let issue_records: Vec<IssueRecord> = issues
         .into_iter()
-        .map(|(id, issue)| IssueRecord::new(id, issue))
+        .map(|(id, issue)| IssueRecord::new(id, issue.item))
         .collect();
 
     let graph_matches = if query.graph_filters.is_empty() {
