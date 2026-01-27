@@ -6,3 +6,7 @@ members = [
     "metis-ui",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+git2 = { version = "0.19", features = ["vendored-openssl"] }
+openssl-sys = { version = "0.9", features = ["vendored"] }
