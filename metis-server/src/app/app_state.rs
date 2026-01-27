@@ -357,7 +357,7 @@ impl AppState {
 
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
-        store.get_user(username).await
+        store.get_user(username).await.map(|user| user.item)
     }
 
     pub async fn set_user_github_token(
@@ -371,6 +371,7 @@ impl AppState {
         store
             .set_user_github_token(username, github_token, github_user_id, github_refresh_token)
             .await
+            .map(|user| user.item)
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
@@ -382,7 +383,7 @@ impl AppState {
 
         Ok(repositories
             .into_iter()
-            .map(RepositoryRecord::from)
+            .map(|(name, repository)| RepositoryRecord::from((name, repository.item)))
             .collect())
     }
 
@@ -1425,7 +1426,7 @@ impl AppState {
 
     pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let store = self.store.as_ref();
-        store.get_repository(name).await
+        store.get_repository(name).await.map(|repo| repo.item)
     }
 
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
@@ -1725,7 +1726,7 @@ mod tests {
         let user = store_read.get_user(&Username::from("octo")).await?;
         let actors = store_read.list_actors().await?;
         assert_eq!(actors.len(), 1);
-        assert_eq!(user.username.as_str(), "octo");
+        assert_eq!(user.item.username.as_str(), "octo");
 
         Ok(())
     }
