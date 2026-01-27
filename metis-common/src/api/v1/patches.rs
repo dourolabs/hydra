@@ -10,6 +10,7 @@ pub enum PatchStatus {
     Open,
     Closed,
     Merged,
+    ChangesRequested,
     #[serde(other)]
     Unknown,
 }
@@ -26,6 +27,7 @@ impl PatchStatus {
             PatchStatus::Open => "open",
             PatchStatus::Closed => "closed",
             PatchStatus::Merged => "merged",
+            PatchStatus::ChangesRequested => "changes-requested",
             PatchStatus::Unknown => "unknown",
         }
     }
@@ -46,6 +48,9 @@ impl FromStr for PatchStatus {
             "open" => Ok(PatchStatus::Open),
             "closed" => Ok(PatchStatus::Closed),
             "merged" => Ok(PatchStatus::Merged),
+            "changes-requested" | "changes_requested" | "changes requested" => {
+                Ok(PatchStatus::ChangesRequested)
+            }
             other => Err(format!("unsupported patch status '{other}'")),
         }
     }
@@ -367,6 +372,10 @@ mod tests {
         assert_eq!(
             PatchStatus::from_str(" merged ").unwrap(),
             PatchStatus::Merged
+        );
+        assert_eq!(
+            PatchStatus::from_str("changes_requested").unwrap(),
+            PatchStatus::ChangesRequested
         );
         assert!(PatchStatus::from_str("pending").is_err());
     }

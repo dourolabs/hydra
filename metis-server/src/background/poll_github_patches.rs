@@ -114,7 +114,12 @@ async fn sync_open_patches(
         .list_patches()
         .await?
         .into_iter()
-        .filter(|(_, patch)| matches!(patch.status, PatchStatus::Open))
+        .filter(|(_, patch)| {
+            matches!(
+                patch.status,
+                PatchStatus::Open | PatchStatus::ChangesRequested
+            )
+        })
         .filter(|(_, patch)| patch.github.is_some())
         .collect();
 
@@ -215,11 +220,12 @@ async fn sync_patch_from_github(
         .await?;
 
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
-    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
-    let new_status = patch_status_from_github(&pr);
 
     let mut latest_patch = state.get_patch(patch_id).await?;
-    if !matches!(latest_patch.status, PatchStatus::Open) {
+    if !matches!(
+        latest_patch.status,
+        PatchStatus::Open | PatchStatus::ChangesRequested
+    ) {
         debug!(patch_id = %patch_id, "skipping GitHub sync for non-open patch");
         return Ok(());
     }
@@ -228,7 +234,18 @@ async fn sync_patch_from_github(
         return Ok(());
     }
 
+    let ci_status = fetch_ci_status(&client, &github, &pr).await?;
+    let pr_status = patch_status_from_github(&pr);
     let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
+    let has_new_changes_requested =
+        has_new_non_approved_reviews(&latest_patch.reviews, &merged_reviews);
+    let mut new_status = match pr_status {
+        PatchStatus::Closed | PatchStatus::Merged => pr_status,
+        PatchStatus::Open | PatchStatus::ChangesRequested => latest_patch.status,
+    };
+    if matches!(pr_status, PatchStatus::Open) && has_new_changes_requested {
+        new_status = PatchStatus::ChangesRequested;
+    }
     let mut updated_github = latest_patch
         .github
         .clone()
@@ -396,6 +413,13 @@ fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review
     });
 
     merged
+}
+
+fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) -> bool {
+    let existing_keys: HashSet<_> = existing.iter().map(review_key).collect();
+    github_reviews
+        .iter()
+        .any(|review| !review.is_approved && !existing_keys.contains(&review_key(review)))
 }
 
 fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
@@ -645,6 +669,30 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert!(merged.contains(&github_reviews[0]));
         assert!(merged.contains(&existing[0]));
+    }
+
+    #[test]
+    fn new_non_approved_reviews_trigger_changes_requested() {
+        let existing = vec![Review::new(
+            "looks fine".to_string(),
+            true,
+            "alice".to_string(),
+            None,
+        )];
+        let github_reviews = vec![
+            existing[0].clone(),
+            Review::new("please update".to_string(), false, "bob".to_string(), None),
+        ];
+
+        assert!(has_new_non_approved_reviews(&existing, &github_reviews));
+
+        let approvals_only = vec![Review::new(
+            "lgtm".to_string(),
+            true,
+            "carol".to_string(),
+            None,
+        )];
+        assert!(!has_new_non_approved_reviews(&existing, &approvals_only));
     }
 
     #[test]

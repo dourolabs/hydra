@@ -10,6 +10,7 @@ pub enum PatchStatus {
     Open,
     Closed,
     Merged,
+    ChangesRequested,
 }
 
 impl Default for PatchStatus {
@@ -24,6 +25,7 @@ impl PatchStatus {
             PatchStatus::Open => "open",
             PatchStatus::Closed => "closed",
             PatchStatus::Merged => "merged",
+            PatchStatus::ChangesRequested => "changes-requested",
         }
     }
 }
@@ -43,6 +45,9 @@ impl FromStr for PatchStatus {
             "open" => Ok(PatchStatus::Open),
             "closed" => Ok(PatchStatus::Closed),
             "merged" => Ok(PatchStatus::Merged),
+            "changes-requested" | "changes_requested" | "changes requested" => {
+                Ok(PatchStatus::ChangesRequested)
+            }
             other => Err(format!("unsupported patch status '{other}'")),
         }
     }
@@ -317,6 +322,7 @@ impl From<api::patches::PatchStatus> for PatchStatus {
             api::patches::PatchStatus::Open => PatchStatus::Open,
             api::patches::PatchStatus::Closed => PatchStatus::Closed,
             api::patches::PatchStatus::Merged => PatchStatus::Merged,
+            api::patches::PatchStatus::ChangesRequested => PatchStatus::ChangesRequested,
             _ => unreachable!("unsupported PatchStatus variant"),
         }
     }
@@ -328,6 +334,7 @@ impl From<PatchStatus> for api::patches::PatchStatus {
             PatchStatus::Open => api::patches::PatchStatus::Open,
             PatchStatus::Closed => api::patches::PatchStatus::Closed,
             PatchStatus::Merged => api::patches::PatchStatus::Merged,
+            PatchStatus::ChangesRequested => api::patches::PatchStatus::ChangesRequested,
         }
     }
 }
@@ -569,6 +576,10 @@ mod tests {
         assert_eq!(
             PatchStatus::from_str("merged").unwrap(),
             PatchStatus::Merged
+        );
+        assert_eq!(
+            PatchStatus::from_str("changes requested").unwrap(),
+            PatchStatus::ChangesRequested
         );
         assert!(PatchStatus::from_str("invalid").is_err());
     }
