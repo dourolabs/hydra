@@ -221,7 +221,7 @@ async fn sync_patch_from_github(
 
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
 
-    let mut latest_patch = state.get_patch(patch_id).await?;
+    let latest_patch = state.get_patch(patch_id).await?;
     if !matches!(
         latest_patch.status,
         PatchStatus::Open | PatchStatus::ChangesRequested
@@ -235,45 +235,19 @@ async fn sync_patch_from_github(
     }
 
     let ci_status = fetch_ci_status(&client, &github, &pr).await?;
-    let pr_status = patch_status_from_github(&pr);
-    let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
-    let has_new_changes_requested =
-        has_new_non_approved_reviews(&latest_patch.reviews, &merged_reviews);
-    let mut new_status = match pr_status {
-        PatchStatus::Closed | PatchStatus::Merged => pr_status,
-        PatchStatus::Open | PatchStatus::ChangesRequested => latest_patch.status,
-    };
-    if matches!(pr_status, PatchStatus::Open) && has_new_changes_requested {
-        new_status = PatchStatus::ChangesRequested;
-    }
-    let mut updated_github = latest_patch
-        .github
-        .clone()
-        .unwrap_or_else(|| github.clone());
-    updated_github.head_ref = Some(pr.head.ref_field.clone());
-    updated_github.base_ref = Some(pr.base.ref_field.clone());
-    updated_github.url = pr.html_url.as_ref().map(ToString::to_string);
-    updated_github.ci = Some(ci_status);
+    let updated_patch = apply_github_sync(
+        latest_patch.clone(),
+        &github,
+        &pr,
+        github_reviews,
+        ci_status,
+    );
 
-    let mut changed = false;
-    if merged_reviews != latest_patch.reviews {
-        latest_patch.reviews = merged_reviews;
-        changed = true;
-    }
-    if new_status != latest_patch.status {
-        latest_patch.status = new_status;
-        changed = true;
-    }
-    if latest_patch.github.as_ref() != Some(&updated_github) {
-        latest_patch.github = Some(updated_github);
-        changed = true;
-    }
-
-    if changed {
+    if updated_patch != latest_patch {
         state
             .upsert_patch(
                 Some(patch_id.clone()),
-                UpsertPatchRequest::new(latest_patch),
+                UpsertPatchRequest::new(updated_patch),
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
@@ -453,6 +427,40 @@ fn patch_status_from_github(pr: &PullRequest) -> PatchStatus {
     } else {
         PatchStatus::Closed
     }
+}
+
+fn apply_github_sync(
+    mut latest_patch: Patch,
+    github: &GithubPr,
+    pr: &PullRequest,
+    github_reviews: Vec<Review>,
+    ci_status: GithubCiStatus,
+) -> Patch {
+    let pr_status = patch_status_from_github(pr);
+    let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
+    let has_new_changes_requested =
+        has_new_non_approved_reviews(&latest_patch.reviews, &merged_reviews);
+    let mut new_status = match pr_status {
+        PatchStatus::Closed | PatchStatus::Merged => pr_status,
+        PatchStatus::Open | PatchStatus::ChangesRequested => latest_patch.status,
+    };
+    if matches!(pr_status, PatchStatus::Open) && has_new_changes_requested {
+        new_status = PatchStatus::ChangesRequested;
+    }
+
+    latest_patch.reviews = merged_reviews;
+    latest_patch.status = new_status;
+    let mut updated_github = latest_patch
+        .github
+        .clone()
+        .unwrap_or_else(|| github.clone());
+    updated_github.head_ref = Some(pr.head.ref_field.clone());
+    updated_github.base_ref = Some(pr.base.ref_field.clone());
+    updated_github.url = pr.html_url.as_ref().map(ToString::to_string);
+    updated_github.ci = Some(ci_status);
+    latest_patch.github = Some(updated_github);
+
+    latest_patch
 }
 
 async fn fetch_ci_status(
@@ -751,6 +759,62 @@ mod tests {
             patch_status_from_github(&base_pr),
             PatchStatus::Closed
         ));
+    }
+
+    #[test]
+    fn apply_github_sync_marks_changes_requested_on_new_review() {
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            1,
+            None,
+            None,
+            None,
+            None,
+        );
+        let patch = Patch::new(
+            "Patch".to_string(),
+            "Patch description".to_string(),
+            sample_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+            Some(github.clone()),
+        );
+        let pr: PullRequest = serde_json::from_value(json!({
+            "url": "",
+            "id": 1,
+            "number": 1,
+            "state": "open",
+            "locked": false,
+            "maintainer_can_modify": false,
+            "html_url": "https://example.com/pr/1",
+            "head": { "ref": "feature", "sha": "abc123", "user": null, "repo": null },
+            "base": { "ref": "main", "sha": "def456", "user": null, "repo": null }
+        }))
+        .unwrap();
+        let reviews = vec![Review::new(
+            "please update".to_string(),
+            false,
+            "alice".to_string(),
+            None,
+        )];
+        let ci_status = GithubCiStatus::new(GithubCiState::Success, None);
+
+        let updated = apply_github_sync(patch, &github, &pr, reviews.clone(), ci_status.clone());
+
+        assert_eq!(updated.status, PatchStatus::ChangesRequested);
+        assert_eq!(updated.reviews, reviews);
+        let updated_github = updated.github.expect("github metadata should be set");
+        assert_eq!(updated_github.head_ref, Some("feature".to_string()));
+        assert_eq!(updated_github.base_ref, Some("main".to_string()));
+        assert_eq!(
+            updated_github.url.as_deref(),
+            Some("https://example.com/pr/1")
+        );
+        assert_eq!(updated_github.ci, Some(ci_status));
     }
 
     #[test]
