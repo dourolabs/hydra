@@ -156,19 +156,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn create_actor_for_github_token(
-        &self,
-        _github_token: String,
-        _github_refresh_token: String,
-    ) -> Result<(User, Actor, String), StoreError> {
-        fail()
-    }
-
-    async fn create_actor_for_task(&self, _task_id: TaskId) -> Result<(Actor, String), StoreError> {
-        fail()
-    }
-
     async fn add_actor(&self, _actor: Actor) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn update_actor(&self, _actor: Actor) -> Result<(), StoreError> {
         fail()
     }
 

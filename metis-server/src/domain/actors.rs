@@ -1,6 +1,5 @@
-use crate::domain::users::{User, Username};
+use crate::domain::users::Username;
 use metis_common::TaskId;
-use octocrab::Octocrab;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
@@ -9,8 +8,6 @@ use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ActorError {
-    #[error("GitHub user lookup failed: {0}")]
-    GithubLookupFailed(String),
     #[error("Invalid actor name: {0}")]
     InvalidActorName(String),
 }
@@ -23,37 +20,7 @@ pub struct Actor {
 }
 
 impl Actor {
-    /// Creates a new user-backed actor from a GitHub token.
-    pub async fn new_for_github_token(
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), ActorError> {
-        let github_client = Octocrab::builder()
-            .personal_token(github_token.clone())
-            .build()
-            .map_err(|err| ActorError::GithubLookupFailed(format!("{err}")))?;
-        Self::new_for_github_token_with_client(github_token, github_refresh_token, &github_client)
-            .await
-    }
-
-    pub(crate) async fn new_for_github_token_with_client(
-        github_token: String,
-        github_refresh_token: String,
-        github_client: &Octocrab,
-    ) -> Result<(User, Actor, String), ActorError> {
-        let github_user = github_client
-            .current()
-            .user()
-            .await
-            .map_err(|err| ActorError::GithubLookupFailed(format!("{err}")))?;
-        let username = Username::from(github_user.login);
-        let user = User {
-            username: username.clone(),
-            github_user_id: github_user.id.into_inner(),
-            github_token,
-            github_refresh_token,
-        };
-
+    pub fn new_for_user(username: Username) -> (Actor, String) {
         let (raw_auth_token, auth_token_hash, auth_token_salt) = Self::generate_auth_token();
         let user_or_worker = UserOrWorker::Username(username);
         let actor = Actor {
@@ -62,7 +29,7 @@ impl Actor {
             user_or_worker,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
-        Ok((user, actor, auth_token))
+        (actor, auth_token)
     }
 
     pub fn name(&self) -> String {
@@ -146,71 +113,16 @@ pub enum UserOrWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::prelude::*;
-    use serde_json::json;
 
-    fn github_user_response(login: &str, id: u64) -> serde_json::Value {
-        json!({
-            "login": login,
-            "id": id,
-            "node_id": "NODEID",
-            "avatar_url": "https://example.com/avatar",
-            "gravatar_id": "gravatar",
-            "url": "https://example.com/user",
-            "html_url": "https://example.com/user",
-            "followers_url": "https://example.com/followers",
-            "following_url": "https://example.com/following",
-            "gists_url": "https://example.com/gists",
-            "starred_url": "https://example.com/starred",
-            "subscriptions_url": "https://example.com/subscriptions",
-            "organizations_url": "https://example.com/orgs",
-            "repos_url": "https://example.com/repos",
-            "events_url": "https://example.com/events",
-            "received_events_url": "https://example.com/received_events",
-            "type": "User",
-            "site_admin": false,
-            "name": null,
-            "patch_url": null,
-            "email": null
-        })
-    }
-
-    fn build_github_client(base_url: String) -> Octocrab {
-        Octocrab::builder()
-            .base_uri(base_url)
-            .unwrap()
-            .personal_token("gh-token".to_string())
-            .build()
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn new_for_github_token_creates_user_and_actor() {
-        let server = MockServer::start_async().await;
-        let _mock = server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(github_user_response("octo", 42));
-        });
-
-        let github_client = build_github_client(server.base_url());
-        let (user, actor, auth_token) = Actor::new_for_github_token_with_client(
-            "gh-token".to_string(),
-            "gh-refresh".to_string(),
-            &github_client,
-        )
-        .await
-        .expect("actor should be created");
+    #[test]
+    fn new_for_user_creates_user_actor() {
+        let username = Username::from("octo");
+        let (actor, auth_token) = Actor::new_for_user(username.clone());
 
         assert!(!auth_token.is_empty());
-        assert_eq!(user.username, Username::from("octo"));
-        assert_eq!(user.github_user_id, 42);
-        assert_eq!(user.github_token, "gh-token");
-        assert_eq!(user.github_refresh_token, "gh-refresh");
         assert_eq!(
             actor.user_or_worker,
-            UserOrWorker::Username(Username::from("octo"))
+            UserOrWorker::Username(username.clone())
         );
         assert!(!actor.auth_token_salt.is_empty());
         let prefix = format!("{}:", actor.name());
@@ -219,25 +131,6 @@ mod tests {
             .expect("auth token should include actor name prefix");
         assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(raw_token));
         assert!(actor.verify_auth_token(&auth_token));
-    }
-
-    #[tokio::test]
-    async fn new_for_github_token_returns_error_on_github_failure() {
-        let server = MockServer::start_async().await;
-        let _mock = server.mock(|when, then| {
-            when.method(GET).path("/user");
-            then.status(500);
-        });
-
-        let github_client = build_github_client(server.base_url());
-        let err = Actor::new_for_github_token_with_client(
-            "gh-token".to_string(),
-            "gh-refresh".to_string(),
-            &github_client,
-        )
-        .await
-        .expect_err("should fail when GitHub lookup fails");
-        assert!(matches!(err, ActorError::GithubLookupFailed(_)));
     }
 
     #[test]

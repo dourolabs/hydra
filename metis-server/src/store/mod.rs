@@ -20,9 +20,6 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
     match Actor::parse_name(name) {
         Ok(_) => Ok(()),
         Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
-        Err(ActorError::GithubLookupFailed(message)) => {
-            Err(StoreError::GithubTokenInvalid(message))
-        }
     }
 }
 
@@ -64,13 +61,6 @@ pub enum StoreError {
     InvalidActorName(String),
     #[error("Invalid auth token")]
     InvalidAuthToken,
-}
-
-fn map_actor_error(error: ActorError) -> StoreError {
-    match error {
-        ActorError::InvalidActorName(name) => StoreError::InvalidActorName(name),
-        ActorError::GithubLookupFailed(message) => StoreError::GithubTokenInvalid(message),
-    }
 }
 
 /// Trait for storing issues, patches, and tasks along with their statuses.
@@ -292,18 +282,11 @@ pub trait Store: Send + Sync {
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
-    /// Creates and persists a user-backed actor from a GitHub token.
-    async fn create_actor_for_github_token(
-        &self,
-        github_token: String,
-        github_refresh_token: String,
-    ) -> Result<(User, Actor, String), StoreError>;
-
-    /// Creates and persists a task-backed actor for the given task.
-    async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError>;
-
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
+
+    /// Updates an existing actor in the store.
+    async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
 
     /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Actor, StoreError>;

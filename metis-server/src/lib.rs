@@ -188,7 +188,6 @@ pub async fn run() -> anyhow::Result<()> {
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
-        store: store.clone(),
     };
 
     let agents = build_agents(&app_config);

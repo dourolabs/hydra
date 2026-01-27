@@ -77,6 +77,8 @@ impl JobEngine for MockJobEngine {
     async fn create_job(
         &self,
         metis_id: &TaskId,
+        _actor: &crate::domain::actors::Actor,
+        _auth_token: &str,
         _image: &str,
         env_vars: &HashMap<String, String>,
         cpu_limit: String,
@@ -226,10 +228,13 @@ mod tests {
         let engine = MockJobEngine::new();
         let env_vars = HashMap::from([("FOO".to_string(), "bar".to_string())]);
         let metis_id = TaskId::new();
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
 
         engine
             .create_job(
                 &metis_id,
+                &actor,
+                "token",
                 "image",
                 &env_vars,
                 "250m".to_string(),

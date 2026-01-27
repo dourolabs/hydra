@@ -340,7 +340,8 @@ async fn app_state_with_repo(remote_url: &str, repo_name: &RepoName) -> Result<(
         )
         .await?;
 
-    let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
+    let (actor, auth_token) = metis_server::domain::actors::Actor::new_for_task(TaskId::new());
+    store.add_actor(actor).await?;
     let user = User::new(
         Username::from("test-user"),
         1,

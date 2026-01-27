@@ -17,7 +17,8 @@ use tempfile::tempdir;
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
     let (auth_token, parent_id) = {
-        let (_actor, auth_token) = state.create_actor_for_task(TaskId::new()).await?;
+        let (actor, auth_token) = metis_server::domain::actors::Actor::new_for_task(TaskId::new());
+        state.add_actor(actor).await?;
         let mut parent_job_settings = JobSettings::default();
         parent_job_settings.repo_name = Some(RepoName::from_str("acme/cli-flow").unwrap());
         parent_job_settings.remote_url = Some("https://example.com/cli-flow.git".into());
