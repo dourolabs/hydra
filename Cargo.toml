@@ -3,6 +3,7 @@ members = [
     "metis",
     "metis-server",
     "metis-common",
+    "metis-build-cache",
     "metis-component-library",
     "metis-ui",
 ]
