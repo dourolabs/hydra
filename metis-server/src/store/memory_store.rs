@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -18,31 +19,31 @@ use metis_common::{IssueId, PatchId, RepoName, TaskId, repositories::Repository}
 
 /// An in-memory implementation of the Store trait.
 ///
-/// This store keeps tasks, issues, and patches in HashMaps for fast lookups.
-/// It is not thread-safe and should only be used in single-threaded contexts.
+/// This store keeps tasks, issues, and patches in DashMaps for fast lookups.
+/// It uses internal locking to make access thread-safe.
 pub struct MemoryStore {
     /// Maps task IDs to their Task data
-    tasks: HashMap<TaskId, Task>,
+    tasks: DashMap<TaskId, Task>,
     /// Maps issue IDs to their Issue data
-    issues: HashMap<IssueId, Issue>,
+    issues: DashMap<IssueId, Issue>,
     /// Maps patch IDs to their Patch data
-    patches: HashMap<PatchId, Patch>,
+    patches: DashMap<PatchId, Patch>,
     /// Maps repository names to their configurations
-    repositories: HashMap<RepoName, Repository>,
+    repositories: DashMap<RepoName, Repository>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
-    issue_children: HashMap<IssueId, Vec<IssueId>>,
+    issue_children: DashMap<IssueId, Vec<IssueId>>,
     /// Maps blocking issue IDs to the issues that are blocked on them
-    issue_blocked_on: HashMap<IssueId, Vec<IssueId>>,
+    issue_blocked_on: DashMap<IssueId, Vec<IssueId>>,
     /// Maps issue IDs to tasks spawned from them
-    issue_tasks: HashMap<IssueId, Vec<TaskId>>,
+    issue_tasks: DashMap<IssueId, Vec<TaskId>>,
     /// Maps patch IDs to the issues that reference them
-    patch_issues: HashMap<PatchId, Vec<IssueId>>,
+    patch_issues: DashMap<PatchId, Vec<IssueId>>,
     /// Maps task IDs to their TaskStatusLog
-    status_logs: HashMap<TaskId, TaskStatusLog>,
+    status_logs: DashMap<TaskId, TaskStatusLog>,
     /// Maps usernames to their User data
-    users: HashMap<Username, User>,
+    users: DashMap<Username, User>,
     /// Maps actor names to their Actor data
-    actors: HashMap<String, Actor>,
+    actors: DashMap<String, Actor>,
     #[cfg(any(test, feature = "test-utils"))]
     github_client: Option<Octocrab>,
 }
@@ -51,17 +52,17 @@ impl MemoryStore {
     /// Creates a new empty MemoryStore.
     pub fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
-            issues: HashMap::new(),
-            patches: HashMap::new(),
-            repositories: HashMap::new(),
-            issue_children: HashMap::new(),
-            issue_blocked_on: HashMap::new(),
-            issue_tasks: HashMap::new(),
-            patch_issues: HashMap::new(),
-            status_logs: HashMap::new(),
-            users: HashMap::new(),
-            actors: HashMap::new(),
+            tasks: DashMap::new(),
+            issues: DashMap::new(),
+            patches: DashMap::new(),
+            repositories: DashMap::new(),
+            issue_children: DashMap::new(),
+            issue_blocked_on: DashMap::new(),
+            issue_tasks: DashMap::new(),
+            patch_issues: DashMap::new(),
+            status_logs: DashMap::new(),
+            users: DashMap::new(),
+            actors: DashMap::new(),
             #[cfg(any(test, feature = "test-utils"))]
             github_client: None,
         }
@@ -84,17 +85,19 @@ impl MemoryStore {
         for dependency in previous {
             match dependency.dependency_type {
                 IssueDependencyType::ChildOf => {
-                    if let Some(children) = self.issue_children.get_mut(&dependency.issue_id) {
+                    if let Some(mut children) = self.issue_children.get_mut(&dependency.issue_id) {
                         children.retain(|child_id| child_id != issue_id);
                         if children.is_empty() {
+                            drop(children);
                             self.issue_children.remove(&dependency.issue_id);
                         }
                     }
                 }
                 IssueDependencyType::BlockedOn => {
-                    if let Some(blocked) = self.issue_blocked_on.get_mut(&dependency.issue_id) {
+                    if let Some(mut blocked) = self.issue_blocked_on.get_mut(&dependency.issue_id) {
                         blocked.retain(|blocked_id| blocked_id != issue_id);
                         if blocked.is_empty() {
+                            drop(blocked);
                             self.issue_blocked_on.remove(&dependency.issue_id);
                         }
                     }
@@ -105,7 +108,7 @@ impl MemoryStore {
         for dependency in updated {
             match dependency.dependency_type {
                 IssueDependencyType::ChildOf => {
-                    let children = self
+                    let mut children = self
                         .issue_children
                         .entry(dependency.issue_id.clone())
                         .or_default();
@@ -114,7 +117,7 @@ impl MemoryStore {
                     }
                 }
                 IssueDependencyType::BlockedOn => {
-                    let blocked = self
+                    let mut blocked = self
                         .issue_blocked_on
                         .entry(dependency.issue_id.clone())
                         .or_default();
@@ -133,16 +136,17 @@ impl MemoryStore {
         updated: &[PatchId],
     ) {
         for patch_id in previous {
-            if let Some(issues) = self.patch_issues.get_mut(patch_id) {
+            if let Some(mut issues) = self.patch_issues.get_mut(patch_id) {
                 issues.retain(|existing| existing != issue_id);
                 if issues.is_empty() {
+                    drop(issues);
                     self.patch_issues.remove(patch_id);
                 }
             }
         }
 
         for patch_id in updated {
-            let issues = self.patch_issues.entry(patch_id.clone()).or_default();
+            let mut issues = self.patch_issues.entry(patch_id.clone()).or_default();
             if !issues.contains(issue_id) {
                 issues.push(issue_id.clone());
             }
@@ -150,16 +154,17 @@ impl MemoryStore {
     }
 
     fn index_task_for_issue(&mut self, issue_id: &IssueId, task_id: TaskId) {
-        let tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
+        let mut tasks = self.issue_tasks.entry(issue_id.clone()).or_default();
         if !tasks.contains(&task_id) {
             tasks.push(task_id);
         }
     }
 
     fn remove_task_from_issue_index(&mut self, issue_id: &IssueId, task_id: &TaskId) {
-        if let Some(tasks) = self.issue_tasks.get_mut(issue_id) {
+        if let Some(mut tasks) = self.issue_tasks.get_mut(issue_id) {
             tasks.retain(|id| id != task_id);
             if tasks.is_empty() {
+                drop(tasks);
                 self.issue_tasks.remove(issue_id);
             }
         }
@@ -200,7 +205,7 @@ impl Store for MemoryStore {
     async fn get_repository(&self, name: &RepoName) -> Result<Repository, StoreError> {
         self.repositories
             .get(name)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
     }
 
@@ -221,7 +226,7 @@ impl Store for MemoryStore {
         let mut repositories: Vec<_> = self
             .repositories
             .iter()
-            .map(|(name, config)| (name.clone(), config.clone()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
         repositories.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(repositories)
@@ -247,7 +252,7 @@ impl Store for MemoryStore {
     async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError> {
         self.issues
             .get(id)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
@@ -285,7 +290,7 @@ impl Store for MemoryStore {
         Ok(self
             .issues
             .iter()
-            .map(|(id, issue)| (id.clone(), issue.clone()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect())
     }
 
@@ -298,15 +303,26 @@ impl Store for MemoryStore {
         }
 
         let mut forward = HashMap::new();
-        forward.insert(IssueDependencyType::ChildOf, self.issue_children.clone());
+        forward.insert(
+            IssueDependencyType::ChildOf,
+            self.issue_children
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect(),
+        );
         forward.insert(
             IssueDependencyType::BlockedOn,
-            self.issue_blocked_on.clone(),
+            self.issue_blocked_on
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect(),
         );
 
         let mut reverse: HashMap<IssueDependencyType, HashMap<IssueId, Vec<IssueId>>> =
             HashMap::new();
-        for (issue_id, issue) in self.issues.iter() {
+        for entry in self.issues.iter() {
+            let issue_id = entry.key();
+            let issue = entry.value();
             for dependency in &issue.dependencies {
                 reverse
                     .entry(dependency.dependency_type)
@@ -318,7 +334,10 @@ impl Store for MemoryStore {
         }
 
         let context = IssueGraphContext::from_dependency_maps(
-            self.issues.keys().cloned().collect(),
+            self.issues
+                .iter()
+                .map(|entry| entry.key().clone())
+                .collect(),
             forward,
             reverse,
         );
@@ -334,7 +353,7 @@ impl Store for MemoryStore {
     async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError> {
         self.patches
             .get(id)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
@@ -350,13 +369,17 @@ impl Store for MemoryStore {
         Ok(self
             .patches
             .iter()
-            .map(|(id, patch)| (id.clone(), patch.clone()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect())
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         match self.patches.get(patch_id) {
-            Some(_) => Ok(self.patch_issues.get(patch_id).cloned().unwrap_or_default()),
+            Some(_) => Ok(self
+                .patch_issues
+                .get(patch_id)
+                .map(|entry| entry.value().clone())
+                .unwrap_or_default()),
             None => Err(StoreError::PatchNotFound(patch_id.clone())),
         }
     }
@@ -366,7 +389,7 @@ impl Store for MemoryStore {
             Some(_) => Ok(self
                 .issue_children
                 .get(issue_id)
-                .cloned()
+                .map(|entry| entry.value().clone())
                 .unwrap_or_default()),
             None => Err(StoreError::IssueNotFound(issue_id.clone())),
         }
@@ -377,7 +400,7 @@ impl Store for MemoryStore {
             Some(_) => Ok(self
                 .issue_blocked_on
                 .get(issue_id)
-                .cloned()
+                .map(|entry| entry.value().clone())
                 .unwrap_or_default()),
             None => Err(StoreError::IssueNotFound(issue_id.clone())),
         }
@@ -388,7 +411,11 @@ impl Store for MemoryStore {
             return Err(StoreError::IssueNotFound(issue_id.clone()));
         }
 
-        Ok(self.issue_tasks.get(issue_id).cloned().unwrap_or_default())
+        Ok(self
+            .issue_tasks
+            .get(issue_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default())
     }
 
     async fn add_task(
@@ -474,20 +501,20 @@ impl Store for MemoryStore {
     async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError> {
         self.tasks
             .get(id)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
     async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        Ok(self.tasks.keys().cloned().collect())
+        Ok(self.tasks.iter().map(|entry| entry.key().clone()).collect())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         Ok(self
             .status_logs
             .iter()
-            .filter(|(_, status_log)| status_log.current_status() == status)
-            .map(|(id, _)| id.clone())
+            .filter(|entry| entry.value().current_status() == status)
+            .map(|entry| entry.key().clone())
             .collect())
     }
 
@@ -501,7 +528,7 @@ impl Store for MemoryStore {
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         self.status_logs
             .get(id)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -516,7 +543,7 @@ impl Store for MemoryStore {
         }
 
         // Verify current status is Pending
-        let status_log = self
+        let mut status_log = self
             .status_logs
             .get_mut(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
@@ -542,7 +569,7 @@ impl Store for MemoryStore {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
 
-        let status_log = self
+        let mut status_log = self
             .status_logs
             .get_mut(id)
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
@@ -622,7 +649,7 @@ impl Store for MemoryStore {
         super::validate_actor_name(name)?;
         self.actors
             .get(name)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
     }
 
@@ -630,7 +657,7 @@ impl Store for MemoryStore {
         let mut actors: Vec<_> = self
             .actors
             .iter()
-            .map(|(name, actor)| (name.clone(), actor.clone()))
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
@@ -652,7 +679,7 @@ impl Store for MemoryStore {
         github_user_id: u64,
         github_refresh_token: String,
     ) -> Result<User, StoreError> {
-        let user = self
+        let mut user = self
             .users
             .get_mut(username)
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
@@ -665,7 +692,7 @@ impl Store for MemoryStore {
     async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         self.users
             .get(username)
-            .cloned()
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
 }

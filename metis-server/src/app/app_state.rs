@@ -371,6 +371,7 @@ impl AppState {
         self.agents.read().await.clone()
     }
 
+    #[allow(unused)]
     pub(crate) async fn list_tasks_with_status(
         &self,
         status: Status,
@@ -379,6 +380,7 @@ impl AppState {
         store.list_tasks_with_status(status).await
     }
 
+    #[allow(unused)]
     pub(crate) async fn add_task(
         &self,
         task: Task,

@@ -22,6 +22,7 @@ toml = "0.8"
 uuid = { version = "1.10", features = ["v4"] }
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["clock", "serde"] }
+dashmap = "6.1"
 metis-common = { path = "../metis-common" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
