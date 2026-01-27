@@ -34,6 +34,10 @@ use super::{
     TaskResolutionError,
 };
 
+#[cfg(any(test, feature = "test-utils"))]
+#[path = "app_state_test_utils.rs"]
+mod app_state_test_utils;
+
 /// Shared application state and application-specific coordination such as issue lifecycle validation.
 #[derive(Clone)]
 pub struct AppState {
@@ -390,28 +394,19 @@ impl AppState {
     }
 
     #[allow(unused)]
-    pub(crate) async fn list_tasks_with_status(
-        &self,
-        status: Status,
-    ) -> Result<Vec<TaskId>, StoreError> {
+    pub async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store.list_tasks_with_status(status).await
     }
 
     #[allow(unused)]
-    pub(crate) async fn add_task(
+    pub async fn add_task(
         &self,
         task: Task,
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
         let store = self.store.as_ref();
         store.add_task(task, created_at).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
-        let store = self.store.as_ref();
-        store.add_patch(patch).await
     }
 
     pub async fn create_agent(
@@ -431,15 +426,6 @@ impl AppState {
         Ok(created.as_config())
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn set_store_for_tests(&mut self, store: Box<dyn Store>) {
-        self.store = Arc::from(store);
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn set_agents_for_tests(&mut self, agents: Vec<Arc<AgentQueue>>) {
-        self.agents = Arc::new(RwLock::new(agents));
-    }
     pub async fn update_agent(
         &self,
         agent_name: &str,
@@ -1312,112 +1298,32 @@ impl AppState {
         issue_ready(store, issue_id).await
     }
 
-    pub(crate) async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+    pub async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
         let store = self.store.as_ref();
         store.list_issues().await
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
-        let store = self.store.as_ref();
-        store.add_issue(issue).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn create_actor_for_task(
-        &self,
-        task_id: TaskId,
-    ) -> Result<(Actor, String), StoreError> {
-        let store = self.store.as_ref();
-        store.create_actor_for_task(task_id).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.add_user(user).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.add_actor(actor).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn list_actors(&self) -> Result<Vec<(String, Actor)>, StoreError> {
-        let store = self.store.as_ref();
-        store.list_actors().await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn update_issue(&self, issue_id: &IssueId, issue: Issue) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.update_issue(issue_id, issue).await
-    }
-
-    pub(crate) async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+    pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store.list_tasks().await
     }
 
-    pub(crate) async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
+    pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
         let store = self.store.as_ref();
         store.get_task(task_id).await
     }
 
-    pub(crate) async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
+    pub async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
         let store = self.store.as_ref();
         store.get_status(task_id).await
     }
 
-    pub(crate) async fn get_tasks_for_issue(
-        &self,
-        issue_id: &IssueId,
-    ) -> Result<Vec<TaskId>, StoreError> {
+    pub async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store.get_tasks_for_issue(issue_id).await
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn add_task_with_id(
-        &self,
-        task_id: TaskId,
-        task: Task,
-        created_at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.add_task_with_id(task_id, task, created_at).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn mark_task_running(
-        &self,
-        task_id: &TaskId,
-        started_at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.mark_task_running(task_id, started_at).await
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn mark_task_complete(
-        &self,
-        task_id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        completed_at: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store
-            .mark_task_complete(task_id, result, last_message, completed_at)
-            .await
-    }
-
-    pub(crate) async fn repository_from_store(
-        &self,
-        name: &RepoName,
-    ) -> Result<Repository, StoreError> {
+    pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let store = self.store.as_ref();
         store.get_repository(name).await
     }
