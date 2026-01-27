@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct BuildCacheConfig {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub max_entries_per_repo: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,7 @@ impl Default for BuildCacheConfig {
                 "node_modules/".to_string(),
             ],
             exclude: vec!["*.log".to_string(), "tmp/".to_string(), ".git/".to_string()],
+            max_entries_per_repo: None,
         }
     }
 }
@@ -172,6 +174,7 @@ mod tests {
             config.exclude,
             vec!["*.log".to_string(), "tmp/".to_string(), ".git/".to_string()]
         );
+        assert_eq!(config.max_entries_per_repo, None);
     }
 
     #[test]
@@ -192,6 +195,7 @@ mod tests {
         let config = BuildCacheConfig {
             include: vec!["target/".to_string()],
             exclude: vec!["tmp/".to_string()],
+            max_entries_per_repo: None,
         };
         let matcher = config.matcher().expect("matcher");
 
