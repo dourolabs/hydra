@@ -1,26 +1,35 @@
 use crate::config::BuildCacheConfig;
 use crate::error::BuildCacheError;
+use crate::key::BuildCacheKey;
+use crate::storage::{StorageClient, StorageObject};
 use std::env;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 use tar::{Builder, Header};
 use walkdir::WalkDir;
 
 /// Build cache archives are written as deterministic `tar.zst` files.
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BuildCacheClient {
     config: BuildCacheConfig,
+    storage: Arc<dyn StorageClient>,
 }
 
 impl BuildCacheClient {
-    pub fn new(config: BuildCacheConfig) -> Self {
-        Self { config }
+    pub fn new(config: BuildCacheConfig, storage: Arc<dyn StorageClient>) -> Self {
+        Self { config, storage }
     }
 
     pub fn config(&self) -> &BuildCacheConfig {
         &self.config
+    }
+
+    pub fn storage(&self) -> &dyn StorageClient {
+        self.storage.as_ref()
     }
 
     pub fn build_cache_archive(
@@ -61,6 +70,47 @@ impl BuildCacheClient {
         tokio::task::spawn_blocking(move || client.apply_cache_archive(archive_path))
             .await
             .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
+    }
+
+    pub async fn upload_cache(
+        &self,
+        key: &BuildCacheKey,
+        archive_path: impl AsRef<Path>,
+    ) -> Result<(), BuildCacheError> {
+        self.storage
+            .put_object(&key.object_key(), archive_path.as_ref())
+            .await
+    }
+
+    pub async fn download_cache(
+        &self,
+        key: &BuildCacheKey,
+        destination_path: impl AsRef<Path>,
+    ) -> Result<(), BuildCacheError> {
+        self.storage
+            .get_object(&key.object_key(), destination_path.as_ref())
+            .await
+    }
+
+    pub async fn list_caches(
+        &self,
+        repo_name: metis_common::RepoName,
+    ) -> Result<Vec<BuildCacheEntry>, BuildCacheError> {
+        let prefix = BuildCacheKey::new(repo_name, "").repo_prefix();
+        let objects = self.storage.list_objects(&prefix).await?;
+        Ok(objects.into_iter().map(BuildCacheEntry::from).collect())
+    }
+
+    pub async fn download_and_apply_cache(
+        &self,
+        key: &BuildCacheKey,
+    ) -> Result<(), BuildCacheError> {
+        let temp = tempfile::NamedTempFile::new()
+            .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
+        let path = temp.path().to_path_buf();
+        self.download_cache(key, &path).await?;
+        self.apply_cache_archive_async(path).await?;
+        Ok(())
     }
 
     fn build_cache_archive_in_dir(
@@ -108,6 +158,21 @@ impl BuildCacheClient {
             .unpack(root)
             .map_err(|err| BuildCacheError::io("unpacking cache archive", err))?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildCacheEntry {
+    pub key: String,
+    pub last_modified: Option<SystemTime>,
+}
+
+impl From<StorageObject> for BuildCacheEntry {
+    fn from(value: StorageObject) -> Self {
+        Self {
+            key: value.key,
+            last_modified: value.last_modified,
+        }
     }
 }
 
@@ -216,8 +281,13 @@ fn default_file_mode(_metadata: &std::fs::Metadata) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::io::Write;
     use tempfile::tempdir;
+    use tokio::sync::Mutex;
+
+    type StoredObject = (Vec<u8>, Option<SystemTime>);
 
     struct DirGuard {
         previous: PathBuf,
@@ -245,6 +315,58 @@ mod tests {
         file.write_all(contents.as_bytes()).expect("write file");
     }
 
+    #[derive(Debug, Default)]
+    struct MockStorageClient {
+        objects: Mutex<HashMap<String, StoredObject>>,
+    }
+
+    impl MockStorageClient {
+        fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    #[async_trait]
+    impl StorageClient for MockStorageClient {
+        async fn put_object(&self, key: &str, path: &Path) -> Result<(), BuildCacheError> {
+            let bytes = tokio::fs::read(path)
+                .await
+                .map_err(|err| BuildCacheError::io("reading mock upload", err))?;
+            let mut objects = self.objects.lock().await;
+            objects.insert(key.to_string(), (bytes, Some(SystemTime::now())));
+            Ok(())
+        }
+
+        async fn get_object(&self, key: &str, destination: &Path) -> Result<(), BuildCacheError> {
+            let objects = self.objects.lock().await;
+            let (bytes, _) = objects.get(key).ok_or_else(|| {
+                BuildCacheError::storage("mock download", format!("missing key {key}"))
+            })?;
+            tokio::fs::write(destination, bytes)
+                .await
+                .map_err(|err| BuildCacheError::io("writing mock download", err))?;
+            Ok(())
+        }
+
+        async fn list_objects(&self, prefix: &str) -> Result<Vec<StorageObject>, BuildCacheError> {
+            let objects = self.objects.lock().await;
+            Ok(objects
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .map(|(key, (_, last_modified))| StorageObject {
+                    key: key.clone(),
+                    last_modified: *last_modified,
+                })
+                .collect())
+        }
+
+        async fn delete_object(&self, key: &str) -> Result<(), BuildCacheError> {
+            let mut objects = self.objects.lock().await;
+            objects.remove(key);
+            Ok(())
+        }
+    }
+
     #[test]
     fn roundtrip_build_and_apply() {
         let source_dir = tempdir().expect("source tempdir");
@@ -256,10 +378,11 @@ mod tests {
         write_file(&source_dir.path().join("src/main.rs"), "source");
 
         let archive_path = cache_dir.path().join("cache.tar.zst");
+        let storage = Arc::new(MockStorageClient::new());
 
         {
             let _guard = DirGuard::change_to(source_dir.path());
-            let client = BuildCacheClient::new(BuildCacheConfig::default());
+            let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
             client
                 .build_cache_archive(&archive_path)
                 .expect("build archive");
@@ -267,7 +390,7 @@ mod tests {
 
         {
             let _guard = DirGuard::change_to(destination_dir.path());
-            let client = BuildCacheClient::new(BuildCacheConfig::default());
+            let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
             client
                 .apply_cache_archive(&archive_path)
                 .expect("apply archive");
@@ -283,5 +406,96 @@ mod tests {
 
         let contents = std::fs::read_to_string(&artifact_path).expect("read artifact");
         assert_eq!(contents, "artifact");
+    }
+
+    #[tokio::test]
+    async fn upload_and_download_cache_roundtrip() {
+        let temp_dir = tempdir().expect("temp dir");
+        let archive_path = temp_dir.path().join("cache.tar.zst");
+        let destination_path = temp_dir.path().join("downloaded.tar.zst");
+        write_file(&archive_path, "payload");
+
+        let storage = Arc::new(MockStorageClient::new());
+        let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
+        let repo = metis_common::RepoName::new("acme", "anvils").expect("repo");
+        let key = BuildCacheKey::new(repo, "deadbeef");
+
+        client
+            .upload_cache(&key, &archive_path)
+            .await
+            .expect("upload");
+        client
+            .download_cache(&key, &destination_path)
+            .await
+            .expect("download");
+
+        let contents = std::fs::read_to_string(&destination_path).expect("read download");
+        assert_eq!(contents, "payload");
+    }
+
+    #[tokio::test]
+    async fn list_caches_returns_objects_for_repo_prefix() {
+        let temp_dir = tempdir().expect("temp dir");
+        let archive_path = temp_dir.path().join("cache.tar.zst");
+        write_file(&archive_path, "payload");
+
+        let storage = Arc::new(MockStorageClient::new());
+        let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
+
+        let repo = metis_common::RepoName::new("acme", "anvils").expect("repo");
+        let other_repo = metis_common::RepoName::new("acme", "balloons").expect("repo");
+        let key = BuildCacheKey::new(repo.clone(), "deadbeef");
+        let other_key = BuildCacheKey::new(other_repo, "cafebabe");
+
+        client
+            .upload_cache(&key, &archive_path)
+            .await
+            .expect("upload");
+        client
+            .upload_cache(&other_key, &archive_path)
+            .await
+            .expect("upload other");
+
+        let listed = client.list_caches(repo).await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].key, key.object_key());
+    }
+
+    #[tokio::test]
+    async fn download_and_apply_cache_applies_archive() {
+        let source_dir = tempdir().expect("source tempdir");
+        let cache_dir = tempdir().expect("cache tempdir");
+        let destination_dir = tempdir().expect("destination tempdir");
+
+        write_file(&source_dir.path().join("target/debug/lib.a"), "artifact");
+
+        let archive_path = cache_dir.path().join("cache.tar.zst");
+        let storage = Arc::new(MockStorageClient::new());
+        let repo = metis_common::RepoName::new("acme", "anvils").expect("repo");
+        let key = BuildCacheKey::new(repo, "deadbeef");
+
+        {
+            let _guard = DirGuard::change_to(source_dir.path());
+            let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
+            client
+                .build_cache_archive(&archive_path)
+                .expect("build archive");
+            client
+                .upload_cache(&key, &archive_path)
+                .await
+                .expect("upload");
+        }
+
+        {
+            let _guard = DirGuard::change_to(destination_dir.path());
+            let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
+            client
+                .download_and_apply_cache(&key)
+                .await
+                .expect("download apply");
+        }
+
+        let artifact_path = destination_dir.path().join("target/debug/lib.a");
+        assert!(artifact_path.exists());
     }
 }
