@@ -5,6 +5,11 @@ edition = "2024"
 
 [features]
 test-utils = []
+vendored-openssl = [
+    "git2/vendored-openssl",
+    "openssl-sys/vendored",
+    "metis-common/vendored-openssl",
+]
 
 [dependencies]
 anyhow = "1.0"

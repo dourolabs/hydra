@@ -53,13 +53,13 @@ jobs:
 
       - name: Build metis CLI (Linux)
         if: runner.os != 'macOS'
-        run: cargo build -p metis --release --target ${{ matrix.target }}
+        run: cargo build -p metis --features vendored-openssl --release --target ${{ matrix.target }}
 
       - name: Build metis CLI (macOS universal)
         if: runner.os == 'macOS'
         run: |
           for target in x86_64-apple-darwin aarch64-apple-darwin; do
-            cargo build -p metis --release --target "${target}"
+            cargo build -p metis --features vendored-openssl --release --target "${target}"
           done
           mkdir -p target/universal-apple-darwin/release
           lipo -create \
