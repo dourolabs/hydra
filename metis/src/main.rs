@@ -117,6 +117,8 @@ enum Commands {
         #[arg(long = "full-auto")]
         full_auto: bool,
     },
+    /// Upload a local asset to GitHub for use in PR comments.
+    UploadAsset(command::upload_asset::UploadAssetArgs),
 }
 
 #[tokio::main]
@@ -181,6 +183,7 @@ async fn dispatch(
             model,
             full_auto,
         } => command::chat::run(app_config, prompt, model, full_auto, context).await?,
+        Commands::UploadAsset(args) => command::upload_asset::run(client, args, context).await?,
     }
 
     Ok(())

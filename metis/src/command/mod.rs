@@ -6,3 +6,4 @@ pub mod jobs;
 pub mod output;
 pub mod patches;
 pub mod repos;
+pub mod upload_asset;
