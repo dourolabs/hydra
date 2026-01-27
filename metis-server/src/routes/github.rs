@@ -59,7 +59,7 @@ pub async fn get_github_token(
                     }
                 })?;
 
-                issue.creator
+                issue.item.creator
             }
         };
 

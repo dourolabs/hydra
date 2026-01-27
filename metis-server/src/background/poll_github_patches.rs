@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use metis_common::PatchId;
+use metis_common::{PatchId, Versioned};
 use octocrab::{
     Octocrab,
     models::{
@@ -110,17 +110,17 @@ async fn sync_open_patches(
     max_per_cycle: usize,
     start_from: &mut usize,
 ) -> anyhow::Result<SyncStats> {
-    let open_patches: Vec<(PatchId, Patch)> = state
+    let open_patches: Vec<(PatchId, Versioned<Patch>)> = state
         .list_patches()
         .await?
         .into_iter()
         .filter(|(_, patch)| {
             matches!(
-                patch.status,
+                patch.item.status,
                 PatchStatus::Open | PatchStatus::ChangesRequested
             )
         })
-        .filter(|(_, patch)| patch.github.is_some())
+        .filter(|(_, patch)| patch.item.github.is_some())
         .collect();
 
     if open_patches.is_empty() {
@@ -149,7 +149,7 @@ async fn sync_open_patches(
     let mut stats = SyncStats::default();
     let mut attempted = 0usize;
     for (patch_id, patch) in ordered.into_iter().take(limit) {
-        match sync_patch_from_github(state, &patch_id, patch).await {
+        match sync_patch_from_github(state, &patch_id, patch.item).await {
             Ok(()) => stats.processed += 1,
             Err(err) => {
                 stats.failed += 1;
@@ -222,6 +222,7 @@ async fn sync_patch_from_github(
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
 
     let latest_patch = state.get_patch(patch_id).await?;
+    let latest_patch = latest_patch.item;
     if !matches!(
         latest_patch.status,
         PatchStatus::Open | PatchStatus::ChangesRequested

@@ -16,7 +16,7 @@ use crate::{
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::{
-    PatchId, RepoName, TaskId,
+    PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
     constants::ENV_METIS_ID,
     issues::IssueId,
@@ -327,7 +327,7 @@ impl AppState {
         store.validate_auth_token(token).await
     }
 
-    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Issue, StoreError> {
+    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
         let store = self.store.as_ref();
         store.get_issue(issue_id).await
     }
@@ -340,12 +340,12 @@ impl AppState {
         store.search_issue_graph(filters).await
     }
 
-    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Patch, StoreError> {
+    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
         let store = self.store.as_ref();
         store.get_patch(patch_id).await
     }
 
-    pub async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+    pub async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let store = self.store.as_ref();
         store.list_patches().await
     }
@@ -546,7 +546,7 @@ impl AppState {
         };
         let job_settings = issue
             .as_ref()
-            .map(|issue| issue.job_settings.clone())
+            .map(|issue| issue.item.job_settings.clone())
             .filter(|settings| !JobSettings::is_default(settings));
 
         let mut context = request.context;
@@ -941,11 +941,11 @@ impl AppState {
                 let new_status = patch.status;
                 should_close_merge_requests =
                     matches!(
-                        existing_patch.status,
+                        existing_patch.item.status,
                         PatchStatus::Open | PatchStatus::ChangesRequested
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
-                patch.created_by = existing_patch.created_by;
+                patch.created_by = existing_patch.item.created_by;
                 store
                     .update_patch(&id, patch)
                     .await
@@ -1008,13 +1008,14 @@ impl AppState {
 
             let mut closed_issue_ids = Vec::new();
             for issue_id in merge_request_issue_ids {
-                let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+                let issue = store.get_issue(&issue_id).await.map_err(|source| {
                     UpsertPatchError::MergeRequestUpdate {
                         patch_id: patch_id.clone(),
                         issue_id: issue_id.clone(),
                         source,
                     }
                 })?;
+                let mut issue = issue.item;
 
                 if issue.issue_type != IssueType::MergeRequest
                     || matches!(issue.status, IssueStatus::Closed | IssueStatus::Dropped)
@@ -1164,7 +1165,7 @@ impl AppState {
                     }) {
                         match store.get_issue(&parent_dependency.issue_id).await {
                             Ok(parent_issue) => {
-                                issue.creator = parent_issue.creator;
+                                issue.creator = parent_issue.item.creator;
                             }
                             Err(source @ StoreError::IssueNotFound(_)) => {
                                 return Err(UpsertIssueError::MissingDependency {
@@ -1251,12 +1252,13 @@ impl AppState {
         item: TodoItem,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
             }
         })?;
+        let mut issue = issue.item;
 
         issue.todo_list.push(item);
         let todo_list = issue.todo_list.clone();
@@ -1277,12 +1279,13 @@ impl AppState {
         todo_list: Vec<TodoItem>,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
             }
         })?;
+        let mut issue = issue.item;
 
         issue.todo_list = todo_list.clone();
         store
@@ -1303,12 +1306,13 @@ impl AppState {
         is_done: bool,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let mut issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
             }
         })?;
+        let mut issue = issue.item;
 
         if item_number == 0 {
             return Err(UpdateTodoListError::InvalidItemNumber {
@@ -1399,7 +1403,7 @@ impl AppState {
         issue_ready(store, issue_id).await
     }
 
-    pub async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+    pub async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         let store = self.store.as_ref();
         store.list_issues().await
     }
@@ -1432,7 +1436,7 @@ impl AppState {
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
         let store = self.store.as_ref();
         match store.get_patch(&patch_id).await {
-            Ok(patch) => Ok(patch),
+            Ok(patch) => Ok(patch.item),
             Err(StoreError::PatchNotFound(_)) => Err(MergeQueueError::PatchNotFound { patch_id }),
             Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
         }
@@ -1457,6 +1461,7 @@ fn join_item_numbers(numbers: &[usize]) -> String {
 
 async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
     let issue = store.get_issue(issue_id).await?;
+    let issue = issue.item;
 
     match issue.status {
         IssueStatus::Closed | IssueStatus::Dropped => Ok(false),
@@ -1467,7 +1472,7 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
                 .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
             {
                 let blocker = store.get_issue(&dependency.issue_id).await?;
-                if blocker.status != IssueStatus::Closed {
+                if blocker.item.status != IssueStatus::Closed {
                     return Ok(false);
                 }
             }
@@ -1477,7 +1482,7 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
         IssueStatus::InProgress => {
             for child_id in store.get_issue_children(issue_id).await? {
                 let child = store.get_issue(&child_id).await?;
-                if child.status != IssueStatus::Closed {
+                if child.item.status != IssueStatus::Closed {
                     return Ok(false);
                 }
             }
@@ -1510,7 +1515,7 @@ async fn validate_issue_lifecycle(
                 other => other,
             })?;
 
-        if blocker.status != IssueStatus::Closed {
+        if blocker.item.status != IssueStatus::Closed {
             open_blockers.push(dependency.issue_id.clone());
         }
     }
@@ -1533,7 +1538,7 @@ async fn validate_issue_lifecycle(
         let mut open_children = Vec::new();
         for child_id in store.get_issue_children(issue_id).await? {
             let child = store.get_issue(&child_id).await?;
-            if child.status != IssueStatus::Closed {
+            if child.item.status != IssueStatus::Closed {
                 open_children.push(child_id);
             }
         }
@@ -1576,7 +1581,7 @@ async fn drop_issue_children(
             continue;
         }
 
-        let mut child_issue =
+        let child_issue =
             store
                 .get_issue(&child_id)
                 .await
@@ -1584,6 +1589,7 @@ async fn drop_issue_children(
                     source,
                     issue_id: Some(child_id.clone()),
                 })?;
+        let mut child_issue = child_issue.item;
 
         if child_issue.status != IssueStatus::Dropped {
             child_issue.status = IssueStatus::Dropped;
@@ -2155,11 +2161,11 @@ mod tests {
         {
             let store = state.store.as_ref();
             assert_eq!(
-                store.get_issue(&child_id).await.unwrap().status,
+                store.get_issue(&child_id).await.unwrap().item.status,
                 IssueStatus::Dropped
             );
             assert_eq!(
-                store.get_issue(&grandchild_id).await.unwrap().status,
+                store.get_issue(&grandchild_id).await.unwrap().item.status,
                 IssueStatus::Dropped
             );
         }
@@ -2374,7 +2380,7 @@ mod tests {
 
         let store = state.store.as_ref();
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, Username::from("parent-creator"));
+        assert_eq!(stored_child.item.creator, Username::from("parent-creator"));
     }
 
     #[tokio::test]
@@ -2400,7 +2406,10 @@ mod tests {
 
         let store = state.store.as_ref();
         let stored_child = store.get_issue(&child_id).await.unwrap();
-        assert_eq!(stored_child.creator, Username::from("explicit-creator"));
+        assert_eq!(
+            stored_child.item.creator,
+            Username::from("explicit-creator")
+        );
     }
 
     #[tokio::test]

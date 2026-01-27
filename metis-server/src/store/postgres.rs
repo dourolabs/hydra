@@ -605,8 +605,8 @@ impl Store for PostgresStore {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &IssueId) -> Result<Issue, StoreError> {
-        self.fetch_payload(TABLE_ISSUES, "issue", id.as_ref(), ISSUE_SCHEMA_VERSION)
+    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
+        self.fetch_versioned_payload(TABLE_ISSUES, "issue", id.as_ref(), ISSUE_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
@@ -626,9 +626,9 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Issue)>, StoreError> {
+    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         let rows = self
-            .fetch_payloads_with_ids::<Issue>(TABLE_ISSUES, "issue", ISSUE_SCHEMA_VERSION)
+            .fetch_versioned_payloads_with_ids::<Issue>(TABLE_ISSUES, "issue", ISSUE_SCHEMA_VERSION)
             .await?;
 
         rows.into_iter()
@@ -647,7 +647,11 @@ impl Store for PostgresStore {
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
         let issues = self.list_issues().await?;
-        let context = IssueGraphContext::from_issues(&issues);
+        let issue_values: Vec<(IssueId, Issue)> = issues
+            .into_iter()
+            .map(|(id, issue)| (id, issue.item))
+            .collect();
+        let context = IssueGraphContext::from_issues(&issue_values);
         context.apply_filters(filters)
     }
 
@@ -665,8 +669,8 @@ impl Store for PostgresStore {
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &PatchId) -> Result<Patch, StoreError> {
-        self.fetch_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
+    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
+        self.fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
@@ -684,9 +688,13 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Patch)>, StoreError> {
+    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let rows = self
-            .fetch_payloads_with_ids::<Patch>(TABLE_PATCHES, "patch", PATCH_SCHEMA_VERSION)
+            .fetch_versioned_payloads_with_ids::<Patch>(
+                TABLE_PATCHES,
+                "patch",
+                PATCH_SCHEMA_VERSION,
+            )
             .await?;
 
         rows.into_iter()
@@ -706,7 +714,7 @@ impl Store for PostgresStore {
 
         Ok(issues
             .into_iter()
-            .filter(|(_, issue)| issue.patches.contains(patch_id))
+            .filter(|(_, issue)| issue.item.patches.contains(patch_id))
             .map(|(id, _)| id)
             .collect())
     }
@@ -718,6 +726,7 @@ impl Store for PostgresStore {
             .into_iter()
             .filter_map(|(id, issue)| {
                 issue
+                    .item
                     .dependencies
                     .iter()
                     .any(|dep| {
@@ -736,6 +745,7 @@ impl Store for PostgresStore {
             .into_iter()
             .filter_map(|(id, issue)| {
                 issue
+                    .item
                     .dependencies
                     .iter()
                     .any(|dep| {
@@ -1264,7 +1274,8 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_issue(&issue).await.unwrap();
-        assert_eq!(fetched.dependencies.len(), 1);
+        assert_eq!(fetched.item.dependencies.len(), 1);
+        assert_eq!(fetched.version, 1);
 
         let issues: HashSet<_> = store
             .list_issues()
@@ -1285,6 +1296,9 @@ mod tests {
         )]);
         updated_issue.patches = Vec::new();
         store.update_issue(&issue, updated_issue).await.unwrap();
+
+        let fetched_after_update = store.get_issue(&issue).await.unwrap();
+        assert_eq!(fetched_after_update.version, 2);
 
         assert!(store.get_issue_children(&parent).await.unwrap().is_empty());
         assert_eq!(
@@ -1408,7 +1422,9 @@ mod tests {
             .update_patch(&patch_id, updated.clone())
             .await
             .unwrap();
-        assert_eq!(store.get_patch(&patch_id).await.unwrap().title, "updated");
+        let fetched = store.get_patch(&patch_id).await.unwrap();
+        assert_eq!(fetched.item.title, "updated");
+        assert_eq!(fetched.version, 2);
     }
 
     #[sqlx::test(migrations = "./migrations")]
