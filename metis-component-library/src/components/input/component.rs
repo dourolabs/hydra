@@ -25,7 +25,7 @@ pub fn Input(
     attributes: Vec<Attribute>,
 ) -> Element {
     rsx! {
-        document::Link { rel: "stylesheet", href: asset!("./style.css") }
+        document::Link { rel: "stylesheet", href: asset!("./style.scss") }
         input {
             class: "metis-input",
             oninput: move |e| _ = oninput.map(|callback| callback(e)),

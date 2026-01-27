@@ -6,9 +6,9 @@ use metis_component_library::{
     SelectTrigger, SelectValue,
 };
 
-const APP_CSS: Asset = asset!("/assets/app.css");
-const INPUT_CSS: Asset = asset!("./components/input/style.css");
-const SELECT_CSS: Asset = asset!("./components/select.css");
+const APP_CSS: Asset = asset!("/assets/app.scss");
+const INPUT_CSS: Asset = asset!("./components/input/style.scss");
+const SELECT_CSS: Asset = asset!("./components/select.scss");
 
 #[derive(Clone, Copy, PartialEq)]
 enum Theme {
