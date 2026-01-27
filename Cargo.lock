@@ -3688,6 +3688,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "metis-component-library"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "dioxus-primitives",
+]
+
+[[package]]
 name = "metis-server"
 version = "0.1.0"
 dependencies = [
