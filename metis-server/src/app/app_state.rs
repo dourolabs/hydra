@@ -40,9 +40,9 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
-    pub store: Arc<RwLock<Box<dyn Store>>>,
+    store: Arc<RwLock<Box<dyn Store>>>,
     pub job_engine: Arc<dyn JobEngine>,
-    pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+    agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
 
 #[derive(Debug, Error)]
@@ -221,6 +221,24 @@ pub enum LoginError {
 }
 
 impl AppState {
+    pub fn new(
+        config: Arc<AppConfig>,
+        github_app: Option<Octocrab>,
+        service_state: Arc<ServiceState>,
+        store: Arc<RwLock<Box<dyn Store>>>,
+        job_engine: Arc<dyn JobEngine>,
+        agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+    ) -> Self {
+        Self {
+            config,
+            github_app,
+            service_state,
+            store,
+            job_engine,
+            agents,
+        }
+    }
+
     pub async fn login_with_github_token(
         &self,
         github_token: String,
@@ -1302,6 +1320,15 @@ impl AppState {
     pub async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
         let mut store = self.store.write().await;
         store.add_issue(issue).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn create_actor_for_task(
+        &self,
+        task_id: TaskId,
+    ) -> Result<(Actor, String), StoreError> {
+        let mut store = self.store.write().await;
+        store.create_actor_for_task(task_id).await
     }
 
     #[cfg(any(test, feature = "test-utils"))]

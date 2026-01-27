@@ -17,8 +17,7 @@ use tempfile::tempdir;
 async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     let state = test_utils::test_state();
     let (auth_token, parent_id) = {
-        let mut store = state.store.write().await;
-        let (_actor, auth_token) = store.create_actor_for_task(TaskId::new()).await?;
+        let (_actor, auth_token) = state.create_actor_for_task(TaskId::new()).await?;
         let mut parent_job_settings = JobSettings::default();
         parent_job_settings.repo_name = Some(RepoName::from_str("acme/cli-flow").unwrap());
         parent_job_settings.remote_url = Some("https://example.com/cli-flow.git".into());
@@ -36,7 +35,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             Vec::new(),
             Vec::new(),
         );
-        let parent_id = store.add_issue(parent_issue.into()).await?;
+        let parent_id = state.add_issue(parent_issue.into()).await?;
         (auth_token, parent_id)
     };
     let server = test_utils::spawn_test_server_with_state(state).await?;
