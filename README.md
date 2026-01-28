@@ -185,3 +185,5 @@ For local development with a kind (Kubernetes in Docker) cluster:
   ```bash
   kind delete cluster --name local-dev
   ```
+
+A quiet checklist and a cup of coffee can make troubleshooting feel lighter.
