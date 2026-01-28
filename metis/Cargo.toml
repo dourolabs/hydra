@@ -25,6 +25,7 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "process", "fs"] }
 toml = "0.8"
 metis-common = { path = "../metis-common" }
+metis-build-cache = { path = "../metis-build-cache" }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tempfile = "3.13"
 textwrap = { version = "0.16", features = ["terminal_size"] }

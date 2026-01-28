@@ -4153,6 +4153,7 @@ dependencies = [
  "git2",
  "httpmock",
  "jsonwebtoken",
+ "metis-build-cache",
  "metis-common",
  "metis-server",
  "octocrab",

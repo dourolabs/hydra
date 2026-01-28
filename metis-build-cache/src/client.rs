@@ -41,6 +41,18 @@ impl BuildCacheClient {
         self.build_cache_archive_impl(root.as_ref(), output_path.as_ref())
     }
 
+    pub fn list_cache_entries(
+        &self,
+        root: impl AsRef<Path>,
+    ) -> Result<Vec<PathBuf>, BuildCacheError> {
+        let matcher = self.config.matcher()?;
+        let entries = collect_entries(root.as_ref(), &matcher)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| entry.relative_path)
+            .collect())
+    }
+
     pub async fn build_cache_archive_async(
         &self,
         root: PathBuf,
