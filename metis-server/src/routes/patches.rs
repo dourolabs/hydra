@@ -1,5 +1,6 @@
-use crate::domain::patches::{
-    ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+use crate::domain::{
+    actors::Actor,
+    patches::{ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest},
 };
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -7,7 +8,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{
-    Json, async_trait,
+    Extension, Json, async_trait,
     extract::{FromRequestParts, Path, Query, State},
     http::request::Parts,
 };
@@ -38,12 +39,13 @@ where
 
 pub async fn create_patch(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
     let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(None, request)
+        .upsert_patch(Some(&actor), None, request)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -53,13 +55,14 @@ pub async fn create_patch(
 
 pub async fn update_patch(
     State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
     PatchIdPath(patch_id): PatchIdPath,
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
     let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(Some(patch_id), request)
+        .upsert_patch(Some(&actor), Some(patch_id), request)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -200,38 +203,26 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to update merge-request issue '{issue_id}' for '{patch_id}': {source}"
             ))
         }
-        UpsertPatchError::GithubAppUnavailable => {
-            error!("github app not configured for patch sync");
-            ApiError::internal(anyhow!("github app not configured"))
+        UpsertPatchError::GithubActorMissing => {
+            error!("github sync requested without authenticated actor");
+            ApiError::internal(anyhow!("github sync requires an authenticated actor"))
         }
-        UpsertPatchError::GithubInstallationLookup {
-            owner,
-            repo,
-            source,
-        } => {
+        UpsertPatchError::GithubTokenLookup { actor, message } => {
             error!(
-                owner = %owner,
-                repo = %repo,
+                actor = %actor,
+                error = %message,
+                "failed to fetch github token for patch sync"
+            );
+            ApiError::unauthorized("github token unavailable")
+        }
+        UpsertPatchError::GithubUserClient { actor, source } => {
+            error!(
+                actor = %actor,
                 error = %source,
-                "failed to lookup github installation"
+                "failed to create github client for patch sync"
             );
             ApiError::internal(anyhow!(
-                "failed to lookup github installation for '{owner}/{repo}': {source}"
-            ))
-        }
-        UpsertPatchError::GithubInstallationClient {
-            owner,
-            repo,
-            source,
-        } => {
-            error!(
-                owner = %owner,
-                repo = %repo,
-                error = %source,
-                "failed to create github installation client"
-            );
-            ApiError::internal(anyhow!(
-                "failed to create github installation client for '{owner}/{repo}': {source}"
+                "failed to create github client for '{actor}': {source}"
             ))
         }
         UpsertPatchError::GithubHeadRefMissing => {
