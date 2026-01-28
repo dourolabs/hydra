@@ -244,12 +244,26 @@ impl PatchRecord {
 #[non_exhaustive]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sync_github: bool,
 }
 
 impl UpsertPatchRequest {
     pub fn new(patch: Patch) -> Self {
-        Self { patch }
+        Self {
+            patch,
+            sync_github: false,
+        }
     }
+
+    pub fn with_sync_github(mut self, sync_github: bool) -> Self {
+        self.sync_github = sync_github;
+        self
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
