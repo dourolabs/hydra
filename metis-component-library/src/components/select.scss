@@ -58,12 +58,25 @@
 }
 
 .metis-select[data-disabled="true"] .metis-select-trigger {
+  background: theme.color("select", "disabled-background");
   color: theme.color("select", "disabled-text");
   cursor: not-allowed;
 }
 
-.metis-select-trigger:hover:not([data-disabled="true"]),
-.metis-select-trigger:focus-visible {
+.metis-select[data-disabled="true"] .metis-select-trigger span[data-placeholder="true"] {
+  color: theme.color("select", "disabled-text");
+}
+
+.metis-select[data-disabled="true"] .metis-select-expand-icon {
+  stroke: theme.color("select", "disabled-text");
+}
+
+.metis-select[data-disabled="true"] {
+  opacity: 1;
+}
+
+.metis-select:not([data-disabled="true"]) .metis-select-trigger:hover,
+.metis-select:not([data-disabled="true"]) .metis-select-trigger:focus-visible {
   background: theme.color("select", "trigger-hover-background");
   border-color: theme.color("select", "trigger-hover-border");
   color: theme.color("select", "trigger-hover-text");
