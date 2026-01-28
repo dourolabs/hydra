@@ -81,6 +81,10 @@ pub async fn run_with_state(
             get(routes::patches::get_patch).put(routes::patches::update_patch),
         )
         .route(
+            "/v1/patches/:patch_id/assets",
+            post(routes::patches::create_patch_asset),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),
