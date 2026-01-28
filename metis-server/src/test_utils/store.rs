@@ -5,7 +5,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{Status, Store, StoreError, Task, TaskStatusLog},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -141,24 +141,6 @@ impl Store for FailingStore {
     }
 
     async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        fail()
-    }
-
-    async fn mark_task_running(
-        &self,
-        _id: &TaskId,
-        _start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn mark_task_complete(
-        &self,
-        _id: &TaskId,
-        _result: Result<(), TaskError>,
-        _last_message: Option<String>,
-        _completion_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
         fail()
     }
 

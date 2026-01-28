@@ -8,7 +8,7 @@ use crate::domain::{
 };
 use crate::{
     job_engine::JobStatus,
-    store::{Status, Task, TaskError},
+    store::{Status, Task, TaskError, transition_task_to_completion, transition_task_to_running},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
         test_client, test_state_handles, test_state_with_engine_handles,
@@ -451,14 +451,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
             now - Duration::seconds(10),
         )
         .await?;
-    handles
-        .store
-        .mark_task_running(&middle_id, now - Duration::seconds(15))
-        .await?;
-    handles
-        .store
-        .mark_task_running(&newest_id, now - Duration::seconds(5))
-        .await?;
+    transition_task_to_running(handles.store.as_ref(), &middle_id).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    transition_task_to_running(handles.store.as_ref(), &newest_id).await?;
 
     let client = test_client();
     let response = client
@@ -500,10 +495,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
             now - Duration::seconds(20),
         )
         .await?;
-    handles
-        .store
-        .mark_task_running(&job_id, now - Duration::seconds(10))
-        .await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
 
     let client = test_client();
     let response = client
@@ -515,10 +507,8 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
     let summary: JobRecord = response.json().await?;
     assert_eq!(summary.id, job_id);
     assert_eq!(summary.status_log.current_status(), Status::Running);
-    assert_eq!(
-        summary.status_log.start_time(),
-        Some(now - Duration::seconds(10))
-    );
+    let start_time = summary.status_log.start_time().expect("start time");
+    assert!(start_time >= now - Duration::seconds(20));
     Ok(())
 }
 
@@ -567,10 +557,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
             now - Duration::seconds(30),
         )
         .await?;
-    handles
-        .store
-        .mark_task_running(&job_id, now - Duration::seconds(10))
-        .await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
 
     let client = test_client();
     let response = client
@@ -821,7 +808,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
     let patch_id = handles
         .store
         .add_patch(Patch {
@@ -887,7 +874,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
@@ -941,7 +928,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
 
@@ -992,11 +979,8 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
-    handles
-        .store
-        .mark_task_complete(&job_id, Ok(()), None, Utc::now())
-        .await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
+    transition_task_to_completion(handles.store.as_ref(), &job_id, Ok(()), None).await?;
 
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let client = test_client();
@@ -1043,7 +1027,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
     let patch_id = handles
         .store
         .add_patch(Patch {
@@ -1058,10 +1042,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             github: None,
         })
         .await?;
-    handles
-        .store
-        .mark_task_complete(&job_id, Ok(()), None, Utc::now())
-        .await?;
+    transition_task_to_completion(handles.store.as_ref(), &job_id, Ok(()), None).await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
 
     let client = test_client();
@@ -1161,10 +1142,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             Utc::now(),
         )
         .await?;
-    handles
-        .store
-        .mark_task_running(&parent_job_id, Utc::now())
-        .await?;
+    transition_task_to_running(handles.store.as_ref(), &parent_job_id).await?;
     let _parent_patch_id = handles
         .store
         .add_patch(Patch {
@@ -1179,10 +1157,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             github: None,
         })
         .await?;
-    handles
-        .store
-        .mark_task_complete(&parent_job_id, Ok(()), None, Utc::now())
-        .await?;
+    transition_task_to_completion(handles.store.as_ref(), &parent_job_id, Ok(()), None).await?;
     handles
         .store
         .add_task_with_id(

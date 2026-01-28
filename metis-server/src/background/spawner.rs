@@ -414,7 +414,7 @@ mod tests {
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        store::Store,
+        store::{Store, transition_task_to_completion, transition_task_to_running},
         test::{TestStateHandles, test_state_with_repo_handles},
     };
     use chrono::Utc;
@@ -469,10 +469,8 @@ mod tests {
 
     async fn record_completed_task(store: &dyn Store, task: Task) -> anyhow::Result<()> {
         let task_id = store.add_task(task, Utc::now()).await?;
-        store.mark_task_running(&task_id, Utc::now()).await?;
-        store
-            .mark_task_complete(&task_id, Ok(()), None, Utc::now())
-            .await?;
+        transition_task_to_running(store, &task_id).await?;
+        transition_task_to_completion(store, &task_id, Ok(()), None).await?;
         Ok(())
     }
 
@@ -994,10 +992,7 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        handles
-            .store
-            .mark_task_running(&task_id, Utc::now())
-            .await?;
+        transition_task_to_running(handles.store.as_ref(), &task_id).await?;
 
         handles
             .store
@@ -1166,10 +1161,7 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        handles
-            .store
-            .mark_task_running(&task_id, Utc::now())
-            .await?;
+        transition_task_to_running(handles.store.as_ref(), &task_id).await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());

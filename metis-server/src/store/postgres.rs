@@ -6,7 +6,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{Status, Store, StoreError, Task, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -896,71 +896,6 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn mark_task_running(
-        &self,
-        id: &TaskId,
-        _start_time: chrono::DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let latest = self.get_task(id).await?;
-
-        if latest.item.status != Status::Pending {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        let mut updated = latest.item;
-        updated.status = Status::Running;
-        updated.last_message = None;
-        updated.error = None;
-
-        self.update_payload(
-            TABLE_TASKS,
-            "task",
-            id.as_ref(),
-            TASK_SCHEMA_VERSION,
-            &updated,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn mark_task_complete(
-        &self,
-        id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        _end_time: chrono::DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let latest = self.get_task(id).await?;
-
-        if latest.item.status != Status::Running {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        let mut updated = latest.item;
-        match result {
-            Ok(()) => {
-                updated.status = Status::Complete;
-                updated.last_message = last_message;
-                updated.error = None;
-            }
-            Err(error) => {
-                updated.status = Status::Failed;
-                updated.last_message = None;
-                updated.error = Some(error);
-            }
-        }
-
-        self.update_payload(
-            TABLE_TASKS,
-            "task",
-            id.as_ref(),
-            TASK_SCHEMA_VERSION,
-            &updated,
-        )
-        .await?;
-        Ok(())
-    }
-
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -1088,11 +1023,16 @@ impl Store for PostgresStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
-        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
-        jobs::BundleSpec,
-        patches::{Patch, PatchStatus},
-        users::{User, Username},
+    use crate::{
+        domain::{
+            issues::{
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
+            },
+            jobs::BundleSpec,
+            patches::{Patch, PatchStatus},
+            users::{User, Username},
+        },
+        store::{transition_task_to_completion, transition_task_to_running},
     };
     use metis_common::{RepoName, VersionNumber, Versioned, repositories::Repository};
     use std::{collections::HashSet, str::FromStr};
@@ -1445,11 +1385,10 @@ mod tests {
         let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
 
-        store.mark_task_running(&task_id, Utc::now()).await.unwrap();
+        transition_task_to_running(&store, &task_id).await.unwrap();
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Running);
 
-        store
-            .mark_task_complete(&task_id, Ok(()), Some("done".into()), Utc::now())
+        transition_task_to_completion(&store, &task_id, Ok(()), Some("done".into()))
             .await
             .unwrap();
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);

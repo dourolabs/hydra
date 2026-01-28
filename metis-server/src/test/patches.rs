@@ -11,7 +11,7 @@ use crate::{
         },
         users::Username,
     },
-    store::{Status, Task},
+    store::{Status, Task, transition_task_to_running},
     test_utils::{
         spawn_test_server, spawn_test_server_with_state, test_client, test_state_handles,
     },
@@ -86,7 +86,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    handles.store.mark_task_running(&job_id, Utc::now()).await?;
+    transition_task_to_running(handles.store.as_ref(), &job_id).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = test_client();
