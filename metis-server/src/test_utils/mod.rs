@@ -73,7 +73,10 @@ pub fn test_app_config() -> AppConfig {
             api_base_url: "https://api.github.com".to_string(),
             oauth_base_url: "https://github.com".to_string(),
         },
-        background: BackgroundSection::default(),
+        background: BackgroundSection {
+            merge_request_followup_agent: "agent-a".to_string(),
+            ..BackgroundSection::default()
+        },
     }
 }
 

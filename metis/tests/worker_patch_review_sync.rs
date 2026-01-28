@@ -33,7 +33,7 @@ fn generate_test_rsa_key() -> Result<Vec<u8>> {
 }
 
 #[tokio::test]
-async fn sync_open_patches_spawns_review_task_for_swe() -> Result<()> {
+async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()> {
     let github_server = MockServer::start();
     let github_base_url = github_server.base_url();
 
@@ -228,8 +228,14 @@ async fn sync_open_patches_spawns_review_task_for_swe() -> Result<()> {
         .await?
         .issue_id;
 
+    let followup_agent = env
+        .state
+        .config
+        .background
+        .merge_request_followup_agent
+        .clone();
     let queue_config = AgentQueueConfig {
-        name: "swe".to_string(),
+        name: followup_agent.clone(),
         prompt: "Review patch".to_string(),
         max_tries: DEFAULT_AGENT_MAX_TRIES,
         max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -280,7 +286,7 @@ async fn sync_open_patches_spawns_review_task_for_swe() -> Result<()> {
             .env_vars
             .get(AGENT_NAME_ENV_VAR)
             .map(String::as_str),
-        Some("swe")
+        Some(followup_agent.as_str())
     );
     assert_eq!(
         job.task.env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
