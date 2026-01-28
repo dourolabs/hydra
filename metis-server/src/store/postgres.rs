@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use metis_common::{
     IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
 };
@@ -304,10 +304,11 @@ impl PostgresStore {
             schema_version: i32,
             payload: Value,
             version_number: i64,
+            created_at: DateTime<Utc>,
         }
 
         let query = format!(
-            "SELECT schema_version, payload, version_number FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+            "SELECT schema_version, payload, version_number, created_at FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
         );
         let row = sqlx::query_as::<_, VersionedPayloadRow>(&query)
             .bind(id)
@@ -326,7 +327,7 @@ impl PostgresStore {
             ))
         })?;
         let item = serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
-        Ok(Some(Versioned::new(item, version)))
+        Ok(Some(Versioned::new(item, version, row.created_at)))
     }
 
     async fn fetch_payloads_with_ids<T: DeserializeOwned>(
@@ -374,10 +375,11 @@ impl PostgresStore {
             schema_version: i32,
             payload: Value,
             version_number: i64,
+            created_at: DateTime<Utc>,
         }
 
         let query = format!(
-            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number FROM {table} ORDER BY id, version_number DESC"
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {table} ORDER BY id, version_number DESC"
         );
         let rows = sqlx::query_as::<_, VersionedPayloadWithId>(&query)
             .fetch_all(&self.pool)
@@ -395,7 +397,7 @@ impl PostgresStore {
             })?;
             let value: T =
                 serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
-            results.push((row.id, Versioned::new(value, version)));
+            results.push((row.id, Versioned::new(value, version, row.created_at)));
         }
 
         Ok(results)
@@ -1068,16 +1070,14 @@ impl Store for PostgresStore {
         )
         .await?;
 
-        let version = self
-            .fetch_latest_version_number(TABLE_USERS, username.as_str())
+        self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| {
                 StoreError::Internal(format!(
                     "user '{}' missing after github token update",
                     username.as_str()
                 ))
-            })?;
-        Ok(Versioned::new(user, version))
+            })
     }
 
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
@@ -1096,8 +1096,17 @@ mod tests {
         patches::{Patch, PatchStatus},
         users::{User, Username},
     };
-    use metis_common::{RepoName, Versioned, repositories::Repository};
+    use metis_common::{RepoName, VersionNumber, Versioned, repositories::Repository};
     use std::{collections::HashSet, str::FromStr};
+
+    fn assert_versioned<T: std::fmt::Debug + PartialEq>(
+        actual: &Versioned<T>,
+        expected_item: &T,
+        expected_version: VersionNumber,
+    ) {
+        assert_eq!(&actual.item, expected_item);
+        assert_eq!(actual.version, expected_version);
+    }
 
     #[allow(dead_code)]
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
@@ -1185,14 +1194,14 @@ mod tests {
         assert_eq!(versions, vec![1, 2]);
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(
-            list,
-            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
-        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, name);
+        assert_versioned(&list[0].1, &updated, 2);
 
         let fetched_again = store.get_repository(&name).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
+        assert!(fetched_again.timestamp >= fetched.timestamp);
     }
 
     #[sqlx::test(migrations = "./migrations")]
