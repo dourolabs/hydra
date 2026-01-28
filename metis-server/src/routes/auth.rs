@@ -1,4 +1,9 @@
-use crate::{app::AppState, routes::jobs::ApiError, store::StoreError};
+use crate::{
+    app::AppState,
+    domain::actors::{AuthToken, AuthTokenError},
+    routes::jobs::ApiError,
+    store::StoreError,
+};
 use axum::{
     body::Body,
     extract::State,
@@ -21,19 +26,34 @@ pub async fn require_auth(
         }
     };
 
-    let actor = { state.validate_auth_token(token).await };
-
-    match actor {
-        Ok(actor) => {
-            info!(actor = %actor.name(), "authorization accepted");
-            request.extensions_mut().insert(actor);
-            Ok(next.run(request).await)
+    let auth_token = match AuthToken::parse(token) {
+        Ok(auth_token) => auth_token,
+        Err(error) => {
+            let store_error = auth_token_error(&error);
+            let message = auth_failure_message(&store_error);
+            info!(error = %store_error, "authorization rejected");
+            return Err(ApiError::unauthorized(message));
         }
+    };
+
+    let actor = match state.get_actor(auth_token.actor_name()).await {
+        Ok(actor) => actor,
         Err(error) => {
             let message = auth_failure_message(&error);
             info!(error = %error, "authorization rejected");
-            Err(ApiError::unauthorized(message))
+            return Err(ApiError::unauthorized(message));
         }
+    };
+
+    if actor.verify_auth_token(&auth_token) {
+        info!(actor = %actor.name(), "authorization accepted");
+        request.extensions_mut().insert(actor);
+        Ok(next.run(request).await)
+    } else {
+        let error = StoreError::InvalidAuthToken;
+        let message = auth_failure_message(&error);
+        info!(error = %error, "authorization rejected");
+        Err(ApiError::unauthorized(message))
     }
 }
 
@@ -60,5 +80,12 @@ fn auth_failure_message(error: &StoreError) -> &'static str {
         | StoreError::InvalidActorName(_)
         | StoreError::InvalidAuthToken => "authorization invalid",
         _ => "authorization unavailable",
+    }
+}
+
+fn auth_token_error(error: &AuthTokenError) -> StoreError {
+    match error {
+        AuthTokenError::InvalidFormat => StoreError::InvalidAuthToken,
+        AuthTokenError::InvalidActorName(name) => StoreError::InvalidActorName(name.clone()),
     }
 }

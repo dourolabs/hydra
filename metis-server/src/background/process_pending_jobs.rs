@@ -124,16 +124,18 @@ mod tests {
 
         assert_eq!(
             state
-                .get_task_status(&first_id)
+                .get_task(&first_id)
                 .await
-                .expect("status should exist"),
+                .expect("task should exist")
+                .status,
             Status::Running
         );
         assert_eq!(
             state
-                .get_task_status(&second_id)
+                .get_task(&second_id)
                 .await
-                .expect("status should exist"),
+                .expect("task should exist")
+                .status,
             Status::Running
         );
     }

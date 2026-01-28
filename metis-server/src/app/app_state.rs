@@ -315,15 +315,14 @@ impl AppState {
         if let Err(err) = store.add_user(user.clone()).await {
             match err {
                 StoreError::UserAlreadyExists(_) => {
-                    store
-                        .set_user_github_token(
-                            &user.username,
-                            user.github_token.clone(),
-                            user.github_user_id,
-                            user.github_refresh_token.clone(),
-                        )
-                        .await
-                        .map_err(|source| LoginError::Store { source })?;
+                    self.set_user_github_token(
+                        &user.username,
+                        user.github_token.clone(),
+                        user.github_user_id,
+                        user.github_refresh_token.clone(),
+                    )
+                    .await
+                    .map_err(|source| LoginError::Store { source })?;
                 }
                 other => return Err(LoginError::Store { source: other }),
             }
@@ -349,11 +348,6 @@ impl AppState {
         let store = self.store.as_ref();
         store.add_actor(actor.clone()).await?;
         Ok((actor, auth_token))
-    }
-
-    pub async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
-        let store = self.store.as_ref();
-        store.validate_auth_token(token).await
     }
 
     pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
@@ -384,6 +378,11 @@ impl AppState {
         store.get_status_log(task_id).await
     }
 
+    pub async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
+        let store = self.store.as_ref();
+        store.get_actor(name).await.map(|actor| actor.item)
+    }
+
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
         store.get_user(username).await.map(|user| user.item)
@@ -397,10 +396,11 @@ impl AppState {
         github_refresh_token: String,
     ) -> Result<User, StoreError> {
         let store = self.store.as_ref();
-        store
-            .set_user_github_token(username, github_token, github_user_id, github_refresh_token)
-            .await
-            .map(|user| user.item)
+        let mut user = store.get_user(username).await?.item;
+        user.github_token = github_token;
+        user.github_user_id = github_user_id;
+        user.github_refresh_token = github_refresh_token;
+        store.update_user(user).await.map(|user| user.item)
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
@@ -980,7 +980,7 @@ impl AppState {
             None => {
                 if let Some(ref job_id) = patch.created_by {
                     let status = store
-                        .get_status(job_id)
+                        .get_task(job_id)
                         .await
                         .map_err(|source| match source {
                             StoreError::TaskNotFound(_) => UpsertPatchError::JobNotFound {
@@ -991,7 +991,9 @@ impl AppState {
                                 job_id: job_id.clone(),
                                 source: other,
                             },
-                        })?;
+                        })?
+                        .item
+                        .status;
 
                     if status != Status::Running {
                         return Err(UpsertPatchError::JobNotRunning {
@@ -1156,7 +1158,7 @@ impl AppState {
             None => {
                 if let Some(ref job_id) = job_id {
                     let status = store
-                        .get_status(job_id)
+                        .get_task(job_id)
                         .await
                         .map_err(|source| match source {
                             StoreError::TaskNotFound(_) => UpsertIssueError::JobNotFound {
@@ -1167,7 +1169,9 @@ impl AppState {
                                 job_id: job_id.clone(),
                                 source: other,
                             },
-                        })?;
+                        })?
+                        .item
+                        .status;
 
                     if status != Status::Running {
                         return Err(UpsertIssueError::JobNotRunning {
@@ -1486,11 +1490,6 @@ impl AppState {
         store.get_task(task_id).await.map(|task| task.item)
     }
 
-    pub async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
-        let store = self.store.as_ref();
-        store.get_status(task_id).await
-    }
-
     pub async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store.get_tasks_for_issue(issue_id).await
@@ -1700,7 +1699,7 @@ async fn active_tasks_for_issue(
 
     let mut active_task_ids = Vec::new();
     for task_id in task_ids {
-        let status = store.get_status(&task_id).await?;
+        let status = store.get_task(&task_id).await?.item.status;
         if matches!(status, Status::Pending | Status::Running) {
             active_task_ids.push(task_id);
         }
@@ -1994,7 +1993,7 @@ mod tests {
 
         {
             let store = state.store.as_ref();
-            let status = store.get_status(&task_id).await.unwrap();
+            let status = store.get_task(&task_id).await.unwrap().item.status;
             assert_eq!(status, Status::Running);
         }
 
@@ -2107,7 +2106,10 @@ mod tests {
         state.reconcile_running_task(task_id.clone()).await;
 
         let store = state.store.as_ref();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
+        assert_eq!(
+            store.get_task(&task_id).await.unwrap().item.status,
+            Status::Failed
+        );
 
         let status_log = store.get_status_log(&task_id).await.unwrap();
         match status_log.result().expect("task should be finished") {
@@ -2141,7 +2143,10 @@ mod tests {
         state.reconcile_running_task(task_id.clone()).await;
 
         let store = state.store.as_ref();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Failed);
+        assert_eq!(
+            store.get_task(&task_id).await.unwrap().item.status,
+            Status::Failed
+        );
         let status_log = store.get_status_log(&task_id).await.unwrap();
         assert!(status_log.end_time().is_some());
 
