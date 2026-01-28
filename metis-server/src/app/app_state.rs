@@ -214,7 +214,7 @@ pub enum AgentError {
 pub enum LoginError {
     #[error("invalid github token: {0}")]
     InvalidGithubToken(String),
-    #[error("github user '{username}' is not in any allowed organization")]
+    #[error("github user '{username}' is not in an allowed organization")]
     ForbiddenGithubOrg { username: String },
     #[error("login store operation failed")]
     Store {
