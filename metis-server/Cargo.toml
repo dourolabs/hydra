@@ -45,6 +45,7 @@ sqlx = { version = "0.7", default-features = false, features = [
     "migrate",
 ] }
 openssl-sys = { workspace = true }
+secrecy = "0.10"
 
 [dev-dependencies]
 serde_urlencoded = "0.7"

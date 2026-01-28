@@ -24,6 +24,11 @@ use metis_common::{
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
+use reqwest::{
+    Client, Url,
+    header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
+};
+use secrecy::ExposeSecret;
 use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
@@ -163,6 +168,53 @@ pub enum UpsertPatchError {
         source: StoreError,
         patch_id: PatchId,
         issue_id: IssueId,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum PatchAssetError {
+    #[error("patch '{patch_id}' not found")]
+    PatchNotFound {
+        #[source]
+        source: StoreError,
+        patch_id: PatchId,
+    },
+    #[error("patch store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+    #[error("patch '{patch_id}' has no github pull request")]
+    MissingGithubPullRequest { patch_id: PatchId },
+    #[error("github app client is not configured")]
+    GithubAppUnavailable,
+    #[error("failed to lookup github installation for '{owner}/{repo}'")]
+    GithubInstallationLookup {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+    },
+    #[error("failed to create github installation client for '{owner}/{repo}'")]
+    GithubInstallationClient {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+    },
+    #[error("invalid github api base url '{api_base_url}'")]
+    InvalidGithubApiBaseUrl {
+        #[source]
+        source: anyhow::Error,
+        api_base_url: String,
+    },
+    #[error("failed to upload github asset for '{owner}/{repo}#{number}'")]
+    GithubAssetUpload {
+        #[source]
+        source: anyhow::Error,
+        owner: String,
+        repo: String,
+        number: u64,
     },
 }
 
@@ -414,6 +466,76 @@ impl AppState {
         store.list_patches().await
     }
 
+    pub async fn create_patch_asset(
+        &self,
+        patch_id: PatchId,
+        filename: String,
+        contents: Vec<u8>,
+    ) -> Result<String, PatchAssetError> {
+        let store = self.store.as_ref();
+        let patch = match store.get_patch(&patch_id).await {
+            Ok(patch) => patch,
+            Err(source @ StoreError::PatchNotFound(_)) => {
+                return Err(PatchAssetError::PatchNotFound {
+                    source,
+                    patch_id: patch_id.clone(),
+                });
+            }
+            Err(source) => return Err(PatchAssetError::Store { source }),
+        };
+
+        let github = patch.item.github.as_ref().ok_or_else(|| {
+            PatchAssetError::MissingGithubPullRequest {
+                patch_id: patch_id.clone(),
+            }
+        })?;
+
+        let owner = github.owner.clone();
+        let repo = github.repo.clone();
+        let number = github.number;
+        let token = self.github_installation_token(&owner, &repo).await?;
+        let upload_url = self.github_upload_url(&owner, &repo, number, &filename)?;
+
+        let response = Client::new()
+            .post(upload_url)
+            .header(ACCEPT, "application/vnd.github+json")
+            .header(USER_AGENT, "metis-server")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .bearer_auth(token)
+            .body(contents)
+            .send()
+            .await
+            .map_err(|source| PatchAssetError::GithubAssetUpload {
+                source: source.into(),
+                owner: owner.clone(),
+                repo: repo.clone(),
+                number,
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(PatchAssetError::GithubAssetUpload {
+                source: anyhow::anyhow!("github upload failed with status {status}: {body}"),
+                owner,
+                repo,
+                number,
+            });
+        }
+
+        let payload = response
+            .json::<GithubAssetUploadResponse>()
+            .await
+            .map_err(|source| PatchAssetError::GithubAssetUpload {
+                source: source.into(),
+                owner: owner.clone(),
+                repo: repo.clone(),
+                number,
+            })?;
+
+        Ok(payload.url)
+    }
+
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await
@@ -568,6 +690,89 @@ impl AppState {
             })?;
 
         Ok(installation_client)
+    }
+
+    async fn github_installation_token(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<String, PatchAssetError> {
+        let app_client = self
+            .github_app
+            .as_ref()
+            .ok_or(PatchAssetError::GithubAppUnavailable)?;
+
+        let installation = app_client
+            .apps()
+            .get_repository_installation(owner, repo)
+            .await
+            .map_err(|source| PatchAssetError::GithubInstallationLookup {
+                source,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+            })?;
+
+        let (_installation_client, token) = app_client
+            .installation_and_token(installation.id)
+            .await
+            .map_err(|source| PatchAssetError::GithubInstallationClient {
+                source,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+            })?;
+
+        Ok(token.expose_secret().to_string())
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn github_upload_url(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+        filename: &str,
+    ) -> Result<Url, PatchAssetError> {
+        let mut base_url = self.github_upload_base_url()?;
+        let base_path = base_url.path().trim_end_matches('/');
+        let path = format!("{base_path}/repos/{owner}/{repo}/issues/{number}/assets");
+        base_url.set_path(&path);
+        base_url.query_pairs_mut().append_pair("name", filename);
+        Ok(base_url)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn github_upload_base_url(&self) -> Result<Url, PatchAssetError> {
+        let api_base_url = self.config.github_app.api_base_url();
+        let api_url = Url::parse(api_base_url).map_err(|source| {
+            PatchAssetError::InvalidGithubApiBaseUrl {
+                source: source.into(),
+                api_base_url: api_base_url.to_string(),
+            }
+        })?;
+
+        if api_url.host_str() == Some("api.github.com") {
+            return Url::parse("https://uploads.github.com").map_err(|source| {
+                PatchAssetError::InvalidGithubApiBaseUrl {
+                    source: source.into(),
+                    api_base_url: api_base_url.to_string(),
+                }
+            });
+        }
+
+        let mut upload_url = api_url.clone();
+        let api_path = api_url.path().trim_end_matches('/');
+        let upload_path = if api_path.ends_with("/api/v3") {
+            format!("{}/api/uploads", api_path.trim_end_matches("/api/v3"))
+        } else if api_path.ends_with("/api") {
+            format!("{}/api/uploads", api_path.trim_end_matches("/api"))
+        } else if api_path.is_empty() {
+            "/uploads".to_string()
+        } else {
+            format!("{api_path}/uploads")
+        };
+        upload_url.set_path(&upload_path);
+        upload_url.set_query(None);
+        Ok(upload_url)
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
@@ -1919,9 +2124,14 @@ async fn active_tasks_for_issue(
     Ok(active_task_ids)
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubAssetUploadResponse {
+    url: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppState, LoginError, UpsertIssueError};
+    use super::{AppState, LoginError, PatchAssetError, UpsertIssueError};
     use crate::app::ServiceState;
     use crate::{
         domain::{
@@ -1937,11 +2147,12 @@ mod tests {
         store::{MemoryStore, Status, StoreError, TaskError},
         test_utils::{
             MockJobEngine, TestStateHandles, add_repository, github_user_response, test_app_config,
-            test_state, test_state_with_engine, test_state_with_github_api_base_url,
+            test_state, test_state_handles, test_state_with_engine,
+            test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
-    use httpmock::Method::PATCH;
+    use httpmock::Method::{PATCH, POST};
     use httpmock::prelude::*;
     use jsonwebtoken::EncodingKey;
     use metis_common::{IssueId, RepoName, TaskId};
@@ -2328,6 +2539,103 @@ WhfybNAUrIC88VYH32GCWb0=\n\
         installation_mock.assert_async().await;
         token_mock.assert_async().await;
         create_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let installation_id = 77;
+
+        let installation_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/repos/octo/repo/installation");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_response(installation_id));
+        });
+        let token_mock = github_server.mock(|when, then| {
+            when.method(POST).path(format!(
+                "/app/installations/{installation_id}/access_tokens"
+            ));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_token_response("token-789"));
+        });
+        let upload_mock = github_server.mock(|when, then| {
+            when.method(POST)
+                .path("/uploads/repos/octo/repo/issues/42/assets")
+                .query_param("name", "artifact.txt");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "url": "https://example.com/assets/asset-123"
+                }));
+        });
+
+        let handles = test_state_with_github_app(github_server.base_url());
+        let repo_name = RepoName::new("octo", "repo")?;
+        let patch = Patch::new(
+            "Asset patch".to_string(),
+            "patch with asset".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(TaskId::new()),
+            Vec::new(),
+            repo_name,
+            Some(GithubPr::new(
+                "octo".to_string(),
+                "repo".to_string(),
+                42,
+                Some("feature".to_string()),
+                Some("main".to_string()),
+                None,
+                None,
+            )),
+        );
+        let patch_id = handles.store.as_ref().add_patch(patch).await?;
+
+        let url = handles
+            .state
+            .create_patch_asset(patch_id, "artifact.txt".to_string(), b"hello".to_vec())
+            .await?;
+
+        assert_eq!(url, "https://example.com/assets/asset-123");
+        installation_mock.assert_async().await;
+        token_mock.assert_async().await;
+        upload_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_asset_requires_github_pr() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::new("octo", "repo")?;
+        let patch = Patch::new(
+            "Asset patch".to_string(),
+            "patch with asset".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(TaskId::new()),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let patch_id = handles.store.as_ref().add_patch(patch).await?;
+
+        let err = handles
+            .state
+            .create_patch_asset(patch_id, "artifact.txt".to_string(), b"hello".to_vec())
+            .await
+            .expect_err("missing github PR should error");
+
+        assert!(matches!(
+            err,
+            PatchAssetError::MissingGithubPullRequest { .. }
+        ));
 
         Ok(())
     }

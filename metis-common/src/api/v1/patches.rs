@@ -278,6 +278,18 @@ impl UpsertPatchResponse {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CreatePatchAssetResponse {
+    pub url: String,
+}
+
+impl CreatePatchAssetResponse {
+    pub fn new(url: String) -> Self {
+        Self { url }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SearchPatchesQuery {

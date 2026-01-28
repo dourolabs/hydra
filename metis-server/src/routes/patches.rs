@@ -2,19 +2,21 @@ use crate::domain::patches::{
     ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
 };
 use crate::{
-    app::{AppState, UpsertPatchError},
+    app::{AppState, PatchAssetError, UpsertPatchError},
     store::StoreError,
 };
 use anyhow::anyhow;
 use axum::{
     Json, async_trait,
+    body::Bytes,
     extract::{FromRequestParts, Path, Query, State},
-    http::request::Parts,
+    http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
 };
 use metis_common::{
     PatchId,
     api::v1::{self, ApiError},
 };
+use std::path::Path as StdPath;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -113,6 +115,28 @@ pub async fn list_patches(
         "list_patches completed"
     );
     Ok(Json(response))
+}
+
+pub async fn create_patch_asset(
+    State(state): State<AppState>,
+    PatchIdPath(patch_id): PatchIdPath,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<v1::patches::CreatePatchAssetResponse>, ApiError> {
+    info!(
+        patch_id = %patch_id,
+        bytes = body.len(),
+        "create_patch_asset invoked"
+    );
+
+    let filename = asset_filename(&headers, &patch_id);
+    let asset_url = state
+        .create_patch_asset(patch_id.clone(), filename, body.to_vec())
+        .await
+        .map_err(map_patch_asset_error)?;
+
+    info!(patch_id = %patch_id, "create_patch_asset completed");
+    Ok(Json(v1::patches::CreatePatchAssetResponse::new(asset_url)))
 }
 
 fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
@@ -313,4 +337,130 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
             ApiError::internal(anyhow!("patch store error: {other}"))
         }
     }
+}
+
+fn map_patch_asset_error(err: PatchAssetError) -> ApiError {
+    match err {
+        PatchAssetError::PatchNotFound { patch_id, .. } => {
+            error!(patch_id = %patch_id, "patch not found for asset upload");
+            ApiError::not_found(format!("patch '{patch_id}' not found"))
+        }
+        PatchAssetError::Store { source } => {
+            error!(error = %source, "patch store operation failed");
+            ApiError::internal(anyhow!("patch store error: {source}"))
+        }
+        PatchAssetError::MissingGithubPullRequest { patch_id } => {
+            error!(
+                patch_id = %patch_id,
+                "patch missing github pull request for asset upload"
+            );
+            ApiError::bad_request(format!(
+                "patch '{patch_id}' is missing a github pull request"
+            ))
+        }
+        PatchAssetError::GithubAppUnavailable => {
+            error!("github app not configured for patch assets");
+            ApiError::internal(anyhow!("github app not configured"))
+        }
+        PatchAssetError::GithubInstallationLookup {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to lookup github installation for asset upload"
+            );
+            ApiError::internal(anyhow!(
+                "failed to lookup github installation for '{owner}/{repo}': {source}"
+            ))
+        }
+        PatchAssetError::GithubInstallationClient {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to create github installation client for asset upload"
+            );
+            ApiError::internal(anyhow!(
+                "failed to create github installation client for '{owner}/{repo}': {source}"
+            ))
+        }
+        PatchAssetError::InvalidGithubApiBaseUrl {
+            api_base_url,
+            source,
+        } => {
+            error!(
+                api_base_url = %api_base_url,
+                error = %source,
+                "invalid github api base url for uploads"
+            );
+            ApiError::internal(anyhow!(
+                "invalid github api base url '{api_base_url}': {source}"
+            ))
+        }
+        PatchAssetError::GithubAssetUpload {
+            owner,
+            repo,
+            number,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                number = number,
+                error = %source,
+                "failed to upload github asset"
+            );
+            ApiError::internal(anyhow!(
+                "failed to upload github asset for '{owner}/{repo}#{number}': {source}"
+            ))
+        }
+    }
+}
+
+fn asset_filename(headers: &HeaderMap, patch_id: &PatchId) -> String {
+    let fallback = format!("patch-{patch_id}-asset.bin");
+
+    let header_name = headers
+        .get("x-file-name")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| StdPath::new(value).file_name())
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string());
+
+    if let Some(name) = header_name {
+        return name;
+    }
+
+    let content_disposition = headers
+        .get(CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .unwrap_or_default();
+
+    if let Some(name) = content_disposition
+        .split(';')
+        .map(str::trim)
+        .find_map(|segment| segment.strip_prefix("filename="))
+    {
+        let trimmed = name.trim_matches('"');
+        if let Some(file_name) = StdPath::new(trimmed).file_name() {
+            if let Some(file_name) = file_name.to_str() {
+                if !file_name.trim().is_empty() {
+                    return file_name.to_string();
+                }
+            }
+        }
+    }
+
+    fallback
 }
