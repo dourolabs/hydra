@@ -116,15 +116,19 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn update_task(&self, _metis_id: &TaskId, _task: Task) -> Result<(), StoreError> {
+    async fn update_task(
+        &self,
+        _metis_id: &TaskId,
+        _task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
         fail()
     }
 
-    async fn get_task(&self, _id: &TaskId) -> Result<Task, StoreError> {
+    async fn get_task(&self, _id: &TaskId) -> Result<Versioned<Task>, StoreError> {
         fail()
     }
 
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         fail()
     }
 

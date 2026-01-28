@@ -9,7 +9,6 @@ use crate::domain::{
     actors::Actor,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
-    task_status::Event,
     users::{User, Username},
 };
 use metis_common::{
@@ -37,8 +36,6 @@ pub struct MemoryStore {
     issue_tasks: DashMap<IssueId, Vec<TaskId>>,
     /// Maps patch IDs to the issues that reference them
     patch_issues: DashMap<PatchId, Vec<IssueId>>,
-    /// Maps task IDs to their TaskStatusLog
-    status_logs: DashMap<TaskId, Vec<Versioned<TaskStatusLog>>>,
     /// Maps usernames to their User data
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
@@ -57,14 +54,9 @@ impl MemoryStore {
             issue_blocked_on: DashMap::new(),
             issue_tasks: DashMap::new(),
             patch_issues: DashMap::new(),
-            status_logs: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
         }
-    }
-
-    fn latest_item<T: Clone>(versions: &[Versioned<T>]) -> Option<T> {
-        versions.last().map(|entry| entry.item.clone())
     }
 
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
@@ -80,6 +72,10 @@ impl MemoryStore {
 
     fn versioned_now<T>(item: T, version: VersionNumber) -> Versioned<T> {
         Versioned::new(item, version, Utc::now())
+    }
+
+    fn versioned_at<T>(item: T, version: VersionNumber, timestamp: DateTime<Utc>) -> Versioned<T> {
+        Versioned::new(item, version, timestamp)
     }
 
     /// Updates issue adjacency indexes to match the provided dependency list.
@@ -446,20 +442,15 @@ impl Store for MemoryStore {
     ) -> Result<TaskId, StoreError> {
         // Generate a unique ID for the new task
         let id = TaskId::new();
+        let mut task = task;
+        task.status = Status::Pending;
+        task.last_message = None;
+        task.error = None;
         let spawned_from = task.spawned_from.clone();
 
         // Add the task
         self.tasks
-            .insert(id.clone(), vec![Self::versioned_now(task, 1)]);
-
-        // Initialize status log
-        self.status_logs.insert(
-            id.clone(),
-            vec![Self::versioned_now(
-                TaskStatusLog::new(Status::Pending, creation_time),
-                1,
-            )],
-        );
+            .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
 
         if let Some(issue_id) = spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, id.clone());
@@ -480,19 +471,16 @@ impl Store for MemoryStore {
                 "Task already exists: {metis_id}"
             )));
         }
+        let mut task = task;
+        task.status = Status::Pending;
+        task.last_message = None;
+        task.error = None;
         let spawned_from = task.spawned_from.clone();
 
         // Add the task with the specified ID
-        self.tasks
-            .insert(metis_id.clone(), vec![Self::versioned_now(task, 1)]);
-
-        // Initialize status log
-        self.status_logs.insert(
+        self.tasks.insert(
             metis_id.clone(),
-            vec![Self::versioned_now(
-                TaskStatusLog::new(Status::Pending, creation_time),
-                1,
-            )],
+            vec![Self::versioned_at(task, 1, creation_time)],
         );
 
         if let Some(issue_id) = spawned_from.as_ref() {
@@ -502,7 +490,11 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
         let previous_spawned_from = match self.tasks.get(metis_id) {
             Some(entry) => entry
                 .value()
@@ -518,53 +510,65 @@ impl Store for MemoryStore {
         }
 
         // Overwrite the existing task without modifying edge structure
-        if let Some(mut versions) = self.tasks.get_mut(metis_id) {
-            let next_version = Self::next_version(&versions);
-            versions.push(Self::versioned_now(task.clone(), next_version));
-        }
+        let updated = match self.tasks.get_mut(metis_id) {
+            Some(mut versions) => {
+                let next_version = Self::next_version(&versions);
+                let versioned = Self::versioned_now(task.clone(), next_version);
+                versions.push(versioned.clone());
+                versioned
+            }
+            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+        };
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, metis_id.clone());
         }
-        Ok(())
+        Ok(updated)
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError> {
+    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
         self.tasks
             .get(id)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        Ok(self.tasks.iter().map(|entry| entry.key().clone()).collect())
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        Ok(self
+            .tasks
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                Some((entry.key().clone(), latest))
+            })
+            .collect())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         Ok(self
-            .status_logs
+            .tasks
             .iter()
             .filter(|entry| {
                 entry
                     .value()
                     .last()
-                    .is_some_and(|log| log.item.current_status() == status)
+                    .is_some_and(|task| task.item.status == status)
             })
             .map(|entry| entry.key().clone())
             .collect())
     }
 
     async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
-        self.status_logs
+        self.tasks
             .get(id)
-            .and_then(|entry| entry.value().last().map(|log| log.item.current_status()))
+            .and_then(|entry| entry.value().last().map(|task| task.item.status))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        self.status_logs
+        self.tasks
             .get(id)
-            .and_then(|entry| entry.value().last().map(|log| log.item.clone()))
+            .and_then(|entry| super::task_status_log_from_versions(entry.value()))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -573,26 +577,27 @@ impl Store for MemoryStore {
         id: &TaskId,
         start_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let mut logs = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        let latest = logs
-            .last()
+        let latest = self
+            .tasks
+            .get(id)
+            .and_then(|entry| entry.value().last().cloned())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(latest.item.current_status(), Status::Pending) {
+        if latest.item.status != Status::Pending {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        let mut updated = latest.item.clone();
-        updated.events.push(Event::Started { at: start_time });
-        let next_version = Self::next_version(&logs);
-        logs.push(Self::versioned_now(updated, next_version));
+        let mut updated = latest.item;
+        updated.status = Status::Running;
+        updated.last_message = None;
+        updated.error = None;
+
+        let mut versions = self
+            .tasks
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_at(updated, next_version, start_time));
 
         Ok(())
     }
@@ -604,37 +609,36 @@ impl Store for MemoryStore {
         last_message: Option<String>,
         end_time: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let mut logs = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        let latest = logs
-            .last()
+        let latest = self
+            .tasks
+            .get(id)
+            .and_then(|entry| entry.value().last().cloned())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
 
-        if !matches!(latest.item.current_status(), Status::Running) {
+        if latest.item.status != Status::Running {
             return Err(StoreError::InvalidStatusTransition);
         }
 
-        let event = match result {
-            Ok(()) => Event::Completed {
-                at: end_time,
-                last_message,
-            },
-            Err(error) => Event::Failed {
-                at: end_time,
-                error,
-            },
-        };
+        let mut updated = latest.item;
+        match result {
+            Ok(()) => {
+                updated.status = Status::Complete;
+                updated.last_message = last_message;
+                updated.error = None;
+            }
+            Err(error) => {
+                updated.status = Status::Failed;
+                updated.last_message = None;
+                updated.error = Some(error);
+            }
+        }
 
-        let mut updated = latest.item.clone();
-        updated.events.push(event);
-        let next_version = Self::next_version(&logs);
-        logs.push(Self::versioned_now(updated, next_version));
+        let mut versions = self
+            .tasks
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_at(updated, next_version, end_time));
 
         Ok(())
     }
@@ -1320,10 +1324,17 @@ mod tests {
         let task = spawn_task();
         let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_task(&task_id).await.unwrap(), task);
+        let fetched = store.get_task(&task_id).await.unwrap();
+        assert_versioned(&fetched, &task, 1);
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
 
-        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
+        let tasks: HashSet<_> = store
+            .list_tasks()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(tasks, HashSet::from([task_id]));
     }
 
@@ -1339,14 +1350,15 @@ mod tests {
         updated.prompt = "v2".to_string();
         store.update_task(&task_id, updated.clone()).await.unwrap();
 
-        assert_eq!(store.get_task(&task_id).await.unwrap(), updated);
+        let fetched = store.get_task(&task_id).await.unwrap();
+        assert_versioned(&fetched, &updated, 2);
 
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
     }
 
     #[tokio::test]
-    async fn status_log_versions_increment_on_transitions() {
+    async fn task_versions_increment_on_transitions() {
         let store = MemoryStore::new();
         let task_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
 
@@ -1356,7 +1368,7 @@ mod tests {
             .await
             .unwrap();
 
-        let versions = store.status_logs.get(&task_id).unwrap();
+        let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3]);
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
     }

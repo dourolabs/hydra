@@ -406,6 +406,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             now - Duration::seconds(30),
         )
@@ -422,6 +425,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             now - Duration::seconds(20),
         )
@@ -438,6 +444,9 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             now - Duration::seconds(10),
         )
@@ -484,6 +493,9 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             now - Duration::seconds(20),
         )
@@ -548,6 +560,9 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             now - Duration::seconds(30),
         )
@@ -799,6 +814,9 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -862,6 +880,9 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -913,6 +934,9 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -961,6 +985,9 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -1009,6 +1036,9 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -1124,6 +1154,9 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -1162,6 +1195,9 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
@@ -1208,6 +1244,9 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )

@@ -625,6 +625,7 @@ impl AppState {
             store
                 .get_task(&job_id)
                 .await
+                .map(|_| ())
                 .map_err(|source| SetJobStatusError::NotFound {
                     source,
                     job_id: job_id.clone(),
@@ -652,8 +653,12 @@ impl AppState {
         let (resolved, cpu_limit, memory_limit) = {
             let store = self.store.as_ref();
             match store.get_task(&task_id).await {
-                Ok(task) => match self.resolve_task(&task).await {
-                    Ok(resolved) => (resolved, task.cpu_limit.clone(), task.memory_limit.clone()),
+                Ok(task) => match self.resolve_task(&task.item).await {
+                    Ok(resolved) => (
+                        resolved,
+                        task.item.cpu_limit.clone(),
+                        task.item.memory_limit.clone(),
+                    ),
                     Err(err) => {
                         warn!(
                             metis_id = %task_id,
@@ -785,10 +790,10 @@ impl AppState {
             return;
         }
 
-        let store_task_ids = {
+        let store_task_ids: Vec<TaskId> = {
             let store = self.store.as_ref();
             match store.list_tasks().await {
-                Ok(ids) => ids,
+                Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
                     return;
@@ -1410,12 +1415,15 @@ impl AppState {
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
-        store.list_tasks().await
+        store
+            .list_tasks()
+            .await
+            .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }
 
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
         let store = self.store.as_ref();
-        store.get_task(task_id).await
+        store.get_task(task_id).await.map(|task| task.item)
     }
 
     pub async fn get_task_status(&self, task_id: &TaskId) -> Result<Status, StoreError> {
