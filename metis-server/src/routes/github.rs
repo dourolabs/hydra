@@ -27,86 +27,95 @@ pub async fn get_github_token(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
 ) -> Result<Json<GithubTokenResponse>, ApiError> {
-    info!(actor = %actor.name(), "get_github_token invoked");
-    let (username, user) = {
-        let username = match &actor.user_or_worker {
-            UserOrWorker::Username(username) => username.clone(),
-            UserOrWorker::Task(task_id) => {
-                let task = state.get_task(task_id).await.map_err(|err| match err {
-                    StoreError::TaskNotFound(_) => {
-                        error!(task_id = %task_id, "task not found");
-                        ApiError::not_found(format!("task '{task_id}' not found"))
-                    }
-                    other => {
-                        error!(task_id = %task_id, error = %other, "failed to load task");
-                        ApiError::internal(format!("failed to load task '{task_id}': {other}"))
-                    }
-                })?;
+    let response = actor.get_github_token(&state).await?;
+    Ok(Json(response))
+}
 
-                let issue_id = task.spawned_from.ok_or_else(|| {
-                    error!(task_id = %task_id, "task missing spawned_from issue");
-                    ApiError::not_found(format!("task '{task_id}' missing spawned_from issue"))
-                })?;
+impl Actor {
+    async fn get_github_token(&self, state: &AppState) -> Result<GithubTokenResponse, ApiError> {
+        info!(actor = %self.name(), "get_github_token invoked");
+        let (username, user) = {
+            let username = match &self.user_or_worker {
+                UserOrWorker::Username(username) => username.clone(),
+                UserOrWorker::Task(task_id) => {
+                    let task = state.get_task(task_id).await.map_err(|err| match err {
+                        StoreError::TaskNotFound(_) => {
+                            error!(task_id = %task_id, "task not found");
+                            ApiError::not_found(format!("task '{task_id}' not found"))
+                        }
+                        other => {
+                            error!(task_id = %task_id, error = %other, "failed to load task");
+                            ApiError::internal(format!("failed to load task '{task_id}': {other}"))
+                        }
+                    })?;
 
-                let issue = state.get_issue(&issue_id).await.map_err(|err| match err {
-                    StoreError::IssueNotFound(_) => {
-                        error!(issue_id = %issue_id, "issue not found");
-                        ApiError::not_found(format!("issue '{issue_id}' not found"))
-                    }
-                    other => {
-                        error!(issue_id = %issue_id, error = %other, "failed to load issue");
-                        ApiError::internal(format!("failed to load issue '{issue_id}': {other}"))
-                    }
-                })?;
+                    let issue_id = task.spawned_from.ok_or_else(|| {
+                        error!(task_id = %task_id, "task missing spawned_from issue");
+                        ApiError::not_found(format!("task '{task_id}' missing spawned_from issue"))
+                    })?;
 
-                issue.item.creator
-            }
-        };
+                    let issue = state.get_issue(&issue_id).await.map_err(|err| match err {
+                        StoreError::IssueNotFound(_) => {
+                            error!(issue_id = %issue_id, "issue not found");
+                            ApiError::not_found(format!("issue '{issue_id}' not found"))
+                        }
+                        other => {
+                            error!(issue_id = %issue_id, error = %other, "failed to load issue");
+                            ApiError::internal(format!(
+                                "failed to load issue '{issue_id}': {other}"
+                            ))
+                        }
+                    })?;
 
-        let user = state.get_user(&username).await.map_err(|err| match err {
-            StoreError::UserNotFound(missing) => {
-                error!(username = %missing, "user not found");
-                ApiError::not_found(format!("user '{missing}' not found"))
-            }
-            other => {
-                error!(username = %username, error = %other, "failed to load user");
-                ApiError::internal(format!("failed to load user '{username}': {other}"))
-            }
-        })?;
+                    issue.item.creator
+                }
+            };
 
-        (username, user)
-    };
-
-    let mut github_token = user.github_token.clone();
-    if !github_token_is_valid(&state.config.github_app, &github_token).await? {
-        let refreshed =
-            refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
-        let updated = state
-            .set_user_github_token(
-                &username,
-                refreshed.access_token.clone(),
-                user.github_user_id,
-                refreshed.refresh_token.clone(),
-            )
-            .await
-            .map_err(|err| match err {
+            let user = state.get_user(&username).await.map_err(|err| match err {
                 StoreError::UserNotFound(missing) => {
                     error!(username = %missing, "user not found");
                     ApiError::not_found(format!("user '{missing}' not found"))
                 }
                 other => {
-                    error!(username = %username, error = %other, "failed to refresh github token");
-                    ApiError::internal(format!(
-                        "failed to refresh github token for '{username}': {other}"
-                    ))
+                    error!(username = %username, error = %other, "failed to load user");
+                    ApiError::internal(format!("failed to load user '{username}': {other}"))
                 }
             })?;
 
-        github_token = updated.github_token;
-    }
+            (username, user)
+        };
 
-    info!(actor = %actor.name(), username = %username, "get_github_token completed");
-    Ok(Json(GithubTokenResponse { github_token }))
+        let mut github_token = user.github_token.clone();
+        if !github_token_is_valid(&state.config.github_app, &github_token).await? {
+            let refreshed =
+                refresh_github_token(&state.config.github_app, &user.github_refresh_token).await?;
+            let updated = state
+                .set_user_github_token(
+                    &username,
+                    refreshed.access_token.clone(),
+                    user.github_user_id,
+                    refreshed.refresh_token.clone(),
+                )
+                .await
+                .map_err(|err| match err {
+                    StoreError::UserNotFound(missing) => {
+                        error!(username = %missing, "user not found");
+                        ApiError::not_found(format!("user '{missing}' not found"))
+                    }
+                    other => {
+                        error!(username = %username, error = %other, "failed to refresh github token");
+                        ApiError::internal(format!(
+                            "failed to refresh github token for '{username}': {other}"
+                        ))
+                    }
+                })?;
+
+            github_token = updated.github_token;
+        }
+
+        info!(actor = %self.name(), username = %username, "get_github_token completed");
+        Ok(GithubTokenResponse { github_token })
+    }
 }
 
 #[derive(Debug, Deserialize)]
