@@ -8,7 +8,7 @@ mod storage;
 
 pub use client::BuildCacheClient;
 pub use client::BuildCacheEntry;
-pub use config::{BuildCacheConfig, BuildCacheMatcher, S3StorageConfig};
+pub use config::{BuildCacheConfig, BuildCacheMatcher, FileSystemStorageConfig, S3StorageConfig};
 pub use error::BuildCacheError;
 pub use key::BuildCacheKey;
-pub use storage::{S3StorageClient, StorageClient, StorageObject};
+pub use storage::{FileSystemStorageClient, S3StorageClient, StorageClient, StorageObject};
