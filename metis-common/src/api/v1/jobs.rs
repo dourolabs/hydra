@@ -1,4 +1,4 @@
-use crate::{IssueId, RepoName, TaskId, task_status::TaskStatusLog};
+use crate::{BuildCacheContext, IssueId, RepoName, TaskId, task_status::TaskStatusLog};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -200,6 +200,8 @@ pub struct WorkerContext {
     pub prompt: String,
     #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_cache: Option<BuildCacheContext>,
 }
 
 impl WorkerContext {
@@ -207,11 +209,13 @@ impl WorkerContext {
         request_context: Bundle,
         prompt: String,
         variables: HashMap<String, String>,
+        build_cache: Option<BuildCacheContext>,
     ) -> Self {
         Self {
             request_context,
             prompt,
             variables,
+            build_cache,
         }
     }
 }

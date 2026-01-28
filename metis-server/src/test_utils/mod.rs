@@ -2,8 +2,8 @@ use crate::{
     app::{AppState, Repository, ServiceState},
     background::AgentQueue,
     config::{
-        AppConfig, BackgroundSection, DatabaseSection, GithubAppSection, JobSection,
-        KubernetesSection, MetisSection,
+        AppConfig, BackgroundSection, BuildCacheSection, DatabaseSection, GithubAppSection,
+        JobSection, KubernetesSection, MetisSection,
     },
     domain::actors::Actor,
     job_engine::JobEngine,
@@ -78,6 +78,7 @@ pub fn test_app_config() -> AppConfig {
             merge_request_followup_agent: "swe".to_string(),
             ..BackgroundSection::default()
         },
+        build_cache: BuildCacheSection::default(),
     }
 }
 
