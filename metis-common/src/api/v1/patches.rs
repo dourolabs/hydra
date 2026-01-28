@@ -280,6 +280,31 @@ impl UpsertPatchResponse {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct CreatePatchAssetQuery {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl CreatePatchAssetQuery {
+    pub fn new(name: Option<String>) -> Self {
+        Self { name }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CreatePatchAssetResponse {
+    pub asset_url: String,
+}
+
+impl CreatePatchAssetResponse {
+    pub fn new(asset_url: String) -> Self {
+        Self { asset_url }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,

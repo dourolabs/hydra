@@ -6,17 +6,22 @@ use crate::{
         },
         jobs::BundleSpec,
         patches::{
-            ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
+            GithubPr, ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
             UpsertPatchRequest, UpsertPatchResponse,
         },
-        users::Username,
+        users::{User, Username},
     },
     store::{Status, Task},
     test_utils::{
-        spawn_test_server, spawn_test_server_with_state, test_client, test_state_handles,
+        github_user_response, spawn_test_server, spawn_test_server_with_state, test_client,
+        test_state_handles, test_state_with_github_api_base_url,
     },
 };
 use chrono::Utc;
+use httpmock::{Method::GET, Method::POST, MockServer};
+use metis_common::api::v1::patches::CreatePatchAssetResponse;
+use reqwest::Client;
+use serde_json::json;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -239,4 +244,136 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     assert_eq!(patch_results.patches.len(), 1);
     assert_eq!(patch_results.patches[0].patch, filtered_patch);
     Ok(())
+}
+
+#[tokio::test]
+async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
+    let github_server = MockServer::start_async().await;
+    let _user_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200).json_body(github_user_response("octo", 42));
+    });
+
+    let upload_mock = github_server.mock(|when, then| {
+        when.method(POST)
+            .path("/repos/octo/repo/issues/42/comments")
+            .query_param("name", "screenshot.png")
+            .header("authorization", "token gh-token")
+            .header("content-type", "image/png");
+        then.status(201)
+            .json_body(json!({ "url": "https://github.com/octo/repo/assets/1" }));
+    });
+
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let username = Username::from("octo");
+    handles
+        .store
+        .add_user(User::new(
+            username.clone(),
+            42,
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+        ))
+        .await?;
+    let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
+    handles.store.add_actor(actor).await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(auth_token);
+
+    let patch = Patch::new(
+        "asset patch".to_string(),
+        "asset patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        Some(GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            42,
+            None,
+            None,
+            None,
+            None,
+        )),
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response: CreatePatchAssetResponse = client
+        .post(format!(
+            "{}/v1/patches/{}/assets?name=screenshot.png",
+            server.base_url(),
+            created.patch_id
+        ))
+        .header("content-type", "image/png")
+        .body(vec![1, 2, 3, 4])
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(response.asset_url, "https://github.com/octo/repo/assets/1");
+    upload_mock.assert_hits(1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let patch = Patch::new(
+        "missing pr".to_string(),
+        "missing pr".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .post(format!(
+            "{}/v1/patches/{}/assets",
+            server.base_url(),
+            created.patch_id
+        ))
+        .body(vec![1, 2, 3])
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+fn client_with_token(auth_token: String) -> Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let auth_value = format!("Bearer {auth_token}");
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&auth_value).expect("valid auth header"),
+    );
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("failed to build client")
 }

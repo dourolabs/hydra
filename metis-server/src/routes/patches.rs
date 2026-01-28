@@ -1,6 +1,8 @@
 use crate::domain::{
     actors::Actor,
-    patches::{ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest},
+    patches::{
+        GithubPr, ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+    },
 };
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -9,13 +11,17 @@ use crate::{
 use anyhow::anyhow;
 use axum::{
     Extension, Json, async_trait,
+    body::Bytes,
     extract::{FromRequestParts, Path, Query, State},
-    http::request::Parts,
+    http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
 };
 use metis_common::{
     PatchId,
     api::v1::{self, ApiError},
 };
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use serde::Deserialize;
+use std::path::Path as FilePath;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -118,6 +124,81 @@ pub async fn list_patches(
     Ok(Json(response))
 }
 
+pub async fn create_patch_asset(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    PatchIdPath(patch_id): PatchIdPath,
+    Query(query): Query<v1::patches::CreatePatchAssetQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<v1::patches::CreatePatchAssetResponse>, ApiError> {
+    info!(patch_id = %patch_id, "create_patch_asset invoked");
+
+    if body.is_empty() {
+        return Err(ApiError::bad_request("asset payload must not be empty"));
+    }
+
+    let patch = state
+        .get_patch(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+    let github = patch
+        .item
+        .github
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("patch does not have a GitHub pull request"))?;
+
+    let token = actor.get_github_token(&state).await?;
+    let asset_name = resolve_asset_name(&query, &headers, &patch_id);
+    let upload_url = build_upload_url(state.config.github_app.api_base_url(), github, &asset_name)?;
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("application/octet-stream");
+
+    let response = reqwest::Client::new()
+        .post(upload_url)
+        .header(ACCEPT, "application/vnd.github+json")
+        .header(USER_AGENT, "metis-server")
+        .header(AUTHORIZATION, format!("token {}", token.github_token))
+        .header(CONTENT_TYPE, content_type)
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to upload patch asset");
+            ApiError::internal(format!("failed to upload patch asset: {err}"))
+        })?;
+
+    let status = response.status();
+    let payload = response
+        .json::<GithubAssetUploadResponse>()
+        .await
+        .map_err(|err| {
+            error!(patch_id = %patch_id, error = %err, "failed to decode github response");
+            ApiError::internal(format!("failed to decode github response: {err}"))
+        })?;
+
+    if !status.is_success() {
+        error!(
+            patch_id = %patch_id,
+            status = %status,
+            "github asset upload failed"
+        );
+        return Err(ApiError::internal(format!(
+            "github asset upload failed with status {status}"
+        )));
+    }
+
+    let asset_url = payload.asset_url().ok_or_else(|| {
+        ApiError::internal("github asset upload response did not include an asset url")
+    })?;
+
+    info!(patch_id = %patch_id, asset_url = %asset_url, "create_patch_asset completed");
+    Ok(Json(v1::patches::CreatePatchAssetResponse::new(asset_url)))
+}
+
 fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
     if let Some(term) = search_term {
         let lower_id = patch_id.to_string().to_lowercase();
@@ -156,6 +237,121 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
     }
 
     true
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAssetUploadResponse {
+    url: Option<String>,
+    browser_download_url: Option<String>,
+    html_url: Option<String>,
+    markdown: Option<String>,
+}
+
+impl GithubAssetUploadResponse {
+    fn asset_url(self) -> Option<String> {
+        if let Some(url) = self.url {
+            return Some(url);
+        }
+        if let Some(url) = self.browser_download_url {
+            return Some(url);
+        }
+        if let Some(url) = self.html_url {
+            return Some(url);
+        }
+        self.markdown
+            .as_deref()
+            .and_then(extract_url_from_markdown)
+            .map(ToString::to_string)
+    }
+}
+
+fn extract_url_from_markdown(markdown: &str) -> Option<&str> {
+    let start = markdown.find('(')?;
+    let end = markdown[start + 1..].find(')')?;
+    Some(&markdown[start + 1..start + 1 + end])
+}
+
+fn resolve_asset_name(
+    query: &v1::patches::CreatePatchAssetQuery,
+    headers: &HeaderMap,
+    patch_id: &PatchId,
+) -> String {
+    query
+        .name
+        .as_ref()
+        .and_then(|value| sanitize_filename(value))
+        .or_else(|| filename_from_content_disposition(headers))
+        .unwrap_or_else(|| format!("patch-{patch_id}-asset.bin"))
+}
+
+fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(CONTENT_DISPOSITION)?.to_str().ok()?;
+    for part in value.split(';') {
+        let part = part.trim();
+        if let Some(filename) = part.strip_prefix("filename=") {
+            let filename = filename.trim_matches('"');
+            if !filename.is_empty() {
+                return sanitize_filename(filename);
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_filename(value: &str) -> Option<String> {
+    let filename = FilePath::new(value).file_name()?.to_string_lossy();
+    let trimmed = filename.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn build_upload_url(
+    api_base_url: &str,
+    github: &GithubPr,
+    name: &str,
+) -> Result<reqwest::Url, ApiError> {
+    let mut base = github_upload_base_url(api_base_url)?;
+    base.set_path(&format!(
+        "/repos/{}/{}/issues/{}/comments",
+        github.owner, github.repo, github.number
+    ));
+    base.set_query(None);
+    base.query_pairs_mut().append_pair("name", name);
+    Ok(base)
+}
+
+fn github_upload_base_url(api_base_url: &str) -> Result<reqwest::Url, ApiError> {
+    let mut url = reqwest::Url::parse(api_base_url).map_err(|err| {
+        ApiError::internal(format!(
+            "invalid github api base url '{api_base_url}': {err}"
+        ))
+    })?;
+
+    if url.host_str() == Some("api.github.com") {
+        url.set_host(Some("uploads.github.com"))
+            .map_err(|err| ApiError::internal(format!("invalid github upload url: {err}")))?;
+        url.set_path("/");
+        url.set_query(None);
+        return Ok(url);
+    }
+
+    if url.path().ends_with("/api/v3") {
+        let trimmed = url.path().trim_end_matches("/api/v3");
+        let mut new_path = String::new();
+        if !trimmed.is_empty() {
+            new_path.push_str(trimmed.trim_end_matches('/'));
+        }
+        new_path.push_str("/api/uploads");
+        url.set_path(&new_path);
+        url.set_query(None);
+        return Ok(url);
+    }
+
+    url.set_query(None);
+    Ok(url)
 }
 
 fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
