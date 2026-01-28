@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{anyhow, bail, Context, Result};
 use metis::config::{AppConfig, ServerSection};
 use metis::{
@@ -17,9 +19,11 @@ use metis_server::{
     app::{AppState, ServiceState},
     background::poll_github_patches::GithubPollerWorker,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
+    background::spawner::AgentQueue,
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
 };
+use octocrab::Octocrab;
 use std::{path::Path, process::Command, str::FromStr, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::RwLock;
@@ -34,6 +38,8 @@ pub struct TestEnvironment {
     pub service_repo_name: RepoName,
     pub auth_token: String,
     pub current_issue_id: metis_common::IssueId,
+    #[allow(dead_code)]
+    pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     #[allow(dead_code)]
     pub state: AppState,
 }
@@ -218,11 +224,19 @@ fn format_command_outputs(outputs: &[CommandOutput]) -> String {
 }
 
 pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnvironment> {
+    init_test_server_with_remote_and_github(repo_name, None).await
+}
+
+pub async fn init_test_server_with_remote_and_github(
+    repo_name: &str,
+    github_app: Option<Octocrab>,
+) -> Result<TestEnvironment> {
     let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let (state, store, auth_token) = app_state_with_repo(&remote_url, &service_repo_name).await?;
+    let (state, store, auth_token, agents) =
+        app_state_with_repo(&remote_url, &service_repo_name, github_app).await?;
     let server = spawn_test_server_with_state(state.clone(), store)
         .await
         .context("failed to start test server")?;
@@ -265,6 +279,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         service_repo_name,
         auth_token,
         current_issue_id,
+        agents,
         state,
     })
 }
@@ -407,9 +422,16 @@ fn init_service_remote(base_dir: &Path) -> Result<String> {
 async fn app_state_with_repo(
     remote_url: &str,
     repo_name: &RepoName,
-) -> Result<(AppState, Arc<dyn Store>, String)> {
+    github_app: Option<Octocrab>,
+) -> Result<(
+    AppState,
+    Arc<dyn Store>,
+    String,
+    Arc<RwLock<Vec<Arc<AgentQueue>>>>,
+)> {
     let server_config = test_app_config();
     let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+    let agents = Arc::new(RwLock::new(Vec::new()));
     store
         .add_repository(
             repo_name.clone(),
@@ -434,13 +456,14 @@ async fn app_state_with_repo(
     Ok((
         AppState::new(
             Arc::new(server_config),
-            None,
+            github_app,
             Arc::new(ServiceState::default()),
             store.clone(),
             Arc::new(MockJobEngine::new()),
-            Arc::new(RwLock::new(Vec::new())),
+            agents.clone(),
         ),
         store,
         auth_token,
+        agents,
     ))
 }
