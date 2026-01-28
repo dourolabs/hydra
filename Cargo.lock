@@ -4156,6 +4156,7 @@ dependencies = [
  "metis-common",
  "metis-server",
  "octocrab",
+ "openssl",
  "openssl-sys",
  "owo-colors",
  "ratatui",

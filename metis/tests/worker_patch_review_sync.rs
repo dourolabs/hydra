@@ -20,6 +20,7 @@ use metis_server::config::{
 use metis_server::test_utils::github_user_response;
 use octocrab::models::AppId;
 use octocrab::Octocrab;
+use openssl::rsa::Rsa;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -27,7 +28,9 @@ mod common;
 
 use common::test_helpers::init_test_server_with_remote_and_github;
 
-const TEST_APP_PRIVATE_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpQIBAAKCAQEAzOglZTqWKm1YRYk/bxQvHDpIZw1DGdXu8xGDfk54GIkdT+Gq\neg+unyByTaoEHKr9CrUx2zbpLRdjJpt2paNmMAd9nXEl/mQvwiRSiKhSJfqlbLPP\nupBCHYlQP+PpCEJgsm9Hj3FzqkBpz+sC/ZxXJdzYhmEIISKjj5a64eoMdM3UOyZ4\nAQTPkkfGlFVnifnj72dJrLH8doT6obJ3GgulDWDD25ci4ZYaaQivNcVJQvfpdzm2\nzYydmgr5OSnRfu7iDQWt5+kka4h7t1uH9q9GE9vqlb3N/1gYr54c2HmRrd9VxnJH\nSpZXl03bucDS/CwEvBZHIbbmrDoZpNbRBZ1ylwIDAQABAoIBABYTZK6qndxlpL7z\nxxvGhuokSqyfkdJ0vqZSsAypk5LBIvak5LhQfDW0nzFILI08zBTylIko5Kebqhj8\nuCRRna7K/844jylVzeISsQ78DhhSuq54E4c8B4N7Hw7jFQtza0uOEEhJ/CDO3mzX\ncEkL0O/JV/fnovfpmB7eKbWGgQpho43WSfKBPpp8pX/As2VCu9k3Sjk3WcfeOMIT\nHLN7KufkJeEQlxuX4mU+eURyqIoylUwZXYDilWWvSJuIAMmnUo66u4cvG/PBMKIN\neBxxrj1eFiOyA1/UyclztEBoZEoHqG0KbeisbjjkCBQTmn7ywWEixIwCjU1fNpfT\nilXWfLECgYEA/3ynOByvF1XpyofjxOWr14JRfw3fCWecI05s6POo+kP6a3G2GRO7\nMX1bHwpKefYl+0jzjLVToWDVCtQ0N+RAnnbiZRPiZ3TN7hPufMogCgytcu1WRClT\nS5BMCWzKLpI69tsRITypPJXtRiVwRJPo4fCGrFlKzPDPw58OF2VBiL0CgYEAzVF9\nTKyNXtwFzryfWatoFt645Y2hHr1//JxxhOtKe0y7xpE8w0PfYckOngLHFVFlZQgC\nw75ZlRL4jJ2L+7qI4yP0EXqFPAzaQI8R4xnVjHT03EqjRpKM4FR3y0n3fVGYPo19\nnMTRwl56AG//GhL9AKtDNcpdTu+t+BQpSMSor+MCgYEA6uFT7p9YTVDb1inmOc+Y\nk1Go0PEUutW5UzA3qlbQY/z5DayF6Doen9oKWtggLk4hDws7dYICt9uJISKEO1oq\nGkVbz+de/xQAer9yQuGkYPjUwVL3O0Tu4gpwDT4qBnTDps0xy2e0gxGnCRVESJfe\nw1FYzrxsq0s9BzCESPf7LtUCgYEAobCqB2bgEjMdk7ixmTFGULRnUcfeedHsZ+hf\n8bhGOKGuQur/uhrKYTyv+TngxGYMfqr3WmWeMKr29+3eXoiA4rferqEZKbhJbIv/\nHySqKum0J4PT33Dr5oI+sOZ4M8W9Ko3MvVe2hOZYF94bPNJ1UkCNNmA+aTqRe4uN\nE5Rj79cCgYEA3as0X+av2mIyGkRMswBZAG46LYV7TEp+lK8TAsTZ4+jHlcbk5EZc\nNFmgjtmrgZ5aOpOQdtztLXJ8JHBNTqXuw0jDmgSXhYM0GiyZNZcctX0ADspAqAMv\nlJTCale/1jva/ErqSrdOJgGi6xeypuvr121MV5eiHvRHZEN+Pg/NW2M=\n-----END RSA PRIVATE KEY-----\n";
+fn generate_test_rsa_key() -> Result<Vec<u8>> {
+    Ok(Rsa::generate(2048)?.private_key_to_pem()?)
+}
 
 #[tokio::test]
 async fn sync_open_patches_spawns_review_task_for_swe() -> Result<()> {
@@ -155,12 +158,13 @@ async fn sync_open_patches_spawns_review_task_for_swe() -> Result<()> {
             .json_body(json!({ "total_count": 0, "check_runs": [] }));
     });
 
+    let private_key = generate_test_rsa_key().context("failed to generate test RSA key")?;
     let github_app = Octocrab::builder()
         .base_uri(github_base_url)
         .context("failed to set mock GitHub base url")?
         .app(
             AppId::from(1),
-            EncodingKey::from_rsa_pem(TEST_APP_PRIVATE_KEY.as_bytes())
+            EncodingKey::from_rsa_pem(&private_key)
                 .context("failed to parse test GitHub App key")?,
         )
         .build()
