@@ -78,6 +78,10 @@ impl MemoryStore {
             .unwrap_or(1)
     }
 
+    fn versioned_now<T>(item: T, version: VersionNumber) -> Versioned<T> {
+        Versioned::new(item, version, Utc::now())
+    }
+
     /// Updates issue adjacency indexes to match the provided dependency list.
     fn apply_issue_dependency_delta(
         &self,
@@ -198,7 +202,7 @@ impl Store for MemoryStore {
         }
 
         self.repositories
-            .insert(name, vec![Versioned::new(config, 1)]);
+            .insert(name, vec![Self::versioned_now(config, 1)]);
         Ok(())
     }
 
@@ -220,7 +224,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
 
-        versions.push(Versioned::new(config, next_version));
+        versions.push(Self::versioned_now(config, next_version));
         Ok(())
     }
 
@@ -246,7 +250,7 @@ impl Store for MemoryStore {
 
         self.validate_dependencies(&new_dependencies)?;
         self.issues
-            .insert(id.clone(), vec![Versioned::new(issue, 1)]);
+            .insert(id.clone(), vec![Self::versioned_now(issue, 1)]);
 
         if !new_dependencies.is_empty() {
             self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
@@ -281,7 +285,7 @@ impl Store for MemoryStore {
         self.validate_dependencies(&updated_dependencies)?;
         if let Some(mut versions) = self.issues.get_mut(id) {
             let next_version = Self::next_version(&versions);
-            versions.push(Versioned::new(issue, next_version));
+            versions.push(Self::versioned_now(issue, next_version));
         }
 
         if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
@@ -358,7 +362,7 @@ impl Store for MemoryStore {
     async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
         let id = PatchId::new();
         self.patches
-            .insert(id.clone(), vec![Versioned::new(patch, 1)]);
+            .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
         Ok(id)
     }
 
@@ -375,7 +379,7 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Versioned::new(patch, next_version));
+        versions.push(Self::versioned_now(patch, next_version));
         Ok(())
     }
 
@@ -445,12 +449,13 @@ impl Store for MemoryStore {
         let spawned_from = task.spawned_from.clone();
 
         // Add the task
-        self.tasks.insert(id.clone(), vec![Versioned::new(task, 1)]);
+        self.tasks
+            .insert(id.clone(), vec![Self::versioned_now(task, 1)]);
 
         // Initialize status log
         self.status_logs.insert(
             id.clone(),
-            vec![Versioned::new(
+            vec![Self::versioned_now(
                 TaskStatusLog::new(Status::Pending, creation_time),
                 1,
             )],
@@ -479,12 +484,12 @@ impl Store for MemoryStore {
 
         // Add the task with the specified ID
         self.tasks
-            .insert(metis_id.clone(), vec![Versioned::new(task, 1)]);
+            .insert(metis_id.clone(), vec![Self::versioned_now(task, 1)]);
 
         // Initialize status log
         self.status_logs.insert(
             metis_id.clone(),
-            vec![Versioned::new(
+            vec![Self::versioned_now(
                 TaskStatusLog::new(Status::Pending, creation_time),
                 1,
             )],
@@ -515,7 +520,7 @@ impl Store for MemoryStore {
         // Overwrite the existing task without modifying edge structure
         if let Some(mut versions) = self.tasks.get_mut(metis_id) {
             let next_version = Self::next_version(&versions);
-            versions.push(Versioned::new(task.clone(), next_version));
+            versions.push(Self::versioned_now(task.clone(), next_version));
         }
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
@@ -587,7 +592,7 @@ impl Store for MemoryStore {
         let mut updated = latest.item.clone();
         updated.events.push(Event::Started { at: start_time });
         let next_version = Self::next_version(&logs);
-        logs.push(Versioned::new(updated, next_version));
+        logs.push(Self::versioned_now(updated, next_version));
 
         Ok(())
     }
@@ -629,7 +634,7 @@ impl Store for MemoryStore {
         let mut updated = latest.item.clone();
         updated.events.push(event);
         let next_version = Self::next_version(&logs);
-        logs.push(Versioned::new(updated, next_version));
+        logs.push(Self::versioned_now(updated, next_version));
 
         Ok(())
     }
@@ -640,7 +645,8 @@ impl Store for MemoryStore {
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
-        self.actors.insert(name, vec![Versioned::new(actor, 1)]);
+        self.actors
+            .insert(name, vec![Self::versioned_now(actor, 1)]);
         Ok(())
     }
 
@@ -651,7 +657,7 @@ impl Store for MemoryStore {
             .get_mut(&name)
             .ok_or_else(|| StoreError::ActorNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Versioned::new(actor, next_version));
+        versions.push(Self::versioned_now(actor, next_version));
         Ok(())
     }
 
@@ -682,7 +688,7 @@ impl Store for MemoryStore {
         }
 
         self.users
-            .insert(user.username.clone(), vec![Versioned::new(user, 1)]);
+            .insert(user.username.clone(), vec![Self::versioned_now(user, 1)]);
         Ok(())
     }
 
@@ -705,7 +711,7 @@ impl Store for MemoryStore {
         updated.github_user_id = github_user_id;
         updated.github_refresh_token = github_refresh_token;
         let next_version = Self::next_version(&versions);
-        let versioned = Versioned::new(updated, next_version);
+        let versioned = Self::versioned_now(updated, next_version);
         versions.push(versioned.clone());
         Ok(versioned)
     }
@@ -791,6 +797,15 @@ mod tests {
         versions.iter().map(|entry| entry.version).collect()
     }
 
+    fn assert_versioned<T: std::fmt::Debug + PartialEq>(
+        actual: &Versioned<T>,
+        expected_item: &T,
+        expected_version: VersionNumber,
+    ) {
+        assert_eq!(&actual.item, expected_item);
+        assert_eq!(actual.version, expected_version);
+    }
+
     #[tokio::test]
     async fn repository_crud_round_trip() {
         let store = MemoryStore::new();
@@ -814,14 +829,14 @@ mod tests {
             .unwrap();
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(
-            list,
-            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
-        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, name);
+        assert_versioned(&list[0].1, &updated, 2);
 
         let fetched_again = store.get_repository(&name).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
+        assert!(fetched_again.timestamp >= fetched.timestamp);
     }
 
     #[tokio::test]
