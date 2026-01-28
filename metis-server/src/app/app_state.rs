@@ -8,7 +8,7 @@ use crate::{
             TodoItem, UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
-        patches::{Patch, PatchStatus, UpsertPatchRequest},
+        patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -109,6 +109,47 @@ pub enum UpsertPatchError {
     Store {
         #[source]
         source: StoreError,
+    },
+    #[error("github app client is not configured")]
+    GithubAppUnavailable,
+    #[error("failed to lookup github installation for '{owner}/{repo}'")]
+    GithubInstallationLookup {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+    },
+    #[error("failed to create github installation client for '{owner}/{repo}'")]
+    GithubInstallationClient {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+    },
+    #[error("github sync requires a head ref")]
+    GithubHeadRefMissing,
+    #[error("github sync requires a base ref")]
+    GithubBaseRefMissing,
+    #[error("failed to load repository '{repo_name}' for github sync")]
+    GithubRepositoryLookup {
+        #[source]
+        source: StoreError,
+        repo_name: RepoName,
+    },
+    #[error("failed to update github pull request '{owner}/{repo}#{number}'")]
+    GithubPullRequestUpdate {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
+        number: u64,
+    },
+    #[error("failed to create github pull request for '{owner}/{repo}'")]
+    GithubPullRequestCreate {
+        #[source]
+        source: octocrab::Error,
+        owner: String,
+        repo: String,
     },
     #[error("failed to load merge-request issues for patch '{patch_id}'")]
     MergeRequestLookup {
@@ -401,6 +442,132 @@ impl AppState {
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
         store.update_user(user).await.map(|user| user.item)
+    }
+
+    async fn sync_patch_with_github(&self, patch: &mut Patch) -> Result<(), UpsertPatchError> {
+        let (owner, repo) = match patch.github.as_ref() {
+            Some(github) => (github.owner.clone(), github.repo.clone()),
+            None => (
+                patch.service_repo_name.organization.clone(),
+                patch.service_repo_name.repo.clone(),
+            ),
+        };
+        let client = self.github_installation_client(&owner, &repo).await?;
+
+        if let Some(existing) = patch.github.as_ref() {
+            let pr = client
+                .pulls(&owner, &repo)
+                .update(existing.number)
+                .title(patch.title.clone())
+                .body(patch.description.clone())
+                .send()
+                .await
+                .map_err(|source| UpsertPatchError::GithubPullRequestUpdate {
+                    source,
+                    owner: owner.clone(),
+                    repo: repo.clone(),
+                    number: existing.number,
+                })?;
+
+            let mut updated = existing.clone();
+            updated.head_ref = Some(pr.head.ref_field.clone());
+            updated.base_ref = Some(pr.base.ref_field.clone());
+            updated.url = pr.html_url.as_ref().map(ToString::to_string);
+            patch.github = Some(updated);
+            return Ok(());
+        }
+
+        let head_ref = patch
+            .github
+            .as_ref()
+            .and_then(|github| github.head_ref.as_ref())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| derive_head_ref(patch));
+
+        if head_ref.trim().is_empty() {
+            return Err(UpsertPatchError::GithubHeadRefMissing);
+        }
+
+        let base_ref = match patch
+            .github
+            .as_ref()
+            .and_then(|github| github.base_ref.as_ref())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            Some(base_ref) => base_ref,
+            None => {
+                let repository = self
+                    .repository_from_store(&patch.service_repo_name)
+                    .await
+                    .map_err(|source| UpsertPatchError::GithubRepositoryLookup {
+                        source,
+                        repo_name: patch.service_repo_name.clone(),
+                    })?;
+                repository
+                    .default_branch
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or(UpsertPatchError::GithubBaseRefMissing)?
+            }
+        };
+
+        let pr = client
+            .pulls(&owner, &repo)
+            .create(patch.title.clone(), head_ref, base_ref)
+            .body(patch.description.clone())
+            .send()
+            .await
+            .map_err(|source| UpsertPatchError::GithubPullRequestCreate {
+                source,
+                owner: owner.clone(),
+                repo: repo.clone(),
+            })?;
+
+        patch.github = Some(GithubPr::new(
+            owner,
+            repo,
+            pr.number,
+            Some(pr.head.ref_field.clone()),
+            Some(pr.base.ref_field.clone()),
+            pr.html_url.as_ref().map(ToString::to_string),
+            patch.github.as_ref().and_then(|github| github.ci.clone()),
+        ));
+
+        Ok(())
+    }
+
+    async fn github_installation_client(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Octocrab, UpsertPatchError> {
+        let app_client = self
+            .github_app
+            .as_ref()
+            .ok_or(UpsertPatchError::GithubAppUnavailable)?;
+
+        let installation = app_client
+            .apps()
+            .get_repository_installation(owner, repo)
+            .await
+            .map_err(|source| UpsertPatchError::GithubInstallationLookup {
+                source,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+            })?;
+
+        let (installation_client, _token) = app_client
+            .installation_and_token(installation.id)
+            .await
+            .map_err(|source| UpsertPatchError::GithubInstallationClient {
+                source,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+            })?;
+
+        Ok(installation_client)
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
@@ -943,7 +1110,10 @@ impl AppState {
         patch_id: Option<PatchId>,
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest { mut patch, .. } = request;
+        let UpsertPatchRequest {
+            mut patch,
+            sync_github,
+        } = request;
 
         let mut should_close_merge_requests = false;
         let store = self.store.as_ref();
@@ -964,6 +1134,14 @@ impl AppState {
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
                 patch.created_by = existing_patch.item.created_by;
+                if sync_github && patch.github.is_none() {
+                    patch.github = existing_patch.item.github.clone();
+                }
+
+                if sync_github {
+                    self.sync_patch_with_github(&mut patch).await?;
+                }
+
                 store
                     .update_patch(&id, patch)
                     .await
@@ -1001,6 +1179,10 @@ impl AppState {
                             status: Some(status),
                         });
                     }
+                }
+
+                if sync_github {
+                    self.sync_patch_with_github(&mut patch).await?;
                 }
 
                 store
@@ -1508,6 +1690,35 @@ impl AppState {
             Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
         }
     }
+}
+
+fn derive_head_ref(patch: &Patch) -> String {
+    let job_id = patch.created_by.as_ref().map(|id| id.as_ref());
+    let sanitized_job = sanitize_branch_segment(job_id.unwrap_or("patch"));
+    if sanitized_job.is_empty() {
+        "metis-patch".to_string()
+    } else {
+        format!("metis-{sanitized_job}")
+    }
+}
+
+fn sanitize_branch_segment(input: &str) -> String {
+    let mut normalized = input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+
+    normalized.trim_matches('-').to_string()
 }
 
 fn join_issue_ids(ids: &[IssueId]) -> String {
