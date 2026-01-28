@@ -10,7 +10,10 @@ use std::{
 };
 use tokio::time::{sleep, Instant};
 
-use crate::client::{MetisClient, MetisClientUnauthenticated};
+use crate::{
+    client::{MetisClient, MetisClientUnauthenticated},
+    config,
+};
 
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
@@ -50,6 +53,8 @@ enum TokenPollState {
 pub async fn login_with_github_device_flow(
     client: &MetisClientUnauthenticated,
     token_path: &Path,
+    config_path: &Path,
+    server_url: &str,
 ) -> Result<MetisClient> {
     let client_id = fetch_github_client_id(client)
         .await
@@ -64,7 +69,8 @@ pub async fn login_with_github_device_flow(
     println!("Waiting for authorization...");
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let auth_token = exchange_and_store_token(client, token_path, &token).await?;
+    let auth_token =
+        exchange_and_store_token(client, token_path, config_path, server_url, &token).await?;
     let auth_client = MetisClient::new(client.base_url().as_str(), auth_token.clone())
         .context("failed to create authenticated client")?;
     let whoami = auth_client
@@ -201,6 +207,8 @@ async fn login_with_github_token(
 async fn exchange_and_store_token(
     client: &MetisClientUnauthenticated,
     token_path: &Path,
+    config_path: &Path,
+    server_url: &str,
     github_token: &DeviceFlowToken,
 ) -> Result<String> {
     let auth_token = login_with_github_token(
@@ -210,6 +218,7 @@ async fn exchange_and_store_token(
     )
     .await?;
     write_auth_token_file(token_path, &auth_token)?;
+    config::store_auth_token(config_path, server_url, &auth_token)?;
     Ok(auth_token)
 }
 
@@ -243,6 +252,7 @@ pub fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::client::MetisClientUnauthenticated;
+    use crate::config::AppConfig;
     use httpmock::prelude::*;
     use reqwest::Client as HttpClient;
     use serde_json::json;
@@ -308,10 +318,14 @@ mod tests {
                 .expect("client");
         let temp = tempdir().expect("tempdir");
         let token_path = temp.path().join("auth-token");
+        let config_path = temp.path().join("config.toml");
+        let server_url = server.base_url();
 
         let auth_token = exchange_and_store_token(
             &client,
             &token_path,
+            &config_path,
+            &server_url,
             &DeviceFlowToken {
                 access_token: "gh-token".to_string(),
                 refresh_token: "refresh-token".to_string(),
@@ -324,5 +338,11 @@ mod tests {
         let contents = fs::read_to_string(&token_path).expect("read token");
         assert_eq!(contents, "api-token");
         assert_eq!(auth_token, "api-token");
+
+        let stored_config = AppConfig::load(&config_path).expect("load config");
+        let stored_token = stored_config
+            .auth_token_for_url(&server_url)
+            .expect("lookup token");
+        assert_eq!(stored_token, Some("api-token"));
     }
 }

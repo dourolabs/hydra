@@ -42,9 +42,11 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
     };
     let server = test_utils::spawn_test_server_with_state(state, handles.store).await?;
     let app_config = AppConfig {
-        server: ServerSection {
+        servers: vec![ServerSection {
             url: server.base_url(),
-        },
+            auth_token: None,
+            default: true,
+        }],
     };
     let client = MetisClient::from_config(&app_config, &auth_token)?;
     let temp_home = tempdir().context("create temp home")?;
@@ -117,7 +119,10 @@ async fn run_metis_command(
 ) -> Result<()> {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_metis"))
         .args(args)
-        .env(ENV_METIS_SERVER_URL, &app_config.server.url)
+        .env(
+            ENV_METIS_SERVER_URL,
+            &app_config.default_server().expect("default server").url,
+        )
         .env(ENV_METIS_TOKEN, auth_token)
         .env("HOME", home_dir)
         .env(ENV_METIS_ISSUE_ID, current_issue_id.as_ref())

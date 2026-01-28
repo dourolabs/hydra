@@ -51,6 +51,7 @@ pub fn metis_bin() -> std::path::PathBuf {
 
 impl TestEnvironment {
     pub async fn run_as_user(&self, commands: Vec<String>) -> Result<()> {
+        let server_url = self.app_config.default_server()?.url.clone();
         for command in commands {
             if command.trim().is_empty() {
                 continue;
@@ -68,7 +69,7 @@ impl TestEnvironment {
             let output = tokio::process::Command::new("bash")
                 .arg("-c")
                 .arg(&command_to_run)
-                .env("METIS_SERVER_URL", &self.app_config.server.url)
+                .env("METIS_SERVER_URL", &server_url)
                 .env(ENV_METIS_TOKEN, &self.auth_token)
                 .env(ENV_METIS_ISSUE_ID, self.current_issue_id.as_ref())
                 .output()
@@ -243,9 +244,11 @@ pub async fn init_test_server_with_remote_and_github(
     let server_url = server.base_url();
 
     let app_config = AppConfig {
-        server: ServerSection {
+        servers: vec![ServerSection {
             url: server_url.clone(),
-        },
+            auth_token: None,
+            default: true,
+        }],
     };
     let client = MetisClient::from_config(&app_config, auth_token.clone())?;
     let mut current_issue_settings = JobSettings::default();
