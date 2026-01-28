@@ -1921,7 +1921,8 @@ async fn active_tasks_for_issue(
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError};
+    use super::{AppState, LoginError, UpsertIssueError};
+    use crate::app::ServiceState;
     use crate::{
         domain::{
             issues::{
@@ -1929,19 +1930,25 @@ mod tests {
                 TodoItem, UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
+            patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
             users::Username,
         },
         job_engine::{JobEngine, JobStatus},
-        store::{Status, StoreError, TaskError},
+        store::{MemoryStore, Status, StoreError, TaskError},
         test_utils::{
-            MockJobEngine, github_user_response, test_state, test_state_with_engine,
-            test_state_with_github_api_base_url,
+            MockJobEngine, TestStateHandles, add_repository, github_user_response, test_app_config,
+            test_state, test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
+    use httpmock::Method::PATCH;
     use httpmock::prelude::*;
-    use metis_common::{IssueId, TaskId};
+    use jsonwebtoken::EncodingKey;
+    use metis_common::{IssueId, RepoName, TaskId};
+    use octocrab::Octocrab;
+    use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::RwLock;
 
     fn sample_task() -> Task {
         Task::new(
@@ -1965,6 +1972,105 @@ mod tests {
             None,
             None,
         )
+    }
+
+    const TEST_GITHUB_APP_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\n\
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCzMuPut8fpAGsX\n\
+kek+8g7wCpW+rdNF+aF/LQxFr5rNe1h/OpNGXGUaXAqvBpwMS5OWf1KkCaBe04tA\n\
+Ss6MdEiTGcW1pqfNQCXUNRCeW8rxTu9dZkAiuLiYbxZFZCumFVL4iNOBBTkT68Si\n\
+gFntGm29KBEkf3g8eLBjMPIvr3DWIp7pXj1k/+ZQeMjEb+6hGTNy8WBEuCIEuS78\n\
+CwoKkhWkybqo2uncKdvp0Bnilb+1HdoB7FP0tO6kwKAVypx38ZfwHQrCjxro5shZ\n\
+DfJVGWAXN7WdG6L4RgGrra9B2V5I4M63rL4vQZ9WXIPfk8ObD2DbuIj3dxYQY0hg\n\
+Xi2CH4R9AgMBAAECggEAIWe2N9UIrjXGwPERUwuan0LJ4W7T+LJtWaDTLdZrfCyn\n\
+Nah8tdwZeM15rGEGDAC2tZJsnGmy/Jpg1g5b7LDsqodeZNt5Yni31JRD0dF4xn0Z\n\
+gAbEo/RdbQUgWLUwsdg9zFjtXJrVphIIaOaWXO3VUTK751rf1h4Fe6gvLZZ96Vzg\n\
+yYWzZ3AV/Q56ngE4cgsrT7lP6RzHpfeKAC1v3cyf0rpM213ggEi3IgYt5Kh3T0fF\n\
++kucxAEGAysiW40tnYOsF/gb4Gc3AKSibQSkeVFJWfg7BGTuTJdjkgPfiLvmiWdE\n\
+VOFEp7ln47se8lVMIFS7AQB8SEwnrqHcYUggnexsoQKBgQDlcFGPxYtHety8OOXq\n\
+Nw7/aoVwGwUcMRpwBEbrvCxSFMZBVrU9GCfhEIDbXnp06jDguK7Pz9s7yx8is9Cc\n\
+qZQYO4OnW/TJUUbVurwY7QhssXGUD55NonToIeF1MkzT6paX5ZzoxTVT+3Sm2M+P\n\
+IUkLZxu07giLx9Fa9BEJyPbUlQKBgQDH8acie5JDEnONDF7HY7Lg+MwrHqRRWgSL\n\
+DHsXYubPHzv/JIj1qaR+V94c81M4W61PEm6hzW7aDUJomj+2CDbd/KLc55iiRQ0T\n\
+q7qnI0HIDvf1/xBFpn9v4gcIyMGB8DMWBhmbr10qXrgdc6PyTzgmsN4C7/aI4k0X\n\
+idYe4bnOSQKBgQDOzUlGvHjIqe5R3TsmvA/RmnLB1Cjr+zpoIwLFsiuEpGL6O6xK\n\
+b/5p91Ud5W+c+AWsV+qBN0nVAEWFIuxyeMsaeHI3JERkPNULCjBGi0ffqKTGHrnC\n\
+Ih8bqIYt+3OSQ00Pho/CoxZpJypCxQN4cDkFhR9NGowraaTDRWAiILiSbQKBgBRS\n\
+Xl9l2d7RUEdEu5lea77r6qxzR9Yw5QdQ9G3TEox4qztqdjUp0ds5iQy+OnYe80V3\n\
+JSFy5NJqyJYjH1icCx+S3ua+70eG5yZZrPXx4my4AMHS889wdcFkYryk0u4nALo7\n\
+Unz9XOXCjMoJh99H5/gev+Hii9cr0RQUYVvwK1dpAoGAdsPVtoBG0UGaTAdqw9p2\n\
+Xul7kc4sSAsxRK1n8QP7XDbc07VLXwxaFFa9AJ406VdMUIVANvrRfL5aYrgkJevU\n\
+SSG0J2dPWpEBR8p0k1EkVqy3C/bOm1L+P+NVLHE1j+wBqwIsV7j3bXh/5z14B8YO\n\
+WhfybNAUrIC88VYH32GCWb0=\n\
+-----END PRIVATE KEY-----";
+
+    fn test_state_with_github_app(api_base_url: String) -> TestStateHandles {
+        let mut config = test_app_config();
+        config.github_app.api_base_url = api_base_url;
+        config.github_app.private_key = TEST_GITHUB_APP_PRIVATE_KEY.to_string();
+
+        let key = EncodingKey::from_rsa_pem(config.github_app.private_key().as_bytes())
+            .expect("test github app key should be valid");
+        let github_app = Octocrab::builder()
+            .base_uri(config.github_app.api_base_url().to_string())
+            .expect("github api base url should be valid")
+            .app(config.github_app.app_id(), key)
+            .build()
+            .expect("github app client should build");
+
+        let store = Arc::new(MemoryStore::new());
+        let agents = Arc::new(RwLock::new(Vec::new()));
+        let state = AppState::new(
+            Arc::new(config),
+            Some(github_app),
+            Arc::new(ServiceState::default()),
+            store.clone(),
+            Arc::new(MockJobEngine::new()),
+            agents.clone(),
+        );
+
+        TestStateHandles {
+            state,
+            store,
+            agents,
+        }
+    }
+
+    fn github_installation_response(installation_id: u64) -> serde_json::Value {
+        json!({
+            "id": installation_id,
+            "account": github_user_response("octo", 42),
+            "permissions": {},
+            "events": []
+        })
+    }
+
+    fn github_installation_token_response(token: &str) -> serde_json::Value {
+        json!({
+            "token": token,
+            "permissions": {}
+        })
+    }
+
+    fn github_pull_request_response(
+        number: u64,
+        head_ref: &str,
+        base_ref: &str,
+        html_url: &str,
+    ) -> serde_json::Value {
+        json!({
+            "url": format!("https://api.example.com/pulls/{number}"),
+            "id": number,
+            "number": number,
+            "head": {
+                "ref": head_ref,
+                "sha": "abc123"
+            },
+            "base": {
+                "ref": base_ref,
+                "sha": "def456"
+            },
+            "html_url": html_url
+        })
     }
 
     fn issue_with_status(
@@ -2031,6 +2137,198 @@ mod tests {
             .expect_err("login should fail for invalid token");
 
         assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_updates_existing_pr() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let installation_id = 33;
+
+        let installation_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/repos/octo/repo/installation");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_response(installation_id));
+        });
+        let token_mock = github_server.mock(|when, then| {
+            when.method(POST).path(format!(
+                "/app/installations/{installation_id}/access_tokens"
+            ));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_token_response("token-123"));
+        });
+        let update_mock = github_server.mock(|when, then| {
+            when.method(PATCH)
+                .path("/repos/octo/repo/pulls/42")
+                .json_body_partial(r#"{"title":"Updated title","body":"Updated description"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_pull_request_response(
+                    42,
+                    "feature",
+                    "main",
+                    "https://example.com/pr/42",
+                ));
+        });
+
+        let handles = test_state_with_github_app(github_server.base_url());
+        let repo_name = RepoName::new("octo", "repo")?;
+        let existing_patch = Patch::new(
+            "Original".to_string(),
+            "Original description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(TaskId::new()),
+            Vec::new(),
+            repo_name.clone(),
+            Some(GithubPr::new(
+                "octo".to_string(),
+                "repo".to_string(),
+                42,
+                Some("old-head".to_string()),
+                Some("old-base".to_string()),
+                None,
+                None,
+            )),
+        );
+
+        let patch_id = handles.store.as_ref().add_patch(existing_patch).await?;
+
+        let request_patch = Patch::new(
+            "Updated title".to_string(),
+            "Updated description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = UpsertPatchRequest {
+            patch: request_patch,
+            sync_github: true,
+        };
+
+        handles
+            .state
+            .upsert_patch(Some(patch_id.clone()), request)
+            .await?;
+
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be preserved");
+        assert_eq!(github.number, 42);
+        assert_eq!(github.owner, "octo");
+        assert_eq!(github.repo, "repo");
+        assert_eq!(github.head_ref.as_deref(), Some("feature"));
+        assert_eq!(github.base_ref.as_deref(), Some("main"));
+        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/42"));
+
+        installation_mock.assert_async().await;
+        token_mock.assert_async().await;
+        update_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_creates_pr_and_persists_github() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let installation_id = 44;
+
+        let installation_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/repos/octo/repo/installation");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_response(installation_id));
+        });
+        let token_mock = github_server.mock(|when, then| {
+            when.method(POST).path(format!(
+                "/app/installations/{installation_id}/access_tokens"
+            ));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_installation_token_response("token-456"));
+        });
+        let create_mock = github_server.mock(|when, then| {
+            when.method(POST)
+                .path("/repos/octo/repo/pulls")
+                .json_body_partial(
+                    r#"{"title":"New patch","head":"metis-t-test","base":"main","body":"New patch description"}"#,
+                );
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_pull_request_response(
+                    99,
+                    "metis-t-test",
+                    "main",
+                    "https://example.com/pr/99",
+                ));
+        });
+
+        let handles = test_state_with_github_app(github_server.base_url());
+        let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
+
+        let task_id = TaskId::try_from("t-test".to_string())?;
+        let mut task = sample_task();
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+        let patch = Patch::new(
+            "New patch".to_string(),
+            "New patch description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = UpsertPatchRequest {
+            patch,
+            sync_github: true,
+        };
+
+        let patch_id = handles.state.upsert_patch(None, request).await?;
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be created");
+
+        assert_eq!(github.number, 99);
+        assert_eq!(github.owner, "octo");
+        assert_eq!(github.repo, "repo");
+        assert_eq!(github.head_ref.as_deref(), Some("metis-t-test"));
+        assert_eq!(github.base_ref.as_deref(), Some("main"));
+        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/99"));
+
+        installation_mock.assert_async().await;
+        token_mock.assert_async().await;
+        create_mock.assert_async().await;
+
         Ok(())
     }
 
