@@ -35,6 +35,11 @@ cargo build --workspace --all-targets
 cargo test --workspace
 ```
 
+Timing (local, 2026-01-28; cold cache with fresh deps download):
+- `cargo build --workspace --all-targets`: 1m 07s
+- `cargo clippy --workspace --all-targets -- -D warnings`: 33s
+- `cargo test --workspace`: 23s
+
 **Note** Postgres-backed store tests are ignored by default to avoid introducing a required database dependency.
 To exercise them, run a Postgres instance locally (`./scripts/dev-postgres.sh`) and set `DATABASE_URL`, then include
 ignored tests:
