@@ -89,6 +89,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::patches::PatchesCommand,
     },
+    /// Manage build caches.
+    Caches {
+        #[command(subcommand)]
+        command: command::caches::CachesCommand,
+    },
     /// Launch a live dashboard for jobs, issues, and patches.
     Dashboard,
     /// List or create issues.
@@ -164,6 +169,7 @@ async fn dispatch(
         Commands::Jobs { command } => command::jobs::run(client, command, context).await?,
         Commands::Agents { command } => command::agents::run(client, command, context).await?,
         Commands::Patches { command } => command::patches::run(client, command, context).await?,
+        Commands::Caches { command } => command::caches::run(command, context).await?,
         Commands::Dashboard => {
             command::dashboard::run(
                 client,
