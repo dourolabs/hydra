@@ -24,6 +24,7 @@ use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
+const SWE_AGENT_NAME: &str = "swe";
 
 #[async_trait]
 pub trait Spawner: Send + Sync {
@@ -251,7 +252,11 @@ impl Spawner for AgentQueue {
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
-            if issue.assignee.as_deref() != Some(self.name.as_str()) {
+            let assignee_mismatch = issue.assignee.as_deref() != Some(self.name.as_str());
+            if assignee_mismatch
+                && !(self.name == SWE_AGENT_NAME
+                    && issue.issue_type == crate::domain::issues::IssueType::MergeRequest)
+            {
                 continue;
             }
 
@@ -426,7 +431,8 @@ mod tests {
         Ok(())
     }
 
-    fn issue(
+    fn issue_with_type(
+        issue_type: IssueType,
         description: &str,
         status: IssueStatus,
         assignee: Option<&str>,
@@ -434,7 +440,7 @@ mod tests {
         repo_name: &RepoName,
     ) -> Issue {
         Issue::new(
-            IssueType::Task,
+            issue_type,
             description.to_string(),
             default_user(),
             String::new(),
@@ -444,6 +450,23 @@ mod tests {
             Vec::new(),
             dependencies,
             Vec::new(),
+        )
+    }
+
+    fn issue(
+        description: &str,
+        status: IssueStatus,
+        assignee: Option<&str>,
+        dependencies: Vec<IssueDependency>,
+        repo_name: &RepoName,
+    ) -> Issue {
+        issue_with_type(
+            IssueType::Task,
+            description,
+            status,
+            assignee,
+            dependencies,
+            repo_name,
         )
     }
 
@@ -685,6 +708,94 @@ mod tests {
         assert!(prompt.contains("Merge request follow-up:"));
         assert!(prompt.contains(&patch_id.to_string()));
         assert!(prompt.contains("needs adjustments"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_request_changes_requested_spawns_for_swe_with_assignee_mismatch()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let patch = Patch::new(
+            "Review patch".to_string(),
+            "Review patch description".to_string(),
+            "diff --git a/file b/file\n".to_string(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            vec![Review::new(
+                "fix the issues".to_string(),
+                false,
+                "alex".to_string(),
+                None,
+            )],
+            repo_name.clone(),
+            None,
+        );
+        let patch_id = handles.store.add_patch(patch).await?;
+        handles
+            .store
+            .add_issue(Issue {
+                issue_type: IssueType::MergeRequest,
+                description: "Review patch".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("pm".to_string()),
+                job_settings: job_settings(&repo_name),
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: vec![patch_id.clone()],
+            })
+            .await?;
+
+        let tasks = queue(SWE_AGENT_NAME).spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        let prompt = &tasks[0].prompt;
+        assert!(prompt.contains("Merge request follow-up:"));
+        assert!(prompt.contains(&patch_id.to_string()));
+        assert!(prompt.contains("fix the issues"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_merge_request_assignee_mismatch_still_skips_for_swe() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue(
+                "Non-MR task",
+                IssueStatus::Open,
+                Some("pm"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue(SWE_AGENT_NAME).spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_request_assignee_mismatch_skips_for_non_swe() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue_with_type(
+                IssueType::MergeRequest,
+                "MR task",
+                IssueStatus::Open,
+                Some("pm"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
 
         Ok(())
     }
