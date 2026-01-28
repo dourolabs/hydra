@@ -5,6 +5,10 @@ namespace = "default"
 # Optional fallback if the OPENAI_API_KEY environment variable is unset.
 OPENAI_API_KEY = ""
 
+# Optional list of allowed GitHub organizations for logins.
+# Leave empty or omit to allow all organizations.
+allowed_orgs = []
+
 [job]
 # Container image the worker Pod will execute.
 # TODO: figure out how to tag this properly in kind x_x

@@ -42,6 +42,7 @@ impl AppConfig {
     }
 
     fn validate(&self) -> Result<()> {
+        self.metis.validate()?;
         self.github_app.validate()?;
         self.background.validate()
     }
@@ -53,8 +54,20 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
+    #[serde(default)]
+    pub allowed_orgs: Vec<String>,
     #[serde(default, rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
+}
+
+impl MetisSection {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.allowed_orgs.iter().all(|org| non_empty(org).is_some()),
+            "metis.allowed_orgs must not contain empty values"
+        );
+        Ok(())
+    }
 }
 
 impl Default for MetisSection {
@@ -62,6 +75,7 @@ impl Default for MetisSection {
         Self {
             namespace: default_namespace(),
             server_hostname: String::new(),
+            allowed_orgs: Vec::new(),
             openai_api_key: None,
         }
     }
@@ -612,6 +626,89 @@ prompt = "prompt"
         assert!(error_chain_contains(
             &error,
             "background.merge_request_followup_agent must match one of background.agent_queues"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_allows_empty_allowed_orgs() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[metis]
+allowed_orgs = []
+
+[job]
+default_image = "metis-worker:latest"
+cpu_limit = "500m"
+memory_limit = "1Gi"
+cpu_request = "500m"
+memory_request = "1Gi"
+
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+api_base_url = "https://api.github.com"
+oauth_base_url = "https://github.com"
+private_key = "private-key"
+
+[background]
+merge_request_followup_agent = "agent-a"
+
+[[background.agent_queues]]
+name = "agent-a"
+prompt = "prompt"
+"#,
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert!(config.metis.allowed_orgs.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_blank_allowed_orgs() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[metis]
+allowed_orgs = [" ", ""]
+
+[job]
+default_image = "metis-worker:latest"
+cpu_limit = "500m"
+memory_limit = "1Gi"
+cpu_request = "500m"
+memory_request = "1Gi"
+
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+api_base_url = "https://api.github.com"
+oauth_base_url = "https://github.com"
+private_key = "private-key"
+
+[background]
+merge_request_followup_agent = "agent-a"
+
+[[background.agent_queues]]
+name = "agent-a"
+prompt = "prompt"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected blank allowed_orgs entry");
+        assert!(error_chain_contains(
+            &error,
+            "metis.allowed_orgs must not contain empty values"
         ));
 
         Ok(())
