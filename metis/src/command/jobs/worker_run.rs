@@ -464,7 +464,8 @@ fn finalize_task_run(
     Ok(())
 }
 
-async fn resolve_tracking_branch_override(
+/// Determine the branch override for merge-request issues with changes requested.
+pub async fn resolve_tracking_branch_override(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
 ) -> Result<Option<String>> {

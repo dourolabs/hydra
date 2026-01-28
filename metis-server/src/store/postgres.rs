@@ -4,14 +4,13 @@ use crate::{
         actors::Actor,
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
-        task_status::Event,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
+    store::{Status, Store, StoreError, Task, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use metis_common::{
     IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
 };
@@ -32,7 +31,6 @@ pub type PgStorePool = Pool<Postgres>;
 pub const ISSUE_SCHEMA_VERSION: i32 = 1;
 pub const PATCH_SCHEMA_VERSION: i32 = 1;
 pub const TASK_SCHEMA_VERSION: i32 = 1;
-pub const TASK_STATUS_LOG_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 3;
 pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
 pub const ACTOR_SCHEMA_VERSION: i32 = 3;
@@ -103,11 +101,6 @@ const PAYLOAD_TABLES: &[PayloadTable] = &[
         target_version: TASK_SCHEMA_VERSION,
     },
     PayloadTable {
-        object_type: "task_status_log",
-        table: TABLE_TASK_STATUS_LOGS,
-        target_version: TASK_STATUS_LOG_SCHEMA_VERSION,
-    },
-    PayloadTable {
         object_type: "user",
         table: TABLE_USERS,
         target_version: USER_SCHEMA_VERSION,
@@ -164,7 +157,6 @@ async fn migrate_table_payloads(pool: &PgStorePool, table: PayloadTable) -> Resu
 const TABLE_ISSUES: &str = "metis.issues";
 const TABLE_PATCHES: &str = "metis.patches";
 const TABLE_TASKS: &str = "metis.tasks";
-const TABLE_TASK_STATUS_LOGS: &str = "metis.task_status_logs";
 const TABLE_USERS: &str = "metis.users";
 const TABLE_REPOSITORIES: &str = "metis.repositories";
 const TABLE_ACTORS: &str = "metis.actors";
@@ -304,10 +296,11 @@ impl PostgresStore {
             schema_version: i32,
             payload: Value,
             version_number: i64,
+            created_at: DateTime<Utc>,
         }
 
         let query = format!(
-            "SELECT schema_version, payload, version_number FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
+            "SELECT schema_version, payload, version_number, created_at FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
         );
         let row = sqlx::query_as::<_, VersionedPayloadRow>(&query)
             .bind(id)
@@ -326,26 +319,29 @@ impl PostgresStore {
             ))
         })?;
         let item = serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
-        Ok(Some(Versioned::new(item, version)))
+        Ok(Some(Versioned::new(item, version, row.created_at)))
     }
 
-    async fn fetch_payloads_with_ids<T: DeserializeOwned>(
+    async fn fetch_versioned_payloads<T: DeserializeOwned>(
         &self,
         table: &str,
         object_type: &str,
+        id: &str,
         target_version: i32,
-    ) -> Result<Vec<(String, T)>, StoreError> {
+    ) -> Result<Vec<Versioned<T>>, StoreError> {
         #[derive(sqlx::FromRow)]
-        struct PayloadWithId {
-            id: String,
+        struct VersionedPayloadRow {
             schema_version: i32,
             payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
         }
 
         let query = format!(
-            "SELECT DISTINCT ON (id) id, schema_version, payload FROM {table} ORDER BY id, version_number DESC"
+            "SELECT schema_version, payload, version_number, created_at FROM {table} WHERE id = $1 ORDER BY version_number"
         );
-        let rows = sqlx::query_as::<_, PayloadWithId>(&query)
+        let rows = sqlx::query_as::<_, VersionedPayloadRow>(&query)
+            .bind(id)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -353,10 +349,13 @@ impl PostgresStore {
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             ensure_schema_version(object_type, row.schema_version, target_version)?;
-
-            let value: T =
-                serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
-            results.push((row.id, value));
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for {object_type} '{id}'"
+                ))
+            })?;
+            let item = serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
+            results.push(Versioned::new(item, version, row.created_at));
         }
 
         Ok(results)
@@ -374,10 +373,11 @@ impl PostgresStore {
             schema_version: i32,
             payload: Value,
             version_number: i64,
+            created_at: DateTime<Utc>,
         }
 
         let query = format!(
-            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number FROM {table} ORDER BY id, version_number DESC"
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {table} ORDER BY id, version_number DESC"
         );
         let rows = sqlx::query_as::<_, VersionedPayloadWithId>(&query)
             .fetch_all(&self.pool)
@@ -395,7 +395,7 @@ impl PostgresStore {
             })?;
             let value: T =
                 serde_json::from_value(row.payload).map_err(map_serde_error(object_type))?;
-            results.push((row.id, Versioned::new(value, version)));
+            results.push((row.id, Versioned::new(value, version, row.created_at)));
         }
 
         Ok(results)
@@ -762,11 +762,9 @@ impl Store for PostgresStore {
         let tasks = self.list_tasks().await?;
         let mut results = Vec::new();
 
-        for task_id in tasks {
-            if let Ok(task) = self.get_task(&task_id).await {
-                if task.spawned_from.as_ref() == Some(issue_id) {
-                    results.push(task_id);
-                }
+        for (task_id, task) in tasks {
+            if task.item.spawned_from.as_ref() == Some(issue_id) {
+                results.push(task_id);
             }
         }
         Ok(results)
@@ -787,8 +785,12 @@ impl Store for PostgresStore {
         &self,
         metis_id: TaskId,
         task: Task,
-        creation_time: chrono::DateTime<Utc>,
+        _creation_time: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
+        let mut task = task;
+        task.status = Status::Pending;
+        task.last_message = None;
+        task.error = None;
         let exists = sqlx::query_scalar::<_, i64>(&format!(
             "SELECT COUNT(1) FROM {TABLE_TASKS} WHERE id = $1"
         ))
@@ -817,21 +819,14 @@ impl Store for PostgresStore {
         )
         .await?;
 
-        let status_log = TaskStatusLog::new(Status::Pending, creation_time);
-        self.insert_payload(
-            TABLE_TASK_STATUS_LOGS,
-            "task_status_log",
-            metis_id.as_ref(),
-            TASK_STATUS_LOG_SCHEMA_VERSION,
-            1,
-            &status_log,
-        )
-        .await?;
-
         Ok(())
     }
 
-    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
         self.ensure_task_exists(metis_id).await?;
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.ensure_issue_exists(issue_id).await?;
@@ -844,43 +839,44 @@ impl Store for PostgresStore {
             TASK_SCHEMA_VERSION,
             &task,
         )
-        .await
+        .await?;
+
+        self.fetch_versioned_payload(TABLE_TASKS, "task", metis_id.as_ref(), TASK_SCHEMA_VERSION)
+            .await?
+            .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError> {
-        self.fetch_payload(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
+    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
+        self.fetch_versioned_payload(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let rows = self
-            .fetch_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
+            .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
             .await?;
 
         rows.into_iter()
-            .map(|(id, _)| {
-                id.parse::<TaskId>().map_err(|err| {
+            .map(|(id, task)| {
+                let task_id = id.parse::<TaskId>().map_err(|err| {
                     StoreError::Internal(format!("invalid task id stored in database: {err}"))
-                })
+                })?;
+                Ok((task_id, task))
             })
             .collect()
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         let rows = self
-            .fetch_payloads_with_ids::<TaskStatusLog>(
-                TABLE_TASK_STATUS_LOGS,
-                "task_status_log",
-                TASK_STATUS_LOG_SCHEMA_VERSION,
-            )
+            .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
             .await?;
 
         let mut matches = Vec::new();
-        for (id, log) in rows {
-            if log.current_status() == status {
+        for (id, task) in rows {
+            if task.item.status == status {
                 matches.push(id.parse::<TaskId>().map_err(|err| {
-                    StoreError::Internal(format!("invalid task id stored in status log: {err}"))
+                    StoreError::Internal(format!("invalid task id stored in database: {err}"))
                 })?);
             }
         }
@@ -889,76 +885,15 @@ impl Store for PostgresStore {
     }
 
     async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
-        Ok(self.get_status_log(id).await?.current_status())
+        Ok(self.get_task(id).await?.item.status)
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        self.fetch_payload(
-            TABLE_TASK_STATUS_LOGS,
-            "task_status_log",
-            id.as_ref(),
-            TASK_STATUS_LOG_SCHEMA_VERSION,
-        )
-        .await?
-        .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
-    async fn mark_task_running(
-        &self,
-        id: &TaskId,
-        start_time: chrono::DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let mut status_log = self.get_status_log(id).await?;
-
-        if status_log.current_status() != Status::Pending {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        status_log.events.push(Event::Started { at: start_time });
-
-        self.update_payload(
-            TABLE_TASK_STATUS_LOGS,
-            "task_status_log",
-            id.as_ref(),
-            TASK_STATUS_LOG_SCHEMA_VERSION,
-            &status_log,
-        )
-        .await
-    }
-
-    async fn mark_task_complete(
-        &self,
-        id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        end_time: chrono::DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        let mut status_log = self.get_status_log(id).await?;
-
-        if status_log.current_status() != Status::Running {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        let event = match result {
-            Ok(()) => Event::Completed {
-                at: end_time,
-                last_message,
-            },
-            Err(error) => Event::Failed {
-                at: end_time,
-                error,
-            },
-        };
-        status_log.events.push(event);
-
-        self.update_payload(
-            TABLE_TASK_STATUS_LOGS,
-            "task_status_log",
-            id.as_ref(),
-            TASK_STATUS_LOG_SCHEMA_VERSION,
-            &status_log,
-        )
-        .await
+        let versions = self
+            .fetch_versioned_payloads::<Task>(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
+            .await?;
+        super::task_status_log_from_versions(&versions)
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
@@ -1068,16 +1003,14 @@ impl Store for PostgresStore {
         )
         .await?;
 
-        let version = self
-            .fetch_latest_version_number(TABLE_USERS, username.as_str())
+        self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| {
                 StoreError::Internal(format!(
                     "user '{}' missing after github token update",
                     username.as_str()
                 ))
-            })?;
-        Ok(Versioned::new(user, version))
+            })
     }
 
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
@@ -1090,14 +1023,28 @@ impl Store for PostgresStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
-        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
-        jobs::BundleSpec,
-        patches::{Patch, PatchStatus},
-        users::{User, Username},
+    use crate::{
+        domain::{
+            issues::{
+                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
+            },
+            jobs::BundleSpec,
+            patches::{Patch, PatchStatus},
+            users::{User, Username},
+        },
+        test_utils::test_state_with_store,
     };
-    use metis_common::{RepoName, Versioned, repositories::Repository};
-    use std::{collections::HashSet, str::FromStr};
+    use metis_common::{RepoName, VersionNumber, Versioned, repositories::Repository};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
+
+    fn assert_versioned<T: std::fmt::Debug + PartialEq>(
+        actual: &Versioned<T>,
+        expected_item: &T,
+        expected_version: VersionNumber,
+    ) {
+        assert_eq!(&actual.item, expected_item);
+        assert_eq!(actual.version, expected_version);
+    }
 
     #[allow(dead_code)]
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
@@ -1185,14 +1132,14 @@ mod tests {
         assert_eq!(versions, vec![1, 2]);
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(
-            list,
-            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
-        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, name);
+        assert_versioned(&list[0].1, &updated, 2);
 
         let fetched_again = store.get_repository(&name).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
+        assert!(fetched_again.timestamp >= fetched.timestamp);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -1430,42 +1377,66 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
-        let store = PostgresStore::new(pool);
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let store = Arc::new(PostgresStore::new(pool));
+        let handles = test_state_with_store(store.clone());
+        let issue_id = handles.store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let mut task = sample_task();
         task.spawned_from = Some(issue_id.clone());
-        let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
-
-        store.mark_task_running(&task_id, Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Running);
-
-        store
-            .mark_task_complete(&task_id, Ok(()), Some("done".into()), Utc::now())
+        let task_id = handles
+            .store
+            .add_task(task.clone(), Utc::now())
             .await
             .unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Pending
+        );
 
-        let tasks = store.get_tasks_for_issue(&issue_id).await.unwrap();
+        handles
+            .state
+            .transition_task_to_running(&task_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Running
+        );
+
+        handles
+            .state
+            .transition_task_to_completion(&task_id, Ok(()), Some("done".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Complete
+        );
+
+        let tasks = handles.store.get_tasks_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let mut updated_task = task.clone();
+        let mut updated_task = handles.store.get_task(&task_id).await.unwrap().item;
         updated_task.spawned_from = None;
-        store
+        let updated_version = handles
+            .store
             .update_task(&task_id, updated_task.clone())
             .await
             .unwrap();
-        assert_eq!(store.get_task(&task_id).await.unwrap(), updated_task);
+        assert_eq!(updated_version.item, updated_task);
+        let fetched = handles.store.get_task(&task_id).await.unwrap();
+        assert_eq!(fetched.item, updated_task);
         assert!(
-            store
+            handles
+                .store
                 .get_tasks_for_issue(&issue_id)
                 .await
                 .unwrap()
                 .is_empty()
         );
 
-        let complete = store
+        let complete = handles
+            .store
             .list_tasks_with_status(Status::Complete)
             .await
             .unwrap();
@@ -1476,7 +1447,13 @@ mod tests {
             .add_task_with_id(explicit_id.clone(), sample_task(), Utc::now())
             .await
             .unwrap();
-        let all_tasks = store.list_tasks().await.unwrap();
+        let all_tasks: HashSet<_> = store
+            .list_tasks()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert!(all_tasks.contains(&explicit_id));
     }
 

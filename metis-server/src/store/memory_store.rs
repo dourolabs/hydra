@@ -4,12 +4,11 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 
 use super::issue_graph::IssueGraphContext;
-use super::{Status, Store, StoreError, Task, TaskError, TaskStatusLog};
+use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::Actor,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
-    task_status::Event,
     users::{User, Username},
 };
 use metis_common::{
@@ -37,8 +36,6 @@ pub struct MemoryStore {
     issue_tasks: DashMap<IssueId, Vec<TaskId>>,
     /// Maps patch IDs to the issues that reference them
     patch_issues: DashMap<PatchId, Vec<IssueId>>,
-    /// Maps task IDs to their TaskStatusLog
-    status_logs: DashMap<TaskId, Vec<Versioned<TaskStatusLog>>>,
     /// Maps usernames to their User data
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
@@ -57,14 +54,9 @@ impl MemoryStore {
             issue_blocked_on: DashMap::new(),
             issue_tasks: DashMap::new(),
             patch_issues: DashMap::new(),
-            status_logs: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
         }
-    }
-
-    fn latest_item<T: Clone>(versions: &[Versioned<T>]) -> Option<T> {
-        versions.last().map(|entry| entry.item.clone())
     }
 
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
@@ -76,6 +68,14 @@ impl MemoryStore {
             .last()
             .map(|entry| entry.version.saturating_add(1))
             .unwrap_or(1)
+    }
+
+    fn versioned_now<T>(item: T, version: VersionNumber) -> Versioned<T> {
+        Versioned::new(item, version, Utc::now())
+    }
+
+    fn versioned_at<T>(item: T, version: VersionNumber, timestamp: DateTime<Utc>) -> Versioned<T> {
+        Versioned::new(item, version, timestamp)
     }
 
     /// Updates issue adjacency indexes to match the provided dependency list.
@@ -198,7 +198,7 @@ impl Store for MemoryStore {
         }
 
         self.repositories
-            .insert(name, vec![Versioned::new(config, 1)]);
+            .insert(name, vec![Self::versioned_now(config, 1)]);
         Ok(())
     }
 
@@ -220,7 +220,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
 
-        versions.push(Versioned::new(config, next_version));
+        versions.push(Self::versioned_now(config, next_version));
         Ok(())
     }
 
@@ -246,7 +246,7 @@ impl Store for MemoryStore {
 
         self.validate_dependencies(&new_dependencies)?;
         self.issues
-            .insert(id.clone(), vec![Versioned::new(issue, 1)]);
+            .insert(id.clone(), vec![Self::versioned_now(issue, 1)]);
 
         if !new_dependencies.is_empty() {
             self.apply_issue_dependency_delta(&id, &[], &new_dependencies);
@@ -281,7 +281,7 @@ impl Store for MemoryStore {
         self.validate_dependencies(&updated_dependencies)?;
         if let Some(mut versions) = self.issues.get_mut(id) {
             let next_version = Self::next_version(&versions);
-            versions.push(Versioned::new(issue, next_version));
+            versions.push(Self::versioned_now(issue, next_version));
         }
 
         if !previous_dependencies.is_empty() || !updated_dependencies.is_empty() {
@@ -358,7 +358,7 @@ impl Store for MemoryStore {
     async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError> {
         let id = PatchId::new();
         self.patches
-            .insert(id.clone(), vec![Versioned::new(patch, 1)]);
+            .insert(id.clone(), vec![Self::versioned_now(patch, 1)]);
         Ok(id)
     }
 
@@ -375,7 +375,7 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Versioned::new(patch, next_version));
+        versions.push(Self::versioned_now(patch, next_version));
         Ok(())
     }
 
@@ -442,19 +442,15 @@ impl Store for MemoryStore {
     ) -> Result<TaskId, StoreError> {
         // Generate a unique ID for the new task
         let id = TaskId::new();
+        let mut task = task;
+        task.status = Status::Pending;
+        task.last_message = None;
+        task.error = None;
         let spawned_from = task.spawned_from.clone();
 
         // Add the task
-        self.tasks.insert(id.clone(), vec![Versioned::new(task, 1)]);
-
-        // Initialize status log
-        self.status_logs.insert(
-            id.clone(),
-            vec![Versioned::new(
-                TaskStatusLog::new(Status::Pending, creation_time),
-                1,
-            )],
-        );
+        self.tasks
+            .insert(id.clone(), vec![Self::versioned_at(task, 1, creation_time)]);
 
         if let Some(issue_id) = spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, id.clone());
@@ -475,19 +471,16 @@ impl Store for MemoryStore {
                 "Task already exists: {metis_id}"
             )));
         }
+        let mut task = task;
+        task.status = Status::Pending;
+        task.last_message = None;
+        task.error = None;
         let spawned_from = task.spawned_from.clone();
 
         // Add the task with the specified ID
-        self.tasks
-            .insert(metis_id.clone(), vec![Versioned::new(task, 1)]);
-
-        // Initialize status log
-        self.status_logs.insert(
+        self.tasks.insert(
             metis_id.clone(),
-            vec![Versioned::new(
-                TaskStatusLog::new(Status::Pending, creation_time),
-                1,
-            )],
+            vec![Self::versioned_at(task, 1, creation_time)],
         );
 
         if let Some(issue_id) = spawned_from.as_ref() {
@@ -497,7 +490,11 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError> {
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError> {
         let previous_spawned_from = match self.tasks.get(metis_id) {
             Some(entry) => entry
                 .value()
@@ -513,125 +510,66 @@ impl Store for MemoryStore {
         }
 
         // Overwrite the existing task without modifying edge structure
-        if let Some(mut versions) = self.tasks.get_mut(metis_id) {
-            let next_version = Self::next_version(&versions);
-            versions.push(Versioned::new(task.clone(), next_version));
-        }
+        let updated = match self.tasks.get_mut(metis_id) {
+            Some(mut versions) => {
+                let next_version = Self::next_version(&versions);
+                let versioned = Self::versioned_now(task.clone(), next_version);
+                versions.push(versioned.clone());
+                versioned
+            }
+            None => return Err(StoreError::TaskNotFound(metis_id.clone())),
+        };
 
         if let Some(issue_id) = task.spawned_from.as_ref() {
             self.index_task_for_issue(issue_id, metis_id.clone());
         }
-        Ok(())
+        Ok(updated)
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError> {
+    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
         self.tasks
             .get(id)
-            .and_then(|entry| Self::latest_item(entry.value()))
+            .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
-        Ok(self.tasks.iter().map(|entry| entry.key().clone()).collect())
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        Ok(self
+            .tasks
+            .iter()
+            .filter_map(|entry| {
+                let latest = Self::latest_versioned(entry.value())?;
+                Some((entry.key().clone(), latest))
+            })
+            .collect())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
         Ok(self
-            .status_logs
+            .tasks
             .iter()
             .filter(|entry| {
                 entry
                     .value()
                     .last()
-                    .is_some_and(|log| log.item.current_status() == status)
+                    .is_some_and(|task| task.item.status == status)
             })
             .map(|entry| entry.key().clone())
             .collect())
     }
 
     async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
-        self.status_logs
+        self.tasks
             .get(id)
-            .and_then(|entry| entry.value().last().map(|log| log.item.current_status()))
+            .and_then(|entry| entry.value().last().map(|task| task.item.status))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
-        self.status_logs
+        self.tasks
             .get(id)
-            .and_then(|entry| entry.value().last().map(|log| log.item.clone()))
+            .and_then(|entry| super::task_status_log_from_versions(entry.value()))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
-    async fn mark_task_running(
-        &self,
-        id: &TaskId,
-        start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let mut logs = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        let latest = logs
-            .last()
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(latest.item.current_status(), Status::Pending) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        let mut updated = latest.item.clone();
-        updated.events.push(Event::Started { at: start_time });
-        let next_version = Self::next_version(&logs);
-        logs.push(Versioned::new(updated, next_version));
-
-        Ok(())
-    }
-
-    async fn mark_task_complete(
-        &self,
-        id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError> {
-        if !self.tasks.contains_key(id) {
-            return Err(StoreError::TaskNotFound(id.clone()));
-        }
-
-        let mut logs = self
-            .status_logs
-            .get_mut(id)
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        let latest = logs
-            .last()
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-
-        if !matches!(latest.item.current_status(), Status::Running) {
-            return Err(StoreError::InvalidStatusTransition);
-        }
-
-        let event = match result {
-            Ok(()) => Event::Completed {
-                at: end_time,
-                last_message,
-            },
-            Err(error) => Event::Failed {
-                at: end_time,
-                error,
-            },
-        };
-
-        let mut updated = latest.item.clone();
-        updated.events.push(event);
-        let next_version = Self::next_version(&logs);
-        logs.push(Versioned::new(updated, next_version));
-
-        Ok(())
     }
 
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
@@ -640,7 +578,8 @@ impl Store for MemoryStore {
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
-        self.actors.insert(name, vec![Versioned::new(actor, 1)]);
+        self.actors
+            .insert(name, vec![Self::versioned_now(actor, 1)]);
         Ok(())
     }
 
@@ -651,7 +590,7 @@ impl Store for MemoryStore {
             .get_mut(&name)
             .ok_or_else(|| StoreError::ActorNotFound(name.clone()))?;
         let next_version = Self::next_version(&versions);
-        versions.push(Versioned::new(actor, next_version));
+        versions.push(Self::versioned_now(actor, next_version));
         Ok(())
     }
 
@@ -682,7 +621,7 @@ impl Store for MemoryStore {
         }
 
         self.users
-            .insert(user.username.clone(), vec![Versioned::new(user, 1)]);
+            .insert(user.username.clone(), vec![Self::versioned_now(user, 1)]);
         Ok(())
     }
 
@@ -705,7 +644,7 @@ impl Store for MemoryStore {
         updated.github_user_id = github_user_id;
         updated.github_refresh_token = github_refresh_token;
         let next_version = Self::next_version(&versions);
-        let versioned = Versioned::new(updated, next_version);
+        let versioned = Self::versioned_now(updated, next_version);
         versions.push(versioned.clone());
         Ok(versioned)
     }
@@ -721,18 +660,24 @@ impl Store for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
-        actors::{Actor, UserOrWorker},
-        issues::{
-            Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
+    use crate::{
+        domain::{
+            actors::{Actor, UserOrWorker},
+            issues::{
+                Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus,
+                IssueType,
+            },
+            jobs::BundleSpec,
+            patches::{Patch, PatchStatus},
+            task_status::Event,
+            users::{User, Username},
         },
-        jobs::BundleSpec,
-        patches::{Patch, PatchStatus},
-        users::{User, Username},
+        store::TaskError,
+        test_utils::test_state_with_store,
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
-    use std::{collections::HashSet, str::FromStr};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn sample_repository_config() -> Repository {
         Repository::new(
@@ -791,6 +736,15 @@ mod tests {
         versions.iter().map(|entry| entry.version).collect()
     }
 
+    fn assert_versioned<T: std::fmt::Debug + PartialEq>(
+        actual: &Versioned<T>,
+        expected_item: &T,
+        expected_version: VersionNumber,
+    ) {
+        assert_eq!(&actual.item, expected_item);
+        assert_eq!(actual.version, expected_version);
+    }
+
     #[tokio::test]
     async fn repository_crud_round_trip() {
         let store = MemoryStore::new();
@@ -814,14 +768,14 @@ mod tests {
             .unwrap();
 
         let list = store.list_repositories().await.unwrap();
-        assert_eq!(
-            list,
-            vec![(name.clone(), Versioned::new(updated.clone(), 2))]
-        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, name);
+        assert_versioned(&list[0].1, &updated, 2);
 
         let fetched_again = store.get_repository(&name).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
+        assert!(fetched_again.timestamp >= fetched.timestamp);
     }
 
     #[tokio::test]
@@ -1305,10 +1259,17 @@ mod tests {
         let task = spawn_task();
         let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_task(&task_id).await.unwrap(), task);
+        let fetched = store.get_task(&task_id).await.unwrap();
+        assert_versioned(&fetched, &task, 1);
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
 
-        let tasks: HashSet<_> = store.list_tasks().await.unwrap().into_iter().collect();
+        let tasks: HashSet<_> = store
+            .list_tasks()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         assert_eq!(tasks, HashSet::from([task_id]));
     }
 
@@ -1324,31 +1285,76 @@ mod tests {
         updated.prompt = "v2".to_string();
         store.update_task(&task_id, updated.clone()).await.unwrap();
 
-        assert_eq!(store.get_task(&task_id).await.unwrap(), updated);
+        let fetched = store.get_task(&task_id).await.unwrap();
+        assert_versioned(&fetched, &updated, 2);
 
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
     }
 
     #[tokio::test]
-    async fn status_log_versions_increment_on_transitions() {
-        let store = MemoryStore::new();
+    async fn task_versions_increment_on_transitions() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
         let task_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
 
-        store.mark_task_running(&task_id, Utc::now()).await.unwrap();
-        store
-            .mark_task_complete(&task_id, Ok(()), None, Utc::now())
+        state.transition_task_to_running(&task_id).await.unwrap();
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None)
             .await
             .unwrap();
 
-        let versions = store.status_logs.get(&task_id).unwrap();
+        let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3]);
         assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
     }
 
     #[tokio::test]
+    async fn status_log_is_derived_from_task_versions() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+        let created_at = Utc::now() - Duration::seconds(60);
+        let mut task = spawn_task();
+        task.prompt = "v1".to_string();
+        let task_id = store.add_task(task.clone(), created_at).await.unwrap();
+
+        let mut updated = task.clone();
+        updated.prompt = "v2".to_string();
+        store.update_task(&task_id, updated).await.unwrap();
+
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.creation_time(), Some(created_at));
+        assert_eq!(log.current_status(), Status::Pending);
+
+        state.transition_task_to_running(&task_id).await.unwrap();
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert!(matches!(log.events.last(), Some(Event::Started { .. })));
+
+        let mut running = store.get_task(&task_id).await.unwrap().item;
+        running.prompt = "v3".to_string();
+        store.update_task(&task_id, running).await.unwrap();
+
+        let log = store.get_status_log(&task_id).await.unwrap();
+        assert_eq!(log.events.len(), 2);
+
+        state
+            .transition_task_to_completion(&task_id, Ok(()), Some("done".to_string()))
+            .await
+            .unwrap();
+        let log = store.get_status_log(&task_id).await.unwrap();
+        match log.events.last() {
+            Some(Event::Completed { last_message, .. }) => {
+                assert_eq!(last_message.as_deref(), Some("done"))
+            }
+            other => panic!("expected completed event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn tasks_for_issue_uses_index() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let other_issue = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1360,20 +1366,17 @@ mod tests {
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
         let running_id = store.add_task(running_task, Utc::now()).await.unwrap();
-        store
-            .mark_task_running(&running_id, Utc::now())
-            .await
-            .unwrap();
+        state.transition_task_to_running(&running_id).await.unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
         let completed_id = store.add_task(completed_task, Utc::now()).await.unwrap();
-        store
-            .mark_task_running(&completed_id, Utc::now())
+        state
+            .transition_task_to_running(&completed_id)
             .await
             .unwrap();
-        store
-            .mark_task_complete(&completed_id, Ok(()), None, Utc::now())
+        state
+            .transition_task_to_completion(&completed_id, Ok(()), None)
             .await
             .unwrap();
 
@@ -1419,21 +1422,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mark_task_running_transitions_from_pending() {
-        let store = MemoryStore::new();
+    async fn transition_task_to_running_from_pending() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
     }
 
     #[tokio::test]
-    async fn mark_task_complete_transitions_from_running() {
-        let store = MemoryStore::new();
+    async fn transition_task_to_completion_from_running() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1441,20 +1446,21 @@ mod tests {
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
         // First mark as running
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
 
         // Then mark as complete
-        store
-            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
+        state
+            .transition_task_to_completion(&root_id, Ok(()), None)
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
     }
 
     #[tokio::test]
-    async fn mark_task_failed_transitions_from_running() {
-        let store = MemoryStore::new();
+    async fn transition_task_to_failure_from_running() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1462,18 +1468,17 @@ mod tests {
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
         // First mark as running
-        store.mark_task_running(&root_id, Utc::now()).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
 
         // Then mark as failed
-        store
-            .mark_task_complete(
+        state
+            .transition_task_to_completion(
                 &root_id,
                 Err(TaskError::JobEngineError {
                     reason: "test failure".to_string(),
                 }),
                 None,
-                Utc::now(),
             )
             .await
             .unwrap();
@@ -1481,36 +1486,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mark_task_complete_from_pending_fails() {
-        let store = MemoryStore::new();
+    async fn transition_task_to_completion_from_pending_fails() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         // Trying to mark as complete from pending should fail
-        let err = store
-            .mark_task_complete(&root_id, Ok(()), None, Utc::now())
+        let err = state
+            .transition_task_to_completion(&root_id, Ok(()), None)
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
     }
 
     #[tokio::test]
-    async fn mark_task_failed_from_pending_fails() {
-        let store = MemoryStore::new();
+    async fn transition_task_to_failure_from_pending_fails() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         // Trying to mark as failed from pending should fail
-        let err = store
-            .mark_task_complete(
+        let err = state
+            .transition_task_to_completion(
                 &root_id,
                 Err(TaskError::JobEngineError {
                     reason: "test".to_string(),
                 }),
                 None,
-                Utc::now(),
             )
             .await
             .unwrap_err();

@@ -19,6 +19,11 @@ pub struct S3StorageConfig {
     pub session_token: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSystemStorageConfig {
+    pub root_dir: String,
+}
+
 impl Default for BuildCacheConfig {
     fn default() -> Self {
         Self {
@@ -73,6 +78,13 @@ impl S3StorageConfig {
             ));
         }
 
+        Ok(())
+    }
+}
+
+impl FileSystemStorageConfig {
+    pub fn validate(&self) -> Result<(), BuildCacheError> {
+        validate_required("root_dir", &self.root_dir)?;
         Ok(())
     }
 }
@@ -292,6 +304,21 @@ mod tests {
             config.validate(),
             Err(BuildCacheError::Config {
                 field: "session_token",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn filesystem_config_requires_root_dir() {
+        let config = FileSystemStorageConfig {
+            root_dir: "".to_string(),
+        };
+
+        assert!(matches!(
+            config.validate(),
+            Err(BuildCacheError::Config {
+                field: "root_dir",
                 ..
             })
         ));

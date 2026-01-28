@@ -11,7 +11,7 @@ use crate::{
         users::Username,
     },
     job_engine::{JobEngine, JobStatus},
-    store::Task,
+    store::{Status, Task},
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client,
         test_state_with_engine_handles,
@@ -664,14 +664,14 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                status: Status::Pending,
+                last_message: None,
+                error: None,
             },
             Utc::now(),
         )
         .await?;
-    handles
-        .store
-        .mark_task_running(&task_id, Utc::now())
-        .await?;
+    handles.state.transition_task_to_running(&task_id).await?;
     engine.insert_job(&task_id, JobStatus::Running).await;
 
     client

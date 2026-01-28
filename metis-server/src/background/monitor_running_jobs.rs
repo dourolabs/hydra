@@ -117,8 +117,8 @@ mod tests {
             .await
             .expect("task should be added");
         handles
-            .store
-            .mark_task_running(&task_id, Utc::now())
+            .state
+            .transition_task_to_running(&task_id)
             .await
             .expect("task should be marked running");
 
