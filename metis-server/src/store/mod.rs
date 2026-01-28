@@ -66,51 +66,6 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
     Some(log)
 }
 
-pub(crate) async fn transition_task_to_running(
-    store: &dyn Store,
-    id: &TaskId,
-) -> Result<Versioned<Task>, StoreError> {
-    let latest = store.get_task(id).await?;
-    if latest.item.status != Status::Pending {
-        return Err(StoreError::InvalidStatusTransition);
-    }
-
-    let mut updated = latest.item;
-    updated.status = Status::Running;
-    updated.last_message = None;
-    updated.error = None;
-
-    store.update_task(id, updated).await
-}
-
-pub(crate) async fn transition_task_to_completion(
-    store: &dyn Store,
-    id: &TaskId,
-    result: Result<(), TaskError>,
-    last_message: Option<String>,
-) -> Result<Versioned<Task>, StoreError> {
-    let latest = store.get_task(id).await?;
-    if latest.item.status != Status::Running {
-        return Err(StoreError::InvalidStatusTransition);
-    }
-
-    let mut updated = latest.item;
-    match result {
-        Ok(()) => {
-            updated.status = Status::Complete;
-            updated.last_message = last_message;
-            updated.error = None;
-        }
-        Err(error) => {
-            updated.status = Status::Failed;
-            updated.last_message = None;
-            updated.error = Some(error);
-        }
-    }
-
-    store.update_task(id, updated).await
-}
-
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

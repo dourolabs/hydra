@@ -672,11 +672,12 @@ mod tests {
             task_status::Event,
             users::{User, Username},
         },
-        store::{TaskError, transition_task_to_completion, transition_task_to_running},
+        store::TaskError,
+        test_utils::test_state_with_store,
     };
     use chrono::{Duration, Utc};
     use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
-    use std::{collections::HashSet, str::FromStr};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn sample_repository_config() -> Repository {
         Repository::new(
@@ -1293,11 +1294,13 @@ mod tests {
 
     #[tokio::test]
     async fn task_versions_increment_on_transitions() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
         let task_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
 
-        transition_task_to_running(&store, &task_id).await.unwrap();
-        transition_task_to_completion(&store, &task_id, Ok(()), None)
+        state.transition_task_to_running(&task_id).await.unwrap();
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None)
             .await
             .unwrap();
 
@@ -1308,7 +1311,8 @@ mod tests {
 
     #[tokio::test]
     async fn status_log_is_derived_from_task_versions() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
         let created_at = Utc::now() - Duration::seconds(60);
         let mut task = spawn_task();
         task.prompt = "v1".to_string();
@@ -1323,7 +1327,7 @@ mod tests {
         assert_eq!(log.creation_time(), Some(created_at));
         assert_eq!(log.current_status(), Status::Pending);
 
-        transition_task_to_running(&store, &task_id).await.unwrap();
+        state.transition_task_to_running(&task_id).await.unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
@@ -1334,7 +1338,8 @@ mod tests {
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.events.len(), 2);
 
-        transition_task_to_completion(&store, &task_id, Ok(()), Some("done".to_string()))
+        state
+            .transition_task_to_completion(&task_id, Ok(()), Some("done".to_string()))
             .await
             .unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
@@ -1348,7 +1353,8 @@ mod tests {
 
     #[tokio::test]
     async fn tasks_for_issue_uses_index() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
         let other_issue = store.add_issue(sample_issue(vec![])).await.unwrap();
@@ -1360,17 +1366,17 @@ mod tests {
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
         let running_id = store.add_task(running_task, Utc::now()).await.unwrap();
-        transition_task_to_running(&store, &running_id)
-            .await
-            .unwrap();
+        state.transition_task_to_running(&running_id).await.unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
         let completed_id = store.add_task(completed_task, Utc::now()).await.unwrap();
-        transition_task_to_running(&store, &completed_id)
+        state
+            .transition_task_to_running(&completed_id)
             .await
             .unwrap();
-        transition_task_to_completion(&store, &completed_id, Ok(()), None)
+        state
+            .transition_task_to_completion(&completed_id, Ok(()), None)
             .await
             .unwrap();
 
@@ -1417,20 +1423,22 @@ mod tests {
 
     #[tokio::test]
     async fn transition_task_to_running_from_pending() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
-        transition_task_to_running(&store, &root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
     }
 
     #[tokio::test]
     async fn transition_task_to_completion_from_running() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1438,11 +1446,12 @@ mod tests {
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
         // First mark as running
-        transition_task_to_running(&store, &root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
 
         // Then mark as complete
-        transition_task_to_completion(&store, &root_id, Ok(()), None)
+        state
+            .transition_task_to_completion(&root_id, Ok(()), None)
             .await
             .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
@@ -1450,7 +1459,8 @@ mod tests {
 
     #[tokio::test]
     async fn transition_task_to_failure_from_running() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
@@ -1458,32 +1468,34 @@ mod tests {
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
 
         // First mark as running
-        transition_task_to_running(&store, &root_id).await.unwrap();
+        state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
 
         // Then mark as failed
-        transition_task_to_completion(
-            &store,
-            &root_id,
-            Err(TaskError::JobEngineError {
-                reason: "test failure".to_string(),
-            }),
-            None,
-        )
-        .await
-        .unwrap();
+        state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "test failure".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap();
         assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Failed);
     }
 
     #[tokio::test]
     async fn transition_task_to_completion_from_pending_fails() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         // Trying to mark as complete from pending should fail
-        let err = transition_task_to_completion(&store, &root_id, Ok(()), None)
+        let err = state
+            .transition_task_to_completion(&root_id, Ok(()), None)
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
@@ -1491,22 +1503,23 @@ mod tests {
 
     #[tokio::test]
     async fn transition_task_to_failure_from_pending_fails() {
-        let store = MemoryStore::new();
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         // Trying to mark as failed from pending should fail
-        let err = transition_task_to_completion(
-            &store,
-            &root_id,
-            Err(TaskError::JobEngineError {
-                reason: "test".to_string(),
-            }),
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err = state
+            .transition_task_to_completion(
+                &root_id,
+                Err(TaskError::JobEngineError {
+                    reason: "test".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(err, StoreError::InvalidStatusTransition));
     }
 

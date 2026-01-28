@@ -414,7 +414,6 @@ mod tests {
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        store::{Store, transition_task_to_completion, transition_task_to_running},
         test::{TestStateHandles, test_state_with_repo_handles},
     };
     use chrono::Utc;
@@ -467,10 +466,13 @@ mod tests {
         Ok((handles, repo_name))
     }
 
-    async fn record_completed_task(store: &dyn Store, task: Task) -> anyhow::Result<()> {
-        let task_id = store.add_task(task, Utc::now()).await?;
-        transition_task_to_running(store, &task_id).await?;
-        transition_task_to_completion(store, &task_id, Ok(()), None).await?;
+    async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
+        let task_id = handles.store.add_task(task, Utc::now()).await?;
+        handles.state.transition_task_to_running(&task_id).await?;
+        handles
+            .state
+            .transition_task_to_completion(&task_id, Ok(()), None)
+            .await?;
         Ok(())
     }
 
@@ -731,7 +733,7 @@ mod tests {
 
         let mut tasks = queue("agent-a").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
+        record_completed_task(&handles, tasks.remove(0)).await?;
 
         let updated_patch = handles.store.get_patch(&patch_id).await?;
         let mut updated_patch = updated_patch.item;
@@ -992,7 +994,7 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        transition_task_to_running(handles.store.as_ref(), &task_id).await?;
+        handles.state.transition_task_to_running(&task_id).await?;
 
         handles
             .store
@@ -1110,7 +1112,7 @@ mod tests {
 
         let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
+        record_completed_task(&handles, tasks.remove(0)).await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
@@ -1161,7 +1163,7 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        transition_task_to_running(handles.store.as_ref(), &task_id).await?;
+        handles.state.transition_task_to_running(&task_id).await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
@@ -1257,11 +1259,11 @@ mod tests {
 
         let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
+        record_completed_task(&handles, tasks.remove(0)).await?;
 
         let mut tasks = queue.spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        record_completed_task(handles.store.as_ref(), tasks.remove(0)).await?;
+        record_completed_task(&handles, tasks.remove(0)).await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
