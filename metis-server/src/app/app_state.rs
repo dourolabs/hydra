@@ -24,7 +24,6 @@ use metis_common::{
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
-use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -45,8 +44,6 @@ pub struct AppState {
     pub job_engine: Arc<dyn JobEngine>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
-
-const GITHUB_ORG_MEMBERSHIP: &str = "dourolabs";
 
 #[derive(Debug, Error)]
 pub enum CreateJobError {
@@ -216,20 +213,11 @@ pub enum AgentError {
 pub enum LoginError {
     #[error("invalid github token: {0}")]
     InvalidGithubToken(String),
-    #[error("github organization membership check failed: {0}")]
-    GithubOrganizationLookupFailed(String),
-    #[error("github organization membership required: {0}")]
-    Unauthorized(String),
     #[error("login store operation failed")]
     Store {
         #[source]
         source: StoreError,
     },
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubOrgSummary {
-    login: String,
 }
 
 impl AppState {
@@ -285,8 +273,6 @@ impl AppState {
             .await
             .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
         let username = Username::from(github_user.login);
-        self.ensure_org_membership(&github_client, &username)
-            .await?;
         let user = User {
             username: username.clone(),
             github_user_id: github_user.id.into_inner(),
@@ -327,29 +313,6 @@ impl AppState {
         }
 
         Ok((user, actor, auth_token))
-    }
-
-    async fn ensure_org_membership(
-        &self,
-        github_client: &Octocrab,
-        username: &Username,
-    ) -> Result<(), LoginError> {
-        let orgs: Vec<GithubOrgSummary> = github_client
-            .get("/user/orgs", None::<&()>)
-            .await
-            .map_err(|err| LoginError::GithubOrganizationLookupFailed(format!("{err}")))?;
-
-        let is_member = orgs.iter().any(|org| org.login == GITHUB_ORG_MEMBERSHIP);
-
-        if !is_member {
-            return Err(LoginError::Unauthorized(format!(
-                "github user '{}' is not a member of {}",
-                username.as_str(),
-                GITHUB_ORG_MEMBERSHIP
-            )));
-        }
-
-        Ok(())
     }
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
@@ -1753,12 +1716,6 @@ mod tests {
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(github_user_response("octo", 42));
-        });
-        let _orgs_mock = github_server.mock(|when, then| {
-            when.method(GET).path("/user/orgs");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(serde_json::json!([{ "login": "dourolabs" }]));
         });
 
         let handles = test_state_with_github_api_base_url(github_server.base_url());

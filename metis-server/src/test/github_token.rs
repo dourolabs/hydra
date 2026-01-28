@@ -6,8 +6,8 @@ use crate::{
         users::{User, Username},
     },
     test_utils::{
-        github_orgs_response, github_user_response, spawn_test_server_with_state,
-        test_client_without_auth, test_state_handles, test_state_with_github_urls,
+        github_user_response, spawn_test_server_with_state, test_client_without_auth,
+        test_state_handles, test_state_with_github_urls,
     },
 };
 use chrono::Utc;
@@ -38,12 +38,6 @@ async fn github_token_returns_for_username_actor() -> anyhow::Result<()> {
         then.status(200)
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_orgs_response(&["dourolabs"]));
     });
 
     let handles = test_state_with_github_urls(server.base_url(), server.base_url());

@@ -1,7 +1,7 @@
 use crate::{
     domain::users::Username,
     test::{
-        github_orgs_response, github_user_response, spawn_test_server_with_state, test_client,
+        github_user_response, spawn_test_server_with_state, test_client,
         test_state_with_github_api_base_url,
     },
 };
@@ -18,12 +18,6 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
         then.status(200)
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_orgs_response(&["dourolabs"]));
     });
 
     let handles = test_state_with_github_api_base_url(github_server.base_url());
@@ -77,12 +71,6 @@ async fn login_persists_refresh_token() -> anyhow::Result<()> {
         then.status(200)
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_orgs_response(&["dourolabs"]));
     });
 
     let handles = test_state_with_github_api_base_url(github_server.base_url());
@@ -142,65 +130,5 @@ async fn login_returns_bad_request_for_invalid_token() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    Ok(())
-}
-
-#[tokio::test]
-async fn login_rejects_non_org_member() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_orgs_response(&["other-org"]));
-    });
-
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
-
-    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
-    let response = client
-        .post(format!("{}/v1/login", server.base_url()))
-        .json(&payload)
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    Ok(())
-}
-
-#[tokio::test]
-async fn login_returns_internal_when_org_lookup_fails() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(500);
-    });
-
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
-    let client = test_client();
-
-    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
-    let response = client
-        .post(format!("{}/v1/login", server.base_url()))
-        .json(&payload)
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     Ok(())
 }
