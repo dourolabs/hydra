@@ -37,6 +37,28 @@ connect_timeout_secs = 5
 # Idle timeout (seconds) before reclaiming a connection; set to 0 to disable.
 idle_timeout_secs = 300
 
+[build_cache]
+# Optional build cache storage configuration for worker runs.
+# Omit this section to disable build caching.
+# include = ["target/", "dist/"]
+# exclude = ["tmp/", "*.log"]
+# max_entries_per_repo = 10
+
+## Local filesystem storage
+#[build_cache.storage]
+#type = "filesystem"
+#root_dir = "/var/lib/metis/build-cache"
+
+## S3 storage
+#[build_cache.storage]
+#type = "s3"
+#endpoint_url = "https://s3.amazonaws.com"
+#bucket = "metis-build-cache"
+#region = "us-east-1"
+#access_key_id = ""
+#secret_access_key = ""
+#session_token = ""
+
 [github_app]
 # GitHub App configuration for device flow and API access.
 # All fields are required; use the values from your GitHub App settings.

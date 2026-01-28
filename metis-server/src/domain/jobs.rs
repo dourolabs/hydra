@@ -170,6 +170,8 @@ pub struct WorkerContext {
     pub prompt: String,
     #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default)]
+    pub build_cache: Option<metis_common::BuildCacheContext>,
 }
 
 impl WorkerContext {
@@ -177,11 +179,13 @@ impl WorkerContext {
         request_context: Bundle,
         prompt: String,
         variables: HashMap<String, String>,
+        build_cache: Option<metis_common::BuildCacheContext>,
     ) -> Self {
         Self {
             request_context,
             prompt,
             variables,
+            build_cache,
         }
     }
 }
@@ -309,13 +313,19 @@ impl From<api::jobs::WorkerContext> for WorkerContext {
             request_context: value.request_context.into(),
             prompt: value.prompt,
             variables: value.variables,
+            build_cache: value.build_cache,
         }
     }
 }
 
 impl From<WorkerContext> for api::jobs::WorkerContext {
     fn from(value: WorkerContext) -> Self {
-        api::jobs::WorkerContext::new(value.request_context.into(), value.prompt, value.variables)
+        api::jobs::WorkerContext::new(
+            value.request_context.into(),
+            value.prompt,
+            value.variables,
+            value.build_cache,
+        )
     }
 }
 

@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod api;
+pub mod build_cache;
 pub mod constants;
 pub mod github;
 pub mod ids;
@@ -12,6 +13,7 @@ pub use api::v1::{
     agents, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
     task_status, users, whoami,
 };
+pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{

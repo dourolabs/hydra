@@ -1,4 +1,6 @@
 use super::common::{default_image, patch_diff, service_repo_name, service_repository, task_id};
+use crate::app::{AppState, ServiceState};
+use crate::config::BuildCacheSection;
 use crate::domain::{
     issues::{Issue, IssueStatus, IssueType, JobSettings},
     jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
@@ -7,17 +9,19 @@ use crate::domain::{
     users::Username,
 };
 use crate::{
+    background::AgentQueue,
     job_engine::JobStatus,
-    store::{Status, Task, TaskError},
+    store::{MemoryStore, Status, Task, TaskError},
     test_utils::{
         MockJobEngine, add_repository, spawn_test_server, spawn_test_server_with_state,
-        test_client, test_state_handles, test_state_with_engine_handles,
+        test_app_config, test_client, test_state_handles, test_state_with_engine_handles,
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{TaskId, job_status::GetJobStatusResponse};
+use metis_common::{BuildCacheStorageConfig, TaskId, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn create_job_enqueues_task() -> anyhow::Result<()> {
@@ -343,6 +347,60 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         }
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
+    let mut config = test_app_config();
+    config.build_cache = BuildCacheSection {
+        storage: Some(BuildCacheStorageConfig::FileSystem {
+            root_dir: "/tmp/metis-build-cache".to_string(),
+        }),
+        include: Vec::new(),
+        exclude: Vec::new(),
+        max_entries_per_repo: Some(5),
+    };
+
+    let store = Arc::new(MemoryStore::new());
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        Arc::new(RwLock::new(Vec::<Arc<AgentQueue>>::new())),
+    );
+    let server = spawn_test_server_with_state(state, store).await?;
+
+    let client = test_client();
+    let response = client
+        .post(format!("{}/v1/jobs", server.base_url()))
+        .json(&json!({ "prompt": "0" }))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: CreateJobResponse = response.json().await?;
+    let context_response = client
+        .get(format!(
+            "{}/v1/jobs/{}/context",
+            server.base_url(),
+            body.job_id.as_ref()
+        ))
+        .send()
+        .await?;
+
+    assert!(context_response.status().is_success());
+    let worker_context: WorkerContext = context_response.json().await?;
+    let build_cache = worker_context.build_cache.expect("build cache");
+    assert_eq!(
+        build_cache.storage,
+        BuildCacheStorageConfig::FileSystem {
+            root_dir: "/tmp/metis-build-cache".to_string(),
+        }
+    );
+    assert_eq!(build_cache.settings.max_entries_per_repo, Some(5));
     Ok(())
 }
 

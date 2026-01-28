@@ -3,6 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result, ensure};
+use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
@@ -22,6 +23,8 @@ pub struct AppConfig {
     pub github_app: GithubAppSection,
     #[serde(default)]
     pub background: BackgroundSection,
+    #[serde(default)]
+    pub build_cache: BuildCacheSection,
 }
 
 impl AppConfig {
@@ -44,7 +47,8 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         self.metis.validate()?;
         self.github_app.validate()?;
-        self.background.validate()
+        self.background.validate()?;
+        self.build_cache.validate()
     }
 }
 
@@ -78,6 +82,84 @@ impl Default for MetisSection {
             allowed_orgs: Vec::new(),
             openai_api_key: None,
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct BuildCacheSection {
+    #[serde(default)]
+    pub storage: Option<BuildCacheStorageConfig>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    #[serde(default)]
+    pub max_entries_per_repo: Option<usize>,
+}
+
+impl BuildCacheSection {
+    pub fn to_context(&self) -> Option<BuildCacheContext> {
+        let storage = self.storage.clone()?;
+        let mut settings = BuildCacheSettings::default();
+        if !self.include.is_empty() {
+            settings.include = self.include.clone();
+        }
+        if !self.exclude.is_empty() {
+            settings.exclude = self.exclude.clone();
+        }
+        if self.max_entries_per_repo.is_some() {
+            settings.max_entries_per_repo = self.max_entries_per_repo;
+        }
+        Some(BuildCacheContext { storage, settings })
+    }
+
+    fn validate(&self) -> Result<()> {
+        let Some(storage) = self.storage.as_ref() else {
+            return Ok(());
+        };
+        match storage {
+            BuildCacheStorageConfig::FileSystem { root_dir } => {
+                ensure!(
+                    non_empty(root_dir).is_some(),
+                    "build_cache.storage.root_dir must be set"
+                );
+            }
+            BuildCacheStorageConfig::S3 {
+                endpoint_url,
+                bucket,
+                region,
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                ensure!(
+                    non_empty(endpoint_url).is_some(),
+                    "build_cache.storage.endpoint_url must be set"
+                );
+                ensure!(
+                    non_empty(bucket).is_some(),
+                    "build_cache.storage.bucket must be set"
+                );
+                ensure!(
+                    non_empty(region).is_some(),
+                    "build_cache.storage.region must be set"
+                );
+                let has_access = access_key_id.as_ref().and_then(|v| non_empty(v)).is_some();
+                let has_secret = secret_access_key
+                    .as_ref()
+                    .and_then(|v| non_empty(v))
+                    .is_some();
+                ensure!(
+                    has_access == has_secret,
+                    "build_cache.storage requires access_key_id and secret_access_key together"
+                );
+                ensure!(
+                    session_token.as_ref().and_then(|v| non_empty(v)).is_none() || has_access,
+                    "build_cache.storage.session_token requires access_key_id and secret_access_key"
+                );
+            }
+        }
+        Ok(())
     }
 }
 
