@@ -2,7 +2,6 @@ use crate::config::BuildCacheConfig;
 use crate::error::BuildCacheError;
 use crate::key::BuildCacheKey;
 use crate::storage::{StorageClient, StorageObject};
-use std::env;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -34,19 +33,19 @@ impl BuildCacheClient {
 
     pub fn build_cache_archive(
         &self,
+        root: impl AsRef<Path>,
         output_path: impl AsRef<Path>,
     ) -> Result<(), BuildCacheError> {
-        let root =
-            env::current_dir().map_err(|err| BuildCacheError::io("reading current dir", err))?;
-        self.build_cache_archive_in_dir(&root, output_path.as_ref())
+        self.build_cache_archive_impl(root.as_ref(), output_path.as_ref())
     }
 
     pub async fn build_cache_archive_async(
         &self,
+        root: PathBuf,
         output_path: PathBuf,
     ) -> Result<(), BuildCacheError> {
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.build_cache_archive(output_path))
+        tokio::task::spawn_blocking(move || client.build_cache_archive(&root, &output_path))
             .await
             .map_err(|err| {
                 BuildCacheError::io("joining cache archive task", io::Error::other(err))
@@ -55,19 +54,19 @@ impl BuildCacheClient {
 
     pub fn apply_cache_archive(
         &self,
+        root: impl AsRef<Path>,
         archive_path: impl AsRef<Path>,
     ) -> Result<(), BuildCacheError> {
-        let root =
-            env::current_dir().map_err(|err| BuildCacheError::io("reading current dir", err))?;
-        self.apply_cache_archive_in_dir(&root, archive_path.as_ref())
+        self.apply_cache_archive_impl(root.as_ref(), archive_path.as_ref())
     }
 
     pub async fn apply_cache_archive_async(
         &self,
+        root: PathBuf,
         archive_path: PathBuf,
     ) -> Result<(), BuildCacheError> {
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.apply_cache_archive(archive_path))
+        tokio::task::spawn_blocking(move || client.apply_cache_archive(&root, &archive_path))
             .await
             .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
     }
@@ -134,17 +133,19 @@ impl BuildCacheClient {
 
     pub async fn download_and_apply_cache(
         &self,
+        root: impl AsRef<Path>,
         key: &BuildCacheKey,
     ) -> Result<(), BuildCacheError> {
         let temp = tempfile::NamedTempFile::new()
             .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
         let path = temp.path().to_path_buf();
         self.download_cache(key, &path).await?;
-        self.apply_cache_archive_async(path).await?;
+        self.apply_cache_archive_async(root.as_ref().to_path_buf(), path)
+            .await?;
         Ok(())
     }
 
-    fn build_cache_archive_in_dir(
+    fn build_cache_archive_impl(
         &self,
         root: &Path,
         output_path: &Path,
@@ -175,7 +176,7 @@ impl BuildCacheClient {
         Ok(())
     }
 
-    fn apply_cache_archive_in_dir(
+    fn apply_cache_archive_impl(
         &self,
         root: &Path,
         archive_path: &Path,
@@ -321,24 +322,6 @@ mod tests {
 
     type StoredObject = (Vec<u8>, Option<SystemTime>);
 
-    struct DirGuard {
-        previous: PathBuf,
-    }
-
-    impl DirGuard {
-        fn change_to(path: &Path) -> Self {
-            let previous = env::current_dir().expect("current dir");
-            env::set_current_dir(path).expect("set current dir");
-            Self { previous }
-        }
-    }
-
-    impl Drop for DirGuard {
-        fn drop(&mut self) {
-            let _ = env::set_current_dir(&self.previous);
-        }
-    }
-
     fn write_file(path: &Path, contents: &str) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create dirs");
@@ -418,18 +401,16 @@ mod tests {
         let storage = Arc::new(MockStorageClient::new());
 
         {
-            let _guard = DirGuard::change_to(source_dir.path());
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
             client
-                .build_cache_archive(&archive_path)
+                .build_cache_archive(source_dir.path(), &archive_path)
                 .expect("build archive");
         }
 
         {
-            let _guard = DirGuard::change_to(destination_dir.path());
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
             client
-                .apply_cache_archive(&archive_path)
+                .apply_cache_archive(destination_dir.path(), &archive_path)
                 .expect("apply archive");
         }
 
@@ -512,10 +493,9 @@ mod tests {
         let key = BuildCacheKey::new(repo, "deadbeef");
 
         {
-            let _guard = DirGuard::change_to(source_dir.path());
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
             client
-                .build_cache_archive(&archive_path)
+                .build_cache_archive(source_dir.path(), &archive_path)
                 .expect("build archive");
             client
                 .upload_cache(&key, &archive_path)
@@ -524,10 +504,9 @@ mod tests {
         }
 
         {
-            let _guard = DirGuard::change_to(destination_dir.path());
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
             client
-                .download_and_apply_cache(&key)
+                .download_and_apply_cache(destination_dir.path(), &key)
                 .await
                 .expect("download apply");
         }
