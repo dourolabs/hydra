@@ -200,6 +200,96 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to update merge-request issue '{issue_id}' for '{patch_id}': {source}"
             ))
         }
+        UpsertPatchError::GithubAppUnavailable => {
+            error!("github app not configured for patch sync");
+            ApiError::internal(anyhow!("github app not configured"))
+        }
+        UpsertPatchError::GithubInstallationLookup {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to lookup github installation"
+            );
+            ApiError::internal(anyhow!(
+                "failed to lookup github installation for '{owner}/{repo}': {source}"
+            ))
+        }
+        UpsertPatchError::GithubInstallationClient {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to create github installation client"
+            );
+            ApiError::internal(anyhow!(
+                "failed to create github installation client for '{owner}/{repo}': {source}"
+            ))
+        }
+        UpsertPatchError::GithubHeadRefMissing => {
+            error!("missing github head ref for patch sync");
+            ApiError::bad_request("github head ref must be provided")
+        }
+        UpsertPatchError::GithubBaseRefMissing => {
+            error!("missing github base ref for patch sync");
+            ApiError::bad_request("github base ref must be provided")
+        }
+        UpsertPatchError::GithubRepositoryLookup { repo_name, source } => match source {
+            StoreError::RepositoryNotFound(_) => {
+                error!(repo_name = %repo_name, "repository not found for github sync");
+                ApiError::bad_request(format!("repository '{repo_name}' not found"))
+            }
+            other => {
+                error!(
+                    repo_name = %repo_name,
+                    error = %other,
+                    "failed to load repository for github sync"
+                );
+                ApiError::internal(anyhow!(
+                    "failed to load repository '{repo_name}' for github sync: {other}"
+                ))
+            }
+        },
+        UpsertPatchError::GithubPullRequestUpdate {
+            owner,
+            repo,
+            number,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                number = %number,
+                error = %source,
+                "failed to update github pull request"
+            );
+            ApiError::internal(anyhow!(
+                "failed to update github pull request '{owner}/{repo}#{number}': {source}"
+            ))
+        }
+        UpsertPatchError::GithubPullRequestCreate {
+            owner,
+            repo,
+            source,
+        } => {
+            error!(
+                owner = %owner,
+                repo = %repo,
+                error = %source,
+                "failed to create github pull request"
+            );
+            ApiError::internal(anyhow!(
+                "failed to create github pull request for '{owner}/{repo}': {source}"
+            ))
+        }
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))
