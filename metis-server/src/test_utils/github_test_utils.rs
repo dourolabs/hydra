@@ -42,9 +42,18 @@ pub fn test_state_with_github_urls(
     api_base_url: String,
     oauth_base_url: String,
 ) -> TestStateHandles {
+    test_state_with_github_urls_and_allowed_orgs(api_base_url, oauth_base_url, Vec::new())
+}
+
+pub fn test_state_with_github_urls_and_allowed_orgs(
+    api_base_url: String,
+    oauth_base_url: String,
+    allowed_orgs: Vec<String>,
+) -> TestStateHandles {
     let mut config = test_app_config();
     config.github_app.api_base_url = api_base_url;
     config.github_app.oauth_base_url = oauth_base_url;
+    config.metis.allowed_orgs = allowed_orgs;
 
     let store = Arc::new(MemoryStore::new());
     let agents = Arc::new(RwLock::new(Vec::new()));
