@@ -261,15 +261,6 @@ pub trait Store: Send + Sync {
     /// A vector of TaskIds for tasks with the specified status
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError>;
 
-    /// Gets the status of a task by its TaskId.
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId to look up
-    ///
-    /// # Returns
-    /// The status if found, or an error if not found
-    async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError>;
-
     /// Gets the status log for a task by its TaskId.
     ///
     /// The status log contains timing information about the task's lifecycle,
@@ -295,31 +286,11 @@ pub trait Store: Send + Sync {
     /// Lists all actors with their canonical names.
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
 
-    /// Validates an auth token and returns the associated actor.
-    async fn validate_auth_token(&self, token: &str) -> Result<Actor, StoreError> {
-        let (actor_name, _raw_token) = token
-            .split_once(':')
-            .filter(|(name, token)| !name.is_empty() && !token.is_empty())
-            .ok_or(StoreError::InvalidAuthToken)?;
-        let actor = self.get_actor(actor_name).await?;
-        if actor.item.verify_auth_token(token) {
-            Ok(actor.item)
-        } else {
-            Err(StoreError::InvalidAuthToken)
-        }
-    }
-
     /// Adds a new user to the store.
     async fn add_user(&self, user: User) -> Result<(), StoreError>;
 
-    /// Updates the GitHub token for the requested user.
-    async fn set_user_github_token(
-        &self,
-        username: &Username,
-        github_token: String,
-        github_user_id: u64,
-        github_refresh_token: String,
-    ) -> Result<Versioned<User>, StoreError>;
+    /// Updates an existing user in the store.
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError>;
 
     /// Gets a user by their username.
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError>;

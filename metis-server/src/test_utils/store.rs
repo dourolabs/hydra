@@ -136,10 +136,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_status(&self, _id: &TaskId) -> Result<Status, StoreError> {
-        fail()
-    }
-
     async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         fail()
     }
@@ -165,13 +161,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn set_user_github_token(
-        &self,
-        _username: &Username,
-        _github_token: String,
-        _github_user_id: u64,
-        _github_refresh_token: String,
-    ) -> Result<Versioned<User>, StoreError> {
+    async fn update_user(&self, _user: User) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 

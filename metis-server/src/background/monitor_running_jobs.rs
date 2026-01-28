@@ -138,9 +138,10 @@ mod tests {
         assert_eq!(
             handles
                 .state
-                .get_task_status(&task_id)
+                .get_task(&task_id)
                 .await
-                .expect("status should exist"),
+                .expect("task should exist")
+                .status,
             Status::Running
         );
     }

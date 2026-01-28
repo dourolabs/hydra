@@ -356,7 +356,7 @@ async fn agent_task_state(
                 continue;
             }
 
-            let status = state.get_task_status(&task_id).await?;
+            let status = state.get_task(&task_id).await?.status;
             match status {
                 Status::Pending => task_state.pending_tasks += 1,
                 Status::Running => task_state.running_tasks += 1,
@@ -384,7 +384,7 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
     {
         for task_id in state.get_tasks_for_issue(&dependency.issue_id).await? {
-            if matches!(state.get_task_status(&task_id).await?, Status::Running) {
+            if matches!(state.get_task(&task_id).await?.status, Status::Running) {
                 return Ok(true);
             }
         }

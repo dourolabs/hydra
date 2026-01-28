@@ -49,7 +49,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
-    let status = check_state.get_task_status(&body.job_id).await?;
+    let status = check_state.get_task(&body.job_id).await?.status;
     assert_eq!(status, Status::Pending);
     Ok(())
 }
@@ -840,7 +840,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
         json!({ "job_id": job_id.as_ref(), "status": "complete" })
     );
 
-    let status = check_state.get_task_status(&job_id).await?;
+    let status = check_state.get_task(&job_id).await?.status;
     assert_eq!(status, Status::Complete);
     let status_log = check_state.get_status_log(&job_id).await?;
     assert!(matches!(status_log.result(), Some(Ok(()))));
@@ -946,7 +946,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
         json!({ "job_id": job_id.as_ref(), "status": "failed" })
     );
 
-    let status = state.get_task_status(&job_id).await?;
+    let status = state.get_task(&job_id).await?.status;
     assert_eq!(status, Status::Failed);
     let status_log = state.get_status_log(&job_id).await?;
     assert!(matches!(

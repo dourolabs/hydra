@@ -558,13 +558,6 @@ impl Store for MemoryStore {
             .collect())
     }
 
-    async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
-        self.tasks
-            .get(id)
-            .and_then(|entry| entry.value().last().map(|task| task.item.status))
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
-    }
-
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         self.tasks
             .get(id)
@@ -625,26 +618,13 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn set_user_github_token(
-        &self,
-        username: &Username,
-        github_token: String,
-        github_user_id: u64,
-        github_refresh_token: String,
-    ) -> Result<Versioned<User>, StoreError> {
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
         let mut versions = self
             .users
-            .get_mut(username)
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        let latest = versions
-            .last()
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        let mut updated = latest.item.clone();
-        updated.github_token = github_token;
-        updated.github_user_id = github_user_id;
-        updated.github_refresh_token = github_refresh_token;
+            .get_mut(&user.username)
+            .ok_or_else(|| StoreError::UserNotFound(user.username.clone()))?;
         let next_version = Self::next_version(&versions);
-        let versioned = Self::versioned_now(updated, next_version);
+        let versioned = Self::versioned_now(user, next_version);
         versions.push(versioned.clone());
         Ok(versioned)
     }
@@ -1261,7 +1241,10 @@ mod tests {
 
         let fetched = store.get_task(&task_id).await.unwrap();
         assert_versioned(&fetched, &task, 1);
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
+        assert_eq!(
+            store.get_task(&task_id).await.unwrap().item.status,
+            Status::Pending
+        );
 
         let tasks: HashSet<_> = store
             .list_tasks()
@@ -1306,7 +1289,10 @@ mod tests {
 
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3]);
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
+        assert_eq!(
+            store.get_task(&task_id).await.unwrap().item.status,
+            Status::Complete
+        );
     }
 
     #[tokio::test]
@@ -1418,7 +1404,10 @@ mod tests {
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Pending
+        );
     }
 
     #[tokio::test]
@@ -1429,10 +1418,16 @@ mod tests {
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Pending
+        );
 
         state.transition_task_to_running(&root_id).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Running
+        );
     }
 
     #[tokio::test]
@@ -1443,18 +1438,27 @@ mod tests {
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Pending
+        );
 
         // First mark as running
         state.transition_task_to_running(&root_id).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Running
+        );
 
         // Then mark as complete
         state
             .transition_task_to_completion(&root_id, Ok(()), None)
             .await
             .unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Complete);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Complete
+        );
     }
 
     #[tokio::test]
@@ -1465,11 +1469,17 @@ mod tests {
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Pending);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Pending
+        );
 
         // First mark as running
         state.transition_task_to_running(&root_id).await.unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Running);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Running
+        );
 
         // Then mark as failed
         state
@@ -1482,7 +1492,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(store.get_status(&root_id).await.unwrap(), Status::Failed);
+        assert_eq!(
+            store.get_task(&root_id).await.unwrap().item.status,
+            Status::Failed
+        );
     }
 
     #[tokio::test]
@@ -1524,7 +1537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_user_github_token_overwrites_existing_value() {
+    async fn update_user_overwrites_existing_value() {
         let store = MemoryStore::new();
         let username = Username::from("alice");
 
@@ -1539,12 +1552,12 @@ mod tests {
             .unwrap();
 
         let updated = store
-            .set_user_github_token(
-                &username,
-                "new-token".to_string(),
-                202,
-                "new-refresh".to_string(),
-            )
+            .update_user(User {
+                username: username.clone(),
+                github_user_id: 202,
+                github_token: "new-token".to_string(),
+                github_refresh_token: "new-refresh".to_string(),
+            })
             .await
             .unwrap();
 

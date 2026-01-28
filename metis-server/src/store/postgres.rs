@@ -251,39 +251,6 @@ impl PostgresStore {
         Ok(())
     }
 
-    async fn fetch_payload<T: DeserializeOwned>(
-        &self,
-        table: &str,
-        object_type: &str,
-        id: &str,
-        target_version: i32,
-    ) -> Result<Option<T>, StoreError> {
-        #[derive(sqlx::FromRow)]
-        struct PayloadRow {
-            schema_version: i32,
-            payload: Value,
-        }
-
-        let query = format!(
-            "SELECT schema_version, payload FROM {table} WHERE id = $1 ORDER BY version_number DESC LIMIT 1"
-        );
-        let row = sqlx::query_as::<_, PayloadRow>(&query)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let Some(row) = row else {
-            return Ok(None);
-        };
-
-        ensure_schema_version(object_type, row.schema_version, target_version)?;
-
-        serde_json::from_value(row.payload)
-            .map(Some)
-            .map_err(map_serde_error(object_type))
-    }
-
     async fn fetch_versioned_payload<T: DeserializeOwned>(
         &self,
         table: &str,
@@ -884,10 +851,6 @@ impl Store for PostgresStore {
         Ok(matches)
     }
 
-    async fn get_status(&self, id: &TaskId) -> Result<Status, StoreError> {
-        Ok(self.get_task(id).await?.item.status)
-    }
-
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let versions = self
             .fetch_versioned_payloads::<Task>(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
@@ -978,39 +941,42 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn set_user_github_token(
-        &self,
-        username: &Username,
-        github_token: String,
-        github_user_id: u64,
-        github_refresh_token: String,
-    ) -> Result<Versioned<User>, StoreError> {
-        let mut user: User = self
-            .fetch_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
-            .await?
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+    async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
+        let username = user.username.clone();
+        let exists = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(1) FROM {TABLE_USERS} WHERE id = $1"
+        ))
+        .bind(user.username.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
 
-        user.github_token = github_token;
-        user.github_user_id = github_user_id;
-        user.github_refresh_token = github_refresh_token;
+        if exists == 0 {
+            return Err(StoreError::UserNotFound(username));
+        }
 
         self.update_payload(
             TABLE_USERS,
             "user",
-            username.as_str(),
+            user.username.as_str(),
             USER_SCHEMA_VERSION,
             &user,
         )
         .await?;
 
-        self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!(
-                    "user '{}' missing after github token update",
-                    username.as_str()
-                ))
-            })
+        self.fetch_versioned_payload(
+            TABLE_USERS,
+            "user",
+            user.username.as_str(),
+            USER_SCHEMA_VERSION,
+        )
+        .await?
+        .ok_or_else(|| {
+            StoreError::Internal(format!(
+                "user '{}' missing after update",
+                user.username.as_str()
+            ))
+        })
     }
 
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
@@ -1389,7 +1355,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_status(&task_id).await.unwrap(),
+            handles.store.get_task(&task_id).await.unwrap().item.status,
             Status::Pending
         );
 
@@ -1399,7 +1365,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_status(&task_id).await.unwrap(),
+            handles.store.get_task(&task_id).await.unwrap().item.status,
             Status::Running
         );
 
@@ -1409,7 +1375,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_status(&task_id).await.unwrap(),
+            handles.store.get_task(&task_id).await.unwrap().item.status,
             Status::Complete
         );
 
@@ -1473,14 +1439,13 @@ mod tests {
         assert_eq!(fetched.item, user);
         assert_eq!(fetched.version, 1);
 
-        let username = Username::from("alice");
         let updated = store
-            .set_user_github_token(
-                &username,
-                "new-token".to_string(),
-                202,
-                "new-refresh".to_string(),
-            )
+            .update_user(User {
+                username: Username::from("alice"),
+                github_user_id: 202,
+                github_token: "new-token".to_string(),
+                github_refresh_token: "new-refresh".to_string(),
+            })
             .await
             .unwrap();
         assert_eq!(updated.item.github_token, "new-token");

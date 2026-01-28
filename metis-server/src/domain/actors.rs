@@ -12,6 +12,45 @@ pub enum ActorError {
     InvalidActorName(String),
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum AuthTokenError {
+    #[error("Invalid auth token format")]
+    InvalidFormat,
+    #[error("Invalid actor name: {0}")]
+    InvalidActorName(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthToken {
+    actor_name: String,
+    raw_token: String,
+}
+
+impl AuthToken {
+    pub fn parse(token: &str) -> Result<Self, AuthTokenError> {
+        let (actor_name, raw_token) = token
+            .split_once(':')
+            .filter(|(name, raw_token)| !name.is_empty() && !raw_token.is_empty())
+            .ok_or(AuthTokenError::InvalidFormat)?;
+
+        Actor::parse_name(actor_name)
+            .map_err(|_| AuthTokenError::InvalidActorName(actor_name.to_string()))?;
+
+        Ok(Self {
+            actor_name: actor_name.to_string(),
+            raw_token: raw_token.to_string(),
+        })
+    }
+
+    pub fn actor_name(&self) -> &str {
+        &self.actor_name
+    }
+
+    pub fn raw_token(&self) -> &str {
+        &self.raw_token
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Actor {
     pub auth_token_hash: String,
@@ -39,14 +78,11 @@ impl Actor {
         }
     }
 
-    pub fn verify_auth_token(&self, token: &str) -> bool {
-        let Some((actor_name, raw_token)) = token.split_once(':') else {
-            return false;
-        };
-        if raw_token.is_empty() || actor_name != self.name() {
+    pub fn verify_auth_token(&self, token: &AuthToken) -> bool {
+        if token.actor_name() != self.name() {
             return false;
         }
-        self.auth_token_hash == Self::hash_auth_token(raw_token)
+        self.auth_token_hash == Self::hash_auth_token(token.raw_token())
     }
 
     pub fn new_for_task(task_id: TaskId) -> (Actor, String) {
@@ -130,7 +166,8 @@ mod tests {
             .strip_prefix(&prefix)
             .expect("auth token should include actor name prefix");
         assert_eq!(actor.auth_token_hash, Actor::hash_auth_token(raw_token));
-        assert!(actor.verify_auth_token(&auth_token));
+        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
+        assert!(actor.verify_auth_token(&parsed));
     }
 
     #[test]
@@ -155,10 +192,12 @@ mod tests {
     fn verify_auth_token_requires_matching_actor_name() {
         let task_id = TaskId::new();
         let (actor, auth_token) = Actor::new_for_task(task_id);
+        let parsed = AuthToken::parse(&auth_token).expect("auth token should parse");
 
-        assert!(actor.verify_auth_token(&auth_token));
+        assert!(actor.verify_auth_token(&parsed));
 
         let invalid = format!("u-wrong:{}", auth_token.split_once(':').unwrap().1);
-        assert!(!actor.verify_auth_token(&invalid));
+        let parsed_invalid = AuthToken::parse(&invalid).expect("auth token should parse");
+        assert!(!actor.verify_auth_token(&parsed_invalid));
     }
 }
