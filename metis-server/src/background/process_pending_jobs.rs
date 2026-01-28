@@ -128,7 +128,7 @@ mod tests {
                 .await
                 .expect("task should exist")
                 .status,
-            Status::Running
+            Status::Started
         );
         assert_eq!(
             state
@@ -136,7 +136,7 @@ mod tests {
                 .await
                 .expect("task should exist")
                 .status,
-            Status::Running
+            Status::Started
         );
     }
 

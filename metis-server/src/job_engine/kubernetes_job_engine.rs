@@ -121,9 +121,12 @@ impl KubernetesJobEngine {
             if status.failed.unwrap_or(0) > 0 {
                 return JobStatus::Failed;
             }
+            if status.active.unwrap_or(0) > 0 {
+                return JobStatus::Running;
+            }
         }
 
-        JobStatus::Running
+        JobStatus::Started
     }
 
     fn job_metis_id(job: &Job) -> Option<TaskId> {
@@ -217,9 +220,11 @@ impl KubernetesJobEngine {
             .as_ref()
             .and_then(|status| status.phase.as_deref())
         {
+            Some("Pending") => JobStatus::Started,
             Some("Succeeded") => JobStatus::Complete,
             Some("Failed") => JobStatus::Failed,
-            _ => JobStatus::Running,
+            Some("Running") => JobStatus::Running,
+            _ => JobStatus::Started,
         }
     }
 

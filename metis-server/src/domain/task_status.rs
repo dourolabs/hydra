@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Pending,
+    Started,
     Running,
     Complete,
     Failed,
@@ -102,6 +103,7 @@ impl From<api_task_status::Status> for Status {
     fn from(value: api_task_status::Status) -> Self {
         match value {
             api_task_status::Status::Pending => Status::Pending,
+            api_task_status::Status::Started => Status::Started,
             api_task_status::Status::Running => Status::Running,
             api_task_status::Status::Complete => Status::Complete,
             api_task_status::Status::Failed => Status::Failed,
@@ -114,6 +116,7 @@ impl From<Status> for api_task_status::Status {
     fn from(value: Status) -> Self {
         match value {
             Status::Pending => api_task_status::Status::Pending,
+            Status::Started => api_task_status::Status::Started,
             Status::Running => api_task_status::Status::Running,
             Status::Complete => api_task_status::Status::Complete,
             Status::Failed => api_task_status::Status::Failed,

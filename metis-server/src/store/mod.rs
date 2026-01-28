@@ -40,6 +40,10 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
                 at: entry.timestamp,
                 status,
             },
+            Status::Started => Event::Created {
+                at: entry.timestamp,
+                status,
+            },
             Status::Running => Event::Started {
                 at: entry.timestamp,
             },
@@ -82,7 +86,7 @@ pub enum StoreError {
     InvalidIssueStatus(String),
     #[error("Internal error: {0}")]
     Internal(String),
-    #[error("Invalid status transition: task is not in Pending state")]
+    #[error("Invalid status transition for task")]
     InvalidStatusTransition,
     #[error("Repository not found: {0}")]
     RepositoryNotFound(RepoName),

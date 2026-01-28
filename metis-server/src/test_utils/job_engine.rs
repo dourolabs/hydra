@@ -23,11 +23,16 @@ impl MockJobEngine {
 
     pub async fn insert_job(&self, metis_id: &TaskId, status: JobStatus) {
         let mut jobs = self.jobs.lock().unwrap();
+        let start_time = if status == JobStatus::Started {
+            None
+        } else {
+            Some(Utc::now())
+        };
         jobs.push(MetisJob {
             id: metis_id.clone(),
             status,
             creation_time: Some(Utc::now()),
-            start_time: Some(Utc::now()),
+            start_time,
             completion_time: None,
             failure_message: None,
         });
@@ -41,11 +46,16 @@ impl MockJobEngine {
         failure_message: Option<String>,
     ) {
         let mut jobs = self.jobs.lock().unwrap();
+        let start_time = if status == JobStatus::Started {
+            None
+        } else {
+            Some(Utc::now())
+        };
         jobs.push(MetisJob {
             id: metis_id.clone(),
             status,
             creation_time: Some(Utc::now()),
-            start_time: Some(Utc::now()),
+            start_time,
             completion_time,
             failure_message,
         });

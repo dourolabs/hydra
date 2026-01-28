@@ -671,6 +671,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
+    handles.state.transition_task_to_started(&task_id).await?;
     handles.state.transition_task_to_running(&task_id).await?;
     engine.insert_job(&task_id, JobStatus::Running).await;
 
