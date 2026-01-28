@@ -24,6 +24,7 @@ use metis_common::{
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
+use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -213,6 +214,8 @@ pub enum AgentError {
 pub enum LoginError {
     #[error("invalid github token: {0}")]
     InvalidGithubToken(String),
+    #[error("github user '{username}' is not in any allowed organization")]
+    ForbiddenGithubOrg { username: String },
     #[error("login store operation failed")]
     Store {
         #[source]
@@ -273,6 +276,32 @@ impl AppState {
             .await
             .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
         let username = Username::from(github_user.login);
+
+        let allowed_orgs = &self.config.metis.allowed_orgs;
+        if !allowed_orgs.is_empty() {
+            #[derive(Deserialize)]
+            struct GithubOrg {
+                login: String,
+            }
+
+            let orgs: Vec<GithubOrg> = github_client
+                .get("/user/orgs", None::<&()>)
+                .await
+                .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+            let is_allowed = orgs.iter().any(|org| {
+                allowed_orgs
+                    .iter()
+                    .any(|allowed| org.login.eq_ignore_ascii_case(allowed))
+            });
+
+            if !is_allowed {
+                return Err(LoginError::ForbiddenGithubOrg {
+                    username: username.to_string(),
+                });
+            }
+        }
+
         let user = User {
             username: username.clone(),
             github_user_id: github_user.id.into_inner(),
