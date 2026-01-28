@@ -1143,48 +1143,73 @@ impl AppState {
             (owner, repo, base_branch, true)
         };
 
-        let client = self.github_installation_client(&owner, &repo).await?;
-
         if should_create {
-            let head_branch = guess_patch_branch(patch);
-            let base_branch = match base_branch {
-                Some(branch) => branch,
-                None => {
-                    let repo_info = client
-                        .repos(&owner, &repo)
-                        .get()
-                        .await
-                        .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
-                    repo_info
-                        .default_branch
-                        .ok_or(UpsertPatchError::GithubBranchMissing)?
-                }
-            };
-
-            let pr = client
-                .pulls(&owner, &repo)
-                .create(&patch.title, &head_branch, &base_branch)
-                .body(&patch.description)
-                .send()
-                .await
-                .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
-
-            patch.github = Some(github_pr_from_response(
-                GithubPr::new(owner, repo, pr.number, None, None, None, None),
-                &pr,
-            ));
+            self.create_patch_github(patch, owner, repo, base_branch)
+                .await?;
         } else if let Some(github) = patch.github.clone() {
-            let pr = client
-                .pulls(&github.owner, &github.repo)
-                .update(github.number)
-                .title(&patch.title)
-                .body(&patch.description)
-                .send()
-                .await
-                .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
-
-            patch.github = Some(github_pr_from_response(github, &pr));
+            self.update_patch_github(patch, github).await?;
         }
+
+        Ok(())
+    }
+
+    async fn create_patch_github(
+        &self,
+        patch: &mut Patch,
+        owner: String,
+        repo: String,
+        base_branch: Option<String>,
+    ) -> Result<(), UpsertPatchError> {
+        let client = self.github_installation_client(&owner, &repo).await?;
+        let head_branch = guess_patch_branch(patch);
+        let base_branch = match base_branch {
+            Some(branch) => branch,
+            None => {
+                let repo_info = client
+                    .repos(&owner, &repo)
+                    .get()
+                    .await
+                    .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+                repo_info
+                    .default_branch
+                    .ok_or(UpsertPatchError::GithubBranchMissing)?
+            }
+        };
+
+        let pr = client
+            .pulls(&owner, &repo)
+            .create(&patch.title, &head_branch, &base_branch)
+            .body(&patch.description)
+            .send()
+            .await
+            .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+        patch.github = Some(github_pr_from_response(
+            GithubPr::new(owner, repo, pr.number, None, None, None, None),
+            &pr,
+        ));
+
+        Ok(())
+    }
+
+    async fn update_patch_github(
+        &self,
+        patch: &mut Patch,
+        github: GithubPr,
+    ) -> Result<(), UpsertPatchError> {
+        let client = self
+            .github_installation_client(&github.owner, &github.repo)
+            .await?;
+        let pr = client
+            .pulls(&github.owner, &github.repo)
+            .update(github.number)
+            .title(&patch.title)
+            .body(&patch.description)
+            .send()
+            .await
+            .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+        patch.github = Some(github_pr_from_response(github, &pr));
 
         Ok(())
     }
