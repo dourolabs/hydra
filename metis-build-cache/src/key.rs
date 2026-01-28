@@ -30,6 +30,23 @@ impl BuildCacheKey {
         prefix
     }
 
+    pub fn git_sha_from_object_key(repo_name: &RepoName, object_key: &str) -> Option<String> {
+        let prefix = BuildCacheKey::new(repo_name.clone(), "").repo_prefix();
+        if !object_key.starts_with(&prefix) {
+            return None;
+        }
+        let rest = &object_key[prefix.len()..];
+        let suffix = format!("/{}", Self::CACHE_ARCHIVE_NAME);
+        if !rest.ends_with(&suffix) {
+            return None;
+        }
+        let git_sha = &rest[..rest.len().saturating_sub(suffix.len())];
+        if git_sha.is_empty() || git_sha.contains('/') {
+            return None;
+        }
+        Some(git_sha.to_string())
+    }
+
     fn prefix_segments(&self) -> Vec<String> {
         vec![Self::REPO_PREFIX_ROOT.to_string(), self.repo_name.as_str()]
     }
@@ -53,5 +70,24 @@ mod tests {
         let key = BuildCacheKey::new(repo, "deadbeef");
 
         assert_eq!(key.repo_prefix(), "repo/acme/anvils/");
+    }
+
+    #[test]
+    fn git_sha_from_object_key_extracts_sha() {
+        let repo = RepoName::new("acme", "anvils").expect("repo");
+        let key = BuildCacheKey::new(repo.clone(), "deadbeef");
+
+        let extracted =
+            BuildCacheKey::git_sha_from_object_key(&repo, &key.object_key()).expect("sha");
+        assert_eq!(extracted, "deadbeef");
+    }
+
+    #[test]
+    fn git_sha_from_object_key_rejects_mismatched_prefix() {
+        let repo = RepoName::new("acme", "anvils").expect("repo");
+        let other_repo = RepoName::new("acme", "balloons").expect("repo");
+        let key = BuildCacheKey::new(other_repo, "deadbeef");
+
+        assert!(BuildCacheKey::git_sha_from_object_key(&repo, &key.object_key()).is_none());
     }
 }

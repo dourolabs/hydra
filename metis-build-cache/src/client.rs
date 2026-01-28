@@ -2,9 +2,11 @@ use crate::config::BuildCacheConfig;
 use crate::error::BuildCacheError;
 use crate::key::BuildCacheKey;
 use crate::storage::{StorageClient, StorageObject};
+use git2::{ErrorCode, Repository};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tar::{Builder, Header};
@@ -181,6 +183,11 @@ impl BuildCacheClient {
         root: &Path,
         archive_path: &Path,
     ) -> Result<(), BuildCacheError> {
+        let tracked_paths = collect_tracked_paths(root)?;
+        if !tracked_paths.is_empty() {
+            assert_archive_safe(archive_path, &tracked_paths)?;
+        }
+
         let input = File::open(archive_path)
             .map_err(|err| BuildCacheError::io("opening cache archive", err))?;
         let decoder = zstd::Decoder::new(input)
@@ -310,10 +317,86 @@ fn default_file_mode(_metadata: &std::fs::Metadata) -> u32 {
     0o644
 }
 
+fn collect_tracked_paths(root: &Path) -> Result<HashSet<PathBuf>, BuildCacheError> {
+    let repo = match Repository::discover(root) {
+        Ok(repo) => repo,
+        Err(err) if err.code() == ErrorCode::NotFound => {
+            return Ok(HashSet::new());
+        }
+        Err(err) => {
+            return Err(BuildCacheError::git("discovering git repository", err));
+        }
+    };
+
+    let index = repo
+        .index()
+        .map_err(|err| BuildCacheError::git("reading git index", err))?;
+    let mut tracked = HashSet::new();
+    for entry in index.iter() {
+        let path = PathBuf::from(String::from_utf8_lossy(&entry.path).to_string());
+        tracked.insert(path);
+    }
+    Ok(tracked)
+}
+
+fn assert_archive_safe(
+    archive_path: &Path,
+    tracked_paths: &HashSet<PathBuf>,
+) -> Result<(), BuildCacheError> {
+    let input = File::open(archive_path)
+        .map_err(|err| BuildCacheError::io("opening cache archive for inspection", err))?;
+    let decoder = zstd::Decoder::new(input)
+        .map_err(|err| BuildCacheError::io("initializing zstd decoder for inspection", err))?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut conflicts = Vec::new();
+
+    let entries = archive
+        .entries()
+        .map_err(|err| BuildCacheError::io("reading cache archive entries", err))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| BuildCacheError::io("reading cache archive entry", err))?;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            continue;
+        }
+        let path = entry
+            .path()
+            .map_err(|err| BuildCacheError::io("reading cache archive entry path", err))?;
+        let normalized = normalize_archive_path(&path)?;
+        if tracked_paths.contains(&normalized) {
+            conflicts.push(normalized);
+        }
+    }
+
+    if !conflicts.is_empty() {
+        return Err(BuildCacheError::tracked_files(&conflicts));
+    }
+
+    Ok(())
+}
+
+fn normalize_archive_path(path: &Path) -> Result<PathBuf, BuildCacheError> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => continue,
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(BuildCacheError::io(
+                    "normalizing cache archive entry path",
+                    io::Error::other("invalid cache archive entry path"),
+                ));
+            }
+        }
+    }
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use git2::Repository;
     use std::collections::HashMap;
     use std::io::Write;
     use std::time::Duration;
@@ -328,6 +411,34 @@ mod tests {
         }
         let mut file = File::create(path).expect("create file");
         file.write_all(contents.as_bytes()).expect("write file");
+    }
+
+    fn commit_file(repo: &Repository, path: &Path) {
+        let signature = git2::Signature::now("metis", "metis@example.com").expect("signature");
+        let workdir = repo.workdir().expect("workdir");
+        let relative = path
+            .strip_prefix(workdir)
+            .expect("path relative to workdir");
+        let mut index = repo.index().expect("index");
+        index.add_path(relative).expect("add path");
+        index.write().expect("write index");
+        let tree_id = index.write_tree().expect("write tree");
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+        let parents = parent.iter().collect::<Vec<_>>();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "commit",
+            &tree,
+            &parents,
+        )
+        .expect("commit");
     }
 
     #[derive(Debug, Default)]
@@ -591,5 +702,36 @@ mod tests {
         assert!(!keys.contains(&key1.object_key()));
         assert!(keys.contains(&key2.object_key()));
         assert!(keys.contains(&key3.object_key()));
+    }
+
+    #[test]
+    fn apply_cache_archive_rejects_tracked_files() {
+        let repo_dir = tempdir().expect("repo dir");
+        let repo = Repository::init(repo_dir.path()).expect("init repo");
+        let tracked_path = repo_dir.path().join("src/lib.rs");
+        write_file(&tracked_path, "tracked");
+        commit_file(&repo, &tracked_path);
+
+        let cache_dir = tempdir().expect("cache dir");
+        let archive_path = cache_dir.path().join("cache.tar.zst");
+
+        let storage = Arc::new(MockStorageClient::new());
+        let config = BuildCacheConfig {
+            include: vec!["src/".to_string()],
+            exclude: Vec::new(),
+            max_entries_per_repo: None,
+        };
+        let client = BuildCacheClient::new(config, storage);
+        client
+            .build_cache_archive(repo_dir.path(), &archive_path)
+            .expect("build archive");
+
+        let error = client
+            .apply_cache_archive(repo_dir.path(), &archive_path)
+            .expect_err("expected conflict error");
+        match error {
+            BuildCacheError::TrackedFiles { .. } => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

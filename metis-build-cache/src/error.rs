@@ -22,6 +22,13 @@ pub enum BuildCacheError {
         context: &'static str,
         message: String,
     },
+    #[error("git error while {context}: {source}")]
+    Git {
+        context: &'static str,
+        source: git2::Error,
+    },
+    #[error("cache apply would overwrite {count} tracked file(s): {sample}")]
+    TrackedFiles { count: usize, sample: String },
 }
 
 impl BuildCacheError {
@@ -48,5 +55,23 @@ impl BuildCacheError {
             context,
             message: message.into(),
         }
+    }
+
+    pub fn git(context: &'static str, source: git2::Error) -> Self {
+        Self::Git { context, source }
+    }
+
+    pub fn tracked_files(conflicts: &[std::path::PathBuf]) -> Self {
+        let count = conflicts.len();
+        let mut sample = conflicts
+            .iter()
+            .take(5)
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if count > 5 {
+            sample.push_str(&format!(" ({} more)", count - 5));
+        }
+        Self::TrackedFiles { count, sample }
     }
 }
