@@ -1,6 +1,6 @@
 use crate::test::{
-    github_orgs_response, github_user_response, spawn_test_server, spawn_test_server_with_state,
-    test_auth_token, test_client, test_state_with_github_api_base_url,
+    github_user_response, spawn_test_server, spawn_test_server_with_state, test_auth_token,
+    test_client, test_state_with_github_api_base_url,
 };
 use httpmock::prelude::*;
 use metis_common::api::v1::whoami::{ActorIdentity, WhoAmIResponse};
@@ -28,12 +28,6 @@ async fn whoami_returns_user_identity() -> anyhow::Result<()> {
         then.status(200)
             .header("content-type", "application/json")
             .json_body(github_user_response("octo", 42));
-    });
-    let _orgs_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user/orgs");
-        then.status(200)
-            .header("content-type", "application/json")
-            .json_body(github_orgs_response(&["dourolabs"]));
     });
 
     let handles = test_state_with_github_api_base_url(github_server.base_url());

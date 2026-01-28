@@ -34,14 +34,6 @@ pub fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     })
 }
 
-pub fn github_orgs_response(orgs: &[&str]) -> serde_json::Value {
-    let orgs = orgs
-        .iter()
-        .map(|org| json!({ "login": org }))
-        .collect::<Vec<_>>();
-    json!(orgs)
-}
-
 pub fn test_state_with_github_api_base_url(api_base_url: String) -> TestStateHandles {
     test_state_with_github_urls(api_base_url, "https://github.com".to_string())
 }
