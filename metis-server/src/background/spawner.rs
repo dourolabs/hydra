@@ -24,7 +24,6 @@ use tokio::sync::RwLock;
 
 pub const ISSUE_ID_ENV_VAR: &str = "METIS_ISSUE_ID";
 pub const AGENT_NAME_ENV_VAR: &str = "METIS_AGENT_NAME";
-const SWE_AGENT_NAME: &str = "swe";
 
 #[async_trait]
 pub trait Spawner: Send + Sync {
@@ -280,7 +279,8 @@ impl Spawner for AgentQueue {
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
-            if should_skip_for_assignee_mismatch(&self.name, &issue) {
+            let followup_agent = state.config.background.merge_request_followup_agent.trim();
+            if should_skip_for_assignee_mismatch(&self.name, followup_agent, &issue) {
                 continue;
             }
 
@@ -393,10 +393,15 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     Ok(false)
 }
 
-fn should_skip_for_assignee_mismatch(agent_name: &str, issue: &Issue) -> bool {
+fn should_skip_for_assignee_mismatch(
+    agent_name: &str,
+    followup_agent: &str,
+    issue: &Issue,
+) -> bool {
     let assignee_mismatch = issue.assignee.as_deref() != Some(agent_name);
     assignee_mismatch
-        && !(agent_name == SWE_AGENT_NAME
+        && !(agent_name == followup_agent
+            && !followup_agent.is_empty()
             && issue.issue_type == crate::domain::issues::IssueType::MergeRequest)
 }
 
@@ -426,6 +431,15 @@ mod tests {
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
+    }
+
+    fn followup_agent_name(handles: &TestStateHandles) -> &str {
+        handles
+            .state
+            .config
+            .background
+            .merge_request_followup_agent
+            .as_str()
     }
 
     fn repository() -> (RepoName, Repository) {
@@ -744,9 +758,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_request_changes_requested_spawns_for_swe_with_assignee_mismatch()
+    async fn merge_request_changes_requested_spawns_for_followup_agent_with_assignee_mismatch()
     -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
+        let followup_agent = followup_agent_name(&handles);
         let patch = Patch::new(
             "Review patch".to_string(),
             "Review patch description".to_string(),
@@ -780,7 +795,7 @@ mod tests {
             })
             .await?;
 
-        let tasks = queue(SWE_AGENT_NAME).spawn(&handles.state).await?;
+        let tasks = queue(followup_agent).spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
         let prompt = &tasks[0].prompt;
         assert!(prompt.contains("Merge request follow-up:"));
@@ -794,6 +809,7 @@ mod tests {
     async fn merge_request_changes_requested_overrides_branch_from_github_head()
     -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
+        let followup_agent = followup_agent_name(&handles);
         let patch = Patch::new(
             "Review patch".to_string(),
             "Review patch description".to_string(),
@@ -837,7 +853,7 @@ mod tests {
             })
             .await?;
 
-        let tasks = queue(SWE_AGENT_NAME).spawn(&handles.state).await?;
+        let tasks = queue(followup_agent).spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
 
         match &tasks[0].context {
@@ -852,8 +868,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_merge_request_assignee_mismatch_still_skips_for_swe() -> anyhow::Result<()> {
+    async fn non_merge_request_assignee_mismatch_still_skips_for_followup_agent()
+    -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
+        let followup_agent = followup_agent_name(&handles);
         handles
             .store
             .add_issue(issue(
@@ -865,14 +883,14 @@ mod tests {
             ))
             .await?;
 
-        let tasks = queue(SWE_AGENT_NAME).spawn(&handles.state).await?;
+        let tasks = queue(followup_agent).spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn merge_request_assignee_mismatch_skips_for_non_swe() -> anyhow::Result<()> {
+    async fn merge_request_assignee_mismatch_skips_for_non_followup_agent() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
@@ -886,7 +904,7 @@ mod tests {
             ))
             .await?;
 
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        let tasks = queue("agent-b").spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
