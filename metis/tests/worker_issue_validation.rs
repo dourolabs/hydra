@@ -10,7 +10,7 @@ use tempfile::tempdir;
 
 mod common;
 
-use common::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
+use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
