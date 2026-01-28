@@ -66,6 +66,51 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
     Some(log)
 }
 
+pub(crate) async fn transition_task_to_running(
+    store: &dyn Store,
+    id: &TaskId,
+) -> Result<Versioned<Task>, StoreError> {
+    let latest = store.get_task(id).await?;
+    if latest.item.status != Status::Pending {
+        return Err(StoreError::InvalidStatusTransition);
+    }
+
+    let mut updated = latest.item;
+    updated.status = Status::Running;
+    updated.last_message = None;
+    updated.error = None;
+
+    store.update_task(id, updated).await
+}
+
+pub(crate) async fn transition_task_to_completion(
+    store: &dyn Store,
+    id: &TaskId,
+    result: Result<(), TaskError>,
+    last_message: Option<String>,
+) -> Result<Versioned<Task>, StoreError> {
+    let latest = store.get_task(id).await?;
+    if latest.item.status != Status::Running {
+        return Err(StoreError::InvalidStatusTransition);
+    }
+
+    let mut updated = latest.item;
+    match result {
+        Ok(()) => {
+            updated.status = Status::Complete;
+            updated.last_message = last_message;
+            updated.error = None;
+        }
+        Err(error) => {
+            updated.status = Status::Failed;
+            updated.last_message = None;
+            updated.error = Some(error);
+        }
+    }
+
+    store.update_task(id, updated).await
+}
+
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -282,53 +327,6 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
-
-    /// Marks a task as running.
-    ///
-    /// Valid transitions:
-    /// - From Pending to Running
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Pending state
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    /// * `start_time` - The timestamp when the task started running
-    async fn mark_task_running(
-        &self,
-        id: &TaskId,
-        start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
-    /// Marks a task as complete.
-    ///
-    /// Valid transitions:
-    /// - From Running to Complete (if result is Ok)
-    /// - From Running to Failed (if result is Err)
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
-    ///              If Err, the task is marked as Failed with the error as the failure reason.
-    /// * `end_time` - The timestamp when the task completed or failed
-    /// * `last_message` - Optional final worker message to store with the completion event
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Running state
-    async fn mark_task_complete(
-        &self,
-        id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
