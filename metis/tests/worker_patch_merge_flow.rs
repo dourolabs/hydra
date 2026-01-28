@@ -4,14 +4,11 @@ use httpmock::Mock;
 use jsonwebtoken::EncodingKey;
 use metis::command::jobs::worker_run::resolve_tracking_branch_override;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
+use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-        UpsertIssueRequest,
-    },
+    issues::{IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
-    users::Username,
 };
 use metis_server::background::run_spawners::RunSpawnersWorker;
 use metis_server::background::scheduler::ScheduledWorker;
@@ -380,27 +377,16 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         )
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        format!("Review patch {}", patch_id.as_ref()),
-        Username::from("requester"),
-        String::new(),
-        IssueStatus::Open,
-        Some("requester".to_string()),
-        Some(job_settings),
-        Vec::new(),
-        vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_issue_id.clone(),
-        )],
-        vec![patch_id.clone()],
-    );
-
-    let merge_request_issue_id = env
-        .client
-        .create_issue(&UpsertIssueRequest::new(merge_request_issue, None))
-        .await?
-        .issue_id;
+    let merge_request_issue = create_merge_request_issue(
+        &env.client,
+        patch_id.clone(),
+        "requester".to_string(),
+        parent_issue_id.clone(),
+        "Review patch".to_string(),
+        "Review description".to_string(),
+    )
+    .await?;
+    let merge_request_issue_id = merge_request_issue.id;
 
     let queue_config = AgentQueueConfig {
         name: "swe".to_string(),
@@ -447,9 +433,33 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         ))
         .await?
         .jobs;
+    assert!(
+        jobs.is_empty(),
+        "expected no review task until merge request job settings are populated"
+    );
+
+    // TODO(i-xsenxc): remove once merge request issues carry job settings at creation.
+    let mut issue_record = env.client.get_issue(&merge_request_issue_id).await?;
+    issue_record.issue.job_settings = job_settings.clone();
+    env.client
+        .update_issue(
+            &merge_request_issue_id,
+            &UpsertIssueRequest::new(issue_record.issue, None),
+        )
+        .await?;
+
+    spawner.run_iteration().await;
+    let jobs = env
+        .client
+        .list_jobs(&SearchJobsQuery::new(
+            None,
+            Some(merge_request_issue_id.clone()),
+        ))
+        .await?
+        .jobs;
     let job = jobs
         .first()
-        .context("expected review task to be spawned for merge request")?;
+        .context("expected review task after manual job settings patch")?;
     let job_id = job.id.clone();
 
     env.state.start_pending_task(job_id.clone()).await;

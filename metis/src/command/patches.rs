@@ -533,7 +533,7 @@ fn print_merge_queue_pretty(
     Ok(())
 }
 
-async fn create_merge_request_issue(
+pub async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
     assignee: String,
