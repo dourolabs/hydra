@@ -172,13 +172,7 @@ async fn resolve_client(
         return MetisClient::new(server_url, token.to_string());
     }
 
-    github_device_flow::login_with_github_device_flow(
-        unauth_client,
-        token_path,
-        config_path,
-        server_url,
-    )
-    .await
+    github_device_flow::login_with_github_device_flow(unauth_client, config_path, server_url).await
 }
 
 async fn dispatch(
