@@ -35,6 +35,8 @@ cargo build --workspace --all-targets
 cargo test --workspace
 ```
 
+Timing note (January 28, 2026, this workspace): build 65.86s, lint 36.78s, test 22.52s (first build included dependency downloads).
+
 **Note** Postgres-backed store tests are ignored by default to avoid introducing a required database dependency.
 To exercise them, run a Postgres instance locally (`./scripts/dev-postgres.sh`) and set `DATABASE_URL`, then include
 ignored tests:
