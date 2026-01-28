@@ -8,7 +8,7 @@ use crate::{
             TodoItem, UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
-        patches::{Patch, PatchStatus, UpsertPatchRequest},
+        patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -23,7 +23,7 @@ use metis_common::{
     job_status::{JobStatusUpdate, SetJobStatusResponse},
     merge_queues::MergeQueue,
 };
-use octocrab::Octocrab;
+use octocrab::{Octocrab, models::pulls::PullRequest};
 use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
@@ -122,6 +122,29 @@ pub enum UpsertPatchError {
         source: StoreError,
         patch_id: PatchId,
         issue_id: IssueId,
+    },
+    #[error("repository '{name}' not found")]
+    RepositoryNotFound {
+        #[source]
+        source: StoreError,
+        name: RepoName,
+    },
+    #[error("failed to load repository '{name}'")]
+    RepositoryLookup {
+        #[source]
+        source: StoreError,
+        name: RepoName,
+    },
+    #[error("github app is not configured")]
+    GithubAppUnavailable,
+    #[error("failed to parse GitHub repository from remote URL '{remote_url}'")]
+    GithubRepositoryParse { remote_url: String },
+    #[error("github branch is required to sync pull request")]
+    GithubBranchMissing,
+    #[error("failed to sync GitHub pull request")]
+    GithubSync {
+        #[source]
+        source: anyhow::Error,
     },
 }
 
@@ -943,7 +966,10 @@ impl AppState {
         patch_id: Option<PatchId>,
         request: UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest { mut patch, .. } = request;
+        let UpsertPatchRequest {
+            mut patch,
+            sync_github,
+        } = request;
 
         let mut should_close_merge_requests = false;
         let store = self.store.as_ref();
@@ -964,6 +990,12 @@ impl AppState {
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
                 patch.created_by = existing_patch.item.created_by;
+                if patch.github.is_none() {
+                    patch.github = existing_patch.item.github.clone();
+                }
+                if sync_github {
+                    self.sync_patch_github(&mut patch).await?;
+                }
                 store
                     .update_patch(&id, patch)
                     .await
@@ -1001,6 +1033,10 @@ impl AppState {
                             status: Some(status),
                         });
                     }
+                }
+
+                if sync_github {
+                    self.sync_patch_github(&mut patch).await?;
                 }
 
                 store
@@ -1072,6 +1108,108 @@ impl AppState {
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
         Ok(patch_id)
+    }
+
+    async fn sync_patch_github(&self, patch: &mut Patch) -> Result<(), UpsertPatchError> {
+        let (owner, repo, base_branch, should_create) = if let Some(github) = &patch.github {
+            (github.owner.clone(), github.repo.clone(), None, false)
+        } else {
+            let repository = self
+                .repository_from_store(&patch.service_repo_name)
+                .await
+                .map_err(|source| match source {
+                    StoreError::RepositoryNotFound(name) => {
+                        let name_clone = name.clone();
+                        UpsertPatchError::RepositoryNotFound {
+                            source: StoreError::RepositoryNotFound(name),
+                            name: name_clone,
+                        }
+                    }
+                    other => UpsertPatchError::RepositoryLookup {
+                        source: other,
+                        name: patch.service_repo_name.clone(),
+                    },
+                })?;
+            let (owner, repo) = parse_github_remote_url(&repository.remote_url).ok_or(
+                UpsertPatchError::GithubRepositoryParse {
+                    remote_url: repository.remote_url,
+                },
+            )?;
+            let base_branch = repository
+                .default_branch
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+
+            (owner, repo, base_branch, true)
+        };
+
+        let client = self.github_installation_client(&owner, &repo).await?;
+
+        if should_create {
+            let head_branch = guess_patch_branch(patch);
+            let base_branch = match base_branch {
+                Some(branch) => branch,
+                None => {
+                    let repo_info = client
+                        .repos(&owner, &repo)
+                        .get()
+                        .await
+                        .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+                    repo_info
+                        .default_branch
+                        .ok_or(UpsertPatchError::GithubBranchMissing)?
+                }
+            };
+
+            let pr = client
+                .pulls(&owner, &repo)
+                .create(&patch.title, &head_branch, &base_branch)
+                .body(&patch.description)
+                .send()
+                .await
+                .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+            patch.github = Some(github_pr_from_response(
+                GithubPr::new(owner, repo, pr.number, None, None, None, None),
+                &pr,
+            ));
+        } else if let Some(github) = patch.github.clone() {
+            let pr = client
+                .pulls(&github.owner, &github.repo)
+                .update(github.number)
+                .title(&patch.title)
+                .body(&patch.description)
+                .send()
+                .await
+                .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+            patch.github = Some(github_pr_from_response(github, &pr));
+        }
+
+        Ok(())
+    }
+
+    async fn github_installation_client(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Octocrab, UpsertPatchError> {
+        let Some(app_client) = self.github_app.as_ref() else {
+            return Err(UpsertPatchError::GithubAppUnavailable);
+        };
+
+        let installation = app_client
+            .apps()
+            .get_repository_installation(owner, repo)
+            .await
+            .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+        let (installation_client, _token) = app_client
+            .installation_and_token(installation.id)
+            .await
+            .map_err(|err| UpsertPatchError::GithubSync { source: err.into() })?;
+
+        Ok(installation_client)
     }
 
     pub async fn upsert_issue(
@@ -1526,6 +1664,63 @@ fn join_item_numbers(numbers: &[usize]) -> String {
         .join(", ")
 }
 
+fn parse_github_remote_url(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim();
+    let without_prefix = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let mut segments = without_prefix.split('/');
+    let owner = segments.next()?;
+    let repo = segments.next()?;
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
+fn guess_patch_branch(patch: &Patch) -> String {
+    let segment = patch
+        .created_by
+        .as_ref()
+        .map(|id| sanitize_branch_segment(id.as_ref()))
+        .unwrap_or_else(|| "patch".to_string());
+    let segment = if segment.is_empty() {
+        "patch".to_string()
+    } else {
+        segment
+    };
+    format!("metis-{segment}")
+}
+
+fn sanitize_branch_segment(input: &str) -> String {
+    let mut normalized = input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+
+    normalized.trim_matches('-').to_string()
+}
+
+fn github_pr_from_response(mut github: GithubPr, pr: &PullRequest) -> GithubPr {
+    github.head_ref = Some(pr.head.ref_field.clone());
+    github.base_ref = Some(pr.base.ref_field.clone());
+    github.url = pr.html_url.as_ref().map(ToString::to_string);
+    github
+}
+
 async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
     let issue = store.get_issue(issue_id).await?;
     let issue = issue.item;
@@ -1710,7 +1905,7 @@ async fn active_tasks_for_issue(
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginError, UpsertIssueError};
+    use super::{AppState, LoginError, ServiceState, UpsertIssueError};
     use crate::{
         domain::{
             issues::{
@@ -1721,16 +1916,19 @@ mod tests {
             users::Username,
         },
         job_engine::{JobEngine, JobStatus},
-        store::{Status, StoreError, TaskError},
+        store::{MemoryStore, Status, StoreError, TaskError},
         test_utils::{
-            MockJobEngine, github_user_response, test_state, test_state_with_engine,
-            test_state_with_github_api_base_url,
+            MockJobEngine, TestStateHandles, github_user_response, test_app_config, test_state,
+            test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
     use chrono::{Duration, Utc};
     use httpmock::prelude::*;
-    use metis_common::{IssueId, TaskId};
-    use std::{collections::HashMap, sync::Arc};
+    use jsonwebtoken::EncodingKey;
+    use metis_common::{IssueId, RepoName, Repository, TaskId};
+    use octocrab::Octocrab;
+    use serde_json::json;
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     fn sample_task() -> Task {
         Task::new(
@@ -1773,6 +1971,67 @@ mod tests {
             dependencies,
             Vec::new(),
         )
+    }
+
+    const TEST_GITHUB_APP_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCmsNpqAyZoiLN0
+IxBVzMPy8Eppz7MJnXM9cqlVop39awW1X+Xlw2qkPC502zCpDi7Vrlm9LHiIWMci
+p5iQznEyOJ5Sx4UZhP/4kHv57ekD5ASZOFMynpoicwQIwN4dTuRVP9wg741qITY3
+EzIHhdfGPwoGAdx34EYXHql2hNNVPVTbZms2xskjUnrfbojygYeI48hDACl2Cwip
+2q3CvVTrtxfryoXbPjhSfxSG08DV/ettbzqvdlsulE5qfFBevuooEu6aHYOhlp3l
+JZADvzziYDlCEX+tGR9TpoWuayIhZU8N5U4Fj8CNBghWWCN82NoiWVJ20VokFxdV
+oSRF35rhAgMBAAECggEAEWRmhaUqfsG0p6t46trgnxp/SScIsToiagjqriq3fVeL
+Uu9cl2qaV+SHnF26aAk4zcbRSjG3qdJJhM4j1wgTO4A41L5Inu8HnjHFHcC7DVLf
+P/VmiOOPhYSmqRsmkbxHirWNDEqyYJ5yf7CbCbnnV6IAM7xB+qgF6Cek2t7lBgGi
+3R/PWyFPHkpt/R5L5VJqMjbt2Q5BcoeHyFCsFsluNcs4Qwq1yvoKjnckby/eB6QZ
+BpeZ+qw597BV5/5BwoqJaGqfES/VUazT1J5NguOlaT1vFKf2eOsaybYABCGk7z32
+zzgKkmzYnbyiajDDDO1iYv94KzwVwgr0lbTBTEUkIQKBgQDlt3C5iwn5tzPKxZ/A
+PnXsspkmEeFuyf9ke75z1HSoMZpe0gNP+/Ghxcyx3ei12Aso7mulZ6I4MLOHOgH4
+Phf9ihHTgCHzDp53nUen2FqcTsOMI9+wb8K8bL8Dj1tQ9U7n0hUZ8B1PJLPsfuGI
+e8krLsxG4cowAJwkyi/B/4MjvQKBgQC5w1hJjvXbMVwAKOwFvcR9r9aS6vUngw1G
+5AqKXhdegsznSgleip74BM8HcuvlWRE1jeQKAGO5a49A7Mi/k2zlxJBv8V3IX/k3
+X4XF+0eQcfYQ2VhA3i+vxM5vZcHU4gB2dsiS7w6+lR/cinJw3Fsb4ZYPv7KXwHfH
+d2ajmlrz9QKBgQCOuru/jTRVhA8aHlB0ElsTBqVBkjqPq9KTjI95SLhzCN7xq2uD
+dvdbnJriqQ6+bc4BUKJx00Jnx1rE2rX+mBYv4mnRD/wIGT089OxgzXz/QbEekeua
+pNZKXQcSHzCNzN2KDG4v/5E2a4efmfZn5wHHYvxpzkDiMn7SHQ4va6L/wQKBgQCs
+I/yddbAY5h2mPEWzcE40VozV6osxiTz1c37dCCJJv5YXwsD57iUwGmyrL3CwQKA0
+637lUcUX3zeJ56KD/R7NsSBTy+ynMWClUoyJkbiYfzKSHIau3fZ8wDi4fChpmODq
+5lop5wPX0iMLYPR554k6RgqkH3VlMMMOgXQIqZIdPQKBgBZn3dKFoNfUVE0/hGE2
+/O0P9vlP1eH7ZLUYFvkYIls2aN5/zBirGqUy8ucajIbzP2vGpfdvdhssCCF1Izyc
+hRUn+KmXDGy5QB1/AmWtb05kPV4VuKHDKZYUsZYY+gdBep59jABC+W2g6rrqTjJg
+mRM+ZhAYt2SU4bFNqrpSmGNw
+-----END PRIVATE KEY-----"#;
+
+    fn test_state_with_github_app(api_base_url: String) -> TestStateHandles {
+        let mut config = test_app_config();
+        config.github_app.api_base_url = api_base_url.clone();
+        config.github_app.private_key = TEST_GITHUB_APP_KEY.to_string();
+
+        let key = EncodingKey::from_rsa_pem(config.github_app.private_key.as_bytes())
+            .expect("test key should parse");
+        let github_app = Octocrab::builder()
+            .base_uri(api_base_url)
+            .expect("api base url should parse")
+            .app(config.github_app.app_id(), key)
+            .build()
+            .expect("github app client should build");
+
+        let store = Arc::new(MemoryStore::new());
+        let agents = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let state = AppState::new(
+            Arc::new(config),
+            Some(github_app),
+            Arc::new(ServiceState::default()),
+            store.clone(),
+            Arc::new(MockJobEngine::new()),
+            agents.clone(),
+        );
+
+        TestStateHandles {
+            state,
+            store,
+            agents,
+        }
     }
 
     #[tokio::test]
@@ -1820,6 +2079,133 @@ mod tests {
             .expect_err("login should fail for invalid token");
 
         assert!(matches!(err, LoginError::InvalidGithubToken(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_creates_pull_request() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let owner = "dourolabs";
+        let repo = "metis";
+        let installation_response = json!({
+            "id": 1,
+            "account": github_user_response("octo", 42),
+            "permissions": {},
+            "events": [],
+        });
+        let _installation = github_server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/repos/{owner}/{repo}/installation"));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(installation_response);
+        });
+        let _token = github_server.mock(|when, then| {
+            when.method(POST).path("/app/installations/1/access_tokens");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "token": "installation-token",
+                    "permissions": {},
+                }));
+        });
+
+        let job_id = TaskId::try_from("t-abcd".to_string())?;
+        let head_branch = "metis-t-abcd";
+        let pr_response = json!({
+            "url": format!("{}/repos/{owner}/{repo}/pulls/10", github_server.base_url()),
+            "id": 10,
+            "number": 10,
+            "head": { "ref": head_branch, "sha": "head-sha", "label": null, "user": null, "repo": null },
+            "base": { "ref": "main", "sha": "base-sha", "label": null, "user": null, "repo": null },
+            "html_url": format!("https://github.com/{owner}/{repo}/pull/10"),
+        });
+        let create_pr = github_server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/repos/{owner}/{repo}/pulls"))
+                .json_body(json!({
+                    "title": "My patch",
+                    "head": head_branch,
+                    "base": "main",
+                    "body": "My description",
+                }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(pr_response);
+        });
+
+        let handles = test_state_with_github_app(github_server.base_url());
+        let repo_name = RepoName::from_str("dourolabs/metis")?;
+        let repository = Repository::new(
+            "https://github.com/dourolabs/metis.git".to_string(),
+            Some("main".to_string()),
+            None,
+        );
+        handles
+            .state
+            .create_repository(repo_name.clone(), repository)
+            .await?;
+
+        handles
+            .store
+            .add_task_with_id(
+                job_id.clone(),
+                Task {
+                    prompt: "0".to_string(),
+                    context: BundleSpec::None,
+                    spawned_from: None,
+                    image: Some("worker:latest".to_string()),
+                    env_vars: HashMap::new(),
+                    cpu_limit: None,
+                    memory_limit: None,
+                    status: Status::Pending,
+                    last_message: None,
+                    error: None,
+                },
+                Utc::now(),
+            )
+            .await?;
+        handles.state.transition_task_to_running(&job_id).await?;
+
+        let patch = super::Patch::new(
+            "My patch".to_string(),
+            "My description".to_string(),
+            "diff --git a/file b/file\n".to_string(),
+            super::PatchStatus::Open,
+            false,
+            Some(job_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let response = handles
+            .state
+            .upsert_patch(
+                None,
+                super::UpsertPatchRequest {
+                    patch,
+                    sync_github: true,
+                },
+            )
+            .await?;
+
+        let stored = handles.state.get_patch(&response).await?;
+        let github = stored
+            .item
+            .github
+            .expect("github metadata should be stored");
+        assert_eq!(github.owner, owner);
+        assert_eq!(github.repo, repo);
+        assert_eq!(github.number, 10);
+        assert_eq!(github.head_ref.as_deref(), Some(head_branch));
+        assert_eq!(github.base_ref.as_deref(), Some("main"));
+        assert_eq!(
+            github.url.as_deref(),
+            Some("https://github.com/dourolabs/metis/pull/10")
+        );
+
+        create_pr.assert();
+
         Ok(())
     }
 

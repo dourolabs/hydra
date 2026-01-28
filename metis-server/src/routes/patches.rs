@@ -200,6 +200,36 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to update merge-request issue '{issue_id}' for '{patch_id}': {source}"
             ))
         }
+        UpsertPatchError::RepositoryNotFound { name, .. } => {
+            error!(repo_name = %name, "repository not found for patch github sync");
+            ApiError::not_found(format!("repository '{name}' not found"))
+        }
+        UpsertPatchError::RepositoryLookup { name, source } => {
+            error!(
+                repo_name = %name,
+                error = %source,
+                "failed to load repository for patch github sync"
+            );
+            ApiError::internal(anyhow!(
+                "failed to load repository '{name}' for github sync: {source}"
+            ))
+        }
+        UpsertPatchError::GithubAppUnavailable => {
+            error!("github app not configured for patch sync");
+            ApiError::internal("github app not configured")
+        }
+        UpsertPatchError::GithubRepositoryParse { remote_url } => {
+            error!(remote_url = %remote_url, "failed to parse GitHub repository for patch");
+            ApiError::bad_request("failed to parse GitHub repository from remote_url")
+        }
+        UpsertPatchError::GithubBranchMissing => {
+            error!("missing github branch for patch sync");
+            ApiError::bad_request("github branch is required to sync pull request")
+        }
+        UpsertPatchError::GithubSync { source } => {
+            error!(error = %source, "failed to sync patch with github");
+            ApiError::internal(anyhow!("github sync failed: {source}"))
+        }
         UpsertPatchError::Store { source } => {
             error!(error = %source, "patch store operation failed");
             ApiError::internal(anyhow!("patch store error: {source}"))
