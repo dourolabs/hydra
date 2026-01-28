@@ -247,6 +247,7 @@ async fn sync_patch_from_github(
     if updated_patch != latest_patch {
         state
             .upsert_patch(
+                None,
                 Some(patch_id.clone()),
                 UpsertPatchRequest::new(updated_patch),
             )
