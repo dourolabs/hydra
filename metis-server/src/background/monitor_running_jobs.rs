@@ -79,7 +79,7 @@ mod tests {
     use crate::{
         domain::jobs::BundleSpec,
         job_engine::JobStatus,
-        store::{Status, Task, transition_task_to_running},
+        store::{Status, Task},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
             test_state_with_store,
@@ -116,7 +116,9 @@ mod tests {
             .add_task(task, Utc::now())
             .await
             .expect("task should be added");
-        transition_task_to_running(handles.store.as_ref(), &task_id)
+        handles
+            .state
+            .transition_task_to_running(&task_id)
             .await
             .expect("task should be marked running");
 

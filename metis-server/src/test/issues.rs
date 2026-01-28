@@ -11,7 +11,7 @@ use crate::{
         users::Username,
     },
     job_engine::{JobEngine, JobStatus},
-    store::{Status, Task, transition_task_to_running},
+    store::{Status, Task},
     test_utils::{
         MockJobEngine, spawn_test_server, spawn_test_server_with_state, test_client,
         test_state_with_engine_handles,
@@ -671,7 +671,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
             Utc::now(),
         )
         .await?;
-    transition_task_to_running(handles.store.as_ref(), &task_id).await?;
+    handles.state.transition_task_to_running(&task_id).await?;
     engine.insert_job(&task_id, JobStatus::Running).await;
 
     client

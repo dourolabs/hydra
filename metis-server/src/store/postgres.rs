@@ -1032,10 +1032,10 @@ mod tests {
             patches::{Patch, PatchStatus},
             users::{User, Username},
         },
-        store::{transition_task_to_completion, transition_task_to_running},
+        test_utils::test_state_with_store,
     };
     use metis_common::{RepoName, VersionNumber, Versioned, repositories::Repository};
-    use std::{collections::HashSet, str::FromStr};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
         actual: &Versioned<T>,
@@ -1377,43 +1377,66 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn task_lifecycle_updates_status(pool: PgStorePool) {
-        let store = PostgresStore::new(pool);
-        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let store = Arc::new(PostgresStore::new(pool));
+        let handles = test_state_with_store(store.clone());
+        let issue_id = handles.store.add_issue(sample_issue(vec![])).await.unwrap();
 
         let mut task = sample_task();
         task.spawned_from = Some(issue_id.clone());
-        let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Pending);
-
-        transition_task_to_running(&store, &task_id).await.unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Running);
-
-        transition_task_to_completion(&store, &task_id, Ok(()), Some("done".into()))
+        let task_id = handles
+            .store
+            .add_task(task.clone(), Utc::now())
             .await
             .unwrap();
-        assert_eq!(store.get_status(&task_id).await.unwrap(), Status::Complete);
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Pending
+        );
 
-        let tasks = store.get_tasks_for_issue(&issue_id).await.unwrap();
+        handles
+            .state
+            .transition_task_to_running(&task_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Running
+        );
+
+        handles
+            .state
+            .transition_task_to_completion(&task_id, Ok(()), Some("done".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            handles.store.get_status(&task_id).await.unwrap(),
+            Status::Complete
+        );
+
+        let tasks = handles.store.get_tasks_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let mut updated_task = store.get_task(&task_id).await.unwrap().item;
+        let mut updated_task = handles.store.get_task(&task_id).await.unwrap().item;
         updated_task.spawned_from = None;
-        let updated_version = store
+        let updated_version = handles
+            .store
             .update_task(&task_id, updated_task.clone())
             .await
             .unwrap();
         assert_eq!(updated_version.item, updated_task);
-        let fetched = store.get_task(&task_id).await.unwrap();
+        let fetched = handles.store.get_task(&task_id).await.unwrap();
         assert_eq!(fetched.item, updated_task);
         assert!(
-            store
+            handles
+                .store
                 .get_tasks_for_issue(&issue_id)
                 .await
                 .unwrap()
                 .is_empty()
         );
 
-        let complete = store
+        let complete = handles
+            .store
             .list_tasks_with_status(Status::Complete)
             .await
             .unwrap();

@@ -12,10 +12,7 @@ use crate::{
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
-    store::{
-        Status, Store, StoreError, Task, TaskError, TaskStatusLog, transition_task_to_completion,
-        transition_task_to_running,
-    },
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::{
@@ -634,8 +631,7 @@ impl AppState {
                     job_id: job_id.clone(),
                 })?;
 
-            transition_task_to_completion(
-                store,
+            self.transition_task_to_completion(
                 &job_id,
                 status.to_result().map_err(TaskError::from),
                 status.last_message(),
@@ -689,17 +685,16 @@ impl AppState {
         let (actor, auth_token) = match self.create_actor_for_task(task_id.clone()).await {
             Ok(values) => values,
             Err(err) => {
-                let store = self.store.as_ref();
                 let failure_reason = format!("Failed to create actor for task: {err}");
-                if let Err(update_err) = transition_task_to_completion(
-                    store,
-                    &task_id,
-                    Err(TaskError::JobEngineError {
-                        reason: failure_reason,
-                    }),
-                    None,
-                )
-                .await
+                if let Err(update_err) = self
+                    .transition_task_to_completion(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                    )
+                    .await
                 {
                     error!(
                         metis_id = %task_id,
@@ -731,36 +726,32 @@ impl AppState {
             )
             .await
         {
-            Ok(()) => {
-                let store = self.store.as_ref();
-                match transition_task_to_running(store, &task_id).await {
-                    Ok(_) => {
-                        info!(
-                            metis_id = %task_id,
-                            "set task status to Running (spawned)"
-                        );
-                    }
-                    Err(err) => {
-                        warn!(
-                            metis_id = %task_id,
-                            error = %err,
-                            "failed to set task to Running after spawn"
-                        );
-                    }
+            Ok(()) => match self.transition_task_to_running(&task_id).await {
+                Ok(_) => {
+                    info!(
+                        metis_id = %task_id,
+                        "set task status to Running (spawned)"
+                    );
                 }
-            }
+                Err(err) => {
+                    warn!(
+                        metis_id = %task_id,
+                        error = %err,
+                        "failed to set task to Running after spawn"
+                    );
+                }
+            },
             Err(err) => {
-                let store = self.store.as_ref();
                 let failure_reason = format!("Failed to create Kubernetes job: {err}");
-                if let Err(update_err) = transition_task_to_completion(
-                    store,
-                    &task_id,
-                    Err(TaskError::JobEngineError {
-                        reason: failure_reason,
-                    }),
-                    None,
-                )
-                .await
+                if let Err(update_err) = self
+                    .transition_task_to_completion(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                    )
+                    .await
                 {
                     error!(
                         metis_id = %task_id,
@@ -847,16 +838,15 @@ impl AppState {
                     let failure_reason =
                         "Job completed without submitting results (timeout after 1 minute)"
                             .to_string();
-                    let store = self.store.as_ref();
-                    match transition_task_to_completion(
-                        store,
-                        &task_id,
-                        Err(TaskError::JobEngineError {
-                            reason: failure_reason,
-                        }),
-                        None,
-                    )
-                    .await
+                    match self
+                        .transition_task_to_completion(
+                            &task_id,
+                            Err(TaskError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            None,
+                        )
+                        .await
                     {
                         Ok(_) => {
                             warn!(metis_id = %task_id, "task marked failed due to missing results after job completion timeout");
@@ -867,19 +857,18 @@ impl AppState {
                     }
                 }
                 JobStatus::Failed => {
-                    let store = self.store.as_ref();
                     let failure_reason = job
                         .failure_message
                         .unwrap_or_else(|| "Job failed for an undetermined reason".to_string());
-                    match transition_task_to_completion(
-                        store,
-                        &task_id,
-                        Err(TaskError::JobEngineError {
-                            reason: failure_reason,
-                        }),
-                        None,
-                    )
-                    .await
+                    match self
+                        .transition_task_to_completion(
+                            &task_id,
+                            Err(TaskError::JobEngineError {
+                                reason: failure_reason,
+                            }),
+                            None,
+                        )
+                        .await
                     {
                         Ok(_) => {
                             info!(metis_id = %task_id, "updated task status to Failed from job engine");
@@ -896,17 +885,16 @@ impl AppState {
                     "job not found in job engine, marking as failed"
                 );
 
-                let store = self.store.as_ref();
                 let failure_reason = "Job not found in job engine".to_string();
-                if let Err(update_err) = transition_task_to_completion(
-                    store,
-                    &task_id,
-                    Err(TaskError::JobEngineError {
-                        reason: failure_reason,
-                    }),
-                    None,
-                )
-                .await
+                if let Err(update_err) = self
+                    .transition_task_to_completion(
+                        &task_id,
+                        Err(TaskError::JobEngineError {
+                            reason: failure_reason,
+                        }),
+                        None,
+                    )
+                    .await
                 {
                     error!(metis_id = %task_id, error = %update_err, "failed to set task status to Failed");
                 }
@@ -1417,6 +1405,53 @@ impl AppState {
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }
 
+    pub async fn transition_task_to_running(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let store = self.store.as_ref();
+        let latest = store.get_task(task_id).await?;
+        if latest.item.status != Status::Pending {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        let mut updated = latest.item;
+        updated.status = Status::Running;
+        updated.last_message = None;
+        updated.error = None;
+
+        store.update_task(task_id, updated).await
+    }
+
+    pub async fn transition_task_to_completion(
+        &self,
+        task_id: &TaskId,
+        result: Result<(), TaskError>,
+        last_message: Option<String>,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let store = self.store.as_ref();
+        let latest = store.get_task(task_id).await?;
+        if latest.item.status != Status::Running {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        let mut updated = latest.item;
+        match result {
+            Ok(()) => {
+                updated.status = Status::Complete;
+                updated.last_message = last_message;
+                updated.error = None;
+            }
+            Err(error) => {
+                updated.status = Status::Failed;
+                updated.last_message = None;
+                updated.error = Some(error);
+            }
+        }
+
+        store.update_task(task_id, updated).await
+    }
+
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
         let store = self.store.as_ref();
         store.get_task(task_id).await.map(|task| task.item)
@@ -1658,7 +1693,7 @@ mod tests {
             users::Username,
         },
         job_engine::{JobEngine, JobStatus},
-        store::{Status, StoreError, TaskError, transition_task_to_running},
+        store::{Status, StoreError, TaskError},
         test_utils::{
             MockJobEngine, github_user_response, test_state, test_state_with_engine,
             test_state_with_github_api_base_url,
@@ -2033,7 +2068,8 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
-            transition_task_to_running(store, &task_id)
+            state
+                .transition_task_to_running(&task_id)
                 .await
                 .expect("task should transition to running");
             task_id
@@ -2062,7 +2098,8 @@ mod tests {
         let task_id = {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
-            transition_task_to_running(store, &task_id)
+            state
+                .transition_task_to_running(&task_id)
                 .await
                 .expect("task should transition to running");
             task_id
