@@ -34,17 +34,54 @@ pub fn github_user_response(login: &str, id: u64) -> serde_json::Value {
     })
 }
 
+pub fn github_org_memberships_response(orgs: &[&str]) -> serde_json::Value {
+    let memberships: Vec<_> = orgs
+        .iter()
+        .map(|org| {
+            json!({
+                "organization": {
+                    "login": org
+                },
+                "state": "active",
+                "role": "member"
+            })
+        })
+        .collect();
+
+    json!(memberships)
+}
+
 pub fn test_state_with_github_api_base_url(api_base_url: String) -> TestStateHandles {
     test_state_with_github_urls(api_base_url, "https://github.com".to_string())
+}
+
+pub fn test_state_with_github_api_base_url_and_allowed_orgs(
+    api_base_url: String,
+    allowed_orgs: Vec<String>,
+) -> TestStateHandles {
+    test_state_with_github_urls_and_allowed_orgs(
+        api_base_url,
+        "https://github.com".to_string(),
+        allowed_orgs,
+    )
 }
 
 pub fn test_state_with_github_urls(
     api_base_url: String,
     oauth_base_url: String,
 ) -> TestStateHandles {
+    test_state_with_github_urls_and_allowed_orgs(api_base_url, oauth_base_url, Vec::new())
+}
+
+pub fn test_state_with_github_urls_and_allowed_orgs(
+    api_base_url: String,
+    oauth_base_url: String,
+    allowed_orgs: Vec<String>,
+) -> TestStateHandles {
     let mut config = test_app_config();
     config.github_app.api_base_url = api_base_url;
     config.github_app.oauth_base_url = oauth_base_url;
+    config.metis.allowed_orgs = allowed_orgs;
 
     let store = Arc::new(MemoryStore::new());
     let agents = Arc::new(RwLock::new(Vec::new()));

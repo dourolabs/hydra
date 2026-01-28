@@ -2,6 +2,9 @@
 # Namespace the CLI uses when creating Jobs.
 namespace = "default"
 
+# Optional allowlist of GitHub organizations required for login.
+# allowed_orgs = ["your-github-org"]
+
 # Optional fallback if the OPENAI_API_KEY environment variable is unset.
 OPENAI_API_KEY = ""
 

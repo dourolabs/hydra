@@ -25,7 +25,9 @@ pub mod job_engine;
 pub mod store;
 
 pub use github_test_utils::{
-    github_user_response, test_state_with_github_api_base_url, test_state_with_github_urls,
+    github_org_memberships_response, github_user_response, test_state_with_github_api_base_url,
+    test_state_with_github_api_base_url_and_allowed_orgs, test_state_with_github_urls,
+    test_state_with_github_urls_and_allowed_orgs,
 };
 pub use job_engine::MockJobEngine;
 pub use store::FailingStore;

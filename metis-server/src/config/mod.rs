@@ -52,6 +52,8 @@ pub struct MetisSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
+    #[serde(default)]
+    pub allowed_orgs: Vec<String>,
     #[serde(default, rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
 }
@@ -61,6 +63,7 @@ impl Default for MetisSection {
         Self {
             namespace: default_namespace(),
             server_hostname: String::new(),
+            allowed_orgs: Vec::new(),
             openai_api_key: None,
         }
     }
@@ -514,6 +517,37 @@ client_secret = "client-secret"
 
         let error = AppConfig::load(&path).expect_err("expected missing private_key");
         assert!(error_chain_contains(&error, "missing field `private_key`"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_loads_allowed_orgs() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[metis]
+allowed_orgs = ["octo-org", "metis"]
+
+[job]
+default_image = "worker:latest"
+cpu_limit = "500m"
+memory_limit = "1Gi"
+cpu_request = "500m"
+memory_request = "1Gi"
+
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+private_key = "private-key"
+"#,
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.metis.allowed_orgs, vec!["octo-org", "metis"]);
 
         Ok(())
     }

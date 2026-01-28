@@ -24,6 +24,7 @@ use metis_common::{
     merge_queues::MergeQueue,
 };
 use octocrab::Octocrab;
+use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -213,6 +214,8 @@ pub enum AgentError {
 pub enum LoginError {
     #[error("invalid github token: {0}")]
     InvalidGithubToken(String),
+    #[error("github user is not a member of any allowed orgs: {allowed_orgs}")]
+    OrgMembershipRequired { allowed_orgs: String },
     #[error("login store operation failed")]
     Store {
         #[source]
@@ -272,6 +275,9 @@ impl AppState {
             .user()
             .await
             .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+        self.enforce_allowed_orgs(&github_client).await?;
+
         let username = Username::from(github_user.login);
         let user = User {
             username: username.clone(),
@@ -313,6 +319,45 @@ impl AppState {
         }
 
         Ok((user, actor, auth_token))
+    }
+
+    async fn enforce_allowed_orgs(&self, github_client: &Octocrab) -> Result<(), LoginError> {
+        let allowed_orgs: HashSet<String> = self
+            .config
+            .metis
+            .allowed_orgs
+            .iter()
+            .map(|org| org.trim().to_lowercase())
+            .filter(|org| !org.is_empty())
+            .collect();
+
+        if allowed_orgs.is_empty() {
+            return Ok(());
+        }
+
+        let org_page = github_client
+            .get::<octocrab::Page<GithubOrgMembership>, _, _>("/user/memberships/orgs", None::<&()>)
+            .await
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+        let memberships = github_client
+            .all_pages(org_page)
+            .await
+            .map_err(|err| LoginError::InvalidGithubToken(format!("{err}")))?;
+
+        let is_allowed = memberships
+            .iter()
+            .any(|membership| allowed_orgs.contains(&membership.organization.login.to_lowercase()));
+
+        if is_allowed {
+            return Ok(());
+        }
+
+        let mut sorted_orgs: Vec<String> = allowed_orgs.into_iter().collect();
+        sorted_orgs.sort();
+        Err(LoginError::OrgMembershipRequired {
+            allowed_orgs: sorted_orgs.join(", "),
+        })
     }
 
     async fn create_actor_for_task(&self, task_id: TaskId) -> Result<(Actor, String), StoreError> {
@@ -1441,6 +1486,16 @@ impl AppState {
             Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubOrgMembership {
+    organization: GithubOrganizationSummary,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubOrganizationSummary {
+    login: String,
 }
 
 fn join_issue_ids(ids: &[IssueId]) -> String {

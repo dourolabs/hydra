@@ -1,8 +1,9 @@
 use crate::{
     domain::users::Username,
     test::{
-        github_user_response, spawn_test_server_with_state, test_client,
-        test_state_with_github_api_base_url,
+        github_org_memberships_response, github_user_response, spawn_test_server_with_state,
+        test_client, test_state_with_github_api_base_url,
+        test_state_with_github_api_base_url_and_allowed_orgs,
     },
 };
 use httpmock::prelude::*;
@@ -130,5 +131,73 @@ async fn login_returns_bad_request_for_invalid_token() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_allows_user_in_allowed_org() -> anyhow::Result<()> {
+    let github_server = MockServer::start_async().await;
+    let _user_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_user_response("octo", 42));
+    });
+    let _orgs_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user/memberships/orgs");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_org_memberships_response(&["octo-org"]));
+    });
+
+    let handles = test_state_with_github_api_base_url_and_allowed_orgs(
+        github_server.base_url(),
+        vec!["octo-org".to_string()],
+    );
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
+    let response = client
+        .post(format!("{}/v1/login", server.base_url()))
+        .json(&payload)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_rejects_user_not_in_allowed_org() -> anyhow::Result<()> {
+    let github_server = MockServer::start_async().await;
+    let _user_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_user_response("octo", 42));
+    });
+    let _orgs_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user/memberships/orgs");
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(github_org_memberships_response(&["other-org"]));
+    });
+
+    let handles = test_state_with_github_api_base_url_and_allowed_orgs(
+        github_server.base_url(),
+        vec!["octo-org".to_string()],
+    );
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let payload = LoginRequest::new("gh-token".to_string(), "gh-refresh".to_string());
+    let response = client
+        .post(format!("{}/v1/login", server.base_url()))
+        .json(&payload)
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     Ok(())
 }
