@@ -53,6 +53,8 @@ REPLACE_WITH_PRIVATE_KEY
 [background]
 # Agent queues automatically enqueue work for assigned issues.
 # Add additional [[background.agent_queues]] tables to run multiple queues.
+# Agent queue name to use for merge-request followups.
+merge_request_followup_agent = "agent-a"
 [[background.agent_queues]]
 name = "agent-a"
 # Prompt provided to the agent; forwarded directly to Codex.
