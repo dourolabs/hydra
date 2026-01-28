@@ -2,12 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{api::v1::login::LoginRequest, whoami::ActorIdentity};
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    path::Path,
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 use tokio::time::{sleep, Instant};
 
 use crate::{
@@ -52,7 +47,6 @@ enum TokenPollState {
 
 pub async fn login_with_github_device_flow(
     client: &MetisClientUnauthenticated,
-    token_path: &Path,
     config_path: &Path,
     server_url: &str,
 ) -> Result<MetisClient> {
@@ -69,8 +63,7 @@ pub async fn login_with_github_device_flow(
     println!("Waiting for authorization...");
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
-    let auth_token =
-        exchange_and_store_token(client, token_path, config_path, server_url, &token).await?;
+    let auth_token = exchange_and_store_token(client, config_path, server_url, &token).await?;
     let auth_client = MetisClient::new(client.base_url().as_str(), auth_token.clone())
         .context("failed to create authenticated client")?;
     let whoami = auth_client
@@ -84,9 +77,9 @@ pub async fn login_with_github_device_flow(
     };
 
     println!(
-        "Logged in as {}. Stored token at {}.",
+        "Logged in as {}. Stored token in {}.",
         actor_label,
-        token_path.display()
+        config_path.display()
     );
 
     Ok(auth_client)
@@ -206,7 +199,6 @@ async fn login_with_github_token(
 
 async fn exchange_and_store_token(
     client: &MetisClientUnauthenticated,
-    token_path: &Path,
     config_path: &Path,
     server_url: &str,
     github_token: &DeviceFlowToken,
@@ -217,35 +209,8 @@ async fn exchange_and_store_token(
         &github_token.refresh_token,
     )
     .await?;
-    write_auth_token_file(token_path, &auth_token)?;
     config::store_auth_token(config_path, server_url, &auth_token)?;
     Ok(auth_token)
-}
-
-pub fn write_auth_token_file(token_path: &Path, token: &str) -> Result<()> {
-    let parent = token_path
-        .parent()
-        .ok_or_else(|| anyhow!("auth token path missing parent directory"))?;
-    fs::create_dir_all(parent).context("failed to create auth token directory")?;
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(token_path)
-        .context("failed to open auth token file for writing")?;
-    file.write_all(token.as_bytes())
-        .context("failed to write auth token file")?;
-    file.flush().context("failed to flush auth token file")?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(token_path, fs::Permissions::from_mode(0o600))
-            .context("failed to set auth token file permissions")?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -279,23 +244,6 @@ mod tests {
         assert!(matches!(slow_down, TokenPollState::SlowDown));
     }
 
-    #[test]
-    fn auth_token_path_and_write_use_provided_path() {
-        let temp = tempdir().expect("tempdir");
-        let token_path = temp.path().join("auth-token");
-
-        write_auth_token_file(&token_path, "token-123").expect("write token");
-        let contents = fs::read_to_string(&token_path).expect("read token");
-        assert_eq!(contents, "token-123");
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&token_path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-        }
-    }
-
     #[tokio::test]
     async fn exchange_and_store_token_uses_login_response_token() {
         let server = MockServer::start();
@@ -317,13 +265,11 @@ mod tests {
             MetisClientUnauthenticated::with_http_client(server.base_url(), HttpClient::new())
                 .expect("client");
         let temp = tempdir().expect("tempdir");
-        let token_path = temp.path().join("auth-token");
         let config_path = temp.path().join("config.toml");
         let server_url = server.base_url();
 
         let auth_token = exchange_and_store_token(
             &client,
-            &token_path,
             &config_path,
             &server_url,
             &DeviceFlowToken {
@@ -335,8 +281,6 @@ mod tests {
         .expect("exchange");
 
         login_mock.assert();
-        let contents = fs::read_to_string(&token_path).expect("read token");
-        assert_eq!(contents, "api-token");
         assert_eq!(auth_token, "api-token");
 
         let stored_config = AppConfig::load(&config_path).expect("load config");
