@@ -79,7 +79,8 @@ impl BuildCacheClient {
     ) -> Result<(), BuildCacheError> {
         self.storage
             .put_object(&key.object_key(), archive_path.as_ref())
-            .await
+            .await?;
+        self.evict_if_needed(key.repo_name.clone()).await
     }
 
     pub async fn download_cache(
@@ -99,6 +100,36 @@ impl BuildCacheClient {
         let prefix = BuildCacheKey::new(repo_name, "").repo_prefix();
         let objects = self.storage.list_objects(&prefix).await?;
         Ok(objects.into_iter().map(BuildCacheEntry::from).collect())
+    }
+
+    pub async fn evict_if_needed(
+        &self,
+        repo_name: metis_common::RepoName,
+    ) -> Result<(), BuildCacheError> {
+        let Some(max_entries) = self.config.max_entries_per_repo else {
+            return Ok(());
+        };
+        let prefix = BuildCacheKey::new(repo_name, "").repo_prefix();
+        let mut objects = self.storage.list_objects(&prefix).await?;
+
+        if objects.len() <= max_entries {
+            return Ok(());
+        }
+
+        objects.sort_by(|a, b| {
+            let ordering = a.last_modified.cmp(&b.last_modified);
+            if ordering == std::cmp::Ordering::Equal {
+                a.key.cmp(&b.key)
+            } else {
+                ordering
+            }
+        });
+
+        let evict_count = objects.len().saturating_sub(max_entries);
+        for object in objects.into_iter().take(evict_count) {
+            self.storage.delete_object(&object.key).await?;
+        }
+        Ok(())
     }
 
     pub async fn download_and_apply_cache(
@@ -284,6 +315,7 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::io::Write;
+    use std::time::Duration;
     use tempfile::tempdir;
     use tokio::sync::Mutex;
 
@@ -323,6 +355,11 @@ mod tests {
     impl MockStorageClient {
         fn new() -> Self {
             Self::default()
+        }
+
+        async fn insert_object_with_time(&self, key: &str, last_modified: Option<SystemTime>) {
+            let mut objects = self.objects.lock().await;
+            objects.insert(key.to_string(), (Vec::new(), last_modified));
         }
     }
 
@@ -497,5 +534,83 @@ mod tests {
 
         let artifact_path = destination_dir.path().join("target/debug/lib.a");
         assert!(artifact_path.exists());
+    }
+
+    #[tokio::test]
+    async fn evict_if_needed_removes_oldest_entries() {
+        let storage = Arc::new(MockStorageClient::new());
+        let repo = metis_common::RepoName::new("acme", "anvils").expect("repo");
+        let key1 = BuildCacheKey::new(repo.clone(), "oldest");
+        let key2 = BuildCacheKey::new(repo.clone(), "middle");
+        let key3 = BuildCacheKey::new(repo.clone(), "newest");
+
+        let time1 = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let time2 = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        let time3 = SystemTime::UNIX_EPOCH + Duration::from_secs(3);
+
+        storage
+            .insert_object_with_time(&key1.object_key(), Some(time1))
+            .await;
+        storage
+            .insert_object_with_time(&key2.object_key(), Some(time2))
+            .await;
+        storage
+            .insert_object_with_time(&key3.object_key(), Some(time3))
+            .await;
+
+        let config = BuildCacheConfig {
+            max_entries_per_repo: Some(2),
+            ..BuildCacheConfig::default()
+        };
+        let client = BuildCacheClient::new(config, storage);
+
+        client.evict_if_needed(repo.clone()).await.expect("evict");
+
+        let remaining = client.list_caches(repo).await.expect("list");
+        let keys: Vec<String> = remaining.into_iter().map(|entry| entry.key).collect();
+        assert_eq!(keys.len(), 2);
+        assert!(!keys.contains(&key1.object_key()));
+        assert!(keys.contains(&key2.object_key()));
+        assert!(keys.contains(&key3.object_key()));
+    }
+
+    #[tokio::test]
+    async fn upload_cache_triggers_eviction() {
+        let temp_dir = tempdir().expect("temp dir");
+        let archive_path = temp_dir.path().join("cache.tar.zst");
+        write_file(&archive_path, "payload");
+
+        let storage = Arc::new(MockStorageClient::new());
+        let repo = metis_common::RepoName::new("acme", "anvils").expect("repo");
+        let key1 = BuildCacheKey::new(repo.clone(), "older");
+        let key2 = BuildCacheKey::new(repo.clone(), "old");
+        let key3 = BuildCacheKey::new(repo.clone(), "new");
+
+        let time1 = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let time2 = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        storage
+            .insert_object_with_time(&key1.object_key(), Some(time1))
+            .await;
+        storage
+            .insert_object_with_time(&key2.object_key(), Some(time2))
+            .await;
+
+        let config = BuildCacheConfig {
+            max_entries_per_repo: Some(2),
+            ..BuildCacheConfig::default()
+        };
+        let client = BuildCacheClient::new(config, storage);
+
+        client
+            .upload_cache(&key3, &archive_path)
+            .await
+            .expect("upload");
+
+        let remaining = client.list_caches(repo).await.expect("list");
+        let keys: Vec<String> = remaining.into_iter().map(|entry| entry.key).collect();
+        assert_eq!(keys.len(), 2);
+        assert!(!keys.contains(&key1.object_key()));
+        assert!(keys.contains(&key2.object_key()));
+        assert!(keys.contains(&key3.object_key()));
     }
 }
