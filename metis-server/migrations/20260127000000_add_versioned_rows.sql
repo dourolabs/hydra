@@ -10,7 +10,7 @@ ALTER TABLE metis.issues
 ALTER TABLE metis.issues
     DROP CONSTRAINT IF EXISTS issues_pkey;
 ALTER TABLE metis.issues
-    ADD CONSTRAINT issues_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS issues_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS issues_latest_idx
     ON metis.issues (id, version_number DESC);
 
@@ -25,7 +25,7 @@ ALTER TABLE metis.patches
 ALTER TABLE metis.patches
     DROP CONSTRAINT IF EXISTS patches_pkey;
 ALTER TABLE metis.patches
-    ADD CONSTRAINT patches_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS patches_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS patches_latest_idx
     ON metis.patches (id, version_number DESC);
 
@@ -40,7 +40,7 @@ ALTER TABLE metis.tasks
 ALTER TABLE metis.tasks
     DROP CONSTRAINT IF EXISTS tasks_pkey;
 ALTER TABLE metis.tasks
-    ADD CONSTRAINT tasks_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS tasks_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS tasks_latest_idx
     ON metis.tasks (id, version_number DESC);
 
@@ -55,7 +55,7 @@ ALTER TABLE metis.task_status_logs
 ALTER TABLE metis.task_status_logs
     DROP CONSTRAINT IF EXISTS task_status_logs_pkey;
 ALTER TABLE metis.task_status_logs
-    ADD CONSTRAINT task_status_logs_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS task_status_logs_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS task_status_logs_latest_idx
     ON metis.task_status_logs (id, version_number DESC);
 
@@ -70,7 +70,7 @@ ALTER TABLE metis.users
 ALTER TABLE metis.users
     DROP CONSTRAINT IF EXISTS users_pkey;
 ALTER TABLE metis.users
-    ADD CONSTRAINT users_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS users_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS users_latest_idx
     ON metis.users (id, version_number DESC);
 
@@ -85,7 +85,7 @@ ALTER TABLE metis.repositories
 ALTER TABLE metis.repositories
     DROP CONSTRAINT IF EXISTS repositories_pkey;
 ALTER TABLE metis.repositories
-    ADD CONSTRAINT repositories_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS repositories_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS repositories_latest_idx
     ON metis.repositories (id, version_number DESC);
 
@@ -100,6 +100,6 @@ ALTER TABLE metis.actors
 ALTER TABLE metis.actors
     DROP CONSTRAINT IF EXISTS actors_pkey;
 ALTER TABLE metis.actors
-    ADD CONSTRAINT actors_id_version_unique UNIQUE (id, version_number);
+    ADD CONSTRAINT IF NOT EXISTS actors_id_version_unique UNIQUE (id, version_number);
 CREATE INDEX IF NOT EXISTS actors_latest_idx
     ON metis.actors (id, version_number DESC);
