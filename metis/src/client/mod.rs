@@ -20,8 +20,8 @@ use metis_common::{
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
-        ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-        UpsertPatchResponse,
+        CreatePatchAssetQuery, CreatePatchAssetResponse, ListPatchesResponse, PatchRecord,
+        SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
     },
     repositories::{
         CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
@@ -32,6 +32,7 @@ use metis_common::{
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use serde::Deserialize;
+use std::path::Path;
 use std::pin::Pin;
 
 use crate::config::AppConfig;
@@ -153,6 +154,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
+    async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String>;
     async fn list_repositories(&self) -> Result<ListRepositoriesResponse>;
     async fn create_repository(
         &self,
@@ -739,6 +741,38 @@ impl MetisClient {
             .context("failed to decode list patches response")
     }
 
+    /// Call `POST /v1/patches/:patch_id/assets` to upload a patch asset.
+    pub async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string());
+        let query = CreatePatchAssetQuery::new(file_name);
+        let body = tokio::fs::read(file_path)
+            .await
+            .with_context(|| format!("failed to read asset file '{}'", file_path.display()))?;
+        let path = format!("/v1/patches/{patch_id}/assets");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .query(&query)
+            .body(body)
+            .send()
+            .await
+            .context("failed to submit patch asset upload")?
+            .error_for_status_with_body(
+                "metis-server returned an error while uploading patch asset",
+            )
+            .await?;
+
+        let response = response
+            .json::<CreatePatchAssetResponse>()
+            .await
+            .context("failed to decode patch asset upload response")?;
+
+        Ok(response.asset_url)
+    }
+
     /// Call `GET /v1/repositories` to list configured repositories.
     pub async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
         let url = self.endpoint("/v1/repositories")?;
@@ -1196,6 +1230,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_patches(self, query).await
     }
 
+    async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {
+        MetisClient::create_patch_asset(self, patch_id, file_path).await
+    }
+
     async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
         MetisClient::list_repositories(self).await
     }
@@ -1265,11 +1303,16 @@ impl MetisClientInterface for MetisClient {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
-    use metis_common::repositories::{
-        CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
+    use metis_common::{
+        repositories::{
+            CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
+        },
+        PatchId,
     };
     use serde_json::json;
+    use std::io::Write;
     use std::str::FromStr;
+    use tempfile::tempdir;
 
     const TEST_METIS_TOKEN: &str = "u-test:test-metis-token";
 
@@ -1383,6 +1426,40 @@ mod tests {
             message.contains("metis-server returned an error while updating repository"),
             "{message}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_asset_uploads_file_and_returns_url() -> Result<()> {
+        let server = MockServer::start();
+        let patch_id = PatchId::new();
+        let expected_auth_header = format!("Bearer {TEST_METIS_TOKEN}");
+        let asset_url = "https://github.com/dourolabs/metis/assets/123";
+        let path = format!("/v1/patches/{patch_id}/assets");
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(path.as_str())
+                .query_param("name", "asset.txt")
+                .header("authorization", expected_auth_header.as_str())
+                .body("asset-bytes");
+            then.status(200)
+                .json_body(json!({ "asset_url": asset_url }));
+        });
+
+        let tempdir = tempdir()?;
+        let file_path = tempdir.path().join("asset.txt");
+        let mut file = std::fs::File::create(&file_path)?;
+        file.write_all(b"asset-bytes")?;
+
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let response = client.create_patch_asset(&patch_id, &file_path).await?;
+
+        mock.assert();
+        assert_eq!(response, asset_url);
 
         Ok(())
     }
