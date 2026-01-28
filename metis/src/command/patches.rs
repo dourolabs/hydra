@@ -5,7 +5,6 @@ use chrono::Utc;
 use clap::Subcommand;
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
-    github::build_octocrab_client,
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueId, IssueRecord, IssueStatus, IssueType,
         UpsertIssueRequest,
@@ -13,12 +12,11 @@ use metis_common::{
     jobs::BundleSpec,
     merge_queues::MergeQueue,
     patches::{
-        GithubPr, Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
+        Patch, PatchRecord, PatchStatus, Review, SearchPatchesQuery, UpsertPatchRequest,
         UpsertPatchResponse,
     },
     PatchId, RepoName, TaskId,
 };
-use serde::Deserialize;
 
 use crate::git;
 use crate::git::{
@@ -32,8 +30,6 @@ use crate::{
         render_issue_records, render_patch_records, CommandContext, ResolvedOutputFormat,
     },
 };
-use git2::Repository;
-
 #[derive(Subcommand, Debug)]
 pub enum PatchesCommand {
     /// List or search patches.
@@ -639,7 +635,7 @@ pub async fn create_patch_artifact_from_repo(
         bail!("Patch diff must not be empty.");
     }
 
-    let mut patch_payload = Patch::new(
+    let patch_payload = Patch::new(
         title.clone(),
         description.clone(),
         diff,
@@ -650,29 +646,19 @@ pub async fn create_patch_artifact_from_repo(
         service_repo_name.clone(),
         None,
     );
+    if create_github_pr {
+        let github_token = github_token
+            .ok_or_else(|| anyhow!("Creator GitHub token is required to push a GitHub branch"))?;
+        let branch_name = ensure_feature_branch(repo_root, job_id.as_ref().map(|id| id.as_ref()))?;
+        push_branch(repo_root, &branch_name, Some(github_token))?;
+    }
+
     let response = client
-        .create_patch(&UpsertPatchRequest::new(patch_payload.clone()))
+        .create_patch(
+            &UpsertPatchRequest::new(patch_payload.clone()).with_sync_github(create_github_pr),
+        )
         .await
         .context("failed to create patch")?;
-
-    if create_github_pr {
-        let github_token = github_token.ok_or_else(|| {
-            anyhow!("Creator GitHub token is required to create a GitHub pull request")
-        })?;
-        let github_pr = create_github_pull_request(
-            repo_root,
-            &title,
-            &description,
-            github_token,
-            job_id.as_ref().map(|id| id.as_ref()),
-        )
-        .await?;
-        patch_payload.github = Some(github_pr);
-        client
-            .update_patch(&response.patch_id, &UpsertPatchRequest::new(patch_payload))
-            .await
-            .context("failed to update patch with GitHub metadata")?;
-    }
 
     Ok(response)
 }
@@ -739,30 +725,6 @@ async fn review_patch(
     Ok(())
 }
 
-async fn create_github_pull_request(
-    repo_root: &Path,
-    title: &str,
-    description: &str,
-    github_token: &str,
-    job_id: Option<&str>,
-) -> Result<GithubPr> {
-    let branch_name = ensure_feature_branch(repo_root, job_id)?;
-    push_branch(repo_root, &branch_name, Some(github_token))?;
-    let pr_metadata =
-        open_pull_request(repo_root, title, description, &branch_name, github_token).await?;
-    let (owner, repo) = parse_pr_repository(&pr_metadata.url)
-        .ok_or_else(|| anyhow!("failed to parse GitHub PR URL '{}'", pr_metadata.url))?;
-    Ok(GithubPr::new(
-        owner,
-        repo,
-        pr_metadata.number,
-        pr_metadata.head_ref_name,
-        pr_metadata.base_ref_name,
-        Some(pr_metadata.url),
-        None,
-    ))
-}
-
 fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
     let current_branch = current_branch(repo_root)?;
     if !should_create_new_branch(&current_branch) {
@@ -806,98 +768,6 @@ fn sanitize_branch_segment(input: &str) -> String {
     }
 
     normalized.trim_matches('-').to_string()
-}
-
-#[derive(Deserialize)]
-struct GhPrCreateResponse {
-    url: String,
-    number: u64,
-    #[serde(rename = "headRefName", default)]
-    head_ref_name: Option<String>,
-    #[serde(rename = "baseRefName", default)]
-    base_ref_name: Option<String>,
-}
-
-fn parse_pr_repository(url: &str) -> Option<(String, String)> {
-    let trimmed = url.trim();
-    let without_scheme = trimmed
-        .strip_prefix("https://github.com/")
-        .or_else(|| trimmed.strip_prefix("http://github.com/"))?;
-    let mut segments = without_scheme.split('/');
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    let pr_segment = segments.next()?;
-    if pr_segment != "pull" {
-        return None;
-    }
-    Some((owner.to_string(), repo.to_string()))
-}
-
-fn parse_github_remote_url(url: &str) -> Option<(String, String)> {
-    let trimmed = url.trim();
-    let without_prefix = trimmed
-        .strip_prefix("https://github.com/")
-        .or_else(|| trimmed.strip_prefix("http://github.com/"))
-        .or_else(|| trimmed.strip_prefix("ssh://git@github.com/"))
-        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
-    let mut segments = without_prefix.split('/');
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    let repo = repo.strip_suffix(".git").unwrap_or(repo);
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-    Some((owner.to_string(), repo.to_string()))
-}
-
-fn github_repo_from_origin(repo_root: &Path) -> Result<(String, String)> {
-    let repo =
-        Repository::discover(repo_root).context("failed to open git repository for PR creation")?;
-    let remote = repo
-        .find_remote("origin")
-        .context("failed to find 'origin' remote for PR creation")?;
-    let url = remote
-        .url()
-        .ok_or_else(|| anyhow!("origin remote has no URL"))?;
-    parse_github_remote_url(url)
-        .ok_or_else(|| anyhow!("failed to parse GitHub repository from origin URL '{url}'"))
-}
-
-async fn open_pull_request(
-    repo_root: &Path,
-    title: &str,
-    description: &str,
-    branch: &str,
-    github_token: &str,
-) -> Result<GhPrCreateResponse> {
-    let crab = build_octocrab_client(github_token).context("failed to create octocrab client")?;
-    let (owner, repo) = github_repo_from_origin(repo_root)?;
-    let repo_info =
-        crab.repos(&owner, &repo).get().await.with_context(|| {
-            format!("failed to load GitHub repository metadata for {owner}/{repo}")
-        })?;
-    let base_branch = repo_info
-        .default_branch
-        .ok_or_else(|| anyhow!("GitHub repository {owner}/{repo} has no default branch"))?;
-
-    let pr = crab
-        .pulls(&owner, &repo)
-        .create(title, branch, &base_branch)
-        .body(description)
-        .send()
-        .await
-        .context("failed to create GitHub pull request")?;
-
-    Ok(GhPrCreateResponse {
-        url: pr
-            .html_url
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/pull/{}", pr.number)),
-        number: pr.number,
-        head_ref_name: Some(pr.head.ref_field.clone()),
-        base_ref_name: Some(pr.base.ref_field.clone()),
-    })
 }
 
 #[cfg(test)]
@@ -1970,21 +1840,5 @@ mod tests {
         assert_eq!(current_branch(&repo_path)?, branch);
 
         Ok(())
-    }
-
-    #[test]
-    fn parse_github_remote_url_handles_https_and_ssh() {
-        assert_eq!(
-            parse_github_remote_url("https://github.com/dourolabs/metis.git"),
-            Some(("dourolabs".to_string(), "metis".to_string()))
-        );
-        assert_eq!(
-            parse_github_remote_url("git@github.com:dourolabs/metis.git"),
-            Some(("dourolabs".to_string(), "metis".to_string()))
-        );
-        assert_eq!(
-            parse_github_remote_url("ssh://git@github.com/dourolabs/metis"),
-            Some(("dourolabs".to_string(), "metis".to_string()))
-        );
     }
 }

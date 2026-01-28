@@ -235,12 +235,21 @@ impl PatchRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sync_github: bool,
 }
 
 impl UpsertPatchRequest {
     pub fn new(patch: Patch) -> Self {
-        Self { patch }
+        Self {
+            patch,
+            sync_github: false,
+        }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +461,7 @@ impl From<api::patches::UpsertPatchRequest> for UpsertPatchRequest {
     fn from(value: api::patches::UpsertPatchRequest) -> Self {
         UpsertPatchRequest {
             patch: value.patch.into(),
+            sync_github: value.sync_github,
         }
     }
 }
@@ -459,6 +469,7 @@ impl From<api::patches::UpsertPatchRequest> for UpsertPatchRequest {
 impl From<UpsertPatchRequest> for api::patches::UpsertPatchRequest {
     fn from(value: UpsertPatchRequest) -> Self {
         api::patches::UpsertPatchRequest::new(value.patch.into())
+            .with_sync_github(value.sync_github)
     }
 }
 
