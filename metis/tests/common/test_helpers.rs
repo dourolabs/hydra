@@ -8,12 +8,15 @@ use metis_common::{
     constants::{ENV_METIS_ISSUE_ID, ENV_METIS_TOKEN},
     issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
     jobs::SearchJobsQuery,
+    patches::{GithubPr, Patch, PatchStatus, Review, UpsertPatchRequest},
     task_status::Status,
     users::{User, Username},
-    RepoName, TaskId,
+    IssueId, PatchId, RepoName, TaskId,
 };
 use metis_server::{
     app::{AppState, ServiceState},
+    background::poll_github_patches::GithubPollerWorker,
+    background::scheduler::{ScheduledWorker, WorkerOutcome},
     store::{MemoryStore, Store},
     test_utils::{spawn_test_server_with_state, test_app_config, MockJobEngine},
 };
@@ -31,6 +34,8 @@ pub struct TestEnvironment {
     pub service_repo_name: RepoName,
     pub auth_token: String,
     pub current_issue_id: metis_common::IssueId,
+    #[allow(dead_code)]
+    pub state: AppState,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
@@ -122,6 +127,78 @@ impl TestEnvironment {
 
         Ok(outputs)
     }
+
+    #[allow(dead_code)]
+    pub async fn create_issue(
+        &self,
+        description: impl Into<String>,
+        issue_type: IssueType,
+        status: IssueStatus,
+        assignee: Option<String>,
+        job_settings: Option<JobSettings>,
+    ) -> Result<IssueId> {
+        let issue = Issue::new(
+            issue_type,
+            description.into(),
+            Username::from("test-user"),
+            String::new(),
+            status,
+            assignee,
+            job_settings,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let response = self
+            .client
+            .create_issue(&UpsertIssueRequest::new(issue, None))
+            .await?;
+        Ok(response.issue_id)
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_patch(
+        &self,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        diff: impl Into<String>,
+        status: PatchStatus,
+        github: Option<GithubPr>,
+        created_by: Option<TaskId>,
+    ) -> Result<PatchId> {
+        let patch = Patch::new(
+            title.into(),
+            description.into(),
+            diff.into(),
+            status,
+            false,
+            created_by,
+            Vec::new(),
+            self.service_repo_name.clone(),
+            github,
+        );
+        let response = self
+            .client
+            .create_patch(&UpsertPatchRequest::new(patch))
+            .await?;
+        Ok(response.patch_id)
+    }
+
+    #[allow(dead_code)]
+    pub async fn append_patch_review(&self, patch_id: &PatchId, review: Review) -> Result<()> {
+        let mut record = self.client.get_patch(patch_id).await?;
+        record.patch.reviews.push(review);
+        self.client
+            .update_patch(patch_id, &UpsertPatchRequest::new(record.patch))
+            .await?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub async fn run_github_sync(&self, interval_secs: u64) -> Result<WorkerOutcome> {
+        let worker = GithubPollerWorker::new(self.state.clone(), interval_secs);
+        Ok(worker.run_iteration().await)
+    }
 }
 
 fn format_command_outputs(outputs: &[CommandOutput]) -> String {
@@ -146,7 +223,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
     let (state, store, auth_token) = app_state_with_repo(&remote_url, &service_repo_name).await?;
-    let server = spawn_test_server_with_state(state, store)
+    let server = spawn_test_server_with_state(state.clone(), store)
         .await
         .context("failed to start test server")?;
     let server_url = server.base_url();
@@ -188,6 +265,7 @@ pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnviron
         service_repo_name,
         auth_token,
         current_issue_id,
+        state,
     })
 }
 
