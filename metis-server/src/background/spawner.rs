@@ -252,11 +252,7 @@ impl Spawner for AgentQueue {
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
-            let assignee_mismatch = issue.assignee.as_deref() != Some(self.name.as_str());
-            if assignee_mismatch
-                && !(self.name == SWE_AGENT_NAME
-                    && issue.issue_type == crate::domain::issues::IssueType::MergeRequest)
-            {
+            if should_skip_for_assignee_mismatch(&self.name, &issue) {
                 continue;
             }
 
@@ -367,6 +363,13 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     }
 
     Ok(false)
+}
+
+fn should_skip_for_assignee_mismatch(agent_name: &str, issue: &Issue) -> bool {
+    let assignee_mismatch = issue.assignee.as_deref() != Some(agent_name);
+    assignee_mismatch
+        && !(agent_name == SWE_AGENT_NAME
+            && issue.issue_type == crate::domain::issues::IssueType::MergeRequest)
 }
 
 #[cfg(test)]
@@ -787,6 +790,26 @@ mod tests {
             .add_issue(issue_with_type(
                 IssueType::MergeRequest,
                 "MR task",
+                IssueStatus::Open,
+                Some("pm"),
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_merge_request_assignee_mismatch_skips_for_non_swe() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue(
+                "Non-MR task",
                 IssueStatus::Open,
                 Some("pm"),
                 vec![],
