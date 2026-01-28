@@ -154,6 +154,7 @@ $color: (
     "expand-icon": light-dark(pallette-color("gray", 600), #cbd5f5),
     "check-icon": light-dark(pallette-color("gray", 900), pallette-color("slate", 50)),
     "disabled-text": light-dark(pallette-color("gray", 400), pallette-color("gray", 500)),
+    "disabled-background": light-dark(pallette-color("gray", 100), pallette-color("gray", 900)),
     "trigger-hover-background": light-dark(pallette-color("slate", 200), #2b3138),
     "trigger-hover-border": light-dark(pallette-color("gray", 400), pallette-color("gray", 600)),
     "trigger-hover-text": light-dark(pallette-color("slate", 900), pallette-color("gray", 50)),
