@@ -106,6 +106,7 @@ client_secret = "${SERVER_GITHUB_APP_CLIENT_SECRET}"
 private_key = """${SERVER_GITHUB_APP_PRIVATE_KEY}"""
 
 [background]
+merge_request_followup_agent = "swe"
 [[background.agent_queues]]
 name = "swe"
 prompt = """You are a software development agent working on an issue, with the goal of merging a patch to resolve it.

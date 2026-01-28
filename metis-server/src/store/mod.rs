@@ -2,6 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorError},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
+    task_status::Event,
     users::{User, Username},
 };
 use async_trait::async_trait;
@@ -21,6 +22,93 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
         Ok(_) => Ok(()),
         Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
     }
+}
+
+pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Option<TaskStatusLog> {
+    let (first, rest) = versions.split_first()?;
+    let mut log = TaskStatusLog::new(first.item.status, first.timestamp);
+    let mut last_status = first.item.status;
+
+    for entry in rest {
+        let status = entry.item.status;
+        if status == last_status {
+            continue;
+        }
+
+        let event = match status {
+            Status::Pending => Event::Created {
+                at: entry.timestamp,
+                status,
+            },
+            Status::Running => Event::Started {
+                at: entry.timestamp,
+            },
+            Status::Complete => Event::Completed {
+                at: entry.timestamp,
+                last_message: entry.item.last_message.clone(),
+            },
+            Status::Failed => Event::Failed {
+                at: entry.timestamp,
+                error: entry
+                    .item
+                    .error
+                    .clone()
+                    .unwrap_or(TaskError::JobEngineError {
+                        reason: "missing failure reason".to_string(),
+                    }),
+            },
+        };
+
+        log.events.push(event);
+        last_status = status;
+    }
+
+    Some(log)
+}
+
+pub(crate) async fn transition_task_to_running(
+    store: &dyn Store,
+    id: &TaskId,
+) -> Result<Versioned<Task>, StoreError> {
+    let latest = store.get_task(id).await?;
+    if latest.item.status != Status::Pending {
+        return Err(StoreError::InvalidStatusTransition);
+    }
+
+    let mut updated = latest.item;
+    updated.status = Status::Running;
+    updated.last_message = None;
+    updated.error = None;
+
+    store.update_task(id, updated).await
+}
+
+pub(crate) async fn transition_task_to_completion(
+    store: &dyn Store,
+    id: &TaskId,
+    result: Result<(), TaskError>,
+    last_message: Option<String>,
+) -> Result<Versioned<Task>, StoreError> {
+    let latest = store.get_task(id).await?;
+    if latest.item.status != Status::Running {
+        return Err(StoreError::InvalidStatusTransition);
+    }
+
+    let mut updated = latest.item;
+    match result {
+        Ok(()) => {
+            updated.status = Status::Complete;
+            updated.last_message = last_message;
+            updated.error = None;
+        }
+        Err(error) => {
+            updated.status = Status::Failed;
+            updated.last_message = None;
+            updated.error = Some(error);
+        }
+    }
+
+    store.update_task(id, updated).await
 }
 
 /// Error type for store operations.
@@ -186,9 +274,13 @@ pub trait Store: Send + Sync {
     /// * `task` - The new Task to store for this vertex
     ///
     /// # Returns
-    /// Ok(()) if successful, or an error if the task doesn't exist
+    /// The stored task version if successful, or an error if the task doesn't exist
     #[allow(dead_code)]
-    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError>;
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError>;
 
     /// Gets a task by its TaskId.
     ///
@@ -197,13 +289,13 @@ pub trait Store: Send + Sync {
     ///
     /// # Returns
     /// The task if found, or an error if not found
-    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError>;
+    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError>;
 
     /// Lists all task IDs in the store.
     ///
     /// # Returns
-    /// A vector of all TaskIds in the store
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError>;
+    /// A vector of all tasks in the store
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
 
     /// Lists all task IDs with the specified status in the store.
     ///
@@ -235,53 +327,6 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
-
-    /// Marks a task as running.
-    ///
-    /// Valid transitions:
-    /// - From Pending to Running
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Pending state
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    /// * `start_time` - The timestamp when the task started running
-    async fn mark_task_running(
-        &self,
-        id: &TaskId,
-        start_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
-
-    /// Marks a task as complete.
-    ///
-    /// Valid transitions:
-    /// - From Running to Complete (if result is Ok)
-    /// - From Running to Failed (if result is Err)
-    ///
-    /// # Arguments
-    /// * `id` - The TaskId of the task to update
-    /// * `result` - The result of the task execution. If Ok, the task is marked as Complete.
-    ///              If Err, the task is marked as Failed with the error as the failure reason.
-    /// * `end_time` - The timestamp when the task completed or failed
-    /// * `last_message` - Optional final worker message to store with the completion event
-    ///
-    /// # Returns
-    /// Ok(()) if successful, or an error if:
-    /// - The task doesn't exist
-    /// - The task is not in Running state
-    async fn mark_task_complete(
-        &self,
-        id: &TaskId,
-        result: Result<(), TaskError>,
-        last_message: Option<String>,
-        end_time: DateTime<Utc>,
-    ) -> Result<(), StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
