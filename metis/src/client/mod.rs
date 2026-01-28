@@ -183,7 +183,8 @@ pub trait MetisClientInterface: Send + Sync {
 impl MetisClientUnauthenticated {
     /// Construct a new client using the server URL from the CLI configuration.
     pub fn from_config(config: &AppConfig) -> Result<Self> {
-        Self::new(&config.server.url)
+        let server = config.default_server()?;
+        Self::new(&server.url)
     }
 
     /// Construct a new client with the default reqwest HTTP client.
@@ -278,7 +279,8 @@ impl MetisClientUnauthenticated {
 impl MetisClient {
     /// Construct a new client using the server URL from the CLI configuration.
     pub fn from_config(config: &AppConfig, auth_token: impl Into<String>) -> Result<Self> {
-        Self::new(&config.server.url, auth_token)
+        let server = config.default_server()?;
+        Self::new(&server.url, auth_token)
     }
 
     /// Construct a new client with the default reqwest HTTP client.

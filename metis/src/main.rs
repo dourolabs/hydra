@@ -122,14 +122,24 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let app_config = load_app_config(&cli)?;
-    let unauth_client = MetisClientUnauthenticated::from_config(&app_config)?;
+    let config_path = resolve_config_path(&cli);
+    let app_config = load_app_config(&config_path)?;
+    let server_url = resolve_server_url(&cli, &app_config)?;
+    let unauth_client = MetisClientUnauthenticated::new(&server_url)?;
     let token_path = config::expand_path(PathBuf::from(&cli.token_path));
-    let client = resolve_client(&cli, &app_config, &unauth_client, &token_path).await?;
+    let client = resolve_client(
+        &cli,
+        &app_config,
+        &unauth_client,
+        &token_path,
+        &config_path,
+        &server_url,
+    )
+    .await?;
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
-    dispatch(cli, &client, &app_config, &context).await
+    dispatch(cli, &client, &server_url, &context).await
 }
 
 async fn resolve_client(
@@ -137,6 +147,8 @@ async fn resolve_client(
     app_config: &AppConfig,
     unauth_client: &MetisClientUnauthenticated,
     token_path: &Path,
+    config_path: &Path,
+    server_url: &str,
 ) -> Result<MetisClient> {
     if let Some(token) = cli
         .token
@@ -144,20 +156,30 @@ async fn resolve_client(
         .map(str::trim)
         .filter(|token| !token.is_empty())
     {
-        return MetisClient::from_config(app_config, token.to_string());
+        return MetisClient::new(server_url, token.to_string());
     }
 
     if let Some(token) = read_token_from_path(token_path)? {
-        return MetisClient::from_config(app_config, token);
+        return MetisClient::new(server_url, token);
     }
 
-    github_device_flow::login_with_github_device_flow(unauth_client, token_path).await
+    if let Some(token) = app_config.auth_token_for_url(server_url)? {
+        return MetisClient::new(server_url, token.to_string());
+    }
+
+    github_device_flow::login_with_github_device_flow(
+        unauth_client,
+        token_path,
+        config_path,
+        server_url,
+    )
+    .await
 }
 
 async fn dispatch(
     cli: Cli,
     client: &dyn MetisClientInterface,
-    app_config: &AppConfig,
+    server_url: &str,
     context: &CommandContext,
 ) -> Result<()> {
     match resolve_command(cli.command) {
@@ -165,13 +187,7 @@ async fn dispatch(
         Commands::Agents { command } => command::agents::run(client, command, context).await?,
         Commands::Patches { command } => command::patches::run(client, command, context).await?,
         Commands::Dashboard => {
-            command::dashboard::run(
-                client,
-                &app_config.server.url,
-                cli.browser.as_deref(),
-                context,
-            )
-            .await?
+            command::dashboard::run(client, server_url, cli.browser.as_deref(), context).await?
         }
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
@@ -180,7 +196,7 @@ async fn dispatch(
             prompt,
             model,
             full_auto,
-        } => command::chat::run(app_config, prompt, model, full_auto, context).await?,
+        } => command::chat::run(server_url, prompt, model, full_auto, context).await?,
     }
 
     Ok(())
@@ -190,30 +206,32 @@ fn resolve_command(command: Option<Commands>) -> Commands {
     command.unwrap_or(Commands::Dashboard)
 }
 
-fn load_app_config(cli: &Cli) -> Result<AppConfig> {
+fn resolve_config_path(cli: &Cli) -> PathBuf {
+    cli.config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE))
+}
+
+fn load_app_config(config_path: &Path) -> Result<AppConfig> {
+    let resolved_path = config::expand_path(config_path);
+    if !resolved_path.exists() {
+        config::create_default_config(&resolved_path)?;
+    }
+
+    AppConfig::load(&resolved_path)
+}
+
+fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
     if let Some(url) = cli
         .server_url
         .as_deref()
         .map(str::trim)
         .filter(|url| !url.is_empty())
     {
-        return Ok(AppConfig {
-            server: config::ServerSection {
-                url: url.to_string(),
-            },
-        });
+        return Ok(url.to_string());
     }
 
-    let config_path = cli
-        .config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE));
-    let resolved_path = config::expand_path(&config_path);
-    if !resolved_path.exists() {
-        config::create_default_config(&resolved_path)?;
-    }
-
-    AppConfig::load(&config_path)
+    Ok(app_config.default_server()?.url.clone())
 }
 
 fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
@@ -237,13 +255,14 @@ fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_app_config, read_token_from_path, resolve_command, Cli, Commands, OutputFormat,
+        load_app_config, read_token_from_path, resolve_command, resolve_server_url, Cli, Commands,
+        OutputFormat,
     };
     use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
     use clap::Parser;
     use metis::command::agents::AgentsCommand;
+    use metis::config::default_app_config;
     use std::fs;
-    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn base_cli() -> Cli {
@@ -261,27 +280,24 @@ mod tests {
     }
 
     #[test]
-    fn load_config_missing_allows_server_url_override() {
+    fn resolve_server_url_prefers_cli_override() {
         let cli = Cli {
             server_url: Some("http://localhost:9000".to_string()),
             ..base_cli()
         };
 
-        let config = load_app_config(&cli).expect("config should load from server url");
-        assert_eq!(config.server.url, "http://localhost:9000");
+        let config = default_app_config();
+        let server_url = resolve_server_url(&cli, &config).expect("resolve server url");
+        assert_eq!(server_url, "http://localhost:9000");
     }
 
     #[test]
     fn load_config_missing_without_server_url_creates_default() {
         let temp = tempdir().expect("tempdir");
         let missing_path = temp.path().join("missing.toml");
-        let cli = Cli {
-            config: Some(missing_path.clone()),
-            ..base_cli()
-        };
-
-        let config = load_app_config(&cli).expect("default config should be created");
-        assert_eq!(config.server.url, DEFAULT_SERVER_URL);
+        let config = load_app_config(&missing_path).expect("default config should be created");
+        let server_url = config.default_server().expect("default server");
+        assert_eq!(server_url.url, DEFAULT_SERVER_URL);
 
         let contents = fs::read_to_string(missing_path).expect("read default config");
         assert!(
@@ -294,15 +310,15 @@ mod tests {
     fn load_config_present_without_server_url_uses_config() {
         let temp = tempdir().expect("tempdir");
         let config_path = temp.path().join("config.toml");
-        std::fs::write(&config_path, "[server]\nurl = \"http://127.0.0.1:8080\"\n")
-            .expect("write config");
+        std::fs::write(
+            &config_path,
+            "[[servers]]\nurl = \"http://127.0.0.1:8080\"\ndefault = true\n",
+        )
+        .expect("write config");
 
-        let cli = Cli {
-            config: Some(PathBuf::from(&config_path)),
-            ..base_cli()
-        };
-        let config = load_app_config(&cli).expect("config should load from file");
-        assert_eq!(config.server.url, "http://127.0.0.1:8080");
+        let config = load_app_config(&config_path).expect("config should load from file");
+        let server_url = config.default_server().expect("default server");
+        assert_eq!(server_url.url, "http://127.0.0.1:8080");
     }
 
     #[test]

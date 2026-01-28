@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use metis_common::constants::ENV_METIS_SERVER_URL;
 use tokio::{io::AsyncWriteExt, process::Command};
 
-use crate::{command::output::CommandContext, config::AppConfig};
+use crate::command::output::CommandContext;
 
 const CHAT_PRIMER: &str = r#"
 You are Codex acting as the "metis chat" assistant. You can run shell commands in the
@@ -34,14 +34,13 @@ const INTERACTIVE_GREETING: &str =
     "The user will chat with you live. Greet them, explain you can run `metis` commands, and wait for their first instruction before acting.";
 
 pub async fn run(
-    config: &AppConfig,
+    server_url: &str,
     prompt: Option<String>,
     model: Option<String>,
     full_auto: bool,
     _context: &CommandContext,
 ) -> Result<()> {
     let working_dir = env::current_dir().context("failed to resolve current directory")?;
-    let server_url = config.server.url.clone();
     let metis_bin_dir = resolve_current_metis_dir()?;
     let path_override = prepend_path_with(&metis_bin_dir)?;
 
@@ -49,7 +48,7 @@ pub async fn run(
         Some(prompt) => {
             run_noninteractive(
                 &working_dir,
-                &server_url,
+                server_url,
                 &prompt,
                 model.as_deref(),
                 full_auto,
@@ -60,7 +59,7 @@ pub async fn run(
         None => {
             run_interactive(
                 &working_dir,
-                &server_url,
+                server_url,
                 model.as_deref(),
                 full_auto,
                 &path_override,
