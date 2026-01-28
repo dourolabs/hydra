@@ -131,7 +131,7 @@ $color-pallette: (
 }
 
 $color: (
-  "shadow": rgb(from pallette-color("black") r g b / 50%),
+  "shadow": rgba(pallette-color("black"), 0.5),
   "input": (
     "border": light-dark(#d6dbe4, #2f3746),
     "background": light-dark(pallette-color("white"), #151922),
@@ -139,8 +139,8 @@ $color: (
     "placeholder": light-dark(pallette-color("gray", 500), pallette-color("slate", 400)),
     "focus-border": light-dark(pallette-color("blue", 600), pallette-color("blue", 400)),
     "focus-shadow": light-dark(
-      rgb(from pallette-color("blue", 600) r g b / 20%),
-      rgb(from pallette-color("blue", 400) r g b / 25%)
+      rgba(pallette-color("blue", 600), 0.2),
+      rgba(pallette-color("blue", 400), 0.25)
     ),
     "focus-background": light-dark(pallette-color("slate", 50), #0f141c),
     "disabled-text": light-dark(#9aa3af, pallette-color("slate", 500)),
@@ -160,8 +160,8 @@ $color: (
     "list-background": light-dark(pallette-color("slate", 50), #1f2328),
     "list-border": light-dark(pallette-color("gray", 300), #3b4148),
     "list-shadow": light-dark(
-      rgb(from pallette-color("slate", 900) r g b / 12%),
-      rgb(from pallette-color("slate", 900) r g b / 60%)
+      rgba(pallette-color("slate", 900), 0.12),
+      rgba(pallette-color("slate", 900), 0.6)
     ),
     "option-hover-background": light-dark(pallette-color("slate", 200), #2b3138),
     "option-hover-text": light-dark(pallette-color("slate", 900), pallette-color("gray", 50)),
@@ -264,18 +264,18 @@ $elevations: (
   ),
   default: (
     1: (
-      0px 4px 6px -4px rgb(from black r g b / 10%),
-      0px 10px 15px -3px rgb(from black r g b / 10%),
+      0px 4px 6px -4px rgba(black, 0.1),
+      0px 10px 15px -3px rgba(black, 0.1),
     ),
     2: (
       0px 29px 12px 0px
-        light-dark(rgb(from #564848 r g b / 2%), rgb(from black r g b / 8%)),
+        light-dark(rgba(#564848, 0.02), rgba(black, 0.08)),
       0px 16px 10px 0px
-        light-dark(rgb(from #564848 r g b / 6%), rgb(from black r g b / 12%)),
+        light-dark(rgba(#564848, 0.06), rgba(black, 0.12)),
       0px 7px 7px 0px
-        light-dark(rgb(from #564848 r g b / 12%), rgb(from black r g b / 20%)),
+        light-dark(rgba(#564848, 0.12), rgba(black, 0.2)),
       0px 2px 4px 0px
-        light-dark(rgb(from #564848 r g b / 14%), rgb(from black r g b / 30%)),
+        light-dark(rgba(#564848, 0.14), rgba(black, 0.3)),
     ),
   ),
 );
