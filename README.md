@@ -9,6 +9,7 @@ coordinates background agents, and talks to Kubernetes to launch workers.
 > Looking for coding conventions or release expectations? See `AGENTS.md`.
 
 Hello, world.
+Kamusta, mundo.
 
 ## Repository layout
 
