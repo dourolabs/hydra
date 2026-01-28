@@ -4,7 +4,7 @@ use crate::{
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
+    constants::{ENV_METIS_BUILD_CACHE_DIR, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
     IssueId, MetisId, TaskId,
 };
 use std::path::PathBuf;
@@ -98,6 +98,14 @@ pub enum JobsCommand {
 
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
+
+        /// Root directory for build cache storage.
+        #[arg(
+            long = "build-cache-dir",
+            value_name = "PATH",
+            env = ENV_METIS_BUILD_CACHE_DIR
+        )]
+        build_cache_dir: Option<PathBuf>,
     },
 }
 
@@ -132,6 +140,7 @@ pub async fn run(
             path,
             openai_api_key,
             issue_id,
+            build_cache_dir,
         } => {
             let commands = CodexCommands;
             worker_run::run(
@@ -140,6 +149,7 @@ pub async fn run(
                 path,
                 openai_api_key,
                 issue_id,
+                build_cache_dir,
                 &commands,
                 context,
             )

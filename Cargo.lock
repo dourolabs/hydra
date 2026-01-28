@@ -4152,6 +4152,7 @@ dependencies = [
  "futures",
  "git2",
  "httpmock",
+ "metis-build-cache",
  "metis-common",
  "metis-server",
  "openssl-sys",

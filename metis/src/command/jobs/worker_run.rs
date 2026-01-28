@@ -2,10 +2,15 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
+use metis_build_cache::{
+    BuildCacheClient, BuildCacheConfig, BuildCacheError, BuildCacheKey, FileSystemStorageClient,
+    FileSystemStorageConfig,
+};
 use metis_common::{
     constants::ENV_METIS_ISSUE_ID,
     issues::IssueType,
@@ -17,6 +22,7 @@ use metis_common::{
 use tempfile::Builder;
 
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
+use crate::config::expand_path;
 use crate::git::{
     clone_repo, commit_changes, configure_repo, push_branch, resolve_head_oid, stage_all_changes,
     workdir_diff,
@@ -30,6 +36,7 @@ pub async fn run(
     dest: PathBuf,
     openai_api_key: Option<String>,
     issue_id: Option<IssueId>,
+    build_cache_dir: Option<PathBuf>,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
 ) -> Result<()> {
@@ -40,6 +47,8 @@ pub async fn run(
         ..
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
+    let build_cache_dir = build_cache_dir.map(expand_path);
+    let build_cache = init_build_cache(service_repo_name.clone(), build_cache_dir.as_deref());
     ensure_clean_destination(&dest)?;
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
@@ -78,6 +87,20 @@ pub async fn run(
         .context("failed to initialize tracking branches")?;
     }
 
+    if let (Some(cache), Some(base_commit)) = (build_cache.as_ref(), base_commit) {
+        match cache.apply_for_commit(&dest, &base_commit).await {
+            Ok(true) => log_status(format!(
+                "Applied build cache for {service_repo_name} at {base_commit}."
+            )),
+            Ok(false) => log_status(format!(
+                "No build cache entry found for {service_repo_name} at {base_commit}."
+            )),
+            Err(err) => log_status(format!(
+                "Skipping build cache apply for {service_repo_name}: {err}"
+            )),
+        }
+    }
+
     let output_dir = Builder::new()
         .prefix("codex-output")
         .tempdir()
@@ -114,6 +137,25 @@ pub async fn run(
             tracking_branch_override.as_deref(),
         ) {
             errors.push(err.context("failed to finalize task output branches"));
+        }
+    }
+
+    if let (Some(cache), Some(_)) = (build_cache.as_ref(), base_commit) {
+        match resolve_head_oid(&dest).context("failed to resolve HEAD for cache upload") {
+            Ok(Some(head)) => match cache.store_for_commit(&dest, &head).await {
+                Ok(()) => log_status(format!(
+                    "Stored build cache for {service_repo_name} at {head}."
+                )),
+                Err(err) => log_status(format!(
+                    "Skipping build cache upload for {service_repo_name}: {err}"
+                )),
+            },
+            Ok(None) => log_status(format!(
+                "Skipping build cache upload for {service_repo_name}: repository has no commits."
+            )),
+            Err(err) => log_status(format!(
+                "Skipping build cache upload for {service_repo_name}: {err}"
+            )),
         }
     }
 
@@ -594,6 +636,74 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
     Ok(())
 }
 
+struct BuildCacheState {
+    client: BuildCacheClient,
+    repo_name: RepoName,
+}
+
+impl BuildCacheState {
+    fn new(repo_name: RepoName, root_dir: &Path) -> Result<Self, BuildCacheError> {
+        let config = BuildCacheConfig::default();
+        let storage_config = FileSystemStorageConfig {
+            root_dir: root_dir.to_string_lossy().to_string(),
+        };
+        let storage = FileSystemStorageClient::new(&storage_config)?;
+        let client = BuildCacheClient::new(config, Arc::new(storage));
+        Ok(Self { client, repo_name })
+    }
+
+    async fn apply_for_commit(
+        &self,
+        repo_path: &Path,
+        commit: &GitOid,
+    ) -> Result<bool, BuildCacheError> {
+        let key = BuildCacheKey::new(self.repo_name.clone(), commit.to_string());
+        let temp = tempfile::NamedTempFile::new()
+            .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
+        let temp_path = temp.path().to_path_buf();
+        match self.client.download_cache(&key, &temp_path).await {
+            Ok(()) => {}
+            Err(BuildCacheError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(false);
+            }
+            Err(err) => return Err(err),
+        }
+        self.client
+            .apply_cache_archive_for_dir_async(repo_path.to_path_buf(), temp_path)
+            .await?;
+        Ok(true)
+    }
+
+    async fn store_for_commit(
+        &self,
+        repo_path: &Path,
+        commit: &GitOid,
+    ) -> Result<(), BuildCacheError> {
+        let key = BuildCacheKey::new(self.repo_name.clone(), commit.to_string());
+        let temp = tempfile::NamedTempFile::new()
+            .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
+        let temp_path = temp.path().to_path_buf();
+        self.client
+            .build_cache_archive_for_dir_async(repo_path.to_path_buf(), temp_path.clone())
+            .await?;
+        self.client.upload_cache(&key, temp_path).await?;
+        Ok(())
+    }
+}
+
+fn init_build_cache(repo_name: RepoName, root_dir: Option<&Path>) -> Option<BuildCacheState> {
+    let root_dir = root_dir?;
+    match BuildCacheState::new(repo_name, root_dir) {
+        Ok(state) => Some(state),
+        Err(err) => {
+            log_status(format!("Build cache disabled: {err}"));
+            None
+        }
+    }
+}
+
 fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
 }
@@ -713,6 +823,44 @@ mod tests {
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+    }
+
+    #[tokio::test]
+    async fn build_cache_state_stores_and_applies_cache() -> Result<()> {
+        let repo_dir = tempfile::tempdir().context("failed to create repo tempdir")?;
+        let repo_path = repo_dir.path();
+        setup_git_repo_with_initial_commit(repo_path)?;
+        let base_commit =
+            resolve_head_oid(repo_path)?.expect("expected HEAD commit after initial setup");
+
+        let cache_root = tempfile::tempdir().context("failed to create cache tempdir")?;
+        let repo_name = RepoName::from_str("acme/anvils")?;
+        let cache_state = BuildCacheState::new(repo_name, cache_root.path())?;
+
+        let target_dir = repo_path.join("target");
+        std::fs::create_dir_all(&target_dir)
+            .context("failed to create target directory for cache")?;
+        std::fs::write(target_dir.join("artifact.txt"), "artifact payload")
+            .context("failed to write cache artifact")?;
+
+        cache_state
+            .store_for_commit(repo_path, &base_commit)
+            .await
+            .context("failed to store build cache")?;
+
+        std::fs::remove_dir_all(&target_dir).context("failed to remove target directory")?;
+
+        let applied = cache_state
+            .apply_for_commit(repo_path, &base_commit)
+            .await
+            .context("failed to apply build cache")?;
+        assert!(applied, "expected cache to be applied");
+
+        let contents = std::fs::read_to_string(repo_path.join("target/artifact.txt"))
+            .context("failed to read cache artifact")?;
+        assert_eq!(contents, "artifact payload");
+
+        Ok(())
     }
 
     #[tokio::test]

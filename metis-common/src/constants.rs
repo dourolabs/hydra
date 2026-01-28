@@ -9,3 +9,4 @@ pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_BROWSER: &str = "BROWSER";
+pub const ENV_METIS_BUILD_CACHE_DIR: &str = "METIS_BUILD_CACHE_DIR";

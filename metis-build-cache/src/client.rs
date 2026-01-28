@@ -53,6 +53,27 @@ impl BuildCacheClient {
             })?
     }
 
+    pub fn build_cache_archive_for_dir(
+        &self,
+        root: &Path,
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), BuildCacheError> {
+        self.build_cache_archive_in_dir(root, output_path.as_ref())
+    }
+
+    pub async fn build_cache_archive_for_dir_async(
+        &self,
+        root: PathBuf,
+        output_path: PathBuf,
+    ) -> Result<(), BuildCacheError> {
+        let client = self.clone();
+        tokio::task::spawn_blocking(move || client.build_cache_archive_for_dir(&root, output_path))
+            .await
+            .map_err(|err| {
+                BuildCacheError::io("joining cache archive task", io::Error::other(err))
+            })?
+    }
+
     pub fn apply_cache_archive(
         &self,
         archive_path: impl AsRef<Path>,
@@ -68,6 +89,25 @@ impl BuildCacheClient {
     ) -> Result<(), BuildCacheError> {
         let client = self.clone();
         tokio::task::spawn_blocking(move || client.apply_cache_archive(archive_path))
+            .await
+            .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
+    }
+
+    pub fn apply_cache_archive_for_dir(
+        &self,
+        root: &Path,
+        archive_path: impl AsRef<Path>,
+    ) -> Result<(), BuildCacheError> {
+        self.apply_cache_archive_in_dir(root, archive_path.as_ref())
+    }
+
+    pub async fn apply_cache_archive_for_dir_async(
+        &self,
+        root: PathBuf,
+        archive_path: PathBuf,
+    ) -> Result<(), BuildCacheError> {
+        let client = self.clone();
+        tokio::task::spawn_blocking(move || client.apply_cache_archive_for_dir(&root, archive_path))
             .await
             .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
     }
