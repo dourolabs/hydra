@@ -1141,6 +1141,9 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
+                    status: Status::Pending,
+                    last_message: None,
+                    error: None,
                 },
                 Utc::now(),
             )
@@ -1207,6 +1210,9 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
+                    status: Status::Pending,
+                    last_message: None,
+                    error: None,
                 },
                 Utc::now(),
             )

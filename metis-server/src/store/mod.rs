@@ -2,6 +2,7 @@ use crate::domain::{
     actors::{Actor, ActorError},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
+    task_status::Event,
     users::{User, Username},
 };
 use async_trait::async_trait;
@@ -21,6 +22,48 @@ pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
         Ok(_) => Ok(()),
         Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
     }
+}
+
+pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Option<TaskStatusLog> {
+    let (first, rest) = versions.split_first()?;
+    let mut log = TaskStatusLog::new(first.item.status, first.timestamp);
+    let mut last_status = first.item.status;
+
+    for entry in rest {
+        let status = entry.item.status;
+        if status == last_status {
+            continue;
+        }
+
+        let event = match status {
+            Status::Pending => Event::Created {
+                at: entry.timestamp,
+                status,
+            },
+            Status::Running => Event::Started {
+                at: entry.timestamp,
+            },
+            Status::Complete => Event::Completed {
+                at: entry.timestamp,
+                last_message: entry.item.last_message.clone(),
+            },
+            Status::Failed => Event::Failed {
+                at: entry.timestamp,
+                error: entry
+                    .item
+                    .error
+                    .clone()
+                    .unwrap_or(TaskError::JobEngineError {
+                        reason: "missing failure reason".to_string(),
+                    }),
+            },
+        };
+
+        log.events.push(event);
+        last_status = status;
+    }
+
+    Some(log)
 }
 
 /// Error type for store operations.
@@ -186,9 +229,13 @@ pub trait Store: Send + Sync {
     /// * `task` - The new Task to store for this vertex
     ///
     /// # Returns
-    /// Ok(()) if successful, or an error if the task doesn't exist
+    /// The stored task version if successful, or an error if the task doesn't exist
     #[allow(dead_code)]
-    async fn update_task(&self, metis_id: &TaskId, task: Task) -> Result<(), StoreError>;
+    async fn update_task(
+        &self,
+        metis_id: &TaskId,
+        task: Task,
+    ) -> Result<Versioned<Task>, StoreError>;
 
     /// Gets a task by its TaskId.
     ///
@@ -197,13 +244,13 @@ pub trait Store: Send + Sync {
     ///
     /// # Returns
     /// The task if found, or an error if not found
-    async fn get_task(&self, id: &TaskId) -> Result<Task, StoreError>;
+    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError>;
 
     /// Lists all task IDs in the store.
     ///
     /// # Returns
-    /// A vector of all TaskIds in the store
-    async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError>;
+    /// A vector of all tasks in the store
+    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
 
     /// Lists all task IDs with the specified status in the store.
     ///

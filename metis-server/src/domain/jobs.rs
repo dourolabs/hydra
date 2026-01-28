@@ -1,8 +1,12 @@
-use super::task_status::TaskStatusLog;
+use super::task_status::{Status, TaskError, TaskStatusLog};
 use metis_common::api::v1 as api;
 use metis_common::{IssueId, RepoName, TaskId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+fn default_task_status() -> Status {
+    Status::Pending
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
@@ -18,6 +22,12 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
+    #[serde(default = "default_task_status")]
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<TaskError>,
 }
 
 impl Task {
@@ -38,6 +48,9 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+            status: Status::Pending,
+            last_message: None,
+            error: None,
         }
     }
 }
@@ -245,6 +258,9 @@ impl From<api::jobs::Task> for Task {
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
+            status: Status::Pending,
+            last_message: None,
+            error: None,
         }
     }
 }
