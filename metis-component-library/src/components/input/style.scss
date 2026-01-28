@@ -3,8 +3,8 @@
 .metis-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: theme.spacing(2.5) theme.spacing(3);
+  border-radius: theme.spacing(2.5);
   border: 1px solid theme.color("input", "border");
   background: theme.color("input", "background");
   color: theme.color("input", "text");
@@ -20,7 +20,7 @@
 .metis-input:focus-visible {
   outline: none;
   border-color: theme.color("input", "focus-border");
-  box-shadow: 0 0 0 3px theme.color("input", "focus-shadow");
+  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("input", "focus-shadow");
   background: theme.color("input", "focus-background");
 }
 
