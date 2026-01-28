@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
 use git2::Repository;
 use metis_common::{
-    constants::{ENV_GITHUB_REPOSITORY, ENV_GITHUB_TOKEN, ENV_PR_NUMBER},
+    constants::{ENV_GITHUB_REPOSITORY, ENV_PR_NUMBER},
     RepoName,
 };
 use reqwest::{header, Client as HttpClient, Url};
@@ -40,10 +40,6 @@ pub struct UploadAssetArgs {
     /// Override the content type (defaults based on file extension).
     #[arg(long = "content-type", value_name = "CONTENT_TYPE")]
     pub content_type: Option<String>,
-
-    /// GitHub token (also via GITHUB_TOKEN).
-    #[arg(long = "github-token", value_name = "TOKEN", env = ENV_GITHUB_TOKEN)]
-    pub github_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,7 +68,7 @@ pub async fn run(
     let pr_number = args
         .pr_number
         .ok_or_else(|| anyhow!("PR number is required; use --pr-number or set PR_NUMBER"))?;
-    let token = resolve_github_token(client, args.github_token).await?;
+    let token = resolve_github_token(client).await?;
     let name = resolve_asset_name(&args.file, args.name.as_deref())?;
     let content_type = args
         .content_type
@@ -97,22 +93,11 @@ pub async fn run(
     Ok(())
 }
 
-async fn resolve_github_token(
-    client: &dyn MetisClientInterface,
-    explicit_token: Option<String>,
-) -> Result<String> {
-    if let Some(token) = explicit_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-    {
-        return Ok(token.to_string());
-    }
-
+async fn resolve_github_token(client: &dyn MetisClientInterface) -> Result<String> {
     client
         .get_github_token()
         .await
-        .context("failed to fetch GitHub token from Metis; set GITHUB_TOKEN to override")
+        .context("failed to fetch GitHub token from Metis")
 }
 
 fn resolve_repo_name(repo: Option<RepoName>, repo_root: &Path) -> Result<RepoName> {

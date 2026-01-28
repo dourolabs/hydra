@@ -10,5 +10,4 @@ pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_BROWSER: &str = "BROWSER";
 pub const ENV_GITHUB_REPOSITORY: &str = "GITHUB_REPOSITORY";
-pub const ENV_GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 pub const ENV_PR_NUMBER: &str = "PR_NUMBER";
