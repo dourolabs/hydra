@@ -4154,6 +4154,7 @@ dependencies = [
  "httpmock",
  "metis-common",
  "metis-server",
+ "octocrab",
  "openssl-sys",
  "owo-colors",
  "ratatui",
