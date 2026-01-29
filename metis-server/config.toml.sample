@@ -80,6 +80,14 @@ private_key = """-----BEGIN RSA PRIVATE KEY-----
 REPLACE_WITH_PRIVATE_KEY
 -----END RSA PRIVATE KEY-----"""
 
+[imgur]
+# Imgur API client id used for image uploads.
+client_id = "replace-with-imgur-client-id"
+# Optional Imgur access token for authenticated uploads.
+# access_token = "replace-with-imgur-access-token"
+# Optional override for Imgur API base URL (used for testing).
+api_base_url = "https://api.imgur.com"
+
 [background]
 # Agent queues automatically enqueue work for assigned issues.
 # Add additional [[background.agent_queues]] tables to run multiple queues.

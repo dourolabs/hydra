@@ -13,13 +13,13 @@ use crate::{
     },
     store::{Status, Task},
     test_utils::{
-        github_user_response, spawn_test_server, spawn_test_server_with_state, test_client,
-        test_state_handles, test_state_with_github_api_base_url,
+        spawn_test_server, spawn_test_server_with_state, test_client, test_state_handles,
+        test_state_with_imgur_api_base_url,
     },
 };
 use chrono::Utc;
 use httpmock::prelude::HttpMockRequest;
-use httpmock::{Method::GET, Method::POST, MockServer};
+use httpmock::{Method::POST, MockServer};
 use metis_common::{
     PatchId,
     api::v1::patches::{CreatePatchAssetResponse, ListPatchVersionsResponse, PatchVersionRecord},
@@ -388,25 +388,30 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _user_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200).json_body(github_user_response("octo", 42));
-    });
+async fn create_patch_asset_uploads_to_imgur() -> anyhow::Result<()> {
+    let imgur_server = MockServer::start_async().await;
 
-    let upload_mock = github_server.mock(|when, then| {
+    let upload_mock = imgur_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments/attachments")
-            .query_param("name", "screenshot.png")
-            .header("authorization", "Bearer gh-token")
-            .header("content-type", "image/png")
-            .body("binary-payload");
-        then.status(201)
-            .json_body(json!({ "url": "https://github.com/octo/repo/assets/1" }));
+            .path("/3/image")
+            .header("authorization", "Client-ID imgur-client-id")
+            .matches(|req: &HttpMockRequest| {
+                let body = match req.body.as_ref() {
+                    Some(body) => body,
+                    None => return false,
+                };
+                let body_str = String::from_utf8_lossy(body);
+                body_str.contains("binary-payload")
+                    && body_str.contains("filename=\"screenshot.png\"")
+            });
+        then.status(200).json_body(json!({
+            "data": { "link": "https://i.imgur.com/asset.png" },
+            "success": true,
+            "status": 200
+        }));
     });
 
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let handles = test_state_with_imgur_api_base_url(imgur_server.base_url());
     let username = Username::from("octo");
     handles
         .store
@@ -464,31 +469,27 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert_eq!(response.asset_url, "https://github.com/octo/repo/assets/1");
+    assert_eq!(response.asset_url, "https://i.imgur.com/asset.png");
     upload_mock.assert_hits(1);
     Ok(())
 }
 
 #[tokio::test]
-async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _user_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200).json_body(github_user_response("octo", 42));
-    });
+async fn create_patch_asset_surfaces_imgur_400() -> anyhow::Result<()> {
+    let imgur_server = MockServer::start_async().await;
 
-    let upload_mock = github_server.mock(|when, then| {
+    let upload_mock = imgur_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments/attachments")
-            .query_param("name", "failure.png")
-            .header("authorization", "Bearer gh-token")
-            .header("content-type", "image/png")
-            .body("binary-payload");
-        then.status(400)
-            .json_body(json!({ "message": "Bad Request" }));
+            .path("/3/image")
+            .header("authorization", "Client-ID imgur-client-id");
+        then.status(400).json_body(json!({
+            "data": { "error": "Bad Request" },
+            "success": false,
+            "status": 400
+        }));
     });
 
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let handles = test_state_with_imgur_api_base_url(imgur_server.base_url());
     let username = Username::from("octo");
     handles
         .store
@@ -549,54 +550,37 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
     assert!(
         error
             .error
-            .contains("github asset upload failed with status 400 Bad Request")
+            .contains("imgur upload failed with status 400 Bad Request")
     );
     upload_mock.assert_hits(1);
     Ok(())
 }
 
 #[tokio::test]
-async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _user_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200).json_body(github_user_response("octo", 42));
-    });
+async fn create_patch_asset_uploads_tiny_payload() -> anyhow::Result<()> {
+    let imgur_server = MockServer::start_async().await;
 
     const TINY_PAYLOAD: &[u8] = b"tiny-payload";
-    let upload_mock = github_server.mock(|when, then| {
+    let upload_mock = imgur_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments/attachments")
-            .query_param("name", "tiny.png")
-            .header("authorization", "Bearer gh-token")
+            .path("/3/image")
+            .header("authorization", "Client-ID imgur-client-id")
             .matches(move |req: &HttpMockRequest| {
                 let body = match req.body.as_ref() {
                     Some(body) => body,
                     None => return false,
                 };
-                let content_length = match req
-                    .headers
-                    .as_ref()
-                    .and_then(|headers| {
-                        headers
-                            .iter()
-                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                    })
-                    .and_then(|(_, value)| value.parse::<usize>().ok())
-                {
-                    Some(value) => value,
-                    None => return false,
-                };
-                if content_length != body.len() {
-                    return false;
-                }
-                body.as_slice() == TINY_PAYLOAD
+                body.windows(TINY_PAYLOAD.len())
+                    .any(|window| window == TINY_PAYLOAD)
             });
-        then.status(201)
-            .json_body(json!({ "url": "https://github.com/octo/repo/assets/2" }));
+        then.status(200).json_body(json!({
+            "data": { "link": "https://i.imgur.com/asset-2.png" },
+            "success": true,
+            "status": 200
+        }));
     });
 
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let handles = test_state_with_imgur_api_base_url(imgur_server.base_url());
     let username = Username::from("octo");
     handles
         .store
@@ -654,29 +638,28 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
         .json()
         .await?;
 
-    assert_eq!(response.asset_url, "https://github.com/octo/repo/assets/2");
+    assert_eq!(response.asset_url, "https://i.imgur.com/asset-2.png");
     upload_mock.assert_hits(1);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
-    let github_server = MockServer::start_async().await;
-    let _user_mock = github_server.mock(|when, then| {
-        when.method(GET).path("/user");
-        then.status(200).json_body(github_user_response("octo", 42));
-    });
+async fn create_patch_asset_surfaces_imgur_bad_size() -> anyhow::Result<()> {
+    let imgur_server = MockServer::start_async().await;
 
-    let upload_mock = github_server.mock(|when, then| {
+    let upload_mock = imgur_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments/attachments")
-            .query_param("name", "bad-size.png")
-            .header("authorization", "Bearer gh-token");
-        then.status(422).json_body(json!({ "message": "Bad Size" }));
+            .path("/3/image")
+            .header("authorization", "Client-ID imgur-client-id");
+        then.status(422).json_body(json!({
+            "data": { "error": "Bad Size" },
+            "success": false,
+            "status": 422
+        }));
     });
 
-    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let handles = test_state_with_imgur_api_base_url(imgur_server.base_url());
     let username = Username::from("octo");
     handles
         .store
@@ -737,16 +720,42 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
     assert!(
         error
             .error
-            .contains("github asset upload failed with status 422 Unprocessable Entity")
+            .contains("imgur upload failed with status 422 Unprocessable Entity")
     );
     upload_mock.assert_hits(1);
     Ok(())
 }
 
 #[tokio::test]
-async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
+async fn create_patch_asset_uploads_without_github_pr() -> anyhow::Result<()> {
+    let imgur_server = MockServer::start_async().await;
+    let upload_mock = imgur_server.mock(|when, then| {
+        when.method(POST)
+            .path("/3/image")
+            .header("authorization", "Client-ID imgur-client-id");
+        then.status(200).json_body(json!({
+            "data": { "link": "https://i.imgur.com/no-pr.png" },
+            "success": true,
+            "status": 200
+        }));
+    });
+
+    let handles = test_state_with_imgur_api_base_url(imgur_server.base_url());
+    let username = Username::from("octo");
+    handles
+        .store
+        .add_user(User::new(
+            username.clone(),
+            42,
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+        ))
+        .await?;
+    let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
+    handles.store.add_actor(actor).await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(auth_token);
     let patch = Patch::new(
         "missing pr".to_string(),
         "missing pr".to_string(),
@@ -767,7 +776,7 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    let response = client
+    let response: CreatePatchAssetResponse = client
         .post(format!(
             "{}/v1/patches/{}/assets",
             server.base_url(),
@@ -775,9 +784,12 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
         ))
         .body(vec![1, 2, 3])
         .send()
+        .await?
+        .json()
         .await?;
 
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.asset_url, "https://i.imgur.com/no-pr.png");
+    upload_mock.assert_hits(1);
     Ok(())
 }
 

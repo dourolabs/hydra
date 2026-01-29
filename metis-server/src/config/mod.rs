@@ -3,7 +3,7 @@ pub mod kube;
 pub use kube::build_kube_client;
 
 use anyhow::{Context, Result, ensure};
-use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
+use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig, ImgurConfig};
 use octocrab::models::AppId;
 use serde::Deserialize;
 use std::{
@@ -21,6 +21,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub database: DatabaseSection,
     pub github_app: GithubAppSection,
+    pub imgur: ImgurConfig,
     #[serde(default)]
     pub background: BackgroundSection,
     #[serde(default)]
@@ -47,6 +48,7 @@ impl AppConfig {
     fn validate(&self) -> Result<()> {
         self.metis.validate()?;
         self.github_app.validate()?;
+        validate_imgur_config(&self.imgur)?;
         self.background.validate()?;
         self.build_cache.validate()
     }
@@ -249,6 +251,24 @@ impl Default for KubernetesSection {
             image_pull_secrets: Vec::new(),
         }
     }
+}
+
+fn validate_imgur_config(imgur: &ImgurConfig) -> Result<()> {
+    ensure!(
+        non_empty(imgur.client_id()).is_some(),
+        "imgur.client_id must be set"
+    );
+    ensure!(
+        non_empty(imgur.api_base_url()).is_some(),
+        "imgur.api_base_url must be set"
+    );
+    if let Some(token) = imgur.access_token() {
+        ensure!(
+            non_empty(token).is_some(),
+            "imgur.access_token must be set when provided"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -618,6 +638,18 @@ mod tests {
     }
 
     #[test]
+    fn imgur_section_rejects_blank_client_id() {
+        let imgur = ImgurConfig {
+            client_id: "  ".to_string(),
+            access_token: None,
+            api_base_url: "https://api.imgur.com".to_string(),
+        };
+
+        let error = validate_imgur_config(&imgur).expect_err("expected blank client_id to fail");
+        assert!(error.to_string().contains("imgur.client_id must be set"));
+    }
+
+    #[test]
     fn config_requires_github_app_private_key() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join("config.toml");
@@ -628,6 +660,9 @@ mod tests {
 app_id = 1
 client_id = "client-id"
 client_secret = "client-secret"
+
+[imgur]
+client_id = "imgur-client"
 "#,
         )?;
 
@@ -658,6 +693,9 @@ client_secret = "client-secret"
 api_base_url = "https://api.github.com"
 oauth_base_url = "https://github.com"
 private_key = "private-key"
+
+[imgur]
+client_id = "imgur-client"
 
 [background]
 
@@ -698,6 +736,9 @@ client_secret = "client-secret"
 api_base_url = "https://api.github.com"
 oauth_base_url = "https://github.com"
 private_key = "private-key"
+
+[imgur]
+client_id = "imgur-client"
 
 [background]
 merge_request_followup_agent = "agent-b"
@@ -743,6 +784,9 @@ api_base_url = "https://api.github.com"
 oauth_base_url = "https://github.com"
 private_key = "private-key"
 
+[imgur]
+client_id = "imgur-client"
+
 [background]
 merge_request_followup_agent = "agent-a"
 
@@ -782,6 +826,9 @@ client_secret = "client-secret"
 api_base_url = "https://api.github.com"
 oauth_base_url = "https://github.com"
 private_key = "private-key"
+
+[imgur]
+client_id = "imgur-client"
 
 [background]
 merge_request_followup_agent = "agent-a"

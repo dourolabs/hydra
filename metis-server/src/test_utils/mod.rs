@@ -75,6 +75,11 @@ pub fn test_app_config() -> AppConfig {
             api_base_url: "https://api.github.com".to_string(),
             oauth_base_url: "https://github.com".to_string(),
         },
+        imgur: metis_common::ImgurConfig {
+            client_id: "imgur-client-id".to_string(),
+            access_token: None,
+            api_base_url: "https://api.imgur.com".to_string(),
+        },
         background: BackgroundSection {
             merge_request_followup_agent: "swe".to_string(),
             ..BackgroundSection::default()
@@ -97,6 +102,28 @@ pub fn test_state() -> AppState {
 
 pub fn test_state_handles() -> TestStateHandles {
     test_state_with_engine_handles(Arc::new(MockJobEngine::new()))
+}
+
+pub fn test_state_with_imgur_api_base_url(api_base_url: String) -> TestStateHandles {
+    let mut config = test_app_config();
+    config.imgur.api_base_url = api_base_url;
+
+    let store = Arc::new(MemoryStore::new());
+    let agents = Arc::new(RwLock::new(Vec::new()));
+    let state = AppState::new(
+        Arc::new(config),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        agents.clone(),
+    );
+
+    TestStateHandles {
+        state,
+        store,
+        agents,
+    }
 }
 
 pub fn test_state_with_store_and_engine(

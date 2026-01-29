@@ -6,6 +6,7 @@ pub mod build_cache;
 pub mod constants;
 pub mod github;
 pub mod ids;
+pub mod imgur;
 pub mod repo_name;
 pub mod util;
 pub mod versioning;
@@ -21,6 +22,7 @@ pub use api::v1::{
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
+pub use imgur::ImgurConfig;
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
     CreateRepositoryRequest, ListRepositoriesResponse, Repository, RepositoryRecord,

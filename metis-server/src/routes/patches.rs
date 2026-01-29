@@ -1,11 +1,10 @@
 use crate::domain::{
     actors::Actor,
-    patches::{
-        GithubPr, ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-    },
+    patches::{ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest},
 };
 use crate::{
     app::{AppState, UpsertPatchError},
+    integrations::imgur::{ImgurClient, ImgurUploadError},
     store::StoreError,
 };
 use anyhow::anyhow;
@@ -13,16 +12,16 @@ use axum::{
     Extension, Json, async_trait,
     body::Bytes,
     extract::{FromRequestParts, Path, Query, State},
-    http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
+    http::{
+        HeaderMap,
+        header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+        request::Parts,
+    },
 };
 use metis_common::{
     PatchId, VersionNumber,
     api::v1::{self, ApiError},
 };
-use reqwest::header::{
-    ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, USER_AGENT,
-};
-use serde::Deserialize;
 use std::path::Path as FilePath;
 use tracing::{error, info, warn};
 
@@ -209,7 +208,7 @@ pub async fn list_patches(
 
 pub async fn create_patch_asset(
     State(state): State<AppState>,
-    Extension(actor): Extension<Actor>,
+    Extension(_actor): Extension<Actor>,
     PatchIdPath(patch_id): PatchIdPath,
     Query(query): Query<v1::patches::CreatePatchAssetQuery>,
     headers: HeaderMap,
@@ -221,86 +220,37 @@ pub async fn create_patch_asset(
         return Err(ApiError::bad_request("asset payload must not be empty"));
     }
 
-    let patch = state
+    state
         .get_patch(&patch_id)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
-    let github = patch
-        .item
-        .github
-        .as_ref()
-        .ok_or_else(|| ApiError::bad_request("patch does not have a GitHub pull request"))?;
 
-    let token = actor.get_github_token(&state).await?;
     let asset_name = resolve_asset_name(&query, &headers, &patch_id);
-    let upload_url = build_upload_url(state.config.github_app.api_base_url(), github, &asset_name)?;
     let content_type = headers
-        .get(axum::http::header::CONTENT_TYPE)
+        .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("application/octet-stream");
     let content_type = if content_type.parse::<mime::Mime>().is_ok() {
-        content_type
+        Some(content_type)
     } else {
         warn!(
             patch_id = %patch_id,
             content_type = %content_type,
-            "invalid content type for github asset upload; using default"
+            "invalid content type for imgur asset upload; using default"
         );
-        "application/octet-stream"
+        Some("application/octet-stream")
     };
-    let body_len =
-        u64::try_from(body.len()).map_err(|_| ApiError::internal("asset payload too large"))?;
-    let content_length = HeaderValue::from_str(&body_len.to_string()).map_err(|err| {
-        ApiError::internal(format!(
-            "invalid content length for github asset upload: {err}"
-        ))
+
+    let client = ImgurClient::new(&state.config.imgur).map_err(|err| {
+        error!(patch_id = %patch_id, error = %err, "invalid imgur configuration");
+        ApiError::internal(err.to_string())
     })?;
-    let body = reqwest::Body::from(body);
 
-    let response = reqwest::Client::new()
-        .post(upload_url)
-        .header(ACCEPT, "application/vnd.github+json")
-        .header(USER_AGENT, "metis-server")
-        .header(AUTHORIZATION, format!("Bearer {}", token.github_token))
-        .header(CONTENT_TYPE, content_type)
-        .header(CONTENT_LENGTH, content_length)
-        .body(body)
-        .send()
+    let asset_url = client
+        .upload_image(&asset_name, body, content_type)
         .await
-        .map_err(|err| {
-            error!(patch_id = %patch_id, error = %err, "failed to upload patch asset");
-            ApiError::internal(format!("failed to upload patch asset: {err}"))
-        })?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_body = response.text().await.unwrap_or_default();
-        error!(
-            patch_id = %patch_id,
-            status = %status,
-            body = %error_body,
-            "github asset upload failed"
-        );
-        let message = if error_body.trim().is_empty() {
-            format!("github asset upload failed with status {status}")
-        } else {
-            format!("github asset upload failed with status {status}: {error_body}")
-        };
-        return Err(ApiError::internal(message));
-    }
-
-    let payload = response
-        .json::<GithubAssetUploadResponse>()
-        .await
-        .map_err(|err| {
-            error!(patch_id = %patch_id, error = %err, "failed to decode github response");
-            ApiError::internal(format!("failed to decode github response: {err}"))
-        })?;
-
-    let asset_url = payload.asset_url().ok_or_else(|| {
-        ApiError::internal("github asset upload response did not include an asset url")
-    })?;
+        .map_err(|err| map_imgur_upload_error(&patch_id, err))?;
 
     info!(patch_id = %patch_id, asset_url = %asset_url, "create_patch_asset completed");
     Ok(Json(v1::patches::CreatePatchAssetResponse::new(asset_url)))
@@ -346,38 +296,6 @@ fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -
     true
 }
 
-#[derive(Debug, Deserialize)]
-struct GithubAssetUploadResponse {
-    url: Option<String>,
-    browser_download_url: Option<String>,
-    html_url: Option<String>,
-    markdown: Option<String>,
-}
-
-impl GithubAssetUploadResponse {
-    fn asset_url(self) -> Option<String> {
-        if let Some(url) = self.url {
-            return Some(url);
-        }
-        if let Some(url) = self.browser_download_url {
-            return Some(url);
-        }
-        if let Some(url) = self.html_url {
-            return Some(url);
-        }
-        self.markdown
-            .as_deref()
-            .and_then(extract_url_from_markdown)
-            .map(ToString::to_string)
-    }
-}
-
-fn extract_url_from_markdown(markdown: &str) -> Option<&str> {
-    let start = markdown.find('(')?;
-    let end = markdown[start + 1..].find(')')?;
-    Some(&markdown[start + 1..start + 1 + end])
-}
-
 fn resolve_asset_name(
     query: &v1::patches::CreatePatchAssetQuery,
     headers: &HeaderMap,
@@ -415,50 +333,31 @@ fn sanitize_filename(value: &str) -> Option<String> {
     }
 }
 
-fn build_upload_url(
-    api_base_url: &str,
-    github: &GithubPr,
-    name: &str,
-) -> Result<reqwest::Url, ApiError> {
-    let mut base = github_upload_base_url(api_base_url)?;
-    base.set_path(&format!(
-        "/repos/{}/{}/issues/{}/comments/attachments",
-        github.owner, github.repo, github.number
-    ));
-    base.set_query(None);
-    base.query_pairs_mut().append_pair("name", name);
-    Ok(base)
-}
-
-fn github_upload_base_url(api_base_url: &str) -> Result<reqwest::Url, ApiError> {
-    let mut url = reqwest::Url::parse(api_base_url).map_err(|err| {
-        ApiError::internal(format!(
-            "invalid github api base url '{api_base_url}': {err}"
-        ))
-    })?;
-
-    if url.host_str() == Some("api.github.com") {
-        url.set_host(Some("uploads.github.com"))
-            .map_err(|err| ApiError::internal(format!("invalid github upload url: {err}")))?;
-        url.set_path("/");
-        url.set_query(None);
-        return Ok(url);
-    }
-
-    if url.path().ends_with("/api/v3") {
-        let trimmed = url.path().trim_end_matches("/api/v3");
-        let mut new_path = String::new();
-        if !trimmed.is_empty() {
-            new_path.push_str(trimmed.trim_end_matches('/'));
+fn map_imgur_upload_error(patch_id: &PatchId, err: ImgurUploadError) -> ApiError {
+    match err {
+        ImgurUploadError::Http { status, message } => {
+            let message = if message.trim().is_empty() {
+                format!("imgur upload failed with status {status}")
+            } else {
+                format!("imgur upload failed with status {status}: {message}")
+            };
+            error!(
+                patch_id = %patch_id,
+                status = %status,
+                error = %message,
+                "imgur asset upload failed"
+            );
+            ApiError::internal(message)
         }
-        new_path.push_str("/api/uploads");
-        url.set_path(&new_path);
-        url.set_query(None);
-        return Ok(url);
+        ImgurUploadError::MissingLink => {
+            error!(patch_id = %patch_id, "imgur response missing asset url");
+            ApiError::internal("imgur asset upload response did not include an asset url")
+        }
+        other => {
+            error!(patch_id = %patch_id, error = %other, "failed to upload patch asset");
+            ApiError::internal(format!("failed to upload patch asset: {other}"))
+        }
     }
-
-    url.set_query(None);
-    Ok(url)
 }
 
 fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
