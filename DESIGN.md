@@ -1,17 +1,25 @@
 # Metis
 
-Metis is an agent coordination framework for running simultaneous Agentic AI coding agents. 
+Metis is an agent coordination framework for running multiple simultaneous Agentic AI coding agents. 
 The system is designed to give developers *maximum leverage* -- it maximizes development velocity by leaning on Agentic AI as much as possible.
+
+Metis makes you the manager of an engineering team. Instead of operating on the level of code, you operate on the level of 
+tasks -- what needs to be done? You work with an issue tracker, and you use it to assign work to your team.
+Agents on your team take care of the implementation details. You survey their progress, review their work, and 
+offer course corrections as needed. You use the issue tracker is a memory aid to make sure your team does
+all the work that's needed.
 
 ## Motivation
 
 Agentic AI coding tools such as Claude and Codex are very powerful tools for writing software.
-The speed at which they can generate code is much, much faster than a human developer.
-However, current ways of working with these agents have several limitations:
-* It's difficult to juggle multiple agents working on different tasks. Most of the time an agent is working,
-  the developer is idle. You only need to intervene when the agent has something to review, or a question.
-* The quality of the generated code can be questionable. Sometimes it's fine, and sometimes it's total garbage. 
-  You can't let the agents run wild on your codebase without causing problems.
+The speed at which they can generate code is much faster than a human developer.
+However, the current interactive paradigm for working with these agents is very limiting.
+Most of the time when an agent is working, the developer is idle. The agents also ask questions or 
+for approvals in the middle of the task, which means the developer can't walk away.
+
+Developers try to solve these problems by running multiple agents at the same time, for example, in
+multiple terminal windows. However, it's difficult to manage more than a few agents this way, as you
+keep context-switching between terminals.
 
 ## Design
 
@@ -50,15 +58,14 @@ the task (either immediately or once the async action completes). The state of t
 between sequential tasks running on the same issue, which enables this follow-up agent to work off of the 
 results produced by the first agent. See details in the section below.
 
-The system implements several guards An issue cannot be marked as Closed unless all of its child issues are Closed.
+**Example: a simple PR task**
 
-## Example: a simple PR task
-
-1. Human creates an issue A 
-2. The Agent who addresses this (1) makes a patch and submits it, then (2) creates an issue B requesting it to be merged. B --child-of--> A 
-3. The Agent who works on the merge request issue reviews the patch, if the patch is good, the agent leaves a review, merges it, then closes B.
-4. The Agent working on the merge request can request reviews for the patch by making a ticket C --child-of--> B and assigning it to someone.
-
+1. User creates issue `A`
+2. An agent is spawned to work on `A`. It makes a patch and submits it, then creates issue `B` requesting a review of the patch. `B:child-of:A`
+3. User reviews the patch (either accepting or rejecting it). Submitting a review automatically closes the issue `B`, as the review was completed.
+3. Issue `A` is now ready to be worked on again. An agent is spawned to work on it. The agent reviews the history of what has happened so far and
+   determines if the issue has been completed. If it has (e.g., the patch was accepted), then the agent marks the issue as `Closed`. Otherwise,
+   the agent goes back to step 2 and tries to make another patch.
 
 ### Git State Management
 
@@ -77,6 +84,3 @@ The branch invariants above are maintained by the `worker_run` command. It creat
 Note that all of these branches are pushed to the remote, so you can easily fetch the repo
 state before/after the work of a task / issue. Simply checkout the corresponding branch from
 the remote.
-
-
-### The Merge Queue
