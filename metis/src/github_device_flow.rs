@@ -1,7 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{api::v1::login::LoginRequest, whoami::ActorIdentity};
+use owo_colors::OwoColorize;
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
+use std::io::IsTerminal;
 use std::{path::Path, time::Duration};
 use tokio::time::{sleep, Instant};
 
@@ -56,11 +58,8 @@ pub async fn login_with_github_device_flow(
     let http = reqwest::Client::new();
     let device_flow = start_device_flow(&http, &client_id).await?;
 
-    println!(
-        "Open {} and enter code: {}",
-        device_flow.verification_uri, device_flow.user_code
-    );
-    println!("Waiting for authorization...");
+    print_login_banner();
+    print_login_instructions(&device_flow.verification_uri, &device_flow.user_code);
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
     let auth_token = exchange_and_store_token(client, config_path, server_url, &token).await?;
@@ -83,6 +82,77 @@ pub async fn login_with_github_device_flow(
     );
 
     Ok(auth_client)
+}
+
+fn print_login_banner() {
+    for line in login_banner_lines() {
+        println!("{line}");
+    }
+    println!();
+}
+
+fn print_login_instructions(verification_uri: &str, user_code: &str) {
+    let color_enabled = supports_color();
+    let url = if color_enabled {
+        verification_uri.bright_blue().bold().to_string()
+    } else {
+        verification_uri.to_string()
+    };
+    let code = if color_enabled {
+        user_code.bright_yellow().bold().to_string()
+    } else {
+        user_code.to_string()
+    };
+    println!("Open {url} and enter code {code}");
+    if color_enabled {
+        println!("{}", "Waiting for authorization...".dimmed());
+    } else {
+        println!("Waiting for authorization...");
+    }
+}
+
+fn login_banner_lines() -> Vec<String> {
+    let color_enabled = supports_color();
+    let lines = [
+        ("   ( )  ", "__  __ ______ _______ _____ "),
+        ("    )   ", "|  \\/  |  ____|__   __|_   _|"),
+        ("   /|\\  ", "| \\  / | |__     | |    | |  "),
+        ("    |   ", "| |\\/| |  __|    | |    | |  "),
+        ("    |   ", "| |  | | |____   | |   _| |_ "),
+        ("   / \\  ", "|_|  |_|______|  |_|  |_____|"),
+    ];
+
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, (torch, text))| {
+            let torch_text = if color_enabled {
+                if index < 2 {
+                    torch.bright_red().to_string()
+                } else {
+                    torch.bright_yellow().to_string()
+                }
+            } else {
+                torch.to_string()
+            };
+            let metis_text = if color_enabled {
+                text.bright_cyan().bold().to_string()
+            } else {
+                text.to_string()
+            };
+            format!("{torch_text}{metis_text}")
+        })
+        .collect()
+}
+
+fn supports_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if matches!(std::env::var_os("TERM").as_deref(), Some(term) if term == "dumb") {
+        return false;
+    }
+    std::io::stdout().is_terminal()
 }
 
 async fn fetch_github_client_id(client: &MetisClientUnauthenticated) -> Result<String> {
