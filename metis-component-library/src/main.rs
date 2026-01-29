@@ -3,13 +3,14 @@ use dioxus::prelude::*;
 
 use metis_component_library::{
     Button, ButtonSize, ButtonVariant, Input, Select, SelectGroup, SelectGroupLabel,
-    SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
+    SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue, ToggleSwitch,
 };
 
 const APP_CSS: Asset = asset!("/assets/app.scss");
 const BUTTON_CSS: Asset = asset!("./components/button/style.scss");
 const INPUT_CSS: Asset = asset!("./components/input/style.scss");
 const SELECT_CSS: Asset = asset!("./components/select.scss");
+const TOGGLE_CSS: Asset = asset!("./components/toggle_switch/style.scss");
 
 #[derive(Clone, Copy, PartialEq)]
 enum Theme {
@@ -85,6 +86,8 @@ fn App() -> Element {
     let mut alias = use_signal(|| "delta-shard".to_string());
     let mut inbox = use_signal(|| "ops@metis.ai".to_string());
     let mut last_action = use_signal(|| "No actions yet.".to_string());
+    let mut realtime_alerts = use_signal(|| false);
+    let mut auto_repair = use_signal(|| true);
 
     use_effect(move || {
         let attribute = theme.read().attribute();
@@ -97,6 +100,8 @@ fn App() -> Element {
     let alias_value = alias.read().clone();
     let inbox_value = inbox.read().clone();
     let active_cluster = *cluster.read();
+    let realtime_label = if *realtime_alerts.read() { "On" } else { "Off" };
+    let auto_repair_label = if *auto_repair.read() { "On" } else { "Off" };
 
     rsx! {
         document::Title { "Metis Component Library" }
@@ -104,6 +109,7 @@ fn App() -> Element {
         document::Stylesheet { href: BUTTON_CSS }
         document::Stylesheet { href: INPUT_CSS }
         document::Stylesheet { href: SELECT_CSS }
+        document::Stylesheet { href: TOGGLE_CSS }
         div { class: "demo-shell",
             header { class: "hero",
                 div { class: "hero-copy",
@@ -302,6 +308,60 @@ fn App() -> Element {
                             "Queue deployment"
                         }
                         span { class: "field-note", "Last action: {last_action}" }
+                    }
+                }
+                section { class: "panel",
+                    div { class: "panel-header",
+                        h2 { "Toggles" }
+                        p { "Boolean switches with on/off and disabled states." }
+                    }
+                    div { class: "toggle-stack",
+                        div { class: "toggle-field",
+                            div { class: "toggle-row",
+                                div { class: "toggle-copy",
+                                    span { class: "toggle-title", "Realtime alerts" }
+                                    span { class: "toggle-note", "Enable alerts for critical events." }
+                                }
+                                ToggleSwitch {
+                                    checked: Some(*realtime_alerts.read()),
+                                    onchange: move |_| {
+                                        let next = !*realtime_alerts.read();
+                                        realtime_alerts.set(next);
+                                    }
+                                }
+                            }
+                            span { class: "field-note",
+                                "Live value: {realtime_label}"
+                            }
+                        }
+                        div { class: "toggle-field",
+                            div { class: "toggle-row",
+                                div { class: "toggle-copy",
+                                    span { class: "toggle-title", "Auto repair" }
+                                    span { class: "toggle-note", "Restart unhealthy services automatically." }
+                                }
+                                ToggleSwitch {
+                                    checked: Some(*auto_repair.read()),
+                                    onchange: move |_| {
+                                        let next = !*auto_repair.read();
+                                        auto_repair.set(next);
+                                    }
+                                }
+                            }
+                            span { class: "field-note",
+                                "Live value: {auto_repair_label}"
+                            }
+                        }
+                        div { class: "toggle-field",
+                            div { class: "toggle-row",
+                                div { class: "toggle-copy",
+                                    span { class: "toggle-title", "Maintenance mode" }
+                                    span { class: "toggle-note", "Disabled while updates are staged." }
+                                }
+                                ToggleSwitch { disabled: Some(true) }
+                            }
+                            span { class: "field-note", "Disabled state for contrast." }
+                        }
                     }
                 }
             }
