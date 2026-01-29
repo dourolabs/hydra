@@ -16,6 +16,8 @@ pub struct Task {
     pub spawned_from: Option<IssueId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env_vars: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,6 +38,7 @@ impl Task {
         context: BundleSpec,
         spawned_from: Option<IssueId>,
         image: Option<String>,
+        model: Option<String>,
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
@@ -45,6 +48,7 @@ impl Task {
             context,
             spawned_from,
             image,
+            model,
             env_vars,
             cpu_limit,
             memory_limit,
@@ -60,6 +64,7 @@ impl Task {
         context: BundleSpec,
         spawned_from: Option<IssueId>,
         image: Option<String>,
+        model: Option<String>,
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
@@ -72,6 +77,7 @@ impl Task {
             context,
             spawned_from,
             image,
+            model,
             env_vars,
             cpu_limit,
             memory_limit,

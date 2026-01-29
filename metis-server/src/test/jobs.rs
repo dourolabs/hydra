@@ -598,6 +598,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -617,6 +618,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -636,6 +638,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -682,6 +685,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -745,6 +749,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -997,6 +1002,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1064,6 +1070,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1119,6 +1126,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1171,6 +1179,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1222,6 +1231,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1340,6 +1350,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1378,6 +1389,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 context: context_spec.clone(),
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1413,29 +1425,11 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-async fn get_job_context_includes_model_from_issue() -> anyhow::Result<()> {
+async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;
     let default_image = default_image();
     let job_id = task_id("t-modeljob");
-    let issue_id = handles
-        .store
-        .add_issue(Issue {
-            issue_type: IssueType::Task,
-            description: "Model context".to_string(),
-            creator: Username::from("tester"),
-            progress: String::new(),
-            status: IssueStatus::Open,
-            assignee: None,
-            job_settings: JobSettings {
-                model: Some("claude-3-5-sonnet".to_string()),
-                ..JobSettings::default()
-            },
-            todo_list: Vec::new(),
-            dependencies: Vec::new(),
-            patches: Vec::new(),
-        })
-        .await?;
     handles
         .store
         .add_task_with_id(
@@ -1443,8 +1437,9 @@ async fn get_job_context_includes_model_from_issue() -> anyhow::Result<()> {
             Task {
                 prompt: "0".to_string(),
                 context: BundleSpec::None,
-                spawned_from: Some(issue_id),
+                spawned_from: None,
                 image: Some(default_image),
+                model: Some("claude-3-5-sonnet".to_string()),
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
@@ -1484,6 +1479,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 context: BundleSpec::None,
                 spawned_from: None,
                 image: Some(default_image.clone()),
+                model: None,
                 env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
                 cpu_limit: None,
                 memory_limit: None,

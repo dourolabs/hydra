@@ -1080,6 +1080,7 @@ mod tests {
             BundleSpec::None,
             None,
             Some("metis-worker:latest".to_string()),
+            None,
             Default::default(),
             None,
             None,

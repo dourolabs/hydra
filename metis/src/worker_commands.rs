@@ -167,6 +167,7 @@ impl ClaudeCommands {
             })?;
 
         let mut command = Command::new("claude");
+        command.arg("--print");
         if let Some(model) = model {
             command.arg("--model");
             command.arg(model);
