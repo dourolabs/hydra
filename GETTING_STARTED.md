@@ -10,75 +10,63 @@ This guide covers how to download and build Metis from GitHub, how to view runni
 git clone https://github.com/dourolabs/metis.git
 cd metis
 
-# Build the workspace (CLI + server + shared crates)
+# Build the CLI
 
-cargo build --workspace --all-targets
+cargo build -p metis
 ```
 
-If you just want a quick sanity check that everything compiles, you can also run:
+Then, add metis to your path:
 
 ```bash
-cargo check --workspace
+export PATH="$PATH:`realpath ./target/debug/`"
 ```
 
-## 2) Start the server and point the CLI at it
+## 2) Connect to the server
 
-The CLI needs a running `metis-server` to show live data and to create issues. A minimal local setup:
+Simply run the metis command and point it to the development server:
 
 ```bash
-cp metis-server/config.toml.sample metis-server/config.toml
-METIS_CONFIG=metis-server/config.toml cargo run -p metis-server
+metis --server-url http://metis-development.monster-vibes.ts.net
 ```
 
-In another terminal, point the CLI at the server (default is `http://localhost:8080` if unchanged):
-
-```bash
-export METIS_SERVER_URL=http://localhost:8080
-```
+You will be prompted to log in with your github account.
+You won't need to provide `--server-url` with future commands (unless you want to connect to a different server).
 
 ## 3) Use the dashboard to see issues and jobs in progress
 
-Launch the dashboard UI:
+Both `metis` and `metis dashboard` will open the metis dashboard. 
+The dashboard is a live view of jobs, issues, and patches.
+It refreshes automatically, so you can keep it open while work is running to track progress.
+
+## 4) Create your first issue with CLI
+
+The basic units of work in metis are issues. You create issues, and then agents work on them and submit PRs back to you asynchronously.
+
+To create an issue, you first need to add your repository to metis if it's not already there:
 
 ```bash
-metis dashboard
+# See what repos are registered
+metis repos list 
+# Add your repo if it doesn't exist
+metis repos create dourolabs/metis https://github.com/dourolabs/metis.git
 ```
 
-The dashboard is a live view of jobs, issues, and patches. It refreshes automatically, so you can keep it open while work is running. You can also run `metis` with no subcommand to open the dashboard by default.
-
-## 4) Create and manipulate issues with the CLI
-
-List issues (filter by status, type, etc.):
+Once you've added your repo, create an issue by running the following command:
 
 ```bash
-metis issues list
-metis issues list --status in-progress
+metis issues create --assignee swe --repo-name your-org/your-repo "please fix the bug in ..."
 ```
 
-Create a new issue:
+This command assigns the issue to `swe`, which is a software engineering agent.
+After running this command, you should see the issue in the dashboard, and the agent picking it up and working on it.
+Once the agent is done, it will create an issue assigned to you to review the PR.
+The PR is copied to Github -- you can submit your review feedback there.
+
+## 5) Try a more complicated issue
+
+Metis also has a product manager agent named `pm` who can break down more complicated features and projects
+into smaller tasks for development. Try writing a more complex feature description and assigning it to the PM:
 
 ```bash
-metis issues create "Investigate slow job startup"
-metis issues create --type bug --assignee alice "Jobs get stuck in pending"
-```
-
-Update an issue (status, assignee, progress notes, etc.):
-
-```bash
-metis issues update i-abc123 --status in-progress --progress "Reproduced on staging"
-metis issues update i-abc123 --assignee bob
-```
-
-Manage the issue todo list:
-
-```bash
-metis issues todo i-abc123 --add "Collect logs"
-metis issues todo i-abc123 --done 1
-metis issues todo i-abc123 --replace "Collect logs,Add regression test,Write summary"
-```
-
-Describe an issue (includes related issues and patches):
-
-```bash
-metis issues describe i-abc123
+metis issues create --assignee pm --repo-name your-org/your-repo "Feature: please build XYZ"
 ```
