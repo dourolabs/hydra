@@ -18,6 +18,7 @@ use crate::{
     },
 };
 use chrono::Utc;
+use httpmock::prelude::HttpMockRequest;
 use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
     PatchId,
@@ -563,6 +564,112 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
             .contains("github asset upload failed with status 400 Bad Request")
     );
     upload_mock.assert_hits(1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Result<()> {
+    let github_server = MockServer::start_async().await;
+    let _user_mock = github_server.mock(|when, then| {
+        when.method(GET).path("/user");
+        then.status(200).json_body(github_user_response("octo", 42));
+    });
+
+    const TINY_PAYLOAD: &[u8] = b"tiny-payload";
+    let upload_mock = github_server.mock(|when, then| {
+        when.method(POST)
+            .path("/repos/octo/repo/issues/42/comments/attachments")
+            .query_param("name", "tiny.png")
+            .header("authorization", "Bearer gh-token")
+            .matches(move |req: &HttpMockRequest| {
+                let body = match req.body.as_ref() {
+                    Some(body) => body,
+                    None => return false,
+                };
+                let content_length = match req
+                    .headers
+                    .as_ref()
+                    .and_then(|headers| {
+                        headers
+                            .iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    })
+                    .and_then(|(_, value)| value.parse::<usize>().ok())
+                {
+                    Some(value) => value,
+                    None => return false,
+                };
+                if content_length != body.len() {
+                    return false;
+                }
+                body.windows(TINY_PAYLOAD.len())
+                    .any(|window| window == TINY_PAYLOAD)
+            });
+        then.status(201)
+            .json_body(json!({ "url": "https://github.com/octo/repo/assets/2" }));
+    });
+
+    let handles = test_state_with_github_api_base_url(github_server.base_url());
+    let username = Username::from("octo");
+    handles
+        .store
+        .add_user(User::new(
+            username.clone(),
+            42,
+            "gh-token".to_string(),
+            "gh-refresh".to_string(),
+        ))
+        .await?;
+    let (actor, auth_token) = crate::domain::actors::Actor::new_for_user(username);
+    handles.store.add_actor(actor).await?;
+
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = client_with_token(auth_token);
+
+    let patch = Patch::new(
+        "asset tiny".to_string(),
+        "asset tiny".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        Some(GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            42,
+            None,
+            None,
+            None,
+            None,
+        )),
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response: CreatePatchAssetResponse = client
+        .post(format!(
+            "{}/v1/patches/{}/assets?name=tiny.png",
+            server.base_url(),
+            created.patch_id
+        ))
+        .header("content-type", "image/png")
+        .body(TINY_PAYLOAD)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(response.asset_url, "https://github.com/octo/repo/assets/2");
+    upload_mock.assert_hits(1);
+
     Ok(())
 }
 
