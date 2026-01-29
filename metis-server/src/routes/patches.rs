@@ -19,7 +19,9 @@ use metis_common::{
     PatchId, VersionNumber,
     api::v1::{self, ApiError},
 };
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, USER_AGENT,
+};
 use serde::Deserialize;
 use std::path::Path as FilePath;
 use tracing::{error, info, warn};
@@ -247,7 +249,14 @@ pub async fn create_patch_asset(
         );
         "application/octet-stream"
     };
-    let content_length = body.len().to_string();
+    let body_len =
+        u64::try_from(body.len()).map_err(|_| ApiError::internal("asset payload too large"))?;
+    let content_length = HeaderValue::from_str(&body_len.to_string()).map_err(|err| {
+        ApiError::internal(format!(
+            "invalid content length for github asset upload: {err}"
+        ))
+    })?;
+    let body = reqwest::Body::from(body);
 
     let response = reqwest::Client::new()
         .post(upload_url)
