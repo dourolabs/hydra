@@ -191,6 +191,41 @@ h1 {
   align-items: center;
 }
 
+.toggle-stack {
+  display: grid;
+  gap: theme.spacing(4);
+}
+
+.toggle-field {
+  display: grid;
+  gap: theme.spacing(1.5);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: theme.spacing(3);
+  padding: theme.spacing(3) theme.spacing(3.5);
+  border-radius: theme.border-radius("2xl");
+  background: var(--bg-sheen);
+  border: 1px solid var(--panel-border);
+}
+
+.toggle-copy {
+  display: grid;
+  gap: theme.spacing(1);
+}
+
+.toggle-title {
+  font-weight: 600;
+}
+
+.toggle-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 .field {
   display: grid;
   gap: theme.spacing(2);
