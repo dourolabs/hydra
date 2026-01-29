@@ -110,6 +110,7 @@ mod tests {
                 metis_common::jobs::BundleSpec::None,
                 None,
                 None,
+                None,
                 HashMap::new(),
                 None,
                 None,

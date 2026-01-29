@@ -50,14 +50,7 @@ fn merge_env_vars(
         .collect();
 
     merged_vars.insert(ENV_OPENAI_API_KEY.to_string(), openai_api_key.to_string());
-    if let Some(anthropic_api_key) = anthropic_api_key.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    }) {
+    if let Some(anthropic_api_key) = anthropic_api_key {
         merged_vars.insert(
             ENV_ANTHROPIC_API_KEY.to_string(),
             anthropic_api_key.to_string(),

@@ -75,14 +75,15 @@ impl AgentQueue {
             .branch_override_for_issue(state, issue)
             .await
             .context("failed to determine branch override for issue")?;
+        let job_settings = state.apply_job_settings_defaults(issue.job_settings.clone());
         let bundle = match (
-            issue.job_settings.remote_url.as_ref(),
-            issue.job_settings.repo_name.as_ref(),
+            job_settings.remote_url.as_ref(),
+            job_settings.repo_name.as_ref(),
         ) {
             (Some(remote_url), _) if !remote_url.trim().is_empty() => {
                 let rev = branch_override
                     .clone()
-                    .or_else(|| issue.job_settings.branch.clone())
+                    .or_else(|| job_settings.branch.clone())
                     .unwrap_or_else(|| "main".to_string());
                 BundleSpec::GitRepository {
                     url: remote_url.trim().to_string(),
@@ -95,7 +96,7 @@ impl AgentQueue {
                     .await
                     .context("failed to load repository for issue task")?;
                 let rev = branch_override
-                    .or_else(|| issue.job_settings.branch.clone())
+                    .or_else(|| job_settings.branch.clone())
                     .or_else(|| repository.default_branch.clone());
 
                 BundleSpec::ServiceRepository {
@@ -111,8 +112,7 @@ impl AgentQueue {
             .await
             .context("failed to build task prompt")?;
 
-        let image = issue
-            .job_settings
+        let image = job_settings
             .image
             .as_ref()
             .map(|value| value.trim())
@@ -128,9 +128,10 @@ impl AgentQueue {
             bundle,
             Some(issue_id.clone()),
             image,
+            job_settings.model.clone(),
             env_vars,
-            issue.job_settings.cpu_limit.clone(),
-            issue.job_settings.memory_limit.clone(),
+            job_settings.cpu_limit.clone(),
+            job_settings.memory_limit.clone(),
         )))
     }
 
@@ -531,6 +532,7 @@ mod tests {
             context,
             spawned_from,
             image.map(str::to_string),
+            None,
             env_vars,
             None,
             None,
@@ -1157,6 +1159,7 @@ mod tests {
                     context: BundleSpec::None,
                     spawned_from: Some(issue_id.clone()),
                     image: None,
+                    model: None,
                     env_vars: HashMap::from([
                         (ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string()),
                         (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
@@ -1223,6 +1226,7 @@ mod tests {
                     context: BundleSpec::None,
                     spawned_from: Some(first_issue_id.clone()),
                     image: None,
+                    model: None,
                     env_vars: HashMap::from([
                         (ISSUE_ID_ENV_VAR.to_string(), first_issue_id.to_string()),
                         (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
