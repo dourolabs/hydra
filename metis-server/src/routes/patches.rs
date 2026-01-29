@@ -242,7 +242,7 @@ pub async fn create_patch_asset(
         .post(upload_url)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "metis-server")
-        .header(AUTHORIZATION, format!("token {}", token.github_token))
+        .header(AUTHORIZATION, format!("Bearer {}", token.github_token))
         .header(CONTENT_TYPE, content_type)
         .body(body.to_vec())
         .send()
@@ -253,6 +253,22 @@ pub async fn create_patch_asset(
         })?;
 
     let status = response.status();
+    if !status.is_success() {
+        let error_body = response.text().await.unwrap_or_default();
+        error!(
+            patch_id = %patch_id,
+            status = %status,
+            body = %error_body,
+            "github asset upload failed"
+        );
+        let message = if error_body.trim().is_empty() {
+            format!("github asset upload failed with status {status}")
+        } else {
+            format!("github asset upload failed with status {status}: {error_body}")
+        };
+        return Err(ApiError::internal(message));
+    }
+
     let payload = response
         .json::<GithubAssetUploadResponse>()
         .await
@@ -260,17 +276,6 @@ pub async fn create_patch_asset(
             error!(patch_id = %patch_id, error = %err, "failed to decode github response");
             ApiError::internal(format!("failed to decode github response: {err}"))
         })?;
-
-    if !status.is_success() {
-        error!(
-            patch_id = %patch_id,
-            status = %status,
-            "github asset upload failed"
-        );
-        return Err(ApiError::internal(format!(
-            "github asset upload failed with status {status}"
-        )));
-    }
 
     let asset_url = payload.asset_url().ok_or_else(|| {
         ApiError::internal("github asset upload response did not include an asset url")
@@ -396,7 +401,7 @@ fn build_upload_url(
 ) -> Result<reqwest::Url, ApiError> {
     let mut base = github_upload_base_url(api_base_url)?;
     base.set_path(&format!(
-        "/repos/{}/{}/issues/{}/comments",
+        "/repos/{}/{}/issues/{}/comments/attachments",
         github.owner, github.repo, github.number
     ));
     base.set_query(None);
