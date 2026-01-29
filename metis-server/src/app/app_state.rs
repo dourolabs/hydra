@@ -910,18 +910,18 @@ impl AppState {
             )
             .await
         {
-            Ok(()) => match self.transition_task_to_started(&task_id).await {
+            Ok(()) => match self.transition_task_to_pending(&task_id).await {
                 Ok(_) => {
                     info!(
                         metis_id = %task_id,
-                        "set task status to Started (spawned)"
+                        "set task status to Pending (spawned)"
                     );
                 }
                 Err(err) => {
                     warn!(
                         metis_id = %task_id,
                         error = %err,
-                        "failed to set task to Started after spawn"
+                        "failed to set task to Pending after spawn"
                     );
                 }
             },
@@ -1019,9 +1019,9 @@ impl AppState {
 
         match self.job_engine.find_job_by_metis_id(&task_id).await {
             Ok(job) => match job.status {
-                JobStatus::Started => {}
+                JobStatus::Pending => {}
                 JobStatus::Running => {
-                    if current_status == Status::Started {
+                    if current_status == Status::Pending {
                         match self.transition_task_to_running(&task_id).await {
                             Ok(_) => {
                                 info!(
@@ -1651,7 +1651,7 @@ impl AppState {
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id).await?;
-        if !matches!(latest.item.status, Status::Pending | Status::Started) {
+        if !matches!(latest.item.status, Status::Created | Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
 
@@ -1672,8 +1672,8 @@ impl AppState {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id).await?;
         let can_transition = match latest.item.status {
-            Status::Pending => result.is_err(),
-            Status::Started | Status::Running => true,
+            Status::Created => result.is_err(),
+            Status::Pending | Status::Running => true,
             _ => false,
         };
         if !can_transition {
@@ -1697,18 +1697,18 @@ impl AppState {
         store.update_task(task_id, updated).await
     }
 
-    pub async fn transition_task_to_started(
+    pub async fn transition_task_to_pending(
         &self,
         task_id: &TaskId,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id).await?;
-        if latest.item.status != Status::Pending {
+        if latest.item.status != Status::Created {
             return Err(StoreError::InvalidStatusTransition);
         }
 
         let mut updated = latest.item;
-        updated.status = Status::Started;
+        updated.status = Status::Pending;
         updated.last_message = None;
         updated.error = None;
 
@@ -1959,7 +1959,7 @@ async fn active_tasks_for_issue(
     let mut active_task_ids = Vec::new();
     for task_id in task_ids {
         let status = store.get_task(&task_id).await?.item.status;
-        if matches!(status, Status::Pending | Status::Started | Status::Running) {
+        if matches!(status, Status::Created | Status::Pending | Status::Running) {
             active_task_ids.push(task_id);
         }
     }
@@ -2456,7 +2456,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_pending_task_spawns_and_marks_started() {
+    async fn start_pending_task_spawns_and_marks_pending() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let config = state.config.clone();
@@ -2472,7 +2472,7 @@ mod tests {
         {
             let store = state.store.as_ref();
             let status = store.get_task(&task_id).await.unwrap().item.status;
-            assert_eq!(status, Status::Started);
+            assert_eq!(status, Status::Pending);
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
@@ -2575,9 +2575,9 @@ mod tests {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
-                .transition_task_to_started(&task_id)
+                .transition_task_to_pending(&task_id)
                 .await
-                .expect("task should transition to started");
+                .expect("task should transition to pending");
             task_id
         };
 
@@ -2608,9 +2608,9 @@ mod tests {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
-                .transition_task_to_started(&task_id)
+                .transition_task_to_pending(&task_id)
                 .await
-                .expect("task should transition to started");
+                .expect("task should transition to pending");
             task_id
         };
 

@@ -84,14 +84,14 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    handles.state.transition_task_to_started(&job_id).await?;
+    handles.state.transition_task_to_pending(&job_id).await?;
     handles.state.transition_task_to_running(&job_id).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

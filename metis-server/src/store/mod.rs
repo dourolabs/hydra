@@ -36,11 +36,11 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
         }
 
         let event = match status {
-            Status::Pending => Event::Created {
+            Status::Created => Event::Created {
                 at: entry.timestamp,
                 status,
             },
-            Status::Started => Event::Created {
+            Status::Pending => Event::Created {
                 at: entry.timestamp,
                 status,
             },
@@ -190,7 +190,7 @@ pub trait Store: Send + Sync {
 
     /// Adds a task to the store.
     ///
-    /// Tasks start in the Pending state.
+    /// Tasks start in the Created state.
     /// # Arguments
     /// * `task` - The task to add
     /// * `creation_time` - The timestamp when the task is being created

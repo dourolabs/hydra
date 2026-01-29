@@ -31,7 +31,7 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         self.state.reap_orphaned_jobs().await;
 
         let mut active_ids = Vec::new();
-        for status in [Status::Started, Status::Running] {
+        for status in [Status::Pending, Status::Running] {
             match self.state.list_tasks_with_status(status).await {
                 Ok(ids) => active_ids.extend(ids),
                 Err(err) => {
@@ -122,9 +122,9 @@ mod tests {
             .expect("task should be added");
         handles
             .state
-            .transition_task_to_started(&task_id)
+            .transition_task_to_pending(&task_id)
             .await
-            .expect("task should be marked started");
+            .expect("task should be marked pending");
 
         engine.insert_job(&task_id, JobStatus::Running).await;
 

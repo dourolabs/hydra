@@ -23,7 +23,7 @@ impl MockJobEngine {
 
     pub async fn insert_job(&self, metis_id: &TaskId, status: JobStatus) {
         let mut jobs = self.jobs.lock().unwrap();
-        let start_time = if status == JobStatus::Started {
+        let start_time = if status == JobStatus::Pending {
             None
         } else {
             Some(Utc::now())
@@ -46,7 +46,7 @@ impl MockJobEngine {
         failure_message: Option<String>,
     ) {
         let mut jobs = self.jobs.lock().unwrap();
-        let start_time = if status == JobStatus::Started {
+        let start_time = if status == JobStatus::Pending {
             None
         } else {
             Some(Utc::now())

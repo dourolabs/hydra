@@ -755,7 +755,7 @@ impl Store for PostgresStore {
         _creation_time: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let mut task = task;
-        task.status = Status::Pending;
+        task.status = Status::Created;
         task.last_message = None;
         task.error = None;
         let exists = sqlx::query_scalar::<_, i64>(&format!(
@@ -1356,12 +1356,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             handles.store.get_task(&task_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
 
         handles
             .state
-            .transition_task_to_started(&task_id)
+            .transition_task_to_pending(&task_id)
             .await
             .unwrap();
         handles

@@ -126,7 +126,7 @@ impl KubernetesJobEngine {
             }
         }
 
-        JobStatus::Started
+        JobStatus::Pending
     }
 
     fn job_metis_id(job: &Job) -> Option<TaskId> {
@@ -220,11 +220,11 @@ impl KubernetesJobEngine {
             .as_ref()
             .and_then(|status| status.phase.as_deref())
         {
-            Some("Pending") => JobStatus::Started,
+            Some("Pending") => JobStatus::Pending,
             Some("Succeeded") => JobStatus::Complete,
             Some("Failed") => JobStatus::Failed,
             Some("Running") => JobStatus::Running,
-            _ => JobStatus::Started,
+            _ => JobStatus::Pending,
         }
     }
 

@@ -6,8 +6,8 @@ use serde_json::Value;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Status {
+    Created,
     Pending,
-    Started,
     Running,
     Complete,
     Failed,
@@ -143,7 +143,7 @@ impl TaskStatusLog {
                 Event::Unknown => Status::Unknown,
             })
             .next()
-            .unwrap_or(Status::Pending)
+            .unwrap_or(Status::Created)
     }
 
     pub fn creation_time(&self) -> Option<DateTime<Utc>> {
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn result_returns_last_completion_state() {
         let now = Utc::now();
-        let mut log = TaskStatusLog::new(Status::Pending, now);
+        let mut log = TaskStatusLog::new(Status::Created, now);
         log.events.push(Event::Started { at: now });
         log.events.push(Event::Failed {
             at: now,

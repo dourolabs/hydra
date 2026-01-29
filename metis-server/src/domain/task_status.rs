@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    Created,
     Pending,
-    Started,
     Running,
     Complete,
     Failed,
@@ -66,7 +66,7 @@ impl TaskStatusLog {
                 Event::Failed { .. } => Status::Failed,
             })
             .next()
-            .unwrap_or(Status::Pending)
+            .unwrap_or(Status::Created)
     }
 
     pub fn creation_time(&self) -> Option<DateTime<Utc>> {
@@ -102,8 +102,8 @@ impl TaskStatusLog {
 impl From<api_task_status::Status> for Status {
     fn from(value: api_task_status::Status) -> Self {
         match value {
+            api_task_status::Status::Created => Status::Created,
             api_task_status::Status::Pending => Status::Pending,
-            api_task_status::Status::Started => Status::Started,
             api_task_status::Status::Running => Status::Running,
             api_task_status::Status::Complete => Status::Complete,
             api_task_status::Status::Failed => Status::Failed,
@@ -115,8 +115,8 @@ impl From<api_task_status::Status> for Status {
 impl From<Status> for api_task_status::Status {
     fn from(value: Status) -> Self {
         match value {
+            Status::Created => api_task_status::Status::Created,
             Status::Pending => api_task_status::Status::Pending,
-            Status::Started => api_task_status::Status::Started,
             Status::Running => api_task_status::Status::Running,
             Status::Complete => api_task_status::Status::Complete,
             Status::Failed => api_task_status::Status::Failed,
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn result_returns_last_completion_state() {
         let now = Utc::now();
-        let mut log = TaskStatusLog::new(Status::Pending, now);
+        let mut log = TaskStatusLog::new(Status::Created, now);
         log.events.push(Event::Started { at: now });
         log.events.push(Event::Failed {
             at: now,
