@@ -16,7 +16,7 @@ use metis_common::{
 };
 use tempfile::Builder;
 
-use crate::build_cache::{apply_nearest_cache, build_and_upload_cache};
+use crate::build_cache::build_cache_client;
 use crate::command::patches::{create_patch_artifact_from_repo, resolve_service_repo_name};
 use crate::git::{
     clone_repo, commit_changes, configure_repo, push_branch, resolve_head_oid, stage_all_changes,
@@ -82,11 +82,17 @@ pub async fn run(
 
     if base_commit.is_some() {
         if let Some(build_cache) = build_cache.as_ref() {
-            match apply_nearest_cache(&dest, &service_repo_name, build_cache).await {
-                Ok(Some(key)) => {
-                    log_status(format!("Applied build cache entry '{}'.", key.object_key()))
-                }
-                Ok(None) => log_status("No build cache entry found to apply.".to_string()),
+            match build_cache_client(build_cache) {
+                Ok(client) => match client
+                    .apply_nearest_cache(&dest, service_repo_name.clone())
+                    .await
+                {
+                    Ok(Some(key)) => {
+                        log_status(format!("Applied build cache entry '{}'.", key.object_key()))
+                    }
+                    Ok(None) => log_status("No build cache entry found to apply.".to_string()),
+                    Err(err) => log_status(format!("Skipping build cache apply: {err}")),
+                },
                 Err(err) => log_status(format!("Skipping build cache apply: {err}")),
             }
         }
@@ -133,23 +139,27 @@ pub async fn run(
 
     if base_commit.is_some() {
         if let Some(build_cache) = build_cache.as_ref() {
-            match resolve_head_oid(&dest) {
-                Ok(Some(head_oid)) => {
-                    let git_sha = head_oid.to_string();
-                    match build_and_upload_cache(&dest, &service_repo_name, build_cache, &git_sha)
-                        .await
-                    {
-                        Ok(key) => log_status(format!(
-                            "Uploaded build cache entry '{}'.",
-                            key.object_key()
-                        )),
-                        Err(err) => log_status(format!("Skipping build cache upload: {err}")),
+            match build_cache_client(build_cache) {
+                Ok(client) => match resolve_head_oid(&dest) {
+                    Ok(Some(head_oid)) => {
+                        let git_sha = head_oid.to_string();
+                        match client
+                            .build_and_upload_cache(&dest, service_repo_name.clone(), &git_sha)
+                            .await
+                        {
+                            Ok(key) => log_status(format!(
+                                "Uploaded build cache entry '{}'.",
+                                key.object_key()
+                            )),
+                            Err(err) => log_status(format!("Skipping build cache upload: {err}")),
+                        }
                     }
-                }
-                Ok(None) => log_status("Skipping build cache upload; HEAD is unavailable."),
-                Err(err) => log_status(format!(
-                    "Skipping build cache upload; failed to resolve HEAD: {err}"
-                )),
+                    Ok(None) => log_status("Skipping build cache upload; HEAD is unavailable."),
+                    Err(err) => log_status(format!(
+                        "Skipping build cache upload; failed to resolve HEAD: {err}"
+                    )),
+                },
+                Err(err) => log_status(format!("Skipping build cache upload: {err}")),
             }
         }
     }

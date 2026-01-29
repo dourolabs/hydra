@@ -1,56 +1,12 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use metis_build_cache::{
-    find_nearest_cache_entry, BuildCacheClient, BuildCacheConfig, BuildCacheKey,
-    FileSystemStorageClient, S3StorageClient,
+    BuildCacheClient, BuildCacheConfig, FileSystemStorageClient, S3StorageClient,
 };
-use metis_common::{BuildCacheContext, BuildCacheStorageConfig, RepoName};
+use metis_common::{BuildCacheContext, BuildCacheStorageConfig};
 
-pub async fn apply_nearest_cache(
-    repo_root: &Path,
-    repo_name: &RepoName,
-    context: &BuildCacheContext,
-) -> Result<Option<BuildCacheKey>> {
-    let client = build_cache_client(context)?;
-    let entries = client
-        .list_caches(repo_name.clone())
-        .await
-        .context("listing build cache entries")?;
-    let nearest = find_nearest_cache_entry(repo_root, repo_name.clone(), entries)
-        .context("finding nearest build cache")?;
-    let Some(nearest) = nearest else {
-        return Ok(None);
-    };
-    client
-        .download_and_apply_cache(repo_root, &nearest.key)
-        .await
-        .context("applying build cache")?;
-    Ok(Some(nearest.key))
-}
-
-pub async fn build_and_upload_cache(
-    repo_root: &Path,
-    repo_name: &RepoName,
-    context: &BuildCacheContext,
-    git_sha: &str,
-) -> Result<BuildCacheKey> {
-    let client = build_cache_client(context)?;
-    let key = BuildCacheKey::new(repo_name.clone(), git_sha);
-    let temp = tempfile::NamedTempFile::new().context("creating build cache archive temp file")?;
-    let archive_path = temp.path().to_path_buf();
-    client
-        .build_cache_archive_async(repo_root.to_path_buf(), archive_path.clone())
-        .await
-        .context("building build cache archive")?;
-    client
-        .upload_cache(&key, archive_path)
-        .await
-        .context("uploading build cache archive")?;
-    Ok(key)
-}
-
-fn build_cache_client(context: &BuildCacheContext) -> Result<BuildCacheClient> {
+pub(crate) fn build_cache_client(context: &BuildCacheContext) -> Result<BuildCacheClient> {
     let storage = build_storage_client(&context.storage)?;
     let settings = &context.settings;
     let config = BuildCacheConfig {
@@ -100,8 +56,9 @@ fn build_storage_client(
 mod tests {
     use super::*;
     use git2::Repository;
-    use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
+    use metis_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig, RepoName};
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
 
     fn init_repo(path: &Path) -> Repository {
@@ -145,12 +102,15 @@ mod tests {
             .target()
             .expect("oid")
             .to_string();
-        build_and_upload_cache(repo_root, &repo_name, &context, &git_sha)
+        let client = build_cache_client(&context).expect("cache client");
+        client
+            .build_and_upload_cache(repo_root, repo_name.clone(), &git_sha)
             .await
             .expect("upload cache");
 
         fs::remove_dir_all(&target_dir).expect("remove target");
-        let applied = apply_nearest_cache(repo_root, &repo_name, &context)
+        let applied = client
+            .apply_nearest_cache(repo_root, repo_name.clone())
             .await
             .expect("apply cache");
         assert!(applied.is_some());
