@@ -79,7 +79,7 @@ mod tests {
                 None,
             ),
             None,
-            TaskStatusLog::new(Status::Pending, Utc::now()),
+            TaskStatusLog::new(Status::Created, Utc::now()),
         )
     }
 

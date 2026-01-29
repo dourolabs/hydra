@@ -358,8 +358,8 @@ async fn agent_task_state(
 
             let status = state.get_task(&task_id).await?.status;
             match status {
-                Status::Pending => task_state.pending_tasks += 1,
-                Status::Started | Status::Running => task_state.running_tasks += 1,
+                Status::Created => task_state.pending_tasks += 1,
+                Status::Pending | Status::Running => task_state.running_tasks += 1,
                 _ => {}
             }
 
@@ -367,7 +367,7 @@ async fn agent_task_state(
                 .get(ISSUE_ID_ENV_VAR)
                 .and_then(|value| value.parse::<IssueId>().ok())
             {
-                if matches!(status, Status::Pending | Status::Started | Status::Running) {
+                if matches!(status, Status::Created | Status::Pending | Status::Running) {
                     task_state.existing_issue_ids.insert(issue_id);
                 }
             }
@@ -386,7 +386,7 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
         for task_id in state.get_tasks_for_issue(&dependency.issue_id).await? {
             if matches!(
                 state.get_task(&task_id).await?.status,
-                Status::Started | Status::Running
+                Status::Pending | Status::Running
             ) {
                 return Ok(true);
             }
@@ -471,7 +471,7 @@ mod tests {
 
     async fn record_completed_task(handles: &TestStateHandles, task: Task) -> anyhow::Result<()> {
         let task_id = handles.store.add_task(task, Utc::now()).await?;
-        handles.state.transition_task_to_started(&task_id).await?;
+        handles.state.transition_task_to_pending(&task_id).await?;
         handles.state.transition_task_to_running(&task_id).await?;
         handles
             .state
@@ -998,7 +998,7 @@ mod tests {
                 Utc::now(),
             )
             .await?;
-        handles.state.transition_task_to_started(&task_id).await?;
+        handles.state.transition_task_to_pending(&task_id).await?;
 
         handles
             .store
@@ -1160,14 +1160,14 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
-                    status: Status::Pending,
+                    status: Status::Created,
                     last_message: None,
                     error: None,
                 },
                 Utc::now(),
             )
             .await?;
-        handles.state.transition_task_to_started(&task_id).await?;
+        handles.state.transition_task_to_pending(&task_id).await?;
 
         let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
@@ -1226,7 +1226,7 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
-                    status: Status::Pending,
+                    status: Status::Created,
                     last_message: None,
                     error: None,
                 },

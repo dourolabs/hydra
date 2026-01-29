@@ -12,7 +12,7 @@ pub use metis_common::TaskId;
 /// Represents the lifecycle state of a Metis job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
-    Started,
+    Pending,
     Complete,
     Failed,
     Running,
@@ -21,7 +21,7 @@ pub enum JobStatus {
 impl JobStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
-            JobStatus::Started => "started",
+            JobStatus::Pending => "pending",
             JobStatus::Complete => "complete",
             JobStatus::Failed => "failed",
             JobStatus::Running => "running",

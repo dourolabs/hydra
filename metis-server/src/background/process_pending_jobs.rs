@@ -27,10 +27,10 @@ impl ProcessPendingJobsWorker {
 impl ScheduledWorker for ProcessPendingJobsWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
-        let pending_ids = match self.state.list_tasks_with_status(Status::Pending).await {
+        let pending_ids = match self.state.list_tasks_with_status(Status::Created).await {
             Ok(ids) => ids,
             Err(err) => {
-                error!(error = %err, "failed to list pending tasks");
+                error!(error = %err, "failed to list created tasks");
                 info!(
                     worker = WORKER_NAME,
                     "worker iteration completed with transient error"
@@ -42,14 +42,14 @@ impl ScheduledWorker for ProcessPendingJobsWorker {
         };
 
         if pending_ids.is_empty() {
-            info!(worker = WORKER_NAME, "no pending tasks found; worker idle");
+            info!(worker = WORKER_NAME, "no created tasks found; worker idle");
             return WorkerOutcome::Idle;
         }
 
         info!(
             worker = WORKER_NAME,
             count = pending_ids.len(),
-            "found pending tasks to process"
+            "found created tasks to process"
         );
 
         for metis_id in &pending_ids {
@@ -128,7 +128,7 @@ mod tests {
                 .await
                 .expect("task should exist")
                 .status,
-            Status::Started
+            Status::Pending
         );
         assert_eq!(
             state
@@ -136,7 +136,7 @@ mod tests {
                 .await
                 .expect("task should exist")
                 .status,
-            Status::Started
+            Status::Pending
         );
     }
 

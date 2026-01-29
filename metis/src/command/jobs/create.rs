@@ -319,7 +319,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -329,7 +329,7 @@ mod tests {
             TaskStatusLog::from_events(vec![
                 Event::Created {
                     at: start_time,
-                    status: Status::Pending,
+                    status: Status::Created,
                 },
                 Event::Started { at: start_time },
                 Event::Completed {
@@ -391,7 +391,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -441,7 +441,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -491,7 +491,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -541,7 +541,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -588,7 +588,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 
@@ -636,7 +636,7 @@ mod tests {
             &server,
             job_record(
                 job_id.as_ref(),
-                TaskStatusLog::new(Status::Pending, Utc::now()),
+                TaskStatusLog::new(Status::Created, Utc::now()),
             ),
         );
 

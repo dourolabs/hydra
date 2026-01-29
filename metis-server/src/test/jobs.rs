@@ -54,7 +54,7 @@ async fn create_job_enqueues_task() -> anyhow::Result<()> {
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
     let status = check_state.get_task(&body.job_id).await?.status;
-    assert_eq!(status, Status::Pending);
+    assert_eq!(status, Status::Created);
     Ok(())
 }
 
@@ -465,7 +465,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
@@ -484,7 +484,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
@@ -503,17 +503,17 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             now - Duration::seconds(10),
         )
         .await?;
-    state.transition_task_to_started(&middle_id).await?;
+    state.transition_task_to_pending(&middle_id).await?;
     state.transition_task_to_running(&middle_id).await?;
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    state.transition_task_to_started(&newest_id).await?;
+    state.transition_task_to_pending(&newest_id).await?;
     state.transition_task_to_running(&newest_id).await?;
 
     let client = test_client();
@@ -549,14 +549,14 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             now - Duration::seconds(20),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
 
     let client = test_client();
@@ -612,14 +612,14 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             now - Duration::seconds(30),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
 
     let client = test_client();
@@ -864,14 +864,14 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     let patch_id = handles
         .store
@@ -931,14 +931,14 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
@@ -986,14 +986,14 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     let server = spawn_test_server_with_state(state.clone(), handles.store.clone()).await?;
     let client = test_client();
@@ -1038,14 +1038,14 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     state
         .transition_task_to_completion(&job_id, Ok(()), None)
@@ -1089,14 +1089,14 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&job_id).await?;
+    state.transition_task_to_pending(&job_id).await?;
     state.transition_task_to_running(&job_id).await?;
     let patch_id = handles
         .store
@@ -1207,14 +1207,14 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
             Utc::now(),
         )
         .await?;
-    state.transition_task_to_started(&parent_job_id).await?;
+    state.transition_task_to_pending(&parent_job_id).await?;
     state.transition_task_to_running(&parent_job_id).await?;
     let _parent_patch_id = handles
         .store
@@ -1245,7 +1245,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },
@@ -1294,7 +1294,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 env_vars: HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())]),
                 cpu_limit: None,
                 memory_limit: None,
-                status: Status::Pending,
+                status: Status::Created,
                 last_message: None,
                 error: None,
             },

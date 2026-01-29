@@ -48,7 +48,7 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
-            status: Status::Pending,
+            status: Status::Created,
             last_message: None,
             error: None,
         }
@@ -236,7 +236,7 @@ impl From<api::jobs::Task> for Task {
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
-            status: Status::Pending,
+            status: Status::Created,
             last_message: None,
             error: None,
         }

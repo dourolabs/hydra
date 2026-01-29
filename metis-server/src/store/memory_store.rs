@@ -443,7 +443,7 @@ impl Store for MemoryStore {
         // Generate a unique ID for the new task
         let id = TaskId::new();
         let mut task = task;
-        task.status = Status::Pending;
+        task.status = Status::Created;
         task.last_message = None;
         task.error = None;
         let spawned_from = task.spawned_from.clone();
@@ -472,7 +472,7 @@ impl Store for MemoryStore {
             )));
         }
         let mut task = task;
-        task.status = Status::Pending;
+        task.status = Status::Created;
         task.last_message = None;
         task.error = None;
         let spawned_from = task.spawned_from.clone();
@@ -1243,7 +1243,7 @@ mod tests {
         assert_versioned(&fetched, &task, 1);
         assert_eq!(
             store.get_task(&task_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
 
         let tasks: HashSet<_> = store
@@ -1281,7 +1281,7 @@ mod tests {
         let state = test_state_with_store(store.clone()).state;
         let task_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
 
-        state.transition_task_to_started(&task_id).await.unwrap();
+        state.transition_task_to_pending(&task_id).await.unwrap();
         state.transition_task_to_running(&task_id).await.unwrap();
         state
             .transition_task_to_completion(&task_id, Ok(()), None)
@@ -1312,11 +1312,11 @@ mod tests {
         let log = store.get_status_log(&task_id).await.unwrap();
         assert_eq!(log.events.len(), 1);
         assert_eq!(log.creation_time(), Some(created_at));
-        assert_eq!(log.current_status(), Status::Pending);
+        assert_eq!(log.current_status(), Status::Created);
 
-        state.transition_task_to_started(&task_id).await.unwrap();
+        state.transition_task_to_pending(&task_id).await.unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
-        assert_eq!(log.current_status(), Status::Started);
+        assert_eq!(log.current_status(), Status::Pending);
 
         state.transition_task_to_running(&task_id).await.unwrap();
         let log = store.get_status_log(&task_id).await.unwrap();
@@ -1357,14 +1357,14 @@ mod tests {
         let mut running_task = spawn_task();
         running_task.spawned_from = Some(issue_id.clone());
         let running_id = store.add_task(running_task, Utc::now()).await.unwrap();
-        state.transition_task_to_started(&running_id).await.unwrap();
+        state.transition_task_to_pending(&running_id).await.unwrap();
         state.transition_task_to_running(&running_id).await.unwrap();
 
         let mut completed_task = spawn_task();
         completed_task.spawned_from = Some(issue_id.clone());
         let completed_id = store.add_task(completed_task, Utc::now()).await.unwrap();
         state
-            .transition_task_to_started(&completed_id)
+            .transition_task_to_pending(&completed_id)
             .await
             .unwrap();
         state
@@ -1408,7 +1408,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_starts_as_pending() {
+    async fn task_starts_as_created() {
         let store = MemoryStore::new();
 
         let root_task = spawn_task();
@@ -1416,12 +1416,12 @@ mod tests {
 
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
     }
 
     #[tokio::test]
-    async fn transition_task_to_started_from_pending() {
+    async fn transition_task_to_pending_from_created() {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
 
@@ -1430,25 +1430,25 @@ mod tests {
 
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
 
-        state.transition_task_to_started(&root_id).await.unwrap();
+        state.transition_task_to_pending(&root_id).await.unwrap();
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
-            Status::Started
+            Status::Pending
         );
     }
 
     #[tokio::test]
-    async fn transition_task_to_running_from_started() {
+    async fn transition_task_to_running_from_pending() {
         let store = Arc::new(MemoryStore::new());
         let state = test_state_with_store(store.clone()).state;
 
         let root_task = spawn_task();
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
-        state.transition_task_to_started(&root_id).await.unwrap();
+        state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
@@ -1466,11 +1466,11 @@ mod tests {
 
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
 
-        // First mark as started then running
-        state.transition_task_to_started(&root_id).await.unwrap();
+        // First mark as pending then running
+        state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
@@ -1498,11 +1498,11 @@ mod tests {
 
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
-            Status::Pending
+            Status::Created
         );
 
-        // First mark as started then running
-        state.transition_task_to_started(&root_id).await.unwrap();
+        // First mark as pending then running
+        state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
             store.get_task(&root_id).await.unwrap().item.status,
