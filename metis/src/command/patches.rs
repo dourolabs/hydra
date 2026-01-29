@@ -2,7 +2,7 @@ use std::{io::Write, path::Path, path::PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use metis_common::{
     constants::{ENV_METIS_ID, ENV_METIS_ISSUE_ID},
     issues::{
@@ -17,6 +17,7 @@ use metis_common::{
     },
     PatchId, RepoName, TaskId,
 };
+use serde::Serialize;
 
 use crate::git;
 use crate::git::{
@@ -141,6 +142,28 @@ pub enum PatchesCommand {
         #[arg(long = "patch-id", value_name = "PATCH_ID")]
         patch_id: Option<PatchId>,
     },
+    /// Manage patch assets.
+    Assets {
+        #[command(subcommand)]
+        command: PatchAssetsCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PatchAssetsCommand {
+    /// Upload an asset to a patch.
+    Create(PatchAssetCreateArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct PatchAssetCreateArgs {
+    /// Patch id to attach the asset to.
+    #[arg(long = "patch-id", value_name = "PATCH_ID")]
+    pub patch_id: PatchId,
+
+    /// Path to the asset file to upload.
+    #[arg(value_name = "FILE")]
+    pub file_path: PathBuf,
 }
 
 pub async fn run(
@@ -204,6 +227,98 @@ pub async fn run(
             branch,
             patch_id,
         } => merge_queue(client, repo, branch, patch_id, context.output_format).await,
+        PatchesCommand::Assets { command } => {
+            patch_assets(client, command, context.output_format).await
+        }
+    }
+}
+
+async fn patch_assets(
+    client: &dyn MetisClientInterface,
+    command: PatchAssetsCommand,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    match command {
+        PatchAssetsCommand::Create(args) => create_patch_asset(client, args, output_format).await,
+    }
+}
+
+async fn create_patch_asset(
+    client: &dyn MetisClientInterface,
+    args: PatchAssetCreateArgs,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    let mut buffer = Vec::new();
+    create_patch_asset_with_writer(
+        client,
+        &args.patch_id,
+        &args.file_path,
+        output_format,
+        &mut buffer,
+    )
+    .await?;
+    std::io::stdout().write_all(&buffer)?;
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
+async fn create_patch_asset_with_writer(
+    client: &dyn MetisClientInterface,
+    patch_id: &PatchId,
+    file_path: &Path,
+    output_format: ResolvedOutputFormat,
+    writer: &mut impl Write,
+) -> Result<()> {
+    if !file_path.is_file() {
+        bail!(
+            "asset file '{}' does not exist or is not a file",
+            file_path.display()
+        );
+    }
+
+    let asset_url = client
+        .create_patch_asset(patch_id, file_path)
+        .await
+        .with_context(|| format!("failed to upload asset for patch '{patch_id}'"))?;
+
+    let output = PatchAssetOutput::new(patch_id.clone(), asset_url);
+    render_patch_asset_output(output_format, &output, writer)?;
+    Ok(())
+}
+
+fn render_patch_asset_output(
+    format: ResolvedOutputFormat,
+    output: &PatchAssetOutput,
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => {
+            serde_json::to_writer(&mut *writer, output)?;
+            writer.write_all(b"\n")?;
+        }
+        ResolvedOutputFormat::Pretty => {
+            writeln!(
+                writer,
+                "Uploaded asset for patch {}: {}",
+                output.patch_id, output.asset_url
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct PatchAssetOutput {
+    patch_id: PatchId,
+    asset_url: String,
+}
+
+impl PatchAssetOutput {
+    fn new(patch_id: PatchId, asset_url: String) -> Self {
+        Self {
+            patch_id,
+            asset_url,
+        }
     }
 }
 
@@ -790,7 +905,10 @@ mod tests {
         },
         jobs::{BundleSpec, JobRecord, Task},
         merge_queues::{EnqueueMergePatchRequest, MergeQueue},
-        patches::{GitOid, ListPatchesResponse, Patch, PatchRecord, Review, UpsertPatchResponse},
+        patches::{
+            CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch, PatchRecord, Review,
+            UpsertPatchResponse,
+        },
         task_status::TaskStatusLog,
         users::Username,
         RepoName,
@@ -948,6 +1066,45 @@ mod tests {
 
         assert!(output.is_empty());
         mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_patch_asset_writes_pretty_output() -> Result<()> {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let patch_id = patch_id("p-asset-output");
+        let asset_url = "https://github.com/dourolabs/metis/assets/123";
+        let path = format!("/v1/patches/{}/assets", patch_id.as_ref());
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(path.as_str())
+                .query_param("name", "asset.txt")
+                .body("asset-bytes");
+            then.status(200)
+                .json_body_obj(&CreatePatchAssetResponse::new(asset_url.to_string()));
+        });
+
+        let tempdir = tempfile::tempdir()?;
+        let file_path = tempdir.path().join("asset.txt");
+        fs::write(&file_path, "asset-bytes")?;
+
+        let mut output = Vec::new();
+        create_patch_asset_with_writer(
+            &client,
+            &patch_id,
+            &file_path,
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .await?;
+
+        mock.assert();
+        assert_eq!(
+            String::from_utf8(output)?,
+            format!("Uploaded asset for patch {patch_id}: {asset_url}\n")
+        );
         Ok(())
     }
 
