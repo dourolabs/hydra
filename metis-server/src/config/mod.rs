@@ -64,6 +64,8 @@ pub struct MetisSection {
     pub openai_api_key: Option<String>,
     #[serde(default, rename = "ANTHROPIC_API_KEY")]
     pub anthropic_api_key: Option<String>,
+    #[serde(default, rename = "CLAUDE_CODE_OAUTH_TOKEN")]
+    pub claude_code_oauth_token: Option<String>,
 }
 
 impl MetisSection {
@@ -84,6 +86,7 @@ impl Default for MetisSection {
             allowed_orgs: Vec::new(),
             openai_api_key: None,
             anthropic_api_key: None,
+            claude_code_oauth_token: None,
         }
     }
 }

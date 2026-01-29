@@ -29,7 +29,9 @@ use axum::{
     routing::{get, post, put},
 };
 use jsonwebtoken::EncodingKey;
-use metis_common::constants::{ENV_ANTHROPIC_API_KEY, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
+use metis_common::constants::{
+    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY,
+};
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
@@ -195,6 +197,10 @@ pub async fn run() -> anyhow::Result<()> {
         .ok()
         .or_else(|| app_config.metis.anthropic_api_key.clone())
         .filter(|value| !value.trim().is_empty());
+    let claude_code_oauth_token = env::var(ENV_CLAUDE_CODE_OAUTH_TOKEN)
+        .ok()
+        .or_else(|| app_config.metis.claude_code_oauth_token.clone())
+        .filter(|value| !value.trim().is_empty());
 
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
@@ -218,6 +224,7 @@ pub async fn run() -> anyhow::Result<()> {
         namespace: app_config.metis.namespace.clone(),
         openai_api_key,
         anthropic_api_key,
+        claude_code_oauth_token,
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
