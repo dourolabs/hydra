@@ -167,6 +167,8 @@ impl BuildCacheSection {
 pub struct JobSection {
     #[serde(default)]
     pub default_image: String,
+    #[serde(default)]
+    pub default_model: Option<String>,
     #[serde(default = "default_cpu_limit")]
     pub cpu_limit: String,
     #[serde(default = "default_memory_limit")]

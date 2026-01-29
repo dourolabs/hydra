@@ -60,6 +60,7 @@ pub fn test_app_config() -> AppConfig {
         kubernetes: KubernetesSection::default(),
         job: JobSection {
             default_image: "metis-worker:latest".to_string(),
+            default_model: None,
             cpu_limit: "500m".to_string(),
             memory_limit: "1Gi".to_string(),
             cpu_request: "500m".to_string(),

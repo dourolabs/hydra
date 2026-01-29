@@ -13,6 +13,8 @@ allowed_orgs = []
 # Container image the worker Pod will execute.
 # TODO: figure out how to tag this properly in kind x_x
 default_image = "metis-worker:latest"
+# Default model to use when job settings omit one.
+default_model = "gpt-4o"
 # CPU limit for worker pods (e.g., "500m", "1", "2.5").
 cpu_limit = "500m"
 # Memory limit for worker pods (e.g., "1Gi", "512Mi", "2G").

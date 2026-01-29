@@ -1,6 +1,6 @@
 use crate::{
     background::AgentQueue,
-    config::{AgentQueueConfig, AppConfig},
+    config::{AgentQueueConfig, AppConfig, non_empty},
     domain::{
         actors::Actor,
         issues::{
@@ -733,7 +733,7 @@ impl AppState {
         };
         let job_settings = issue
             .as_ref()
-            .map(|issue| issue.item.job_settings.clone())
+            .map(|issue| self.apply_job_settings_defaults(issue.item.job_settings.clone()))
             .filter(|settings| !JobSettings::is_default(settings));
 
         let mut context = request.context;
@@ -799,6 +799,18 @@ impl AppState {
             })?;
 
         Ok(job_id)
+    }
+
+    fn apply_job_settings_defaults(&self, mut settings: JobSettings) -> JobSettings {
+        if settings.model.is_none() {
+            if let Some(default_model) =
+                self.config.job.default_model.as_deref().and_then(non_empty)
+            {
+                settings.model = Some(default_model.to_string());
+            }
+        }
+
+        settings
     }
 
     pub async fn set_job_status(
@@ -1955,6 +1967,7 @@ async fn active_tasks_for_issue(
 mod tests {
     use super::{LoginError, UpsertIssueError};
     use crate::{
+        app::{AppState, ServiceState},
         domain::{
             actors::Actor,
             issues::{
@@ -1966,9 +1979,9 @@ mod tests {
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
-        store::{Status, StoreError, TaskError},
+        store::{MemoryStore, Status, StoreError, TaskError},
         test_utils::{
-            MockJobEngine, add_repository, github_user_response, test_state,
+            MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
             test_state_with_engine, test_state_with_github_api_base_url,
         },
     };
@@ -1978,6 +1991,7 @@ mod tests {
     use metis_common::{IssueId, RepoName, TaskId};
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::RwLock;
 
     fn sample_task() -> Task {
         Task::new(
@@ -2000,6 +2014,19 @@ mod tests {
             HashMap::new(),
             None,
             None,
+        )
+    }
+
+    fn state_with_default_model(model: &str) -> AppState {
+        let mut config = test_app_config();
+        config.job.default_model = Some(model.to_string());
+        AppState::new(
+            Arc::new(config),
+            None,
+            Arc::new(ServiceState::default()),
+            Arc::new(MemoryStore::new()),
+            Arc::new(MockJobEngine::new()),
+            Arc::new(RwLock::new(Vec::new())),
         )
     }
 
@@ -2515,6 +2542,29 @@ mod tests {
             .resource_limits_for_job(&task_id)
             .expect("resource limits should be recorded");
         assert_eq!(limits, ("750m".to_string(), "2Gi".to_string()));
+    }
+
+    #[test]
+    fn apply_job_settings_defaults_sets_model() {
+        let state = state_with_default_model("gpt-4o");
+        let job_settings = JobSettings::default();
+
+        let resolved = state.apply_job_settings_defaults(job_settings);
+
+        assert_eq!(resolved.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn apply_job_settings_defaults_preserves_explicit_model() {
+        let state = state_with_default_model("gpt-4o");
+        let job_settings = JobSettings {
+            model: Some("custom-model".to_string()),
+            ..Default::default()
+        };
+
+        let resolved = state.apply_job_settings_defaults(job_settings);
+
+        assert_eq!(resolved.model.as_deref(), Some("custom-model"));
     }
 
     #[tokio::test]

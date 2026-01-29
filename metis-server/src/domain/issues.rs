@@ -407,6 +407,8 @@ pub struct JobSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
@@ -435,6 +437,9 @@ impl JobSettings {
         }
         if self.image.is_none() {
             self.image = other.image.take();
+        }
+        if self.model.is_none() {
+            self.model = other.model.take();
         }
         if self.branch.is_none() {
             self.branch = other.branch.take();
@@ -807,6 +812,7 @@ impl From<api::issues::JobSettings> for JobSettings {
             repo_name: value.repo_name,
             remote_url: value.remote_url,
             image: value.image,
+            model: value.model,
             branch: value.branch,
             max_retries: value.max_retries,
             cpu_limit: value.cpu_limit,
@@ -821,6 +827,7 @@ impl From<JobSettings> for api::issues::JobSettings {
         job_settings.repo_name = value.repo_name;
         job_settings.remote_url = value.remote_url;
         job_settings.image = value.image;
+        job_settings.model = value.model;
         job_settings.branch = value.branch;
         job_settings.max_retries = value.max_retries;
         job_settings.cpu_limit = value.cpu_limit;
@@ -1071,6 +1078,7 @@ mod tests {
             repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
             remote_url: Some("https://github.com/dourolabs/metis".to_string()),
             image: Some("worker:latest".to_string()),
+            model: Some("gpt-4o".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(2),
             cpu_limit: Some("400m".to_string()),
