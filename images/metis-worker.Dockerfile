@@ -102,8 +102,8 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | b
 # Set NVM environment variable for the worker user
 ENV NVM_DIR=/home/worker/.nvm
 
-# Install node, codex, and puppeteer as the non-root user
-RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex puppeteer"
+# Install node, codex, claude, and puppeteer as the non-root user
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install $NODE_VERSION && npm install -g @openai/codex @anthropic-ai/claude-code puppeteer"
 
 # Ensure cargo is in PATH for the worker user's login shell
 # TODO: this is sort of a hacky spot for this. need to consolidate app-specific configuration somewhere.
