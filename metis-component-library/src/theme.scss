@@ -124,6 +124,19 @@ $color-pallette: (
     900: #1e3a8a,
     950: #172554,
   ),
+  "red": (
+    50: #fef2f2,
+    100: #fee2e2,
+    200: #fecaca,
+    300: #fca5a5,
+    400: #f87171,
+    500: #ef4444,
+    600: #dc2626,
+    700: #b91c1c,
+    800: #991b1b,
+    900: #7f1d1d,
+    950: #450a0a,
+  ),
 );
 
 @function pallette-color($color...) {
@@ -147,13 +160,13 @@ $color: (
     "disabled-background": light-dark(pallette-color("gray", 100), pallette-color("gray", 900)),
   ),
   "button": (
-    "primary-background": light-dark(pallette-color("blue", 600), pallette-color("blue", 500)),
-    "primary-text": light-dark(pallette-color("white"), #021224),
-    "primary-hover": light-dark(pallette-color("blue", 500), pallette-color("blue", 400)),
-    "primary-active": light-dark(pallette-color("blue", 700), pallette-color("blue", 600)),
+    "primary-background": light-dark(pallette-color("red", 600), pallette-color("red", 500)),
+    "primary-text": light-dark(pallette-color("white"), #2b0a0a),
+    "primary-hover": light-dark(pallette-color("red", 500), pallette-color("red", 400)),
+    "primary-active": light-dark(pallette-color("red", 700), pallette-color("red", 600)),
     "primary-shadow": light-dark(
-      rgba(pallette-color("blue", 700), 0.25),
-      rgba(pallette-color("blue", 950), 0.45)
+      rgba(pallette-color("red", 700), 0.25),
+      rgba(pallette-color("red", 950), 0.45)
     ),
     "secondary-background": light-dark(pallette-color("slate", 50), #1f2530),
     "secondary-text": light-dark(pallette-color("slate", 900), pallette-color("slate", 100)),
@@ -162,11 +175,11 @@ $color: (
     "secondary-hover-border": light-dark(pallette-color("slate", 300), #3a4452),
     "secondary-hover-text": light-dark(pallette-color("slate", 900), pallette-color("slate", 50)),
     "secondary-active": light-dark(pallette-color("slate", 300), #374151),
-    "ghost-text": light-dark(pallette-color("blue", 700), pallette-color("blue", 300)),
-    "ghost-border": light-dark(pallette-color("blue", 100), #2b3a52),
-    "ghost-hover": light-dark(rgba(pallette-color("blue", 500), 0.12), rgba(59, 130, 246, 0.2)),
-    "ghost-active": light-dark(rgba(pallette-color("blue", 500), 0.2), rgba(59, 130, 246, 0.3)),
-    "focus-ring": light-dark(rgba(pallette-color("blue", 600), 0.35), rgba(56, 189, 248, 0.35)),
+    "ghost-text": light-dark(pallette-color("red", 700), pallette-color("red", 300)),
+    "ghost-border": light-dark(pallette-color("red", 100), #2b1b1b),
+    "ghost-hover": light-dark(rgba(pallette-color("red", 500), 0.12), rgba(248, 113, 113, 0.2)),
+    "ghost-active": light-dark(rgba(pallette-color("red", 500), 0.2), rgba(248, 113, 113, 0.3)),
+    "focus-ring": light-dark(rgba(pallette-color("red", 600), 0.35), rgba(248, 113, 113, 0.35)),
     "disabled-background": light-dark(pallette-color("gray", 100), #1f2430),
     "disabled-border": light-dark(pallette-color("gray", 200), #2f3542),
     "disabled-text": light-dark(pallette-color("gray", 400), pallette-color("gray", 500)),
