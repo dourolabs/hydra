@@ -171,6 +171,15 @@ $color: (
     "disabled-border": light-dark(pallette-color("gray", 200), #2f3542),
     "disabled-text": light-dark(pallette-color("gray", 400), pallette-color("gray", 500)),
   ),
+  "toggle": (
+    "track-off": light-dark(pallette-color("gray", 300), #2b313b),
+    "track-on": light-dark(pallette-color("blue", 600), pallette-color("blue", 500)),
+    "thumb": light-dark(pallette-color("white"), #0b111a),
+    "thumb-on": light-dark(pallette-color("white"), #021224),
+    "focus-ring": light-dark(rgba(pallette-color("blue", 600), 0.35), rgba(56, 189, 248, 0.35)),
+    "disabled-track": light-dark(pallette-color("gray", 200), #2a303a),
+    "disabled-thumb": light-dark(pallette-color("gray", 400), pallette-color("gray", 600)),
+  ),
   "select": (
     "border": light-dark(pallette-color("gray", 300), #3b4148),
     "background": light-dark(pallette-color("slate", 50), #1f2328),

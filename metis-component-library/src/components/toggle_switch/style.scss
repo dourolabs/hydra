@@ -1,0 +1,62 @@
+@use "../../theme";
+
+.metis-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.metis-toggle--disabled {
+  cursor: not-allowed;
+}
+
+.metis-toggle__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.metis-toggle__track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: theme.spacing(10);
+  height: theme.spacing(6);
+  border-radius: theme.border-radius("full");
+  background: theme.color("toggle", "track-off");
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.metis-toggle__thumb {
+  position: absolute;
+  left: theme.spacing(0.5);
+  width: theme.spacing(5);
+  height: theme.spacing(5);
+  border-radius: theme.border-radius("full");
+  background: theme.color("toggle", "thumb");
+  transition: transform 150ms ease, background-color 150ms ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.metis-toggle__input:checked + .metis-toggle__track {
+  background: theme.color("toggle", "track-on");
+}
+
+.metis-toggle__input:checked + .metis-toggle__track .metis-toggle__thumb {
+  transform: translateX(theme.spacing(4.5));
+  background: theme.color("toggle", "thumb-on");
+}
+
+.metis-toggle__input:focus-visible + .metis-toggle__track {
+  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("toggle", "focus-ring");
+}
+
+.metis-toggle__input:disabled + .metis-toggle__track {
+  background: theme.color("toggle", "disabled-track");
+}
+
+.metis-toggle__input:disabled + .metis-toggle__track .metis-toggle__thumb {
+  background: theme.color("toggle", "disabled-thumb");
+  box-shadow: none;
+}
