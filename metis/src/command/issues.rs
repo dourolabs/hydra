@@ -3425,6 +3425,7 @@ mod tests {
             BundleSpec::None,
             Some(main_issue_id.clone()),
             None,
+            None,
             HashMap::new(),
             None,
             None,
