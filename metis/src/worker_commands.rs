@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, process::Stdio};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use metis_common::constants::ENV_OPENAI_API_KEY;
+use metis_common::constants::{ENV_ANTHROPIC_API_KEY, ENV_OPENAI_API_KEY};
 use tokio::{fs, io::AsyncWriteExt, process::Command};
 
 #[async_trait]
@@ -10,7 +10,9 @@ pub trait WorkerCommands: Send + Sync {
     async fn run(
         &self,
         prompt: &str,
+        model: Option<&str>,
         openai_api_key: Option<String>,
+        anthropic_api_key: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -18,6 +20,25 @@ pub trait WorkerCommands: Send + Sync {
 }
 
 pub struct CodexCommands;
+pub struct ClaudeCommands;
+
+pub struct ModelAwareCommands {
+    codex: CodexCommands,
+    claude: ClaudeCommands,
+}
+
+impl Default for ModelAwareCommands {
+    fn default() -> Self {
+        Self {
+            codex: CodexCommands,
+            claude: ClaudeCommands,
+        }
+    }
+}
+
+fn is_claude_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("claude")
+}
 
 impl CodexCommands {
     async fn login(&self, openai_api_key: Option<&str>) -> Result<()> {
@@ -57,6 +78,7 @@ impl CodexCommands {
 
     async fn run_codex(
         prompt: &str,
+        model: Option<&str>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -78,10 +100,14 @@ impl CodexCommands {
                     .to_str()
                     .expect("codex output path should be valid UTF-8"),
                 "--dangerously-bypass-approvals-and-sandbox",
-                prompt,
             ])
             .current_dir(working_dir)
             .envs(env);
+        if let Some(model) = model {
+            command.arg("--model");
+            command.arg(model);
+        }
+        command.arg(prompt);
 
         let status = command
             .status()
@@ -103,14 +129,137 @@ impl WorkerCommands for CodexCommands {
     async fn run(
         &self,
         prompt: &str,
+        model: Option<&str>,
         openai_api_key: Option<String>,
+        _anthropic_api_key: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
     ) -> Result<String> {
         self.login(openai_api_key.as_deref()).await?;
-        Self::run_codex(prompt, working_dir, env, output_path)
+        Self::run_codex(prompt, model, working_dir, env, output_path)
             .await
             .with_context(|| "failed to execute codex for worker context")
+    }
+}
+
+impl ClaudeCommands {
+    async fn run_claude(
+        prompt: &str,
+        model: Option<&str>,
+        anthropic_api_key: Option<String>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+        output_path: &Path,
+    ) -> Result<String> {
+        if let Some(dir) = output_path.parent() {
+            fs::create_dir_all(dir)
+                .await
+                .with_context(|| format!("failed to create claude output directory {dir:?}"))?;
+        }
+
+        let anthropic_api_key = anthropic_api_key
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "{ENV_ANTHROPIC_API_KEY} must be provided via --anthropic-api-key or environment"
+                )
+            })?;
+
+        let mut command = Command::new("claude");
+        if let Some(model) = model {
+            command.arg("--model");
+            command.arg(model);
+        }
+        let output = command
+            .arg(prompt)
+            .current_dir(working_dir)
+            .envs(env)
+            .env(ENV_ANTHROPIC_API_KEY, anthropic_api_key)
+            .output()
+            .await
+            .context("failed to spawn claude command")?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "claude command failed with status {}",
+                output.status
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        fs::write(output_path, &stdout)
+            .await
+            .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
+
+        Ok(stdout)
+    }
+}
+
+#[async_trait]
+impl WorkerCommands for ClaudeCommands {
+    async fn run(
+        &self,
+        prompt: &str,
+        model: Option<&str>,
+        _openai_api_key: Option<String>,
+        anthropic_api_key: Option<String>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+        output_path: &Path,
+    ) -> Result<String> {
+        Self::run_claude(
+            prompt,
+            model,
+            anthropic_api_key,
+            working_dir,
+            env,
+            output_path,
+        )
+        .await
+        .with_context(|| "failed to execute claude for worker context")
+    }
+}
+
+#[async_trait]
+impl WorkerCommands for ModelAwareCommands {
+    async fn run(
+        &self,
+        prompt: &str,
+        model: Option<&str>,
+        openai_api_key: Option<String>,
+        anthropic_api_key: Option<String>,
+        working_dir: &Path,
+        env: &HashMap<String, String>,
+        output_path: &Path,
+    ) -> Result<String> {
+        match model.filter(|value| is_claude_model(value)) {
+            Some(_) => {
+                self.claude
+                    .run(
+                        prompt,
+                        model,
+                        openai_api_key,
+                        anthropic_api_key,
+                        working_dir,
+                        env,
+                        output_path,
+                    )
+                    .await
+            }
+            None => {
+                self.codex
+                    .run(
+                        prompt,
+                        model,
+                        openai_api_key,
+                        anthropic_api_key,
+                        working_dir,
+                        env,
+                        output_path,
+                    )
+                    .await
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 /// Environment variable names used across the metis server and CLI.
 pub const ENV_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
+pub const ENV_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
 pub const ENV_METIS_CONFIG: &str = "METIS_CONFIG";
 pub const ENV_METIS_DATABASE_URL: &str = "METIS_DATABASE_URL";
 pub const ENV_DATABASE_URL: &str = "DATABASE_URL";

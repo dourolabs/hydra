@@ -95,7 +95,9 @@ impl WorkerCommands for BashCommands {
     async fn run(
         &self,
         _prompt: &str,
+        _model: Option<&str>,
         _openai_api_key: Option<String>,
+        _anthropic_api_key: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         _output_path: &Path,

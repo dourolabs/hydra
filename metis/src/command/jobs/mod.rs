@@ -1,10 +1,11 @@
 use crate::{
-    client::MetisClientInterface, command::output::CommandContext, worker_commands::CodexCommands,
+    client::MetisClientInterface, command::output::CommandContext,
+    worker_commands::ModelAwareCommands,
 };
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
+    constants::{ENV_ANTHROPIC_API_KEY, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
     IssueId, MetisId, TaskId,
 };
 use std::path::PathBuf;
@@ -84,7 +85,7 @@ pub enum JobsCommand {
         #[arg(value_name = "JOB_ID")]
         job: TaskId,
     },
-    /// Retrieve a job's context locally and run it via Codex.
+    /// Retrieve a job's context locally and run it via Codex or Claude.
     WorkerRun {
         /// Job identifier returned by `metis jobs create` or `metis jobs list`.
         #[arg(value_name = "JOB_ID")]
@@ -95,6 +96,13 @@ pub enum JobsCommand {
         /// API key to pass to Codex (defaults to OPENAI_API_KEY).
         #[arg(long = "openai-api-key", value_name = "KEY", env = ENV_OPENAI_API_KEY)]
         openai_api_key: Option<String>,
+        /// API key to pass to Claude (defaults to ANTHROPIC_API_KEY).
+        #[arg(
+            long = "anthropic-api-key",
+            value_name = "KEY",
+            env = ENV_ANTHROPIC_API_KEY
+        )]
+        anthropic_api_key: Option<String>,
 
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
@@ -131,14 +139,16 @@ pub async fn run(
             job,
             path,
             openai_api_key,
+            anthropic_api_key,
             issue_id,
         } => {
-            let commands = CodexCommands;
+            let commands = ModelAwareCommands::default();
             worker_run::run(
                 client,
                 job,
                 path,
                 openai_api_key,
+                anthropic_api_key,
                 issue_id,
                 &commands,
                 context,

@@ -4,6 +4,8 @@ namespace = "default"
 
 # Optional fallback if the OPENAI_API_KEY environment variable is unset.
 OPENAI_API_KEY = ""
+# Optional fallback if the ANTHROPIC_API_KEY environment variable is unset.
+ANTHROPIC_API_KEY = ""
 
 # Optional list of allowed GitHub organizations for logins.
 # Leave empty or omit to allow all organizations.

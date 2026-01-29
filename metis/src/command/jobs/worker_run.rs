@@ -30,6 +30,7 @@ pub async fn run(
     job: TaskId,
     dest: PathBuf,
     openai_api_key: Option<String>,
+    anthropic_api_key: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
@@ -38,6 +39,7 @@ pub async fn run(
         request_context,
         variables,
         prompt,
+        model,
         build_cache,
         ..
     } = client.get_job_context(&job).await?;
@@ -108,7 +110,9 @@ pub async fn run(
     let last_message = match commands
         .run(
             &prompt,
+            model.as_deref(),
             openai_api_key.clone(),
+            anthropic_api_key.clone(),
             &dest,
             &execution_env,
             &output_path,

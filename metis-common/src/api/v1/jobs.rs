@@ -242,6 +242,8 @@ impl<'de> Deserialize<'de> for Bundle {
 pub struct WorkerContext {
     pub request_context: Bundle,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default)]
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -252,12 +254,14 @@ impl WorkerContext {
     pub fn new(
         request_context: Bundle,
         prompt: String,
+        model: Option<String>,
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
     ) -> Self {
         Self {
             request_context,
             prompt,
+            model,
             variables,
             build_cache,
         }

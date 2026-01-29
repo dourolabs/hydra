@@ -29,7 +29,7 @@ use axum::{
     routing::{get, post, put},
 };
 use jsonwebtoken::EncodingKey;
-use metis_common::constants::{ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
+use metis_common::constants::{ENV_ANTHROPIC_API_KEY, ENV_METIS_CONFIG, ENV_OPENAI_API_KEY};
 use octocrab::Octocrab;
 use serde_json::json;
 use std::{env, path::PathBuf, sync::Arc};
@@ -191,6 +191,10 @@ pub async fn run() -> anyhow::Result<()> {
                 "{ENV_OPENAI_API_KEY} is not set. Provide it via the environment or config.toml."
             )
         })?;
+    let anthropic_api_key = env::var(ENV_ANTHROPIC_API_KEY)
+        .ok()
+        .or_else(|| app_config.metis.anthropic_api_key.clone())
+        .filter(|value| !value.trim().is_empty());
 
     // Build Kubernetes client
     let kube_client = build_kube_client(&app_config.kubernetes).await?;
@@ -213,6 +217,7 @@ pub async fn run() -> anyhow::Result<()> {
     let job_engine = KubernetesJobEngine {
         namespace: app_config.metis.namespace.clone(),
         openai_api_key,
+        anthropic_api_key,
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
