@@ -19,7 +19,7 @@ use metis_common::{
     PatchId, VersionNumber,
     api::v1::{self, ApiError},
 };
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, USER_AGENT};
 use serde::Deserialize;
 use std::path::Path as FilePath;
 use tracing::{error, info, warn};
@@ -247,20 +247,16 @@ pub async fn create_patch_asset(
         );
         "application/octet-stream"
     };
-    let part = reqwest::multipart::Part::bytes(body.to_vec())
-        .file_name(asset_name.clone())
-        .mime_str(content_type)
-        .map_err(|err| {
-            ApiError::internal(format!("failed to set github upload content type: {err}"))
-        })?;
-    let form = reqwest::multipart::Form::new().part("file", part);
+    let content_length = body.len().to_string();
 
     let response = reqwest::Client::new()
         .post(upload_url)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "metis-server")
         .header(AUTHORIZATION, format!("Bearer {}", token.github_token))
-        .multipart(form)
+        .header(CONTENT_TYPE, content_type)
+        .header(CONTENT_LENGTH, content_length)
+        .body(body)
         .send()
         .await
         .map_err(|err| {

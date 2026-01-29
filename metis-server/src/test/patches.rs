@@ -24,7 +24,6 @@ use metis_common::{
     PatchId,
     api::v1::patches::{CreatePatchAssetResponse, ListPatchVersionsResponse, PatchVersionRecord},
 };
-use regex::Regex;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -401,13 +400,8 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
             .path("/repos/octo/repo/issues/42/comments/attachments")
             .query_param("name", "screenshot.png")
             .header("authorization", "Bearer gh-token")
-            .header_exists("content-type")
-            .body_matches(
-                Regex::new(
-                    r#"(?s)Content-Disposition: form-data; name="file"; filename="screenshot\.png".*Content-Type: image/png.*\r\n\r\nbinary-payload"#,
-                )
-                .unwrap(),
-            );
+            .header("content-type", "image/png")
+            .body("binary-payload");
         then.status(201)
             .json_body(json!({ "url": "https://github.com/octo/repo/assets/1" }));
     });
@@ -483,19 +477,13 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
         then.status(200).json_body(github_user_response("octo", 42));
     });
 
-    // Regression coverage: ensure GitHub receives multipart form data with the file part.
     let upload_mock = github_server.mock(|when, then| {
         when.method(POST)
             .path("/repos/octo/repo/issues/42/comments/attachments")
             .query_param("name", "failure.png")
             .header("authorization", "Bearer gh-token")
-            .header_exists("content-type")
-            .body_matches(
-                Regex::new(
-                    r#"(?s)Content-Disposition: form-data; name="file"; filename="failure\.png".*Content-Type: image/png.*\r\n\r\nbinary-payload"#,
-                )
-                .unwrap(),
-            );
+            .header("content-type", "image/png")
+            .body("binary-payload");
         then.status(400)
             .json_body(json!({ "message": "Bad Request" }));
     });
