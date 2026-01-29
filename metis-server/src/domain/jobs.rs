@@ -257,6 +257,23 @@ impl From<Task> for api::jobs::Task {
     }
 }
 
+impl From<Task> for api::jobs::TaskVersion {
+    fn from(value: Task) -> Self {
+        api::jobs::TaskVersion::new(
+            value.prompt,
+            value.context.into(),
+            value.spawned_from,
+            value.image,
+            value.env_vars,
+            value.cpu_limit,
+            value.memory_limit,
+            value.status.into(),
+            value.last_message,
+            value.error.map(Into::into),
+        )
+    }
+}
+
 impl From<api::jobs::CreateJobRequest> for CreateJobRequest {
     fn from(value: api::jobs::CreateJobRequest) -> Self {
         CreateJobRequest {

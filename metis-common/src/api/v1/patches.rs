@@ -1,4 +1,4 @@
-use crate::{PatchId, RepoName, TaskId};
+use crate::{PatchId, RepoName, TaskId, VersionNumber};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -242,6 +242,24 @@ impl PatchRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct PatchVersionRecord {
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub patch: Patch,
+}
+
+impl PatchVersionRecord {
+    pub fn new(version: VersionNumber, timestamp: DateTime<Utc>, patch: Patch) -> Self {
+        Self {
+            version,
+            timestamp,
+            patch,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -369,6 +387,18 @@ pub struct ListPatchesResponse {
 impl ListPatchesResponse {
     pub fn new(patches: Vec<PatchRecord>) -> Self {
         Self { patches }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ListPatchVersionsResponse {
+    pub versions: Vec<PatchVersionRecord>,
+}
+
+impl ListPatchVersionsResponse {
+    pub fn new(versions: Vec<PatchVersionRecord>) -> Self {
+        Self { versions }
     }
 }
 

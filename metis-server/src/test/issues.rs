@@ -18,7 +18,11 @@ use crate::{
     },
 };
 use chrono::Utc;
-use metis_common::{PatchId, TaskId};
+use metis_common::{
+    IssueId, PatchId, TaskId,
+    api::v1::issues::{IssueVersionRecord, ListIssueVersionsResponse},
+};
+use reqwest::StatusCode;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -144,6 +148,146 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Vec::new(),
         )
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "initial".to_string(),
+                default_user(),
+                "Initial progress".to_string(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let _updated: UpsertIssueResponse = client
+        .put(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "updated".to_string(),
+                default_user(),
+                "Updated progress".to_string(),
+                IssueStatus::InProgress,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let versions: ListIssueVersionsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/versions",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(versions.versions.len(), 2);
+    assert_eq!(versions.versions[0].version, 1);
+    assert_eq!(versions.versions[0].issue.description, "initial");
+    assert_eq!(versions.versions[1].version, 2);
+    assert_eq!(versions.versions[1].issue.description, "updated");
+
+    let version: IssueVersionRecord = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/2",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(version.version, 2);
+    assert_eq!(version.issue.description, "updated");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let missing: IssueId = "i-missing".parse().expect("valid issue id");
+    let response = client
+        .get(format!(
+            "{}/v1/issues/{}/versions",
+            server.base_url(),
+            missing
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest::new(
+            Issue::new(
+                IssueType::Task,
+                "initial".to_string(),
+                default_user(),
+                "Initial progress".to_string(),
+                IssueStatus::Open,
+                None,
+                None,
+                Vec::new(),
+                vec![],
+                Vec::new(),
+            ),
+            None,
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let response = client
+        .get(format!(
+            "{}/v1/issues/{}/versions/99",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
     Ok(())
 }
 

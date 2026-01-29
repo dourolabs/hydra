@@ -19,8 +19,12 @@ use crate::{
 };
 use chrono::Utc;
 use httpmock::{Method::GET, Method::POST, MockServer};
-use metis_common::api::v1::patches::CreatePatchAssetResponse;
+use metis_common::{
+    PatchId,
+    api::v1::patches::{CreatePatchAssetResponse, ListPatchVersionsResponse, PatchVersionRecord},
+};
 use reqwest::Client;
+use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -63,6 +67,137 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
 
     assert_eq!(fetched.id, created.patch_id);
     assert_eq!(fetched.patch, patch);
+    Ok(())
+}
+
+#[tokio::test]
+async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let patch = Patch::new(
+        "Initial patch".to_string(),
+        "initial patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let response = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.clone()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let created: UpsertPatchResponse = response.json().await?;
+
+    let updated_patch = Patch::new(
+        "Updated patch".to_string(),
+        "updated patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+    let _updated: UpsertPatchResponse = client
+        .put(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .json(&UpsertPatchRequest::new(updated_patch))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let versions: ListPatchVersionsResponse = client
+        .get(format!(
+            "{}/v1/patches/{}/versions",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(versions.versions.len(), 2);
+    assert_eq!(versions.versions[0].version, 1);
+    assert_eq!(versions.versions[0].patch.title, "Initial patch");
+    assert_eq!(versions.versions[1].version, 2);
+    assert_eq!(versions.versions[1].patch.title, "Updated patch");
+
+    let version: PatchVersionRecord = client
+        .get(format!(
+            "{}/v1/patches/{}/versions/2",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(version.version, 2);
+    assert_eq!(version.patch.title, "Updated patch");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn patch_version_endpoints_return_404s() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let missing: PatchId = "p-missing".parse().expect("valid patch id");
+    let response = client
+        .get(format!(
+            "{}/v1/patches/{}/versions",
+            server.base_url(),
+            missing
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let patch = Patch::new(
+        "Initial patch".to_string(),
+        "initial patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+    let response = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch))
+        .send()
+        .await?;
+    let created: UpsertPatchResponse = response.json().await?;
+
+    let response = client
+        .get(format!(
+            "{}/v1/patches/{}/versions/99",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
     Ok(())
 }
 

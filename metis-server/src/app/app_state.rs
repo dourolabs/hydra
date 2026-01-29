@@ -390,6 +390,14 @@ impl AppState {
         store.get_issue(issue_id).await
     }
 
+    pub async fn get_issue_versions(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<Vec<Versioned<Issue>>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_issue_versions(issue_id).await
+    }
+
     pub async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
@@ -401,6 +409,14 @@ impl AppState {
     pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
         let store = self.store.as_ref();
         store.get_patch(patch_id).await
+    }
+
+    pub async fn get_patch_versions(
+        &self,
+        patch_id: &PatchId,
+    ) -> Result<Vec<Versioned<Patch>>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_patch_versions(patch_id).await
     }
 
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
@@ -1718,6 +1734,14 @@ impl AppState {
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
         let store = self.store.as_ref();
         store.get_task(task_id).await.map(|task| task.item)
+    }
+
+    pub async fn get_task_versions(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<Versioned<Task>>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_task_versions(task_id).await
     }
 
     pub async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {

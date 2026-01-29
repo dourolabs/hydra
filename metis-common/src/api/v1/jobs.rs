@@ -1,4 +1,8 @@
-use crate::{BuildCacheContext, IssueId, RepoName, TaskId, task_status::TaskStatusLog};
+use crate::{
+    BuildCacheContext, IssueId, RepoName, TaskId, VersionNumber,
+    task_status::{Status, TaskError, TaskStatusLog},
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,6 +42,57 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TaskVersion {
+    pub prompt: String,
+    pub context: BundleSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env_vars: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit: Option<String>,
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<TaskError>,
+}
+
+impl TaskVersion {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        prompt: String,
+        context: BundleSpec,
+        spawned_from: Option<IssueId>,
+        image: Option<String>,
+        env_vars: HashMap<String, String>,
+        cpu_limit: Option<String>,
+        memory_limit: Option<String>,
+        status: Status,
+        last_message: Option<String>,
+        error: Option<TaskError>,
+    ) -> Self {
+        Self {
+            prompt,
+            context,
+            spawned_from,
+            image,
+            env_vars,
+            cpu_limit,
+            memory_limit,
+            status,
+            last_message,
+            error,
         }
     }
 }
@@ -265,6 +320,24 @@ impl JobRecord {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct JobVersionRecord {
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub task: TaskVersion,
+}
+
+impl JobVersionRecord {
+    pub fn new(version: VersionNumber, timestamp: DateTime<Utc>, task: TaskVersion) -> Self {
+        Self {
+            version,
+            timestamp,
+            task,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SearchJobsQuery {
@@ -272,6 +345,18 @@ pub struct SearchJobsQuery {
     pub q: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ListJobVersionsResponse {
+    pub versions: Vec<JobVersionRecord>,
+}
+
+impl ListJobVersionsResponse {
+    pub fn new(versions: Vec<JobVersionRecord>) -> Self {
+        Self { versions }
+    }
 }
 
 impl SearchJobsQuery {
