@@ -1,5 +1,6 @@
 use crate::error::BuildCacheError;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use metis_common::build_cache::{default_build_cache_exclude, default_build_cache_include};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,14 +28,8 @@ pub struct FileSystemStorageConfig {
 impl Default for BuildCacheConfig {
     fn default() -> Self {
         Self {
-            include: vec![
-                "target/".to_string(),
-                "dist/".to_string(),
-                "build/".to_string(),
-                ".cargo/".to_string(),
-                "node_modules/".to_string(),
-            ],
-            exclude: vec!["*.log".to_string(), "tmp/".to_string(), ".git/".to_string()],
+            include: default_build_cache_include(),
+            exclude: default_build_cache_exclude(),
             max_entries_per_repo: None,
         }
     }

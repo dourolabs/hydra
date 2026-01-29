@@ -1,5 +1,6 @@
 use crate::config::BuildCacheConfig;
 use crate::error::BuildCacheError;
+use crate::git::find_nearest_cache_entry;
 use crate::key::BuildCacheKey;
 use crate::storage::{StorageClient, StorageObject};
 use git2::{ErrorCode, Repository};
@@ -157,6 +158,38 @@ impl BuildCacheClient {
         self.apply_cache_archive_async(root.as_ref().to_path_buf(), path)
             .await?;
         Ok(())
+    }
+
+    pub async fn apply_nearest_cache(
+        &self,
+        repo_root: impl AsRef<Path>,
+        repo_name: metis_common::RepoName,
+    ) -> Result<Option<BuildCacheKey>, BuildCacheError> {
+        let entries = self.list_caches(repo_name.clone()).await?;
+        let repo_root = repo_root.as_ref();
+        let nearest = find_nearest_cache_entry(repo_root, repo_name, entries)?;
+        let Some(nearest) = nearest else {
+            return Ok(None);
+        };
+        self.download_and_apply_cache(repo_root, &nearest.key)
+            .await?;
+        Ok(Some(nearest.key))
+    }
+
+    pub async fn build_and_upload_cache(
+        &self,
+        repo_root: impl AsRef<Path>,
+        repo_name: metis_common::RepoName,
+        git_sha: &str,
+    ) -> Result<BuildCacheKey, BuildCacheError> {
+        let key = BuildCacheKey::new(repo_name, git_sha);
+        let temp = tempfile::NamedTempFile::new()
+            .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
+        let archive_path = temp.path().to_path_buf();
+        self.build_cache_archive_async(repo_root.as_ref().to_path_buf(), archive_path.clone())
+            .await?;
+        self.upload_cache(&key, archive_path).await?;
+        Ok(key)
     }
 
     fn build_cache_archive_impl(
