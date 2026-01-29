@@ -118,7 +118,37 @@ pub fn clone_repo(url: &str, rev: &str, dest: &Path, github_token: Option<&str>)
         .clone(url, dest)
         .with_context(|| format!("failed to clone repository from {url}"))?;
 
+    fetch_revision(&repo, rev, github_token)
+        .with_context(|| format!("failed to fetch revision '{rev}' from {url}"))?;
     checkout_revision(&repo, rev)?;
+    Ok(())
+}
+
+fn fetch_revision(repo: &Repository, rev: &str, github_token: Option<&str>) -> Result<()> {
+    if rev == "HEAD" || rev == "main" || rev.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+
+    let mut fetch_opts = FetchOptions::new();
+    fetch_opts.remote_callbacks(remote_callbacks(github_token));
+
+    let mut remote = repo
+        .find_remote("origin")
+        .context("failed to find origin remote")?;
+
+    let refspecs = if rev.starts_with("refs/") {
+        vec![rev.to_string()]
+    } else {
+        vec![
+            format!("refs/heads/{rev}:refs/heads/{rev}"),
+            format!("refs/tags/{rev}:refs/tags/{rev}"),
+        ]
+    };
+
+    remote
+        .fetch(&refspecs, Some(&mut fetch_opts), None)
+        .context("failed to fetch revision from remote")?;
+
     Ok(())
 }
 

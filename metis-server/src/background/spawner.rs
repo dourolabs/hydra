@@ -281,7 +281,16 @@ impl Spawner for AgentQueue {
         for (issue_id, issue) in issues {
             let issue = issue.item;
             let followup_agent = state.config.background.merge_request_followup_agent.trim();
-            if should_skip_for_assignee_mismatch(&self.name, followup_agent, &issue) {
+            let last_patch_status = match issue.patches.last() {
+                Some(patch_id) => state.get_patch(patch_id).await.ok().map(|p| p.item.status),
+                None => None,
+            };
+            if should_skip_for_assignee_mismatch(
+                &self.name,
+                followup_agent,
+                &issue,
+                last_patch_status,
+            ) {
                 continue;
             }
 
@@ -401,12 +410,14 @@ fn should_skip_for_assignee_mismatch(
     agent_name: &str,
     followup_agent: &str,
     issue: &Issue,
+    last_patch_status: Option<PatchStatus>,
 ) -> bool {
     let assignee_mismatch = issue.assignee.as_deref() != Some(agent_name);
     assignee_mismatch
         && !(agent_name == followup_agent
             && !followup_agent.is_empty()
-            && issue.issue_type == crate::domain::issues::IssueType::MergeRequest)
+            && issue.issue_type == crate::domain::issues::IssueType::MergeRequest
+            && last_patch_status == Some(PatchStatus::ChangesRequested))
 }
 
 #[cfg(test)]
