@@ -1,0 +1,95 @@
+@use "../../theme";
+
+.metis-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: theme.spacing(1.5);
+  border-radius: theme.border-radius("full");
+  border: 1px solid transparent;
+  padding: theme.spacing(2.25) theme.spacing(4);
+  font: inherit;
+  font-weight: theme.font-weight("semibold");
+  font-size: theme.font-size("base");
+  letter-spacing: theme.letter-spacing("wide");
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease,
+    border-color 140ms ease, color 140ms ease;
+}
+
+.metis-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("button", "focus-ring");
+}
+
+.metis-button:disabled {
+  cursor: not-allowed;
+  background: theme.color("button", "disabled-background");
+  color: theme.color("button", "disabled-text");
+  border-color: theme.color("button", "disabled-border");
+  box-shadow: none;
+  transform: none;
+}
+
+.metis-button--primary {
+  background: theme.color("button", "primary-background");
+  color: theme.color("button", "primary-text");
+  box-shadow: 0 theme.spacing(2) theme.spacing(5) theme.color("button", "primary-shadow");
+}
+
+.metis-button--primary:hover:enabled {
+  background: theme.color("button", "primary-hover");
+  transform: translateY(theme.spacing(-0.25));
+}
+
+.metis-button--primary:active:enabled {
+  background: theme.color("button", "primary-active");
+  transform: translateY(0);
+  box-shadow: 0 theme.spacing(1.5) theme.spacing(4) theme.color("button", "primary-shadow");
+}
+
+.metis-button--secondary {
+  background: theme.color("button", "secondary-background");
+  color: theme.color("button", "secondary-text");
+  border-color: theme.color("button", "secondary-border");
+}
+
+.metis-button--secondary:hover:enabled {
+  background: theme.color("button", "secondary-hover");
+  border-color: theme.color("button", "secondary-hover-border");
+  color: theme.color("button", "secondary-hover-text");
+}
+
+.metis-button--secondary:active:enabled {
+  background: theme.color("button", "secondary-active");
+}
+
+.metis-button--ghost {
+  background: transparent;
+  color: theme.color("button", "ghost-text");
+  border-color: theme.color("button", "ghost-border");
+}
+
+.metis-button--ghost:hover:enabled {
+  background: theme.color("button", "ghost-hover");
+}
+
+.metis-button--ghost:active:enabled {
+  background: theme.color("button", "ghost-active");
+}
+
+.metis-button--sm {
+  padding: theme.spacing(1.75) theme.spacing(3);
+  font-size: theme.font-size("sm");
+}
+
+.metis-button--lg {
+  padding: theme.spacing(2.75) theme.spacing(5);
+  font-size: theme.font-size("lg");
+}
+
+.metis-button--full {
+  width: 100%;
+}

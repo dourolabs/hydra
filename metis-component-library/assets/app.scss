@@ -179,6 +179,18 @@ h1 {
   gap: theme.spacing(4.5);
 }
 
+.button-stack {
+  display: grid;
+  gap: theme.spacing(3.5);
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: theme.spacing(2.5);
+  align-items: center;
+}
+
 .field {
   display: grid;
   gap: theme.spacing(2);

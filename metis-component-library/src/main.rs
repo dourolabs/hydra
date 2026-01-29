@@ -2,11 +2,12 @@ use dioxus::document;
 use dioxus::prelude::*;
 
 use metis_component_library::{
-    Input, Select, SelectGroup, SelectGroupLabel, SelectItemIndicator, SelectList, SelectOption,
-    SelectTrigger, SelectValue,
+    Button, ButtonSize, ButtonVariant, Input, Select, SelectGroup, SelectGroupLabel,
+    SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
 };
 
 const APP_CSS: Asset = asset!("/assets/app.scss");
+const BUTTON_CSS: Asset = asset!("./components/button/style.scss");
 const INPUT_CSS: Asset = asset!("./components/input/style.scss");
 const SELECT_CSS: Asset = asset!("./components/select.scss");
 
@@ -83,6 +84,7 @@ fn App() -> Element {
     let mut cluster = use_signal(|| Cluster::Atlas);
     let mut alias = use_signal(|| "delta-shard".to_string());
     let mut inbox = use_signal(|| "ops@metis.ai".to_string());
+    let mut last_action = use_signal(|| "No actions yet.".to_string());
 
     use_effect(move || {
         let attribute = theme.read().attribute();
@@ -99,6 +101,7 @@ fn App() -> Element {
     rsx! {
         document::Title { "Metis Component Library" }
         document::Stylesheet { href: APP_CSS }
+        document::Stylesheet { href: BUTTON_CSS }
         document::Stylesheet { href: INPUT_CSS }
         document::Stylesheet { href: SELECT_CSS }
         div { class: "demo-shell",
@@ -254,6 +257,51 @@ fn App() -> Element {
                             }
                             span { class: "field-note", "Disabled select for contrast." }
                         }
+                    }
+                }
+                section { class: "panel",
+                    div { class: "panel-header",
+                        h2 { "Buttons" }
+                        p { "Primary and secondary actions with size and width variations." }
+                    }
+                    div { class: "button-stack",
+                        div { class: "button-row",
+                            Button {
+                                onclick: move |_| {
+                                    last_action.set("Launched Atlas runbook.".to_string());
+                                },
+                                "Launch runbook"
+                            }
+                            Button {
+                                variant: Some(ButtonVariant::Secondary),
+                                onclick: move |_| {
+                                    last_action.set("Opened incident channel.".to_string());
+                                },
+                                "Open incident room"
+                            }
+                        }
+                        div { class: "button-row",
+                            Button { size: Some(ButtonSize::Sm), variant: Some(ButtonVariant::Ghost), "Ghost" }
+                            Button {
+                                size: Some(ButtonSize::Lg),
+                                variant: Some(ButtonVariant::Primary),
+                                "Promote build"
+                            }
+                            Button {
+                                variant: Some(ButtonVariant::Secondary),
+                                disabled: Some(true),
+                                "Disabled"
+                            }
+                        }
+                        Button {
+                            full_width: Some(true),
+                            variant: Some(ButtonVariant::Primary),
+                            onclick: move |_| {
+                                last_action.set("Deployment queued.".to_string());
+                            },
+                            "Queue deployment"
+                        }
+                        span { class: "field-note", "Last action: {last_action}" }
                     }
                 }
             }
