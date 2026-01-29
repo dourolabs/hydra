@@ -31,7 +31,9 @@
       gnugrep,
       dioxus-cli,
       wasm-bindgen-cli,
-      k9s
+      binaryen,
+      k9s,
+      flyctl
     }:
       mkShell {
         FORCE_COLOR = 1;
@@ -48,6 +50,8 @@
           k9s
           dioxus-cli
           wasm-bindgen-cli
+          binaryen
+          flyctl
         ];
       };
 
