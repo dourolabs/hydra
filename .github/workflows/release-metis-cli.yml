@@ -86,7 +86,10 @@ jobs:
 
   release:
     name: Publish release
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build
+      - package-deb
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -103,3 +106,80 @@ jobs:
           files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package-deb:
+    name: Build Debian package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Debian packaging tooling
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dpkg-dev
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build Debian package
+        run: cargo deb -p metis --features vendored-openssl --target x86_64-unknown-linux-gnu
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: metis-deb
+          path: target/x86_64-unknown-linux-gnu/debian/*.deb
+          if-no-files-found: error
+
+  publish-apt:
+    name: Publish APT package
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package-deb
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download Debian package
+        uses: actions/download-artifact@v4
+        with:
+          name: metis-deb
+          path: dist
+
+      - name: Configure Cloudsmith CLI
+        uses: cloudsmith-io/cloudsmith-cli-action@v1
+        with:
+          oidc-namespace: ${{ vars.CLOUDSMITH_NAMESPACE }}
+          oidc-service-slug: ${{ vars.CLOUDSMITH_SERVICE_SLUG }}
+
+      - name: Upload package to Cloudsmith APT
+        run: >
+          cloudsmith push deb
+          ${{ vars.CLOUDSMITH_NAMESPACE }}/${{ vars.CLOUDSMITH_APT_REPOSITORY }}/${{ vars.CLOUDSMITH_APT_DISTRO }}/${{ vars.CLOUDSMITH_APT_RELEASE }}
+          dist/*.deb
+
+  publish-homebrew:
+    name: Publish Homebrew formula
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Update Homebrew formula
+        uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: ${{ vars.HOMEBREW_FORMULA || 'metis' }}
+          homebrew-tap: ${{ vars.HOMEBREW_TAP || 'dourolabs/homebrew-metis' }}
+          download-url: https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.ref_name }}.tar.gz
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_COMMITTER_TOKEN }}

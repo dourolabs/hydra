@@ -2,6 +2,8 @@
 name = "metis"
 version = "0.1.0"
 edition = "2021"
+description = "Metis CLI for managing jobs, workers, and workflows."
+repository = "https://github.com/dourolabs/metis"
 
 [features]
 vendored-openssl = [
@@ -47,3 +49,12 @@ metis-server = { path = "../metis-server", features = ["test-utils"] }
 octocrab = "0.49"
 jsonwebtoken = "10"
 openssl = "0.10"
+
+[package.metadata.deb]
+maintainer = "Metis Team <ops@dourolabs.ai>"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/metis", "usr/bin/", "755"],
+]
