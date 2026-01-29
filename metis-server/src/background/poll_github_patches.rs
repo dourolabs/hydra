@@ -442,13 +442,16 @@ fn apply_github_sync(
     let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
     let has_new_changes_requested =
         has_new_non_approved_reviews(&latest_patch.reviews, &merged_reviews);
-    let mut new_status = match pr_status {
+    let new_status = match pr_status {
         PatchStatus::Closed | PatchStatus::Merged => pr_status,
-        PatchStatus::Open | PatchStatus::ChangesRequested => latest_patch.status,
+        PatchStatus::Open | PatchStatus::ChangesRequested => {
+            if has_new_changes_requested {
+                PatchStatus::ChangesRequested
+            } else {
+                PatchStatus::Open
+            }
+        }
     };
-    if matches!(pr_status, PatchStatus::Open) && has_new_changes_requested {
-        new_status = PatchStatus::ChangesRequested;
-    }
 
     latest_patch.reviews = merged_reviews;
     latest_patch.status = new_status;
@@ -809,6 +812,68 @@ mod tests {
 
         assert_eq!(updated.status, PatchStatus::ChangesRequested);
         assert_eq!(updated.reviews, reviews);
+        let updated_github = updated.github.expect("github metadata should be set");
+        assert_eq!(updated_github.head_ref, Some("feature".to_string()));
+        assert_eq!(updated_github.base_ref, Some("main".to_string()));
+        assert_eq!(
+            updated_github.url.as_deref(),
+            Some("https://example.com/pr/1")
+        );
+        assert_eq!(updated_github.ci, Some(ci_status));
+    }
+
+    #[test]
+    fn apply_github_sync_resets_changes_requested_without_new_review() {
+        let github = GithubPr::new(
+            "octo".to_string(),
+            "repo".to_string(),
+            1,
+            None,
+            None,
+            None,
+            None,
+        );
+        let existing_reviews = vec![Review::new(
+            "please update".to_string(),
+            false,
+            "alice".to_string(),
+            None,
+        )];
+        let patch = Patch::new(
+            "Patch".to_string(),
+            "Patch description".to_string(),
+            sample_diff(),
+            PatchStatus::ChangesRequested,
+            false,
+            None,
+            existing_reviews.clone(),
+            RepoName::from_str("dourolabs/api").unwrap(),
+            Some(github.clone()),
+        );
+        let pr: PullRequest = serde_json::from_value(json!({
+            "url": "",
+            "id": 1,
+            "number": 1,
+            "state": "open",
+            "locked": false,
+            "maintainer_can_modify": false,
+            "html_url": "https://example.com/pr/1",
+            "head": { "ref": "feature", "sha": "abc123", "user": null, "repo": null },
+            "base": { "ref": "main", "sha": "def456", "user": null, "repo": null }
+        }))
+        .unwrap();
+        let ci_status = GithubCiStatus::new(GithubCiState::Success, None);
+
+        let updated = apply_github_sync(
+            patch,
+            &github,
+            &pr,
+            existing_reviews.clone(),
+            ci_status.clone(),
+        );
+
+        assert_eq!(updated.status, PatchStatus::Open);
+        assert_eq!(updated.reviews, existing_reviews);
         let updated_github = updated.github.expect("github metadata should be set");
         assert_eq!(updated_github.head_ref, Some("feature".to_string()));
         assert_eq!(updated_github.base_ref, Some("main".to_string()));
