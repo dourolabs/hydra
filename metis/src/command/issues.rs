@@ -108,6 +108,10 @@ pub enum IssueCommands {
         #[arg(long, value_name = "IMAGE")]
         image: Option<String>,
 
+        /// Model to use for job settings.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+
         /// Branch to use for job settings.
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
@@ -190,6 +194,10 @@ pub enum IssueCommands {
         /// Container image to use for job settings.
         #[arg(long, value_name = "IMAGE", conflicts_with = "clear_job_settings")]
         image: Option<String>,
+
+        /// Model to use for job settings.
+        #[arg(long, value_name = "MODEL", conflicts_with = "clear_job_settings")]
+        model: Option<String>,
 
         /// Branch to use for job settings.
         #[arg(long, value_name = "BRANCH", conflicts_with = "clear_job_settings")]
@@ -284,6 +292,7 @@ pub async fn run(
             repo_name,
             remote_url,
             image,
+            model,
             branch,
             max_retries,
         } => {
@@ -301,6 +310,7 @@ pub async fn run(
                 repo_name,
                 remote_url,
                 image,
+                model,
                 branch,
                 max_retries,
                 current_issue_id,
@@ -324,6 +334,7 @@ pub async fn run(
             repo_name,
             remote_url,
             image,
+            model,
             branch,
             max_retries,
             clear_job_settings,
@@ -344,6 +355,7 @@ pub async fn run(
             repo_name,
             remote_url,
             image,
+            model,
             branch,
             max_retries,
             clear_job_settings,
@@ -625,6 +637,7 @@ fn resolve_job_settings(
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
+    model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
     clear_job_settings: bool,
@@ -662,6 +675,15 @@ fn resolve_job_settings(
             bail!("--image must not be empty when provided.");
         }
         job_settings.image = Some(trimmed.to_string());
+        changed = true;
+    }
+
+    if let Some(value) = model {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            bail!("--model must not be empty when provided.");
+        }
+        job_settings.model = Some(trimmed.to_string());
         changed = true;
     }
 
@@ -704,6 +726,7 @@ async fn resolve_inherited_job_settings(
     job_settings.repo_name = current.repo_name;
     job_settings.remote_url = current.remote_url;
     job_settings.image = current.image;
+    job_settings.model = current.model;
     job_settings.branch = current.branch;
 
     Ok(job_settings)
@@ -722,6 +745,7 @@ async fn create_issue(
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
+    model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
     current_issue_id: Option<IssueId>,
@@ -753,6 +777,7 @@ async fn create_issue(
         repo_name,
         remote_url,
         image,
+        model,
         branch,
         max_retries,
         false,
@@ -799,6 +824,7 @@ async fn update_issue(
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
+    model: Option<String>,
     branch: Option<String>,
     max_retries: Option<u32>,
     clear_job_settings: bool,
@@ -854,6 +880,7 @@ async fn update_issue(
         || repo_name.is_some()
         || remote_url.is_some()
         || image.is_some()
+        || model.is_some()
         || branch.is_some()
         || max_retries.is_some();
 
@@ -879,6 +906,7 @@ async fn update_issue(
         repo_name,
         remote_url,
         image,
+        model,
         branch,
         max_retries,
         clear_job_settings,
@@ -1479,6 +1507,7 @@ mod tests {
         job_settings.repo_name = Some(sample_repo_name());
         job_settings.remote_url = Some("https://example.com/service.git".into());
         job_settings.image = Some("worker:123".into());
+        job_settings.model = Some("gpt-4o".into());
         job_settings.branch = Some("main".into());
         job_settings.max_retries = Some(5);
         job_settings.cpu_limit = Some("750m".into());
@@ -1902,6 +1931,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1957,6 +1987,7 @@ mod tests {
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:latest".into()),
+            None,
             Some("feature/job-settings".into()),
             Some(4),
             None,
@@ -2032,6 +2063,7 @@ mod tests {
             Username::from("creator-a"),
             "New issue description".into(),
             Some("Initial notes".into()),
+            None,
             None,
             None,
             None,
@@ -2121,6 +2153,7 @@ mod tests {
             Some("dourolabs/override".into()),
             None,
             Some("custom:tag".into()),
+            None,
             Some("override-branch".into()),
             None,
             Some(current_issue_id),
@@ -2153,6 +2186,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .is_err());
@@ -2171,6 +2205,7 @@ mod tests {
             Some("   ".into()),
             empty_user(),
             "Valid description".into(),
+            None,
             None,
             None,
             None,
@@ -2346,6 +2381,7 @@ mod tests {
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:123".into()),
+            None,
             Some("main".into()),
             Some(5),
             false,
@@ -2424,6 +2460,7 @@ mod tests {
             true,
             None,
             true,
+            None,
             None,
             None,
             None,
@@ -2509,6 +2546,7 @@ mod tests {
             false,
             None,
             false,
+            None,
             None,
             None,
             None,

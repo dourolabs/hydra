@@ -458,6 +458,8 @@ pub struct JobSettings {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub max_retries: Option<u32>,
@@ -486,6 +488,9 @@ impl JobSettings {
         }
         if self.image.is_none() {
             self.image = other.image.take();
+        }
+        if self.model.is_none() {
+            self.model = other.model.take();
         }
         if self.branch.is_none() {
             self.branch = other.branch.take();
@@ -778,6 +783,7 @@ mod tests {
             repo_name: Some(RepoName::from_str("dourolabs/metis").unwrap()),
             remote_url: Some("https://github.com/dourolabs/metis".to_string()),
             image: Some("worker:latest".to_string()),
+            model: Some("gpt-4o".to_string()),
             branch: Some("main".to_string()),
             max_retries: Some(3),
             cpu_limit: Some("500m".to_string()),
