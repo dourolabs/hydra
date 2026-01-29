@@ -196,18 +196,30 @@ impl BuildCacheClient {
         archive_path: &Path,
     ) -> Result<(), BuildCacheError> {
         let tracked_paths = collect_tracked_paths(root)?;
-        if !tracked_paths.is_empty() {
-            assert_archive_safe(archive_path, &tracked_paths)?;
-        }
-
         let input = File::open(archive_path)
             .map_err(|err| BuildCacheError::io("opening cache archive", err))?;
         let decoder = zstd::Decoder::new(input)
             .map_err(|err| BuildCacheError::io("initializing zstd decoder", err))?;
         let mut archive = tar::Archive::new(decoder);
-        archive
-            .unpack(root)
-            .map_err(|err| BuildCacheError::io("unpacking cache archive", err))?;
+        let entries = archive
+            .entries()
+            .map_err(|err| BuildCacheError::io("reading cache archive entries", err))?;
+
+        for entry in entries {
+            let mut entry =
+                entry.map_err(|err| BuildCacheError::io("reading cache archive entry", err))?;
+            let entry_type = entry.header().entry_type();
+            let path = entry
+                .path()
+                .map_err(|err| BuildCacheError::io("reading cache archive entry path", err))?;
+            let normalized = normalize_archive_path(&path)?;
+            if entry_type.is_file() && tracked_paths.contains(&normalized) {
+                continue;
+            }
+            entry
+                .unpack_in(root)
+                .map_err(|err| BuildCacheError::io("unpacking cache archive entry", err))?;
+        }
         Ok(())
     }
 }
@@ -349,42 +361,6 @@ fn collect_tracked_paths(root: &Path) -> Result<HashSet<PathBuf>, BuildCacheErro
         tracked.insert(path);
     }
     Ok(tracked)
-}
-
-fn assert_archive_safe(
-    archive_path: &Path,
-    tracked_paths: &HashSet<PathBuf>,
-) -> Result<(), BuildCacheError> {
-    let input = File::open(archive_path)
-        .map_err(|err| BuildCacheError::io("opening cache archive for inspection", err))?;
-    let decoder = zstd::Decoder::new(input)
-        .map_err(|err| BuildCacheError::io("initializing zstd decoder for inspection", err))?;
-    let mut archive = tar::Archive::new(decoder);
-    let mut conflicts = Vec::new();
-
-    let entries = archive
-        .entries()
-        .map_err(|err| BuildCacheError::io("reading cache archive entries", err))?;
-    for entry in entries {
-        let entry = entry.map_err(|err| BuildCacheError::io("reading cache archive entry", err))?;
-        let entry_type = entry.header().entry_type();
-        if entry_type.is_dir() {
-            continue;
-        }
-        let path = entry
-            .path()
-            .map_err(|err| BuildCacheError::io("reading cache archive entry path", err))?;
-        let normalized = normalize_archive_path(&path)?;
-        if tracked_paths.contains(&normalized) {
-            conflicts.push(normalized);
-        }
-    }
-
-    if !conflicts.is_empty() {
-        return Err(BuildCacheError::tracked_files(&conflicts));
-    }
-
-    Ok(())
 }
 
 fn normalize_archive_path(path: &Path) -> Result<PathBuf, BuildCacheError> {
@@ -717,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_cache_archive_rejects_tracked_files() {
+    fn apply_cache_archive_skips_tracked_files() {
         let repo_dir = tempdir().expect("repo dir");
         let repo = Repository::init(repo_dir.path()).expect("init repo");
         let tracked_path = repo_dir.path().join("src/lib.rs");
@@ -738,12 +714,13 @@ mod tests {
             .build_cache_archive(repo_dir.path(), &archive_path)
             .expect("build archive");
 
-        let error = client
+        write_file(&tracked_path, "local edits");
+
+        client
             .apply_cache_archive(repo_dir.path(), &archive_path)
-            .expect_err("expected conflict error");
-        match error {
-            BuildCacheError::TrackedFiles { .. } => {}
-            other => panic!("unexpected error: {other:?}"),
-        }
+            .expect("apply archive");
+
+        let contents = std::fs::read_to_string(&tracked_path).expect("read tracked file");
+        assert_eq!(contents, "local edits");
     }
 }

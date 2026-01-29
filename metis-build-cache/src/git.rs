@@ -28,10 +28,13 @@ pub fn find_nearest_cache_entry(
 
     let mut best: Option<NearestCacheEntry> = None;
     for entry in entries {
-        let Some(git_sha) = BuildCacheKey::git_sha_from_object_key(&repo_name, &entry.key) else {
+        let Some(cache_key) = BuildCacheKey::from_object_key(&entry.key) else {
             continue;
         };
-        let Ok(oid) = Oid::from_str(&git_sha) else {
+        if cache_key.repo_name != repo_name {
+            continue;
+        }
+        let Ok(oid) = Oid::from_str(&cache_key.git_sha) else {
             continue;
         };
         if let Err(err) = repo.find_commit(oid) {
@@ -49,7 +52,7 @@ pub fn find_nearest_cache_entry(
         };
 
         let candidate = NearestCacheEntry {
-            key: BuildCacheKey::new(repo_name.clone(), git_sha),
+            key: cache_key,
             entry,
             distance,
         };
