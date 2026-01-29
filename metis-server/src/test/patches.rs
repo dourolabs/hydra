@@ -395,9 +395,9 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
 
     let upload_mock = github_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments")
+            .path("/repos/octo/repo/issues/42/comments/attachments")
             .query_param("name", "screenshot.png")
-            .header("authorization", "token gh-token")
+            .header("authorization", "Bearer gh-token")
             .header("content-type", "image/png");
         then.status(201)
             .json_body(json!({ "url": "https://github.com/octo/repo/assets/1" }));
@@ -477,9 +477,9 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
     // Regression coverage: the current upload request shape triggers a 400 from GitHub.
     let upload_mock = github_server.mock(|when, then| {
         when.method(POST)
-            .path("/repos/octo/repo/issues/42/comments")
+            .path("/repos/octo/repo/issues/42/comments/attachments")
             .query_param("name", "failure.png")
-            .header("authorization", "token gh-token")
+            .header("authorization", "Bearer gh-token")
             .header("content-type", "image/png")
             .body("binary-payload");
         then.status(400)
