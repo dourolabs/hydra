@@ -143,6 +143,9 @@ pub trait Store: Send + Sync {
     /// Retrieves an issue by its IssueId.
     async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError>;
 
+    /// Retrieves all versions of an issue in ascending version order.
+    async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError>;
+
     /// Updates an existing issue in the store.
     ///
     /// Returns an error if the issue does not exist or if any dependencies
@@ -166,6 +169,9 @@ pub trait Store: Send + Sync {
 
     /// Retrieves a patch by its PatchId.
     async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError>;
+
+    /// Retrieves all versions of a patch in ascending version order.
+    async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError>;
 
     /// Updates an existing patch in the store.
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
@@ -249,6 +255,9 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The task if found, or an error if not found
     async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError>;
+
+    /// Retrieves all versions of a task in ascending version order.
+    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError>;
 
     /// Lists all task IDs in the store.
     ///
