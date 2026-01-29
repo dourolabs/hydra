@@ -118,6 +118,7 @@ impl TestEnvironment {
             worker_dir,
             None,
             None,
+            None,
             &bash_commands,
             &context,
         )

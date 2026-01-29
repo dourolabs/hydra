@@ -1413,6 +1413,63 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn get_job_context_includes_model_from_issue() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state;
+    let default_image = default_image();
+    let job_id = task_id("t-modeljob");
+    let issue_id = handles
+        .store
+        .add_issue(Issue {
+            issue_type: IssueType::Task,
+            description: "Model context".to_string(),
+            creator: Username::from("tester"),
+            progress: String::new(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: JobSettings {
+                model: Some("claude-3-5-sonnet".to_string()),
+                ..JobSettings::default()
+            },
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        })
+        .await?;
+    handles
+        .store
+        .add_task_with_id(
+            job_id.clone(),
+            Task {
+                prompt: "0".to_string(),
+                context: BundleSpec::None,
+                spawned_from: Some(issue_id),
+                image: Some(default_image),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                status: Status::Created,
+                last_message: None,
+                error: None,
+            },
+            Utc::now(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!("{}/v1/jobs/{job_id}/context", server.base_url()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::jobs::WorkerContext = response.json().await?;
+    assert_eq!(body.model.as_deref(), Some("claude-3-5-sonnet"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let state = handles.state;

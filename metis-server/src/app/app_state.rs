@@ -801,7 +801,7 @@ impl AppState {
         Ok(job_id)
     }
 
-    fn apply_job_settings_defaults(&self, mut settings: JobSettings) -> JobSettings {
+    pub(crate) fn apply_job_settings_defaults(&self, mut settings: JobSettings) -> JobSettings {
         if settings.model.is_none() {
             if let Some(default_model) =
                 self.config.job.default_model.as_deref().and_then(non_empty)
