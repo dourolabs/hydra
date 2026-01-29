@@ -3676,6 +3676,7 @@ mod tests {
                 BundleSpec::None,
                 None,
                 None,
+                None,
                 HashMap::new(),
                 None,
                 None,

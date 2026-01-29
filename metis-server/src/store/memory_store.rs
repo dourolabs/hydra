@@ -694,6 +694,7 @@ mod tests {
             BundleSpec::None,
             None,
             Some("metis-worker:latest".to_string()),
+            None,
             HashMap::new(),
             None,
             None,

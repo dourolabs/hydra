@@ -741,6 +741,9 @@ impl AppState {
             .as_ref()
             .and_then(|settings| settings.image.clone())
             .or(request.image);
+        let model = job_settings
+            .as_ref()
+            .and_then(|settings| settings.model.clone());
         let cpu_limit = job_settings
             .as_ref()
             .and_then(|settings| settings.cpu_limit.clone());
@@ -782,6 +785,7 @@ impl AppState {
             context,
             request.issue_id.clone(),
             image,
+            model,
             env_vars,
             cpu_limit,
             memory_limit,
@@ -1999,6 +2003,7 @@ mod tests {
             BundleSpec::None,
             None,
             Some("worker:latest".to_string()),
+            None,
             HashMap::new(),
             None,
             None,
@@ -2011,6 +2016,7 @@ mod tests {
             BundleSpec::None,
             Some(issue_id.clone()),
             Some("worker:latest".to_string()),
+            None,
             HashMap::new(),
             None,
             None,
