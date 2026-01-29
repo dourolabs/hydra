@@ -1361,6 +1361,11 @@ mod tests {
 
         handles
             .state
+            .transition_task_to_started(&task_id)
+            .await
+            .unwrap();
+        handles
+            .state
             .transition_task_to_running(&task_id)
             .await
             .unwrap();

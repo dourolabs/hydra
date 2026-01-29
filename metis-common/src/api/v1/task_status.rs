@@ -7,6 +7,7 @@ use serde_json::Value;
 #[non_exhaustive]
 pub enum Status {
     Pending,
+    Started,
     Running,
     Complete,
     Failed,

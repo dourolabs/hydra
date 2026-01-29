@@ -443,6 +443,7 @@ fn color_status(padded_status: &str, status: &Status) -> String {
         Status::Complete => padded_status.green().to_string(),
         Status::Running => padded_status.yellow().to_string(),
         Status::Failed => padded_status.red().to_string(),
+        Status::Started => padded_status.cyan().to_string(),
         Status::Pending => padded_status.bold().to_string(),
         _ => padded_status.to_string(),
     }
@@ -451,6 +452,7 @@ fn color_status(padded_status: &str, status: &Status) -> String {
 fn format_status(status: &Status) -> &'static str {
     match status {
         Status::Pending => "pending",
+        Status::Started => "started",
         Status::Running => "running",
         Status::Complete => "complete",
         Status::Failed => "failed",
@@ -660,6 +662,7 @@ mod tests {
     #[test]
     fn format_status_returns_plain_labels() {
         assert_eq!(format_status(&Status::Pending), "pending");
+        assert_eq!(format_status(&Status::Started), "started");
         assert_eq!(format_status(&Status::Running), "running");
         assert_eq!(format_status(&Status::Complete), "complete");
         assert_eq!(format_status(&Status::Failed), "failed");

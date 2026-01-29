@@ -910,18 +910,18 @@ impl AppState {
             )
             .await
         {
-            Ok(()) => match self.transition_task_to_running(&task_id).await {
+            Ok(()) => match self.transition_task_to_started(&task_id).await {
                 Ok(_) => {
                     info!(
                         metis_id = %task_id,
-                        "set task status to Running (spawned)"
+                        "set task status to Started (spawned)"
                     );
                 }
                 Err(err) => {
                     warn!(
                         metis_id = %task_id,
                         error = %err,
-                        "failed to set task to Running after spawn"
+                        "failed to set task to Started after spawn"
                     );
                 }
             },
@@ -1002,9 +1002,43 @@ impl AppState {
     }
 
     pub async fn reconcile_running_task(&self, task_id: TaskId) {
+        let current_status = {
+            let store = self.store.as_ref();
+            match store.get_task(&task_id).await {
+                Ok(task) => task.item.status,
+                Err(err) => {
+                    warn!(
+                        metis_id = %task_id,
+                        error = %err,
+                        "failed to load task while reconciling status"
+                    );
+                    return;
+                }
+            }
+        };
+
         match self.job_engine.find_job_by_metis_id(&task_id).await {
             Ok(job) => match job.status {
-                JobStatus::Running => {}
+                JobStatus::Started => {}
+                JobStatus::Running => {
+                    if current_status == Status::Started {
+                        match self.transition_task_to_running(&task_id).await {
+                            Ok(_) => {
+                                info!(
+                                    metis_id = %task_id,
+                                    "set task status to Running (pod started)"
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    metis_id = %task_id,
+                                    error = %err,
+                                    "failed to set task to Running after pod start"
+                                );
+                            }
+                        }
+                    }
+                }
                 JobStatus::Complete => {
                     warn!(
                         metis_id = %task_id,
@@ -1617,7 +1651,7 @@ impl AppState {
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id).await?;
-        if latest.item.status != Status::Pending {
+        if !matches!(latest.item.status, Status::Pending | Status::Started) {
             return Err(StoreError::InvalidStatusTransition);
         }
 
@@ -1637,7 +1671,12 @@ impl AppState {
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
         let latest = store.get_task(task_id).await?;
-        if latest.item.status != Status::Running {
+        let can_transition = match latest.item.status {
+            Status::Pending => result.is_err(),
+            Status::Started | Status::Running => true,
+            _ => false,
+        };
+        if !can_transition {
             return Err(StoreError::InvalidStatusTransition);
         }
 
@@ -1654,6 +1693,24 @@ impl AppState {
                 updated.error = Some(error);
             }
         }
+
+        store.update_task(task_id, updated).await
+    }
+
+    pub async fn transition_task_to_started(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let store = self.store.as_ref();
+        let latest = store.get_task(task_id).await?;
+        if latest.item.status != Status::Pending {
+            return Err(StoreError::InvalidStatusTransition);
+        }
+
+        let mut updated = latest.item;
+        updated.status = Status::Started;
+        updated.last_message = None;
+        updated.error = None;
 
         store.update_task(task_id, updated).await
     }
@@ -1902,7 +1959,7 @@ async fn active_tasks_for_issue(
     let mut active_task_ids = Vec::new();
     for task_id in task_ids {
         let status = store.get_task(&task_id).await?.item.status;
-        if matches!(status, Status::Pending | Status::Running) {
+        if matches!(status, Status::Pending | Status::Started | Status::Running) {
             active_task_ids.push(task_id);
         }
     }
@@ -2399,7 +2456,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_pending_task_spawns_and_marks_running() {
+    async fn start_pending_task_spawns_and_marks_started() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let config = state.config.clone();
@@ -2415,7 +2472,7 @@ mod tests {
         {
             let store = state.store.as_ref();
             let status = store.get_task(&task_id).await.unwrap().item.status;
-            assert_eq!(status, Status::Running);
+            assert_eq!(status, Status::Started);
         }
 
         assert!(job_engine.env_vars_for_job(&task_id).is_some());
@@ -2518,9 +2575,9 @@ mod tests {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
-                .transition_task_to_running(&task_id)
+                .transition_task_to_started(&task_id)
                 .await
-                .expect("task should transition to running");
+                .expect("task should transition to started");
             task_id
         };
 
@@ -2551,9 +2608,9 @@ mod tests {
             let store = state.store.as_ref();
             let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
             state
-                .transition_task_to_running(&task_id)
+                .transition_task_to_started(&task_id)
                 .await
-                .expect("task should transition to running");
+                .expect("task should transition to started");
             task_id
         };
 

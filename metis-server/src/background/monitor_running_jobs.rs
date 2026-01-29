@@ -30,44 +30,48 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         // Kill any jobs that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
-        let running_ids = match self.state.list_tasks_with_status(Status::Running).await {
-            Ok(ids) => ids,
-            Err(err) => {
-                error!(error = %err, "failed to list running tasks");
-                info!(
-                    worker = WORKER_NAME,
-                    "worker iteration completed with transient error"
-                );
-                return WorkerOutcome::TransientError {
-                    reason: err.to_string(),
-                };
+        let mut active_ids = Vec::new();
+        for status in [Status::Started, Status::Running] {
+            match self.state.list_tasks_with_status(status).await {
+                Ok(ids) => active_ids.extend(ids),
+                Err(err) => {
+                    error!(error = %err, "failed to list active tasks");
+                    info!(
+                        worker = WORKER_NAME,
+                        "worker iteration completed with transient error"
+                    );
+                    return WorkerOutcome::TransientError {
+                        reason: err.to_string(),
+                    };
+                }
             }
-        };
+        }
 
-        if running_ids.is_empty() {
-            info!(worker = WORKER_NAME, "no running tasks found; worker idle");
+        if active_ids.is_empty() {
+            info!(worker = WORKER_NAME, "no active tasks found; worker idle");
             return WorkerOutcome::Idle;
         }
 
+        let active_count = active_ids.len();
         info!(
             worker = WORKER_NAME,
-            count = running_ids.len(),
-            "found running tasks to monitor"
+            count = active_count,
+            "found active tasks to monitor"
         );
 
-        // Check each running job's status
-        for metis_id in &running_ids {
-            self.state.reconcile_running_task(metis_id.clone()).await;
+        // Check each active job's status
+        for metis_id in active_ids {
+            self.state.reconcile_running_task(metis_id).await;
         }
 
         info!(
             worker = WORKER_NAME,
-            processed = running_ids.len(),
+            processed = active_count,
             "worker iteration completed successfully"
         );
 
         WorkerOutcome::Progress {
-            processed: running_ids.len(),
+            processed: active_count,
             failed: 0,
         }
     }
@@ -118,9 +122,9 @@ mod tests {
             .expect("task should be added");
         handles
             .state
-            .transition_task_to_running(&task_id)
+            .transition_task_to_started(&task_id)
             .await
-            .expect("task should be marked running");
+            .expect("task should be marked started");
 
         engine.insert_job(&task_id, JobStatus::Running).await;
 

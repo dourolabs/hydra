@@ -3418,7 +3418,9 @@ fn best_task_indicator(tasks: &[JobDisplay]) -> Option<TaskIndicator> {
         .map(|job| TaskIndicator {
             status: job.status,
             runtime: match job.status {
-                Status::Running | Status::Complete | Status::Failed => job.runtime.clone(),
+                Status::Started | Status::Running | Status::Complete | Status::Failed => {
+                    job.runtime.clone()
+                }
                 _ => None,
             },
         })
@@ -3427,10 +3429,11 @@ fn best_task_indicator(tasks: &[JobDisplay]) -> Option<TaskIndicator> {
 fn task_status_order(status: Status) -> usize {
     match status {
         Status::Running => 0,
-        Status::Pending => 1,
-        Status::Failed => 2,
-        Status::Complete => 3,
-        _ => 4,
+        Status::Started => 1,
+        Status::Pending => 2,
+        Status::Failed => 3,
+        Status::Complete => 4,
+        _ => 5,
     }
 }
 
@@ -3502,6 +3505,7 @@ fn status_style(status: Status) -> Style {
         Status::Complete => Style::default().fg(Color::Green),
         Status::Running => Style::default().fg(Color::Yellow),
         Status::Failed => Style::default().fg(Color::Red),
+        Status::Started => Style::default().fg(Color::Cyan),
         Status::Pending => Style::default().fg(Color::Blue),
         _ => Style::default(),
     }
@@ -3638,6 +3642,10 @@ mod tests {
         let now = Utc::now() - ChronoDuration::seconds(offset_seconds);
         let mut log = TaskStatusLog::new(Status::Pending, now);
         match status {
+            Status::Started => log.events.push(Event::Created {
+                at: now,
+                status: Status::Started,
+            }),
             Status::Running => log.events.push(Event::Started { at: now }),
             Status::Complete => {
                 log.events.push(Event::Started { at: now });
