@@ -1,6 +1,6 @@
 pub mod components;
 
 pub use components::{
-    Input, Select, SelectGroup, SelectGroupLabel, SelectItemIndicator, SelectList, SelectOption,
-    SelectTrigger, SelectValue,
+    Button, ButtonSize, ButtonVariant, Input, Select, SelectGroup, SelectGroupLabel,
+    SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
 };
