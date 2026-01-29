@@ -52,6 +52,10 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn get_issue_versions(&self, _id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
+        fail()
+    }
+
     async fn update_issue(&self, _id: &IssueId, _issue: Issue) -> Result<(), StoreError> {
         fail()
     }
@@ -72,6 +76,10 @@ impl Store for FailingStore {
     }
 
     async fn get_patch(&self, _id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
+        fail()
+    }
+
+    async fn get_patch_versions(&self, _id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         fail()
     }
 
@@ -125,6 +133,10 @@ impl Store for FailingStore {
     }
 
     async fn get_task(&self, _id: &TaskId) -> Result<Versioned<Task>, StoreError> {
+        fail()
+    }
+
+    async fn get_task_versions(&self, _id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
         fail()
     }
 

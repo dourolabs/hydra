@@ -264,6 +264,13 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
+    async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
+        self.issues
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
+    }
+
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         let (previous_dependencies, previous_patches) = match self.issues.get(id) {
             Some(entry) => match entry.value().last() {
@@ -366,6 +373,13 @@ impl Store for MemoryStore {
         self.patches
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+    }
+
+    async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
+        self.patches
+            .get(id)
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
     }
 
@@ -530,6 +544,13 @@ impl Store for MemoryStore {
         self.tasks
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+    }
+
+    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
+        self.tasks
+            .get(id)
+            .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
@@ -879,6 +900,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn issue_versions_return_ordered_entries() {
+        let store = MemoryStore::new();
+
+        let mut issue = sample_issue(vec![]);
+        issue.description = "v1".to_string();
+        let issue_id = store.add_issue(issue).await.unwrap();
+
+        let mut v2 = sample_issue(vec![]);
+        v2.description = "v2".to_string();
+        store.update_issue(&issue_id, v2).await.unwrap();
+
+        let mut v3 = sample_issue(vec![]);
+        v3.description = "v3".to_string();
+        store.update_issue(&issue_id, v3).await.unwrap();
+
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(version_numbers(&versions), vec![1, 2, 3]);
+        assert_eq!(versions[0].item.description, "v1");
+        assert_eq!(versions[2].item.description, "v3");
+    }
+
+    #[tokio::test]
     async fn add_and_get_patch_assigns_id() {
         let store = MemoryStore::new();
 
@@ -915,6 +958,24 @@ mod tests {
 
         let versions = store.patches.get(&id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn patch_versions_return_ordered_entries() {
+        let store = MemoryStore::new();
+
+        let mut patch = sample_patch();
+        patch.title = "v1".to_string();
+        let patch_id = store.add_patch(patch).await.unwrap();
+
+        let mut v2 = sample_patch();
+        v2.title = "v2".to_string();
+        store.update_patch(&patch_id, v2).await.unwrap();
+
+        let versions = store.get_patch_versions(&patch_id).await.unwrap();
+        assert_eq!(version_numbers(&versions), vec![1, 2]);
+        assert_eq!(versions[0].item.title, "v1");
+        assert_eq!(versions[1].item.title, "v2");
     }
 
     #[tokio::test]
@@ -1273,6 +1334,24 @@ mod tests {
 
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn task_versions_return_ordered_entries() {
+        let store = MemoryStore::new();
+
+        let mut task = spawn_task();
+        task.prompt = "v1".to_string();
+        let task_id = store.add_task(task, Utc::now()).await.unwrap();
+
+        let mut v2 = spawn_task();
+        v2.prompt = "v2".to_string();
+        store.update_task(&task_id, v2).await.unwrap();
+
+        let versions = store.get_task_versions(&task_id).await.unwrap();
+        assert_eq!(version_numbers(&versions), vec![1, 2]);
+        assert_eq!(versions[0].item.prompt, "v1");
+        assert_eq!(versions[1].item.prompt, "v2");
     }
 
     #[tokio::test]

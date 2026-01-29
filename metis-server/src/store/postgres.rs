@@ -578,6 +578,16 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
     }
 
+    async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(TABLE_ISSUES, "issue", id.as_ref(), ISSUE_SCHEMA_VERSION)
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+        Ok(versions)
+    }
+
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
         self.get_issue(id).await?;
 
@@ -640,6 +650,16 @@ impl Store for PostgresStore {
         self.fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+    }
+
+    async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+        Ok(versions)
     }
 
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
@@ -817,6 +837,16 @@ impl Store for PostgresStore {
         self.fetch_versioned_payload(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+    }
+
+    async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+        Ok(versions)
     }
 
     async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
