@@ -1,7 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use metis_common::{api::v1::login::LoginRequest, whoami::ActorIdentity};
+use owo_colors::OwoColorize;
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
+use std::io::IsTerminal;
 use std::{path::Path, time::Duration};
 use tokio::time::{sleep, Instant};
 
@@ -56,11 +58,8 @@ pub async fn login_with_github_device_flow(
     let http = reqwest::Client::new();
     let device_flow = start_device_flow(&http, &client_id).await?;
 
-    println!(
-        "Open {} and enter code: {}",
-        device_flow.verification_uri, device_flow.user_code
-    );
-    println!("Waiting for authorization...");
+    print_login_banner();
+    print_login_instructions(&device_flow.verification_uri, &device_flow.user_code);
 
     let token = poll_for_token(&http, &client_id, &device_flow).await?;
     let auth_token = exchange_and_store_token(client, config_path, server_url, &token).await?;
@@ -83,6 +82,79 @@ pub async fn login_with_github_device_flow(
     );
 
     Ok(auth_client)
+}
+
+fn print_login_banner() {
+    for line in login_banner_lines() {
+        println!("{line}");
+    }
+    println!();
+}
+
+fn print_login_instructions(verification_uri: &str, user_code: &str) {
+    let color_enabled = supports_color();
+    let url = if color_enabled {
+        verification_uri.bright_blue().bold().to_string()
+    } else {
+        verification_uri.to_string()
+    };
+    let code = if color_enabled {
+        user_code.bright_yellow().bold().to_string()
+    } else {
+        user_code.to_string()
+    };
+    println!("Open {url} and enter code {code}");
+    if color_enabled {
+        println!("{}", "Waiting for authorization...".dimmed());
+    } else {
+        println!("Waiting for authorization...");
+    }
+}
+
+fn login_banner_lines() -> Vec<String> {
+    let color_enabled = supports_color();
+    let lines = [
+        r"__/\\\\____________/\\\\\\\\__/\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\__/\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\__/\\\\\\\\\\\\\\\\\\\\\\_____/\\\\\\\\\\\\\\\\\\\\\\___        ",
+        r" _\\/\\\\\\\\\\\\________/\\\\\\\\\\\\_\\/\\\\\\///////////__\\///////\\\\\\/////__\\/////\\\\\\///____/\\\\\\/////////\\\\\\_       ",
+        r"  _\\/\\\\\\//\\\\\\____/\\\\\\//\\\\\\_\\/\\\\\\___________________\\/\\\\\\___________\\/\\\\\\______\\//\\\\\\______\\///__      ",
+        r"   _\\/\\\\\\\\///\\\\\\/\\\\\\/_\\/\\\\\\_\\/\\\\\\\\\\\\\\\\\\\\\\___________\\/\\\\\\___________\\/\\\\\\_______\\////\\\\\\_________     ",
+        r"    _\\/\\\\\\__\\///\\\\\\/___\\/\\\\\\_\\/\\\\\\///////____________\\/\\\\\\___________\\/\\\\\\__________\\////\\\\\\______    ",
+        r"     _\\/\\\\\\____\\///_____\\/\\\\\\_\\/\\\\\\___________________\\/\\\\\\___________\\/\\\\\\_____________\\////\\\\\\___   ",
+        r"      _\\/\\\\\\_____________\\/\\\\\\_\\/\\\\\\___________________\\/\\\\\\___________\\/\\\\\\______/\\\\\\______\\//\\\\\\__  ",
+        r"       _\\/\\\\\\_____________\\/\\\\\\_\\/\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_______\\/\\\\\\________/\\\\\\\\\\\\\\\\\\\\\\_\\///\\\\\\\\\\\\\\\\\\\\\\/___ ",
+        r"        _\\///______________\\///__\\///////////////________\\///________\\///////////____\\///////////_____",
+    ];
+
+    lines
+        .into_iter()
+        .map(|line| colorize_raised(line, color_enabled))
+        .collect()
+}
+
+fn colorize_raised(line: &str, color_enabled: bool) -> String {
+    if !color_enabled {
+        return line.to_string();
+    }
+
+    line.chars()
+        .map(|ch| {
+            if ch == '_' || ch == ' ' {
+                ch.to_string()
+            } else {
+                format!("{ch}").bright_cyan().bold().to_string()
+            }
+        })
+        .collect()
+}
+
+fn supports_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if matches!(std::env::var_os("TERM").as_deref(), Some(term) if term == "dumb") {
+        return false;
+    }
+    std::io::stdout().is_terminal()
 }
 
 async fn fetch_github_client_id(client: &MetisClientUnauthenticated) -> Result<String> {
