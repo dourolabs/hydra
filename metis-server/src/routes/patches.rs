@@ -16,7 +16,7 @@ use axum::{
     http::{HeaderMap, header::CONTENT_DISPOSITION, request::Parts},
 };
 use metis_common::{
-    PatchId,
+    PatchId, VersionNumber,
     api::v1::{self, ApiError},
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -40,6 +40,29 @@ where
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self(patch_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PatchVersionPath {
+    pub patch_id: PatchId,
+    pub version: VersionNumber,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for PatchVersionPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((patch_id, version)) =
+            Path::<(PatchId, VersionNumber)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self { patch_id, version })
     }
 }
 
@@ -88,6 +111,64 @@ pub async fn get_patch(
 
     info!(patch_id = %patch_id, "get_patch completed");
     let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch.item).into();
+    Ok(Json(response))
+}
+
+pub async fn list_patch_versions(
+    State(state): State<AppState>,
+    PatchIdPath(patch_id): PatchIdPath,
+) -> Result<Json<v1::patches::ListPatchVersionsResponse>, ApiError> {
+    info!(patch_id = %patch_id, "list_patch_versions invoked");
+    let versions = state
+        .get_patch_versions(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    let records = versions
+        .into_iter()
+        .map(|version| {
+            v1::patches::PatchVersionRecord::new(
+                patch_id.clone(),
+                version.version,
+                version.timestamp,
+                version.item.into(),
+            )
+        })
+        .collect();
+
+    let response = v1::patches::ListPatchVersionsResponse::new(records);
+    info!(
+        patch_id = %patch_id,
+        returned = response.versions.len(),
+        "list_patch_versions completed"
+    );
+    Ok(Json(response))
+}
+
+pub async fn get_patch_version(
+    State(state): State<AppState>,
+    PatchVersionPath { patch_id, version }: PatchVersionPath,
+) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
+    info!(patch_id = %patch_id, version, "get_patch_version invoked");
+    let versions = state
+        .get_patch_versions(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    let entry = versions
+        .into_iter()
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| {
+            ApiError::not_found(format!("patch '{patch_id}' version {version} not found"))
+        })?;
+
+    let response = v1::patches::PatchVersionRecord::new(
+        patch_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
+    info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
 }
 

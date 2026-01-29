@@ -14,7 +14,7 @@ use axum::{
     http::request::Parts,
 };
 use metis_common::{
-    IssueId,
+    IssueId, VersionNumber,
     api::v1::{self, ApiError},
 };
 use tracing::{error, info};
@@ -35,6 +35,29 @@ where
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self(issue_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IssueVersionPath {
+    pub issue_id: IssueId,
+    pub version: VersionNumber,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for IssueVersionPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((issue_id, version)) =
+            Path::<(IssueId, VersionNumber)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self { issue_id, version })
     }
 }
 
@@ -107,6 +130,64 @@ pub async fn get_issue(
 
     info!(issue_id = %issue_id, "get_issue completed");
     let response: v1::issues::IssueRecord = IssueRecord::new(issue_id, issue.item).into();
+    Ok(Json(response))
+}
+
+pub async fn list_issue_versions(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+) -> Result<Json<v1::issues::ListIssueVersionsResponse>, ApiError> {
+    info!(issue_id = %issue_id, "list_issue_versions invoked");
+    let versions = state
+        .get_issue_versions(&issue_id)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let records = versions
+        .into_iter()
+        .map(|version| {
+            v1::issues::IssueVersionRecord::new(
+                issue_id.clone(),
+                version.version,
+                version.timestamp,
+                version.item.into(),
+            )
+        })
+        .collect();
+
+    let response = v1::issues::ListIssueVersionsResponse::new(records);
+    info!(
+        issue_id = %issue_id,
+        returned = response.versions.len(),
+        "list_issue_versions completed"
+    );
+    Ok(Json(response))
+}
+
+pub async fn get_issue_version(
+    State(state): State<AppState>,
+    IssueVersionPath { issue_id, version }: IssueVersionPath,
+) -> Result<Json<v1::issues::IssueVersionRecord>, ApiError> {
+    info!(issue_id = %issue_id, version, "get_issue_version invoked");
+    let versions = state
+        .get_issue_versions(&issue_id)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let entry = versions
+        .into_iter()
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| {
+            ApiError::not_found(format!("issue '{issue_id}' version {version} not found"))
+        })?;
+
+    let response = v1::issues::IssueVersionRecord::new(
+        issue_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
+    info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
 }
 

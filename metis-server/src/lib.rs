@@ -61,6 +61,14 @@ pub async fn run_with_state(
             get(routes::issues::get_issue).put(routes::issues::update_issue),
         )
         .route(
+            "/v1/issues/:issue_id/versions",
+            get(routes::issues::list_issue_versions),
+        )
+        .route(
+            "/v1/issues/:issue_id/versions/:version_number",
+            get(routes::issues::get_issue_version),
+        )
+        .route(
             "/v1/issues/:issue_id/todo-items",
             post(routes::issues::add_todo_item).put(routes::issues::replace_todo_list),
         )
@@ -79,6 +87,14 @@ pub async fn run_with_state(
         .route(
             "/v1/patches/:patch_id",
             get(routes::patches::get_patch).put(routes::patches::update_patch),
+        )
+        .route(
+            "/v1/patches/:patch_id/versions",
+            get(routes::patches::list_patch_versions),
+        )
+        .route(
+            "/v1/patches/:patch_id/versions/:version_number",
+            get(routes::patches::get_patch_version),
         )
         .route(
             "/v1/patches/:patch_id/assets",
@@ -112,6 +128,14 @@ pub async fn run_with_state(
         .route(
             "/v1/jobs/:job_id",
             get(routes::jobs::get_job).delete(routes::jobs::kill::kill_job),
+        )
+        .route(
+            "/v1/jobs/:job_id/versions",
+            get(routes::jobs::list_job_versions),
+        )
+        .route(
+            "/v1/jobs/:job_id/versions/:version_number",
+            get(routes::jobs::get_job_version),
         )
         .route("/v1/jobs", post(routes::jobs::create_job))
         .route(

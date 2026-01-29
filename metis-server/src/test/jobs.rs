@@ -18,7 +18,15 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{BuildCacheStorageConfig, TaskId, api::v1, job_status::GetJobStatusResponse};
+use metis_common::{
+    BuildCacheStorageConfig, TaskId,
+    api::v1::{
+        self,
+        jobs::{JobVersionRecord, ListJobVersionsResponse},
+    },
+    job_status::GetJobStatusResponse,
+};
+use reqwest::StatusCode;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -438,6 +446,132 @@ async fn list_jobs_returns_empty_list_when_store_is_empty() -> anyhow::Result<()
     assert!(response.status().is_success());
     let body: ListJobsResponse = response.json().await?;
     assert!(body.jobs.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state.clone();
+    let server = spawn_test_server_with_state(state.clone(), handles.store).await?;
+    let client = test_client();
+
+    let response = client
+        .post(format!("{}/v1/jobs", server.base_url()))
+        .json(&json!({ "prompt": "0" }))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let created: CreateJobResponse = response.json().await?;
+
+    state.transition_task_to_pending(&created.job_id).await?;
+    state.transition_task_to_running(&created.job_id).await?;
+
+    let response = client
+        .post(format!(
+            "{}/v1/jobs/{}/status",
+            server.base_url(),
+            created.job_id
+        ))
+        .json(&json!({ "status": "complete" }))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+
+    let versions: ListJobVersionsResponse = client
+        .get(format!(
+            "{}/v1/jobs/{}/versions",
+            server.base_url(),
+            created.job_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(versions.versions.len(), 4);
+    assert_eq!(versions.versions[0].job_id, created.job_id);
+    assert_eq!(versions.versions[0].version, 1);
+    assert_eq!(
+        versions.versions[0].task.status,
+        v1::task_status::Status::Created
+    );
+    assert_eq!(versions.versions[1].job_id, created.job_id);
+    assert_eq!(versions.versions[1].version, 2);
+    assert_eq!(
+        versions.versions[1].task.status,
+        v1::task_status::Status::Pending
+    );
+    assert_eq!(versions.versions[2].job_id, created.job_id);
+    assert_eq!(versions.versions[2].version, 3);
+    assert_eq!(
+        versions.versions[2].task.status,
+        v1::task_status::Status::Running
+    );
+    assert_eq!(versions.versions[3].job_id, created.job_id);
+    assert_eq!(versions.versions[3].version, 4);
+    assert_eq!(
+        versions.versions[3].task.status,
+        v1::task_status::Status::Complete
+    );
+
+    let version: JobVersionRecord = client
+        .get(format!(
+            "{}/v1/jobs/{}/versions/4",
+            server.base_url(),
+            created.job_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(version.version, 4);
+    assert_eq!(version.job_id, created.job_id);
+    assert_eq!(version.task.status, v1::task_status::Status::Complete);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_version_endpoints_return_404s() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let missing_id = task_id("t-missing");
+    let response = client
+        .get(format!(
+            "{}/v1/jobs/{}/versions",
+            server.base_url(),
+            missing_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = client
+        .post(format!("{}/v1/jobs", server.base_url()))
+        .json(&json!({ "prompt": "0" }))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let created: CreateJobResponse = response.json().await?;
+
+    let response = client
+        .get(format!(
+            "{}/v1/jobs/{}/versions/99",
+            server.base_url(),
+            created.job_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
     Ok(())
 }
 

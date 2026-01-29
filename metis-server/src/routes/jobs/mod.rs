@@ -9,7 +9,7 @@ use axum::{
     http::request::Parts,
 };
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, TaskId, api::v1};
+use metis_common::{IssueId, TaskId, VersionNumber, api::v1};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -147,6 +147,82 @@ pub async fn get_job(
     Ok(Json(summary))
 }
 
+pub async fn list_job_versions(
+    State(state): State<AppState>,
+    JobIdPath(job_id): JobIdPath,
+) -> Result<Json<v1::jobs::ListJobVersionsResponse>, ApiError> {
+    info!(job_id = %job_id, "list_job_versions invoked");
+    let versions = state
+        .get_task_versions(&job_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::TaskNotFound(_) => {
+                error!(job_id = %job_id, "job not found");
+                ApiError::not_found(format!("job '{job_id}' not found"))
+            }
+            other => {
+                error!(job_id = %job_id, error = %other, "failed to load job versions");
+                ApiError::internal(format!("Failed to load job '{job_id}': {other}"))
+            }
+        })?;
+
+    let records = versions
+        .into_iter()
+        .map(|version| {
+            v1::jobs::JobVersionRecord::new(
+                job_id.clone(),
+                version.version,
+                version.timestamp,
+                version.item.into(),
+            )
+        })
+        .collect();
+
+    let response = v1::jobs::ListJobVersionsResponse::new(records);
+    info!(
+        job_id = %job_id,
+        returned = response.versions.len(),
+        "list_job_versions completed"
+    );
+    Ok(Json(response))
+}
+
+pub async fn get_job_version(
+    State(state): State<AppState>,
+    JobVersionPath { job_id, version }: JobVersionPath,
+) -> Result<Json<v1::jobs::JobVersionRecord>, ApiError> {
+    info!(job_id = %job_id, version, "get_job_version invoked");
+    let versions = state
+        .get_task_versions(&job_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::TaskNotFound(_) => {
+                error!(job_id = %job_id, "job not found");
+                ApiError::not_found(format!("job '{job_id}' not found"))
+            }
+            other => {
+                error!(job_id = %job_id, error = %other, "failed to load job versions");
+                ApiError::internal(format!("Failed to load job '{job_id}': {other}"))
+            }
+        })?;
+
+    let entry = versions
+        .into_iter()
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| {
+            ApiError::not_found(format!("job '{job_id}' version {version} not found"))
+        })?;
+
+    let response = v1::jobs::JobVersionRecord::new(
+        job_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
+    info!(job_id = %job_id, version, "get_job_version completed");
+    Ok(Json(response))
+}
+
 impl From<BundleResolutionError> for ApiError {
     fn from(error: BundleResolutionError) -> Self {
         match error {
@@ -185,6 +261,29 @@ where
             .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
 
         Ok(Self(job_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JobVersionPath {
+    pub job_id: TaskId,
+    pub version: VersionNumber,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for JobVersionPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((job_id, version)) =
+            Path::<(TaskId, VersionNumber)>::from_request_parts(parts, state)
+                .await
+                .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self { job_id, version })
     }
 }
 

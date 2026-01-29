@@ -1,6 +1,7 @@
 use super::users::Username;
 pub use crate::IssueId;
-use crate::{PatchId, RepoName, TaskId};
+use crate::{PatchId, RepoName, TaskId, VersionNumber};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -516,6 +517,31 @@ impl IssueRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct IssueVersionRecord {
+    pub issue_id: IssueId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub issue: Issue,
+}
+
+impl IssueVersionRecord {
+    pub fn new(
+        issue_id: IssueId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        issue: Issue,
+    ) -> Self {
+        Self {
+            issue_id,
+            version,
+            timestamp,
+            issue,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpsertIssueRequest {
     pub issue: Issue,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -615,6 +641,18 @@ pub struct ListIssuesResponse {
 impl ListIssuesResponse {
     pub fn new(issues: Vec<IssueRecord>) -> Self {
         Self { issues }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ListIssueVersionsResponse {
+    pub versions: Vec<IssueVersionRecord>,
+}
+
+impl ListIssueVersionsResponse {
+    pub fn new(versions: Vec<IssueVersionRecord>) -> Self {
+        Self { versions }
     }
 }
 
