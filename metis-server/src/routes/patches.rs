@@ -19,10 +19,10 @@ use metis_common::{
     PatchId, VersionNumber,
     api::v1::{self, ApiError},
 };
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::Deserialize;
 use std::path::Path as FilePath;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct PatchIdPath(pub PatchId);
@@ -237,14 +237,30 @@ pub async fn create_patch_asset(
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("application/octet-stream");
+    let content_type = if content_type.parse::<mime::Mime>().is_ok() {
+        content_type
+    } else {
+        warn!(
+            patch_id = %patch_id,
+            content_type = %content_type,
+            "invalid content type for github asset upload; using default"
+        );
+        "application/octet-stream"
+    };
+    let part = reqwest::multipart::Part::bytes(body.to_vec())
+        .file_name(asset_name.clone())
+        .mime_str(content_type)
+        .map_err(|err| {
+            ApiError::internal(format!("failed to set github upload content type: {err}"))
+        })?;
+    let form = reqwest::multipart::Form::new().part("file", part);
 
     let response = reqwest::Client::new()
         .post(upload_url)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "metis-server")
         .header(AUTHORIZATION, format!("Bearer {}", token.github_token))
-        .header(CONTENT_TYPE, content_type)
-        .body(body.to_vec())
+        .multipart(form)
         .send()
         .await
         .map_err(|err| {
