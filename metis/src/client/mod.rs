@@ -8,20 +8,21 @@ use metis_common::{
     api::v1::login::{LoginRequest, LoginResponse},
     github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
-        AddTodoItemRequest, IssueRecord, ListIssuesResponse, ReplaceTodoListRequest,
-        SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse, UpsertIssueRequest,
-        UpsertIssueResponse,
+        AddTodoItemRequest, IssueRecord, ListIssueVersionsResponse, ListIssuesResponse,
+        ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     },
     job_status::{GetJobStatusResponse, JobStatusUpdate, SetJobStatusResponse},
     jobs::{
-        CreateJobRequest, CreateJobResponse, JobRecord, KillJobResponse, ListJobsResponse,
-        SearchJobsQuery, WorkerContext,
+        CreateJobRequest, CreateJobResponse, JobRecord, KillJobResponse, ListJobVersionsResponse,
+        ListJobsResponse, SearchJobsQuery, WorkerContext,
     },
     logs::LogsQuery,
     merge_queues::{EnqueueMergePatchRequest, MergeQueue},
     patches::{
-        CreatePatchAssetQuery, CreatePatchAssetResponse, ListPatchesResponse, PatchRecord,
-        SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+        CreatePatchAssetQuery, CreatePatchAssetResponse, ListPatchVersionsResponse,
+        ListPatchesResponse, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
+        UpsertPatchResponse,
     },
     repositories::{
         CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
@@ -120,6 +121,7 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_job_status(&self, job_id: &TaskId) -> Result<GetJobStatusResponse>;
 
     async fn get_job_context(&self, job_id: &TaskId) -> Result<WorkerContext>;
+    async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse>;
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse>;
     #[allow(dead_code)]
     async fn update_issue(
@@ -145,6 +147,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<TodoListResponse>;
     async fn get_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
     async fn list_issues(&self, query: &SearchIssuesQuery) -> Result<ListIssuesResponse>;
+    async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse>;
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse>;
     #[allow(dead_code)]
     async fn update_patch(
@@ -154,6 +157,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertPatchResponse>;
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
+    async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse>;
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String>;
     async fn list_repositories(&self) -> Result<ListRepositoriesResponse>;
     async fn create_repository(
@@ -390,6 +394,24 @@ impl MetisClient {
             .context("failed to decode list jobs response")
     }
 
+    /// Call `GET /v1/jobs/:job_id/versions` to list job history.
+    pub async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse> {
+        let path = format!("/v1/jobs/{job_id}/versions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch job versions")?
+            .error_for_status_with_body("metis-server returned an error while listing job versions")
+            .await?;
+
+        response
+            .json::<ListJobVersionsResponse>()
+            .await
+            .context("failed to decode list job versions response")
+    }
+
     /// Call `GET /v1/jobs/:job_id` to fetch an individual job summary.
     pub async fn get_job(&self, job_id: &TaskId) -> Result<JobRecord> {
         let path = format!("/v1/jobs/{job_id}");
@@ -592,6 +614,29 @@ impl MetisClient {
             .context("failed to decode list issues response")
     }
 
+    /// Call `GET /v1/issues/:issue_id/versions` to list issue history.
+    pub async fn list_issue_versions(
+        &self,
+        issue_id: &IssueId,
+    ) -> Result<ListIssueVersionsResponse> {
+        let path = format!("/v1/issues/{issue_id}/versions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch issue versions")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing issue versions",
+            )
+            .await?;
+
+        response
+            .json::<ListIssueVersionsResponse>()
+            .await
+            .context("failed to decode list issue versions response")
+    }
+
     /// Call `POST /v1/issues/:issue_id/todo-items` to append a todo item.
     pub async fn add_todo_item(
         &self,
@@ -739,6 +784,29 @@ impl MetisClient {
             .json::<ListPatchesResponse>()
             .await
             .context("failed to decode list patches response")
+    }
+
+    /// Call `GET /v1/patches/:patch_id/versions` to list patch history.
+    pub async fn list_patch_versions(
+        &self,
+        patch_id: &PatchId,
+    ) -> Result<ListPatchVersionsResponse> {
+        let path = format!("/v1/patches/{patch_id}/versions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch patch versions")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing patch versions",
+            )
+            .await?;
+
+        response
+            .json::<ListPatchVersionsResponse>()
+            .await
+            .context("failed to decode list patch versions response")
     }
 
     /// Call `POST /v1/patches/:patch_id/assets` to upload a patch asset.
@@ -1165,6 +1233,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::get_job_context(self, job_id).await
     }
 
+    async fn list_job_versions(&self, job_id: &TaskId) -> Result<ListJobVersionsResponse> {
+        MetisClient::list_job_versions(self, job_id).await
+    }
+
     async fn create_issue(&self, request: &UpsertIssueRequest) -> Result<UpsertIssueResponse> {
         MetisClient::create_issue(self, request).await
     }
@@ -1210,6 +1282,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::list_issues(self, query).await
     }
 
+    async fn list_issue_versions(&self, issue_id: &IssueId) -> Result<ListIssueVersionsResponse> {
+        MetisClient::list_issue_versions(self, issue_id).await
+    }
+
     async fn create_patch(&self, request: &UpsertPatchRequest) -> Result<UpsertPatchResponse> {
         MetisClient::create_patch(self, request).await
     }
@@ -1228,6 +1304,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse> {
         MetisClient::list_patches(self, query).await
+    }
+
+    async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse> {
+        MetisClient::list_patch_versions(self, patch_id).await
     }
 
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {

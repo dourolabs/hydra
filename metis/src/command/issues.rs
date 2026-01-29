@@ -6,6 +6,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Subcommand;
 use metis_common::{
+    activity_log_for_issue_versions, activity_log_for_job_versions,
+    activity_log_for_patch_versions,
     constants::ENV_METIS_ISSUE_ID,
     issues::{
         AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueGraphFilter,
@@ -13,12 +15,15 @@ use metis_common::{
         JobSettings, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
         UpsertIssueRequest,
     },
+    jobs::{JobRecord, SearchJobsQuery, Task},
     patches::{PatchRecord, Review},
     users::Username,
     whoami::ActorIdentity,
-    PatchId, RepoName,
+    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, PatchId, RepoName, TaskId,
+    Versioned,
 };
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Write},
@@ -390,11 +395,12 @@ struct IssueWithPatches {
     patches: Vec<PatchRecord>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize)]
 struct IssueDescription {
     issue: IssueWithPatches,
     parents: Vec<IssueWithPatches>,
     children: Vec<IssueWithPatches>,
+    activity_log: Vec<ActivityLogEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -439,10 +445,22 @@ async fn collect_issue_description(
     let children = fetch_child_issues(client, &issue.id).await?;
     let mut patch_cache = HashMap::new();
 
+    let issue_with_patches = issue_with_patches(client, issue, &mut patch_cache).await?;
+    let parents_with_patches = issues_with_patches(client, parents, &mut patch_cache).await?;
+    let children_with_patches = issues_with_patches(client, children, &mut patch_cache).await?;
+    let activity_log = collect_activity_log(
+        client,
+        &issue_with_patches,
+        &parents_with_patches,
+        &children_with_patches,
+    )
+    .await?;
+
     Ok(IssueDescription {
-        issue: issue_with_patches(client, issue, &mut patch_cache).await?,
-        parents: issues_with_patches(client, parents, &mut patch_cache).await?,
-        children: issues_with_patches(client, children, &mut patch_cache).await?,
+        issue: issue_with_patches,
+        parents: parents_with_patches,
+        children: children_with_patches,
+        activity_log,
     })
 }
 
@@ -538,6 +556,151 @@ async fn fetch_patch_records(
     }
 
     Ok(patches)
+}
+
+async fn collect_activity_log(
+    client: &dyn MetisClientInterface,
+    issue: &IssueWithPatches,
+    parents: &[IssueWithPatches],
+    children: &[IssueWithPatches],
+) -> Result<Vec<ActivityLogEntry>> {
+    let issue_id = &issue.issue.id;
+    let issue_versions = fetch_issue_versions(client, issue_id).await?;
+    let root_created_at = issue_versions.iter().map(|version| version.timestamp).min();
+
+    let mut entries = activity_log_for_issue_versions(issue_id.clone(), &issue_versions);
+
+    for related in parents.iter().chain(children.iter()) {
+        let related_id = &related.issue.id;
+        let versions = fetch_issue_versions(client, related_id).await?;
+        let log = activity_log_for_issue_versions(related_id.clone(), &versions);
+        entries.extend(filter_activity_entries(log, root_created_at));
+    }
+
+    let patch_ids = collect_patch_ids(issue, parents, children);
+    for patch_id in patch_ids {
+        let versions = fetch_patch_versions(client, &patch_id).await?;
+        let log = activity_log_for_patch_versions(patch_id.clone(), &versions);
+        entries.extend(filter_activity_entries(log, root_created_at));
+    }
+
+    let jobs = fetch_jobs_for_issue(client, issue_id).await?;
+    for job in jobs {
+        let versions = fetch_job_versions(client, &job.id).await?;
+        let log = activity_log_for_job_versions(job.id.clone(), &versions);
+        entries.extend(filter_activity_entries(log, root_created_at));
+    }
+
+    sort_activity_log_entries(&mut entries);
+    Ok(entries)
+}
+
+fn collect_patch_ids(
+    issue: &IssueWithPatches,
+    parents: &[IssueWithPatches],
+    children: &[IssueWithPatches],
+) -> Vec<PatchId> {
+    let mut ids = std::collections::BTreeSet::new();
+    for issue in parents
+        .iter()
+        .chain(children.iter())
+        .chain(std::iter::once(issue))
+    {
+        for patch_id in &issue.issue.issue.patches {
+            ids.insert(patch_id.clone());
+        }
+    }
+    ids.into_iter().collect()
+}
+
+async fn fetch_issue_versions(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+) -> Result<Vec<Versioned<Issue>>> {
+    let response = client
+        .list_issue_versions(issue_id)
+        .await
+        .with_context(|| format!("failed to fetch versions for issue '{issue_id}'"))?;
+    Ok(response
+        .versions
+        .into_iter()
+        .map(|record| Versioned::new(record.issue, record.version, record.timestamp))
+        .collect())
+}
+
+async fn fetch_patch_versions(
+    client: &dyn MetisClientInterface,
+    patch_id: &PatchId,
+) -> Result<Vec<Versioned<metis_common::patches::Patch>>> {
+    let response = client
+        .list_patch_versions(patch_id)
+        .await
+        .with_context(|| format!("failed to fetch versions for patch '{patch_id}'"))?;
+    Ok(response
+        .versions
+        .into_iter()
+        .map(|record| Versioned::new(record.patch, record.version, record.timestamp))
+        .collect())
+}
+
+async fn fetch_job_versions(
+    client: &dyn MetisClientInterface,
+    job_id: &TaskId,
+) -> Result<Vec<Versioned<Task>>> {
+    let response = client
+        .list_job_versions(job_id)
+        .await
+        .with_context(|| format!("failed to fetch versions for job '{job_id}'"))?;
+    Ok(response
+        .versions
+        .into_iter()
+        .map(|record| Versioned::new(record.task, record.version, record.timestamp))
+        .collect())
+}
+
+async fn fetch_jobs_for_issue(
+    client: &dyn MetisClientInterface,
+    issue_id: &IssueId,
+) -> Result<Vec<JobRecord>> {
+    let response = client
+        .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone())))
+        .await
+        .with_context(|| format!("failed to fetch jobs for issue '{issue_id}'"))?;
+    Ok(response.jobs)
+}
+
+fn filter_activity_entries(
+    entries: Vec<ActivityLogEntry>,
+    start_time: Option<DateTime<Utc>>,
+) -> Vec<ActivityLogEntry> {
+    match start_time {
+        Some(cutoff) => entries
+            .into_iter()
+            .filter(|entry| entry.timestamp >= cutoff)
+            .collect(),
+        None => entries,
+    }
+}
+
+fn sort_activity_log_entries(entries: &mut [ActivityLogEntry]) {
+    entries.sort_by(|a, b| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| {
+                activity_kind_rank(&a.object_kind).cmp(&activity_kind_rank(&b.object_kind))
+            })
+            .then_with(|| a.object_id.to_string().cmp(&b.object_id.to_string()))
+            .then_with(|| a.version.cmp(&b.version))
+    });
+}
+
+fn activity_kind_rank(kind: &ActivityObjectKind) -> u8 {
+    match kind {
+        ActivityObjectKind::Issue => 0,
+        ActivityObjectKind::Patch => 1,
+        ActivityObjectKind::Job => 2,
+        _ => u8::MAX,
+    }
 }
 
 async fn fetch_issues(
@@ -1196,6 +1359,13 @@ fn print_issue_description_pretty(
         }
     }
 
+    writeln!(writer, "History:")?;
+    if description.activity_log.is_empty() {
+        writeln!(writer, "  none")?;
+    } else {
+        write_activity_log_pretty(&description.activity_log, writer)?;
+    }
+
     writer.flush()?;
     Ok(())
 }
@@ -1293,6 +1463,238 @@ fn write_issue_details_pretty(
     }
 
     Ok(())
+}
+
+fn write_activity_log_pretty(entries: &[ActivityLogEntry], writer: &mut impl Write) -> Result<()> {
+    for (index, entry) in entries.iter().enumerate() {
+        write_activity_log_entry_pretty(entry, "  ", writer)?;
+        if index + 1 < entries.len() {
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_activity_log_entry_pretty(
+    entry: &ActivityLogEntry,
+    indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let timestamp = entry.timestamp.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let kind_label = match entry.object_kind {
+        ActivityObjectKind::Issue => "Issue",
+        ActivityObjectKind::Patch => "Patch",
+        ActivityObjectKind::Job => "Job",
+        _ => "Activity",
+    };
+    let event_label = match entry.event {
+        ActivityEvent::Created => "created",
+        ActivityEvent::Updated { .. } => "updated",
+        _ => "updated",
+    };
+
+    writeln!(
+        writer,
+        "{indent}{timestamp} {kind_label} {} v{} {event_label}",
+        entry.object_id, entry.version
+    )?;
+
+    let detail_indent = format!("{indent}  ");
+    match entry.object_kind {
+        ActivityObjectKind::Issue => {
+            if let Ok(issue) = decode_activity_object::<Issue>(entry) {
+                write_issue_activity_details(
+                    &issue,
+                    &detail_indent,
+                    writer,
+                    matches!(entry.event, ActivityEvent::Created),
+                )?;
+            } else {
+                write_activity_object_fallback(entry, &detail_indent, writer)?;
+            }
+        }
+        ActivityObjectKind::Patch => {
+            if let Ok(patch) = decode_activity_object::<metis_common::patches::Patch>(entry) {
+                write_patch_activity_details(
+                    &patch,
+                    &detail_indent,
+                    writer,
+                    matches!(entry.event, ActivityEvent::Created),
+                )?;
+            } else {
+                write_activity_object_fallback(entry, &detail_indent, writer)?;
+            }
+        }
+        ActivityObjectKind::Job => {
+            if let Ok(task) = decode_activity_object::<Task>(entry) {
+                write_job_activity_details(
+                    &task,
+                    &detail_indent,
+                    writer,
+                    matches!(entry.event, ActivityEvent::Created),
+                )?;
+            } else {
+                write_activity_object_fallback(entry, &detail_indent, writer)?;
+            }
+        }
+        _ => {
+            write_activity_object_fallback(entry, &detail_indent, writer)?;
+        }
+    }
+
+    if let ActivityEvent::Updated { changes } = &entry.event {
+        write_activity_changes(changes, &detail_indent, writer)?;
+    }
+
+    Ok(())
+}
+
+fn decode_activity_object<T: DeserializeOwned>(entry: &ActivityLogEntry) -> Result<T> {
+    serde_json::from_value(entry.object.clone()).context("failed to decode activity log object")
+}
+
+fn write_activity_object_fallback(
+    entry: &ActivityLogEntry,
+    indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let serialized =
+        serde_json::to_string(&entry.object).unwrap_or_else(|_| "<unavailable>".into());
+    writeln!(writer, "{indent}Object: {serialized}")?;
+    Ok(())
+}
+
+fn write_issue_activity_details(
+    issue: &Issue,
+    indent: &str,
+    writer: &mut impl Write,
+    include_long_fields: bool,
+) -> Result<()> {
+    writeln!(writer, "{indent}Type: {}", issue.issue_type)?;
+    writeln!(writer, "{indent}Status: {}", issue.status)?;
+    writeln!(writer, "{indent}Creator: {}", issue.creator.as_ref())?;
+    writeln!(
+        writer,
+        "{indent}Assignee: {}",
+        issue.assignee.as_deref().unwrap_or("-")
+    )?;
+
+    if include_long_fields {
+        write_multiline_field(indent, "Description", &issue.description, writer)?;
+        write_multiline_field(indent, "Progress", &issue.progress, writer)?;
+        if issue.dependencies.is_empty() {
+            writeln!(writer, "{indent}Dependencies: none")?;
+        } else {
+            writeln!(writer, "{indent}Dependencies:")?;
+            for dependency in &issue.dependencies {
+                writeln!(
+                    writer,
+                    "{indent}  - {} {}",
+                    dependency.dependency_type, dependency.issue_id
+                )?;
+            }
+        }
+
+        if issue.patches.is_empty() {
+            writeln!(writer, "{indent}Patches: none")?;
+        } else {
+            writeln!(writer, "{indent}Patches:")?;
+            for patch_id in &issue.patches {
+                writeln!(writer, "{indent}  - {patch_id}")?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn write_patch_activity_details(
+    patch: &metis_common::patches::Patch,
+    indent: &str,
+    writer: &mut impl Write,
+    include_long_fields: bool,
+) -> Result<()> {
+    let title = if patch.title.trim().is_empty() {
+        "(untitled)"
+    } else {
+        patch.title.as_str()
+    };
+    writeln!(writer, "{indent}Title: {title}")?;
+    writeln!(writer, "{indent}Status: {}", patch.status)?;
+    writeln!(writer, "{indent}Repo: {}", patch.service_repo_name)?;
+    if let Some(created_by) = &patch.created_by {
+        writeln!(writer, "{indent}Created by job: {created_by}")?;
+    }
+    if include_long_fields {
+        write_multiline_field(indent, "Description", &patch.description, writer)?;
+    }
+    Ok(())
+}
+
+fn write_job_activity_details(
+    task: &Task,
+    indent: &str,
+    writer: &mut impl Write,
+    include_long_fields: bool,
+) -> Result<()> {
+    writeln!(writer, "{indent}Status: {:?}", task.status)?;
+    if let Some(spawned_from) = &task.spawned_from {
+        writeln!(writer, "{indent}Spawned from: {spawned_from}")?;
+    }
+    if let Some(image) = &task.image {
+        writeln!(writer, "{indent}Image: {image}")?;
+    }
+    if let Some(last_message) = &task.last_message {
+        writeln!(writer, "{indent}Last message: {last_message}")?;
+    }
+    if include_long_fields {
+        write_multiline_field(indent, "Prompt", &task.prompt, writer)?;
+    }
+    Ok(())
+}
+
+fn write_multiline_field(
+    indent: &str,
+    label: &str,
+    value: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    writeln!(writer, "{indent}{label}:")?;
+    if value.trim().is_empty() {
+        writeln!(writer, "{indent}  -")?;
+    } else {
+        for line in value.lines() {
+            writeln!(writer, "{indent}  {line}")?;
+        }
+    }
+    Ok(())
+}
+
+fn write_activity_changes(
+    changes: &[FieldChange],
+    indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    if changes.is_empty() {
+        writeln!(writer, "{indent}Changes: -")?;
+        return Ok(());
+    }
+
+    writeln!(writer, "{indent}Changes:")?;
+    for change in changes {
+        writeln!(
+            writer,
+            "{indent}  - {}: {} -> {}",
+            change.path,
+            format_activity_value(&change.before),
+            format_activity_value(&change.after)
+        )?;
+    }
+    Ok(())
+}
+
+fn format_activity_value(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<unavailable>".to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1475,21 +1877,27 @@ fn format_timestamp(timestamp: Option<&DateTime<Utc>>) -> String {
 mod tests {
     use super::*;
     use crate::client::MetisClient;
-    use crate::test_utils::ids::{issue_id, patch_id};
+    use crate::test_utils::ids::{issue_id, patch_id, task_id};
     use chrono::{Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        JobSettings, ListIssuesResponse, ReplaceTodoListRequest, SetTodoItemStatusRequest,
-        TodoItem, TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+        IssueVersionRecord, JobSettings, ListIssueVersionsResponse, ListIssuesResponse,
+        ReplaceTodoListRequest, SetTodoItemStatusRequest, TodoItem, TodoListResponse,
+        UpsertIssueRequest, UpsertIssueResponse,
     };
     use metis_common::{
-        patches::{Patch, PatchRecord, Review},
+        jobs::{BundleSpec, ListJobsResponse, Task},
+        patches::{
+            ListPatchVersionsResponse, Patch, PatchRecord, PatchStatus, PatchVersionRecord, Review,
+        },
+        task_status::Status,
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
         PatchId, RepoName, TaskId,
     };
     use reqwest::Client as HttpClient;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -1831,6 +2239,43 @@ mod tests {
                 None,
             ),
         );
+        let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
+        let root_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
+            root_id.clone(),
+            1,
+            version_timestamp,
+            root_issue.issue.clone(),
+        )]);
+        let parent_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
+            parent_id.clone(),
+            1,
+            version_timestamp,
+            parent_issue.issue.clone(),
+        )]);
+        let child_versions = ListIssueVersionsResponse::new(vec![IssueVersionRecord::new(
+            child_issue.id.clone(),
+            1,
+            version_timestamp,
+            child_issue.issue.clone(),
+        )]);
+        let root_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
+            root_patch_id.clone(),
+            1,
+            version_timestamp,
+            root_patch_record.patch.clone(),
+        )]);
+        let parent_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
+            parent_patch_id.clone(),
+            1,
+            version_timestamp,
+            parent_patch_record.patch.clone(),
+        )]);
+        let child_patch_versions = ListPatchVersionsResponse::new(vec![PatchVersionRecord::new(
+            child_patch_id.clone(),
+            1,
+            version_timestamp,
+            child_patch_record.patch.clone(),
+        )]);
         let root_patch_mock = server.mock(|when, then| {
             when.method(GET)
                 .path(format!("/v1/patches/{root_patch_id}").as_str());
@@ -1846,6 +2291,43 @@ mod tests {
                 .path(format!("/v1/patches/{child_patch_id}").as_str());
             then.status(200).json_body_obj(&child_patch_record);
         });
+        let root_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{root_id}/versions").as_str());
+            then.status(200).json_body_obj(&root_versions);
+        });
+        let parent_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{parent_id}/versions").as_str());
+            then.status(200).json_body_obj(&parent_versions);
+        });
+        let child_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{}/versions", child_issue.id).as_str());
+            then.status(200).json_body_obj(&child_versions);
+        });
+        let root_patch_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{root_patch_id}/versions").as_str());
+            then.status(200).json_body_obj(&root_patch_versions);
+        });
+        let parent_patch_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{parent_patch_id}/versions").as_str());
+            then.status(200).json_body_obj(&parent_patch_versions);
+        });
+        let child_patch_versions_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/patches/{child_patch_id}/versions").as_str());
+            then.status(200).json_body_obj(&child_patch_versions);
+        });
+        let list_jobs_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/jobs/")
+                .query_param("spawned_from", root_id.as_ref());
+            then.status(200)
+                .json_body_obj(&ListJobsResponse::new(Vec::new()));
+        });
 
         let description = collect_issue_description(&client, root_id.clone())
             .await
@@ -1857,12 +2339,26 @@ mod tests {
         root_patch_mock.assert();
         parent_patch_mock.assert();
         child_patch_mock.assert();
+        root_versions_mock.assert();
+        parent_versions_mock.assert();
+        child_versions_mock.assert();
+        root_patch_versions_mock.assert();
+        parent_patch_versions_mock.assert();
+        child_patch_versions_mock.assert();
+        list_jobs_mock.assert();
         assert_eq!(root_issue_mock.hits(), 1);
         assert_eq!(parent_issue_mock.hits(), 1);
         assert_eq!(list_children_mock.hits(), 1);
         assert_eq!(root_patch_mock.hits(), 1);
         assert_eq!(parent_patch_mock.hits(), 1);
         assert_eq!(child_patch_mock.hits(), 1);
+        assert_eq!(root_versions_mock.hits(), 1);
+        assert_eq!(parent_versions_mock.hits(), 1);
+        assert_eq!(child_versions_mock.hits(), 1);
+        assert_eq!(root_patch_versions_mock.hits(), 1);
+        assert_eq!(parent_patch_versions_mock.hits(), 1);
+        assert_eq!(child_patch_versions_mock.hits(), 1);
+        assert_eq!(list_jobs_mock.hits(), 1);
         assert_eq!(
             description.issue,
             IssueWithPatches {
@@ -2843,6 +3339,7 @@ mod tests {
                 patches: Vec::new(),
             }],
             children: vec![],
+            activity_log: Vec::new(),
         };
 
         let mut output = Vec::new();
@@ -2855,6 +3352,126 @@ mod tests {
         assert!(rendered.contains("main patch (p-main) [open]"));
         assert!(rendered.contains("      Description:\n        desc"));
         assert!(rendered.contains("Reviews: none"));
+    }
+
+    #[test]
+    fn describe_issue_pretty_printer_includes_history() {
+        let main_issue_id = issue_id("i-main");
+        let main_patch_id = patch_id("p-main");
+        let main_job_id = task_id("t-main");
+
+        let base_issue = Issue::new(
+            IssueType::Task,
+            "Main issue".into(),
+            empty_user(),
+            String::new(),
+            IssueStatus::Open,
+            Some("owner".into()),
+            None,
+            Vec::new(),
+            vec![],
+            vec![main_patch_id.clone()],
+        );
+        let mut updated_issue = base_issue.clone();
+        updated_issue.status = IssueStatus::InProgress;
+
+        let issue_versions = vec![
+            Versioned::new(
+                base_issue,
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            ),
+            Versioned::new(
+                updated_issue,
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 4, 9, 0, 0).unwrap(),
+            ),
+        ];
+        let mut activity_log =
+            activity_log_for_issue_versions(main_issue_id.clone(), &issue_versions);
+
+        let base_patch = Patch::new(
+            "main patch".into(),
+            "desc".into(),
+            sample_diff(),
+            PatchStatus::Open,
+            false,
+            None,
+            Vec::new(),
+            sample_repo_name(),
+            None,
+        );
+        let mut updated_patch = base_patch.clone();
+        updated_patch.status = PatchStatus::Merged;
+        let patch_versions = vec![
+            Versioned::new(
+                base_patch,
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 2, 9, 0, 0).unwrap(),
+            ),
+            Versioned::new(
+                updated_patch,
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 3, 9, 0, 0).unwrap(),
+            ),
+        ];
+        activity_log.extend(activity_log_for_patch_versions(
+            main_patch_id.clone(),
+            &patch_versions,
+        ));
+
+        let base_task = Task::new_with_status(
+            "run build".into(),
+            BundleSpec::None,
+            Some(main_issue_id.clone()),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            Status::Created,
+            None,
+            None,
+        );
+        let mut updated_task = base_task.clone();
+        updated_task.status = Status::Running;
+        let job_versions = vec![
+            Versioned::new(
+                base_task,
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 2, 12, 0, 0).unwrap(),
+            ),
+            Versioned::new(
+                updated_task,
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 2, 15, 0, 0).unwrap(),
+            ),
+        ];
+        activity_log.extend(activity_log_for_job_versions(
+            main_job_id.clone(),
+            &job_versions,
+        ));
+        sort_activity_log_entries(&mut activity_log);
+
+        let description = IssueDescription {
+            issue: IssueWithPatches {
+                issue: IssueRecord::new(main_issue_id.clone(), issue_versions[1].item.clone()),
+                patches: Vec::new(),
+            },
+            parents: vec![],
+            children: vec![],
+            activity_log,
+        };
+
+        let mut output = Vec::new();
+        print_issue_description_pretty(&description, &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+
+        assert!(rendered.contains("History:"));
+        assert!(rendered.contains("2024-01-01T12:00:00Z Issue i-main v1 created"));
+        assert!(rendered.contains("2024-01-02T09:00:00Z Patch p-main v1 created"));
+        assert!(rendered.contains("2024-01-02T12:00:00Z Job t-main v1 created"));
+        assert!(rendered.contains("Changes:"));
+        assert!(rendered.contains("/status"));
     }
 
     #[test]
@@ -2914,6 +3531,7 @@ mod tests {
                 ),
                 patches: Vec::new(),
             }],
+            activity_log: Vec::new(),
         };
 
         let mut output = Vec::new();
@@ -2986,6 +3604,7 @@ mod tests {
                 ),
                 patches: Vec::new(),
             }],
+            activity_log: Vec::new(),
         };
 
         let mut output = Vec::new();
@@ -3056,6 +3675,7 @@ mod tests {
             },
             parents: vec![],
             children: vec![],
+            activity_log: Vec::new(),
         };
 
         let mut output = Vec::new();
