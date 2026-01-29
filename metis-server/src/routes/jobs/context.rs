@@ -1,6 +1,5 @@
 use crate::{
     app::AppState,
-    domain::jobs::WorkerContext,
     routes::jobs::{ApiError, JobIdPath},
     store::StoreError,
 };
@@ -39,13 +38,12 @@ pub async fn get_job_context(
     let resolved = state.resolve_task(&task).await.map_err(ApiError::from)?;
 
     let build_cache = state.config.build_cache.to_context();
-    let context: v1::jobs::WorkerContext = WorkerContext::new(
-        resolved.context.bundle,
+    let context = v1::jobs::WorkerContext::new(
+        resolved.context.bundle.into(),
         task.prompt,
         resolved.env_vars,
         build_cache,
-    )
-    .into();
+    );
     info!(job_id = %job_id, "get_job_context completed");
     Ok(Json(context))
 }

@@ -164,32 +164,6 @@ impl From<Bundle> for api::jobs::Bundle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkerContext {
-    pub request_context: Bundle,
-    pub prompt: String,
-    #[serde(default)]
-    pub variables: HashMap<String, String>,
-    #[serde(default)]
-    pub build_cache: Option<metis_common::BuildCacheContext>,
-}
-
-impl WorkerContext {
-    pub fn new(
-        request_context: Bundle,
-        prompt: String,
-        variables: HashMap<String, String>,
-        build_cache: Option<metis_common::BuildCacheContext>,
-    ) -> Self {
-        Self {
-            request_context,
-            prompt,
-            variables,
-            build_cache,
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateJobResponse {
     pub job_id: TaskId,
@@ -304,28 +278,6 @@ impl From<CreateJobRequest> for api::jobs::CreateJobRequest {
             value.variables,
         )
         .with_issue_id(value.issue_id)
-    }
-}
-
-impl From<api::jobs::WorkerContext> for WorkerContext {
-    fn from(value: api::jobs::WorkerContext) -> Self {
-        WorkerContext {
-            request_context: value.request_context.into(),
-            prompt: value.prompt,
-            variables: value.variables,
-            build_cache: value.build_cache,
-        }
-    }
-}
-
-impl From<WorkerContext> for api::jobs::WorkerContext {
-    fn from(value: WorkerContext) -> Self {
-        api::jobs::WorkerContext::new(
-            value.request_context.into(),
-            value.prompt,
-            value.variables,
-            value.build_cache,
-        )
     }
 }
 

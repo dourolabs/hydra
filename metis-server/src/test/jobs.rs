@@ -3,7 +3,7 @@ use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     issues::{Issue, IssueStatus, IssueType, JobSettings},
-    jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, WorkerContext},
+    jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse},
     patches::{Patch, PatchStatus},
     task_status::Event,
     users::Username,
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 use chrono::{Duration, Utc};
-use metis_common::{BuildCacheStorageConfig, TaskId, job_status::GetJobStatusResponse};
+use metis_common::{BuildCacheStorageConfig, TaskId, api::v1, job_status::GetJobStatusResponse};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -257,10 +257,10 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
         .send()
         .await?;
     assert!(context_response.status().is_success());
-    let worker_context: WorkerContext = context_response.json().await?;
+    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
     assert_eq!(
         worker_context.request_context,
-        Bundle::GitRepository {
+        v1::jobs::Bundle::GitRepository {
             url: "https://override.example.com/repo.git".to_string(),
             rev: "issue-branch".to_string(),
         }
@@ -338,10 +338,10 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
         .send()
         .await?;
     assert!(context_response.status().is_success());
-    let worker_context: WorkerContext = context_response.json().await?;
+    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
     assert_eq!(
         worker_context.request_context,
-        Bundle::GitRepository {
+        v1::jobs::Bundle::GitRepository {
             url: repo.remote_url.clone(),
             rev: "issue-branch".to_string(),
         }
@@ -392,7 +392,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         .await?;
 
     assert!(context_response.status().is_success());
-    let worker_context: WorkerContext = context_response.json().await?;
+    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
     let build_cache = worker_context.build_cache.expect("build cache");
     assert_eq!(
         build_cache.storage,
@@ -1264,10 +1264,10 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
         .await?;
 
     assert!(response.status().is_success());
-    let body: WorkerContext = response.json().await?;
+    let body: v1::jobs::WorkerContext = response.json().await?;
     assert_eq!(
         body.request_context,
-        Bundle::GitRepository {
+        v1::jobs::Bundle::GitRepository {
             url: "https://example.com/repo.git".to_string(),
             rev: "main".to_string(),
         }
@@ -1310,7 +1310,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: WorkerContext = response.json().await?;
+    let body: v1::jobs::WorkerContext = response.json().await?;
     assert_eq!(
         body.variables,
         HashMap::from([("SECRET_VALUE".to_string(), "keep-me-safe".to_string())])
