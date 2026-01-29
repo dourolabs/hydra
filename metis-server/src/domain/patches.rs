@@ -235,21 +235,17 @@ impl PatchRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpsertPatchRequest {
     pub patch: Patch,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub sync_github: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_github_branch: Option<String>,
 }
 
 impl UpsertPatchRequest {
     pub fn new(patch: Patch) -> Self {
         Self {
             patch,
-            sync_github: false,
+            sync_github_branch: None,
         }
     }
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,15 +457,18 @@ impl From<api::patches::UpsertPatchRequest> for UpsertPatchRequest {
     fn from(value: api::patches::UpsertPatchRequest) -> Self {
         UpsertPatchRequest {
             patch: value.patch.into(),
-            sync_github: value.sync_github,
+            sync_github_branch: value.sync_github_branch,
         }
     }
 }
 
 impl From<UpsertPatchRequest> for api::patches::UpsertPatchRequest {
     fn from(value: UpsertPatchRequest) -> Self {
-        api::patches::UpsertPatchRequest::new(value.patch.into())
-            .with_sync_github(value.sync_github)
+        let upsert_request = api::patches::UpsertPatchRequest::new(value.patch.into());
+        match value.sync_github_branch {
+            Some(sync_github_branch) => upsert_request.with_sync_github_branch(&sync_github_branch),
+            None => upsert_request,
+        }
     }
 }
 

@@ -421,10 +421,6 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to create github client for '{actor}': {source}"
             ))
         }
-        UpsertPatchError::GithubHeadRefMissing => {
-            error!("missing github head ref for patch sync");
-            ApiError::bad_request("github head ref must be provided")
-        }
         UpsertPatchError::GithubBaseRefMissing => {
             error!("missing github base ref for patch sync");
             ApiError::bad_request("github base ref must be provided")

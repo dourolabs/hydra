@@ -120,8 +120,6 @@ pub enum UpsertPatchError {
         source: octocrab::Error,
         actor: String,
     },
-    #[error("github sync requires a head ref")]
-    GithubHeadRefMissing,
     #[error("github sync requires a base ref")]
     GithubBaseRefMissing,
     #[error("failed to load repository '{repo_name}' for github sync")]
@@ -442,6 +440,7 @@ impl AppState {
         &self,
         actor: &Actor,
         patch: &mut Patch,
+        head_ref: &str,
     ) -> Result<(), UpsertPatchError> {
         let (owner, repo) = match patch.github.as_ref() {
             Some(github) => (github.owner.clone(), github.repo.clone()),
@@ -473,18 +472,6 @@ impl AppState {
             updated.url = pr.html_url.as_ref().map(ToString::to_string);
             patch.github = Some(updated);
             return Ok(());
-        }
-
-        let head_ref = patch
-            .github
-            .as_ref()
-            .and_then(|github| github.head_ref.as_ref())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| derive_head_ref(patch));
-
-        if head_ref.trim().is_empty() {
-            return Err(UpsertPatchError::GithubHeadRefMissing);
         }
 
         let base_ref = match patch
@@ -1135,7 +1122,7 @@ impl AppState {
     ) -> Result<PatchId, UpsertPatchError> {
         let UpsertPatchRequest {
             mut patch,
-            sync_github,
+            sync_github_branch,
         } = request;
 
         let mut should_close_merge_requests = false;
@@ -1157,13 +1144,14 @@ impl AppState {
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
 
                 patch.created_by = existing_patch.item.created_by;
-                if sync_github && patch.github.is_none() {
-                    patch.github = existing_patch.item.github.clone();
-                }
+                if let Some(sync_github_branch) = sync_github_branch {
+                    if patch.github.is_none() {
+                        patch.github = existing_patch.item.github.clone();
+                    }
 
-                if sync_github {
                     let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
-                    self.sync_patch_with_github(actor, &mut patch).await?;
+                    self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
+                        .await?;
                 }
 
                 store
@@ -1205,9 +1193,10 @@ impl AppState {
                     }
                 }
 
-                if sync_github {
+                if let Some(sync_github_branch) = sync_github_branch {
                     let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
-                    self.sync_patch_with_github(actor, &mut patch).await?;
+                    self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
+                        .await?;
                 }
 
                 store
@@ -1740,35 +1729,6 @@ impl AppState {
     }
 }
 
-fn derive_head_ref(patch: &Patch) -> String {
-    let job_id = patch.created_by.as_ref().map(|id| id.as_ref());
-    let sanitized_job = sanitize_branch_segment(job_id.unwrap_or("patch"));
-    if sanitized_job.is_empty() {
-        "metis-patch".to_string()
-    } else {
-        format!("metis-{sanitized_job}")
-    }
-}
-
-fn sanitize_branch_segment(input: &str) -> String {
-    let mut normalized = input
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-
-    while normalized.contains("--") {
-        normalized = normalized.replace("--", "-");
-    }
-
-    normalized.trim_matches('-').to_string()
-}
-
 fn join_issue_ids(ids: &[IssueId]) -> String {
     let mut values: Vec<String> = ids.iter().map(ToString::to_string).collect();
     values.sort();
@@ -2178,7 +2138,7 @@ mod tests {
         );
         let request = UpsertPatchRequest {
             patch: request_patch,
-            sync_github: true,
+            sync_github_branch: Some(String::from("feature")),
         };
 
         handles
@@ -2275,7 +2235,7 @@ mod tests {
         );
         let request = UpsertPatchRequest {
             patch,
-            sync_github: true,
+            sync_github_branch: Some(String::from("metis-t-test")),
         };
 
         let patch_id = handles

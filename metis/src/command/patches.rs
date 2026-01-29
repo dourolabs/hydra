@@ -761,17 +761,18 @@ pub async fn create_patch_artifact_from_repo(
         service_repo_name.clone(),
         None,
     );
+    let mut upsert_request = UpsertPatchRequest::new(patch_payload.clone());
+
     if create_github_pr {
         let github_token = github_token
             .ok_or_else(|| anyhow!("Creator GitHub token is required to push a GitHub branch"))?;
         let branch_name = ensure_feature_branch(repo_root, job_id.as_ref().map(|id| id.as_ref()))?;
         push_branch(repo_root, &branch_name, Some(github_token))?;
+        upsert_request = upsert_request.with_sync_github_branch(&branch_name);
     }
 
     let response = client
-        .create_patch(
-            &UpsertPatchRequest::new(patch_payload.clone()).with_sync_github(create_github_pr),
-        )
+        .create_patch(&upsert_request)
         .await
         .context("failed to create patch")?;
 
