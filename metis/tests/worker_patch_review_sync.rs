@@ -2,14 +2,11 @@ use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use httpmock::prelude::*;
 use jsonwebtoken::EncodingKey;
+use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-        UpsertIssueRequest,
-    },
+    issues::{IssueStatus, IssueType, JobSettings},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
-    users::Username,
 };
 use metis_server::background::run_spawners::RunSpawnersWorker;
 use metis_server::background::scheduler::ScheduledWorker;
@@ -206,27 +203,16 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         )
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        format!("Review patch {}", patch_id.as_ref()),
-        Username::from("requester"),
-        String::new(),
-        IssueStatus::Open,
-        Some("requester".to_string()),
-        Some(job_settings),
-        Vec::new(),
-        vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_issue_id.clone(),
-        )],
-        vec![patch_id.clone()],
-    );
-
-    let merge_request_issue_id = env
-        .client
-        .create_issue(&UpsertIssueRequest::new(merge_request_issue, None))
-        .await?
-        .issue_id;
+    let merge_request_issue_id = create_merge_request_issue(
+        &env.client,
+        patch_id.clone(),
+        "requester".to_string(),
+        parent_issue_id.clone(),
+        "Review patch".to_string(),
+        "Review description".to_string(),
+    )
+    .await?
+    .id;
 
     let followup_agent = env
         .state

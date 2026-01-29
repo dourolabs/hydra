@@ -4,14 +4,11 @@ use httpmock::Mock;
 use jsonwebtoken::EncodingKey;
 use metis::command::jobs::worker_run::resolve_tracking_branch_override;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
+use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-        UpsertIssueRequest,
-    },
+    issues::{IssueStatus, IssueType, JobSettings},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
-    users::Username,
 };
 use metis_server::background::run_spawners::RunSpawnersWorker;
 use metis_server::background::scheduler::ScheduledWorker;
@@ -363,8 +360,8 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
 
     let patch_id = env
         .create_patch(
-            "Review patch",
-            "Review description",
+            "Code change summary",
+            "Code change description",
             patch_diff,
             PatchStatus::Open,
             Some(GithubPr::new(
@@ -380,27 +377,16 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         )
         .await?;
 
-    let merge_request_issue = Issue::new(
-        IssueType::MergeRequest,
-        format!("Review patch {}", patch_id.as_ref()),
-        Username::from("requester"),
-        String::new(),
-        IssueStatus::Open,
-        Some("requester".to_string()),
-        Some(job_settings),
-        Vec::new(),
-        vec![IssueDependency::new(
-            IssueDependencyType::ChildOf,
-            parent_issue_id.clone(),
-        )],
-        vec![patch_id.clone()],
-    );
-
-    let merge_request_issue_id = env
-        .client
-        .create_issue(&UpsertIssueRequest::new(merge_request_issue, None))
-        .await?
-        .issue_id;
+    let merge_request_issue_id = create_merge_request_issue(
+        &env.client,
+        patch_id.clone(),
+        "requester".to_string(),
+        parent_issue_id.clone(),
+        "Code change summary".to_string(),
+        "Code change description".to_string(),
+    )
+    .await?
+    .id;
 
     let queue_config = AgentQueueConfig {
         name: "swe".to_string(),
@@ -412,6 +398,10 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         let mut agents = env.agents.write().await;
         *agents = vec![Arc::new(AgentQueue::from_config(&queue_config))];
     }
+
+    // run the spawner once before syncing and picking up patch changes
+    let spawner = RunSpawnersWorker::new(env.state.clone());
+    spawner.run_iteration().await;
 
     env.run_github_sync(60)
         .await
@@ -436,7 +426,6 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         Some(head_ref)
     );
 
-    let spawner = RunSpawnersWorker::new(env.state.clone());
     spawner.run_iteration().await;
 
     let jobs = env

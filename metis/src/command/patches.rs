@@ -648,7 +648,8 @@ fn print_merge_queue_pretty(
     Ok(())
 }
 
-async fn create_merge_request_issue(
+#[doc(hidden)]
+pub async fn create_merge_request_issue(
     client: &dyn MetisClientInterface,
     patch_id: PatchId,
     assignee: String,
@@ -686,6 +687,7 @@ async fn create_merge_request_issue(
         )
     })?;
     let creator = parent_issue.issue.creator;
+    let job_settings = parent_issue.issue.job_settings.clone();
     let issue = Issue::new(
         IssueType::MergeRequest,
         description,
@@ -693,7 +695,7 @@ async fn create_merge_request_issue(
         String::new(),
         IssueStatus::Open,
         Some(assignee),
-        None,
+        Some(job_settings),
         Vec::new(),
         dependencies,
         vec![patch_id],
