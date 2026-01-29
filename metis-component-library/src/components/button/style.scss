@@ -34,18 +34,18 @@
 }
 
 .metis-button--primary {
-  background: theme.color("button", "primary-background");
+  background: red;
   color: theme.color("button", "primary-text");
   box-shadow: 0 theme.spacing(2) theme.spacing(5) theme.color("button", "primary-shadow");
 }
 
 .metis-button--primary:hover:enabled {
-  background: theme.color("button", "primary-hover");
+  background: red;
   transform: translateY(theme.spacing(-0.25));
 }
 
 .metis-button--primary:active:enabled {
-  background: theme.color("button", "primary-active");
+  background: red;
   transform: translateY(0);
   box-shadow: 0 theme.spacing(1.5) theme.spacing(4) theme.color("button", "primary-shadow");
 }
