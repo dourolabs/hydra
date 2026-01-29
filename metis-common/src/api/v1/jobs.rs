@@ -22,6 +22,12 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
+    #[serde(default = "default_status")]
+    pub status: Status,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<TaskError>,
 }
 
 impl Task {
@@ -42,35 +48,14 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+            status: Status::Created,
+            last_message: None,
+            error: None,
         }
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct TaskVersion {
-    pub prompt: String,
-    pub context: BundleSpec,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawned_from: Option<IssueId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub env_vars: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_limit: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_limit: Option<String>,
-    pub status: Status,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<TaskError>,
-}
-
-impl TaskVersion {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_status(
         prompt: String,
         context: BundleSpec,
         spawned_from: Option<IssueId>,
@@ -95,6 +80,10 @@ impl TaskVersion {
             error,
         }
     }
+}
+
+fn default_status() -> Status {
+    Status::Created
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,14 +312,21 @@ impl JobRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct JobVersionRecord {
+    pub job_id: TaskId,
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
-    pub task: TaskVersion,
+    pub task: Task,
 }
 
 impl JobVersionRecord {
-    pub fn new(version: VersionNumber, timestamp: DateTime<Utc>, task: TaskVersion) -> Self {
+    pub fn new(
+        job_id: TaskId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        task: Task,
+    ) -> Self {
         Self {
+            job_id,
             version,
             timestamp,
             task,

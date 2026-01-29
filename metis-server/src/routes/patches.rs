@@ -128,6 +128,7 @@ pub async fn list_patch_versions(
         .into_iter()
         .map(|version| {
             v1::patches::PatchVersionRecord::new(
+                patch_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
@@ -161,8 +162,12 @@ pub async fn get_patch_version(
             ApiError::not_found(format!("patch '{patch_id}' version {version} not found"))
         })?;
 
-    let response =
-        v1::patches::PatchVersionRecord::new(entry.version, entry.timestamp, entry.item.into());
+    let response = v1::patches::PatchVersionRecord::new(
+        patch_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
     info!(patch_id = %patch_id, version, "get_patch_version completed");
     Ok(Json(response))
 }

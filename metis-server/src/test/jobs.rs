@@ -492,21 +492,25 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(versions.versions.len(), 4);
+    assert_eq!(versions.versions[0].job_id, created.job_id);
     assert_eq!(versions.versions[0].version, 1);
     assert_eq!(
         versions.versions[0].task.status,
         v1::task_status::Status::Created
     );
+    assert_eq!(versions.versions[1].job_id, created.job_id);
     assert_eq!(versions.versions[1].version, 2);
     assert_eq!(
         versions.versions[1].task.status,
         v1::task_status::Status::Pending
     );
+    assert_eq!(versions.versions[2].job_id, created.job_id);
     assert_eq!(versions.versions[2].version, 3);
     assert_eq!(
         versions.versions[2].task.status,
         v1::task_status::Status::Running
     );
+    assert_eq!(versions.versions[3].job_id, created.job_id);
     assert_eq!(versions.versions[3].version, 4);
     assert_eq!(
         versions.versions[3].task.status,
@@ -525,6 +529,7 @@ async fn job_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(version.version, 4);
+    assert_eq!(version.job_id, created.job_id);
     assert_eq!(version.task.status, v1::task_status::Status::Complete);
 
     Ok(())

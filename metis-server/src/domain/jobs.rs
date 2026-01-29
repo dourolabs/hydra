@@ -236,30 +236,16 @@ impl From<api::jobs::Task> for Task {
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
-            status: Status::Created,
-            last_message: None,
-            error: None,
+            status: value.status.into(),
+            last_message: value.last_message,
+            error: value.error.map(Into::into),
         }
     }
 }
 
 impl From<Task> for api::jobs::Task {
     fn from(value: Task) -> Self {
-        api::jobs::Task::new(
-            value.prompt,
-            value.context.into(),
-            value.spawned_from,
-            value.image,
-            value.env_vars,
-            value.cpu_limit,
-            value.memory_limit,
-        )
-    }
-}
-
-impl From<Task> for api::jobs::TaskVersion {
-    fn from(value: Task) -> Self {
-        api::jobs::TaskVersion::new(
+        api::jobs::Task::new_with_status(
             value.prompt,
             value.context.into(),
             value.spawned_from,

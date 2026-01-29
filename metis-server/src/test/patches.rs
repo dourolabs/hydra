@@ -130,8 +130,10 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(versions.versions.len(), 2);
+    assert_eq!(versions.versions[0].patch_id, created.patch_id);
     assert_eq!(versions.versions[0].version, 1);
     assert_eq!(versions.versions[0].patch.title, "Initial patch");
+    assert_eq!(versions.versions[1].patch_id, created.patch_id);
     assert_eq!(versions.versions[1].version, 2);
     assert_eq!(versions.versions[1].patch.title, "Updated patch");
 
@@ -147,6 +149,7 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(version.version, 2);
+    assert_eq!(version.patch_id, created.patch_id);
     assert_eq!(version.patch.title, "Updated patch");
 
     Ok(())

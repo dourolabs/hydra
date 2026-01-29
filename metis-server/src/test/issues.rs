@@ -216,8 +216,10 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(versions.versions.len(), 2);
+    assert_eq!(versions.versions[0].issue_id, created.issue_id);
     assert_eq!(versions.versions[0].version, 1);
     assert_eq!(versions.versions[0].issue.description, "initial");
+    assert_eq!(versions.versions[1].issue_id, created.issue_id);
     assert_eq!(versions.versions[1].version, 2);
     assert_eq!(versions.versions[1].issue.description, "updated");
 
@@ -233,6 +235,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(version.version, 2);
+    assert_eq!(version.issue_id, created.issue_id);
     assert_eq!(version.issue.description, "updated");
 
     Ok(())

@@ -518,14 +518,21 @@ impl IssueRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct IssueVersionRecord {
+    pub issue_id: IssueId,
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub issue: Issue,
 }
 
 impl IssueVersionRecord {
-    pub fn new(version: VersionNumber, timestamp: DateTime<Utc>, issue: Issue) -> Self {
+    pub fn new(
+        issue_id: IssueId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        issue: Issue,
+    ) -> Self {
         Self {
+            issue_id,
             version,
             timestamp,
             issue,

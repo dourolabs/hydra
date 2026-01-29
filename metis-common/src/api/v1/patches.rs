@@ -243,14 +243,21 @@ impl PatchRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PatchVersionRecord {
+    pub patch_id: PatchId,
     pub version: VersionNumber,
     pub timestamp: DateTime<Utc>,
     pub patch: Patch,
 }
 
 impl PatchVersionRecord {
-    pub fn new(version: VersionNumber, timestamp: DateTime<Utc>, patch: Patch) -> Self {
+    pub fn new(
+        patch_id: PatchId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        patch: Patch,
+    ) -> Self {
         Self {
+            patch_id,
             version,
             timestamp,
             patch,

@@ -147,6 +147,7 @@ pub async fn list_issue_versions(
         .into_iter()
         .map(|version| {
             v1::issues::IssueVersionRecord::new(
+                issue_id.clone(),
                 version.version,
                 version.timestamp,
                 version.item.into(),
@@ -180,8 +181,12 @@ pub async fn get_issue_version(
             ApiError::not_found(format!("issue '{issue_id}' version {version} not found"))
         })?;
 
-    let response =
-        v1::issues::IssueVersionRecord::new(entry.version, entry.timestamp, entry.item.into());
+    let response = v1::issues::IssueVersionRecord::new(
+        issue_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
     info!(issue_id = %issue_id, version, "get_issue_version completed");
     Ok(Json(response))
 }

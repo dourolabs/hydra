@@ -169,7 +169,12 @@ pub async fn list_job_versions(
     let records = versions
         .into_iter()
         .map(|version| {
-            v1::jobs::JobVersionRecord::new(version.version, version.timestamp, version.item.into())
+            v1::jobs::JobVersionRecord::new(
+                job_id.clone(),
+                version.version,
+                version.timestamp,
+                version.item.into(),
+            )
         })
         .collect();
 
@@ -208,8 +213,12 @@ pub async fn get_job_version(
             ApiError::not_found(format!("job '{job_id}' version {version} not found"))
         })?;
 
-    let response =
-        v1::jobs::JobVersionRecord::new(entry.version, entry.timestamp, entry.item.into());
+    let response = v1::jobs::JobVersionRecord::new(
+        job_id.clone(),
+        entry.version,
+        entry.timestamp,
+        entry.item.into(),
+    );
     info!(job_id = %job_id, version, "get_job_version completed");
     Ok(Json(response))
 }
