@@ -522,7 +522,7 @@ async fn create_followup_issues_on_new_review(
         }
 
         let followup_issue = Issue::new(
-            IssueType::MergeRequest,
+            IssueType::Task,
             format!("Follow-up for review on patch {patch_id}"),
             Username::from(""),
             String::new(),
@@ -1026,7 +1026,7 @@ mod tests {
         let children = handles.store.get_issue_children(&parent_issue_id).await?;
         assert_eq!(children.len(), 1);
         let child = handles.store.get_issue(&children[0]).await?.item;
-        assert_eq!(child.issue_type, IssueType::MergeRequest);
+        assert_eq!(child.issue_type, IssueType::Task);
         assert_eq!(child.status, IssueStatus::Open);
         assert_eq!(child.assignee.as_deref(), Some("swe"));
         assert_eq!(child.patches, vec![patch_id.clone()]);
