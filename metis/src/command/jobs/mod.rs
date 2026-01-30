@@ -5,7 +5,9 @@ use crate::{
 use anyhow::Result;
 use clap::Subcommand;
 use metis_common::{
-    constants::{ENV_ANTHROPIC_API_KEY, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY},
+    constants::{
+        ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID, ENV_OPENAI_API_KEY,
+    },
     IssueId, MetisId, TaskId,
 };
 use std::path::PathBuf;
@@ -103,6 +105,13 @@ pub enum JobsCommand {
             env = ENV_ANTHROPIC_API_KEY
         )]
         anthropic_api_key: Option<String>,
+        /// OAuth token to pass to Claude Code (defaults to CLAUDE_CODE_OAUTH_TOKEN).
+        #[arg(
+            long = "claude-code-oauth-token",
+            value_name = "TOKEN",
+            env = ENV_CLAUDE_CODE_OAUTH_TOKEN
+        )]
+        claude_code_oauth_token: Option<String>,
 
         #[arg(long = "issue-id", value_name = "ISSUE_ID", env = ENV_METIS_ISSUE_ID)]
         issue_id: Option<IssueId>,
@@ -140,6 +149,7 @@ pub async fn run(
             path,
             openai_api_key,
             anthropic_api_key,
+            claude_code_oauth_token,
             issue_id,
         } => {
             let commands = ModelAwareCommands::default();
@@ -149,6 +159,7 @@ pub async fn run(
                 path,
                 openai_api_key,
                 anthropic_api_key,
+                claude_code_oauth_token,
                 issue_id,
                 &commands,
                 context,

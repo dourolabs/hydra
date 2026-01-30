@@ -2,7 +2,9 @@ use std::{collections::HashMap, path::Path, process::Stdio};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use metis_common::constants::{ENV_ANTHROPIC_API_KEY, ENV_OPENAI_API_KEY};
+use metis_common::constants::{
+    ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
+};
 use tokio::{fs, io::AsyncWriteExt, process::Command};
 
 #[async_trait]
@@ -13,6 +15,7 @@ pub trait WorkerCommands: Send + Sync {
         model: Option<&str>,
         openai_api_key: Option<String>,
         anthropic_api_key: Option<String>,
+        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -132,6 +135,7 @@ impl WorkerCommands for CodexCommands {
         model: Option<&str>,
         openai_api_key: Option<String>,
         _anthropic_api_key: Option<String>,
+        _claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -148,6 +152,7 @@ impl ClaudeCommands {
         prompt: &str,
         model: Option<&str>,
         anthropic_api_key: Option<String>,
+        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -158,13 +163,15 @@ impl ClaudeCommands {
                 .with_context(|| format!("failed to create claude output directory {dir:?}"))?;
         }
 
-        let anthropic_api_key = anthropic_api_key
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                anyhow!(
-                    "{ENV_ANTHROPIC_API_KEY} must be provided via --anthropic-api-key or environment"
-                )
-            })?;
+        let anthropic_api_key = anthropic_api_key.filter(|value| !value.trim().is_empty());
+        let claude_code_oauth_token =
+            claude_code_oauth_token.filter(|value| !value.trim().is_empty());
+
+        if anthropic_api_key.is_none() && claude_code_oauth_token.is_none() {
+            return Err(anyhow!(
+                "Either {ENV_CLAUDE_CODE_OAUTH_TOKEN} or {ENV_ANTHROPIC_API_KEY} must be provided via CLI flags or environment"
+            ));
+        }
 
         let mut command = Command::new("claude");
         command.arg("--print");
@@ -172,11 +179,16 @@ impl ClaudeCommands {
             command.arg("--model");
             command.arg(model);
         }
+        command.current_dir(working_dir).envs(env);
+        if let Some(key) = anthropic_api_key.as_ref() {
+            command.env(ENV_ANTHROPIC_API_KEY, key);
+        }
+        if let Some(token) = claude_code_oauth_token.as_ref() {
+            command.env(ENV_CLAUDE_CODE_OAUTH_TOKEN, token);
+        }
+
         let output = command
             .arg(prompt)
-            .current_dir(working_dir)
-            .envs(env)
-            .env(ENV_ANTHROPIC_API_KEY, anthropic_api_key)
             .output()
             .await
             .context("failed to spawn claude command")?;
@@ -205,6 +217,7 @@ impl WorkerCommands for ClaudeCommands {
         model: Option<&str>,
         _openai_api_key: Option<String>,
         anthropic_api_key: Option<String>,
+        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -213,6 +226,7 @@ impl WorkerCommands for ClaudeCommands {
             prompt,
             model,
             anthropic_api_key,
+            claude_code_oauth_token,
             working_dir,
             env,
             output_path,
@@ -230,6 +244,7 @@ impl WorkerCommands for ModelAwareCommands {
         model: Option<&str>,
         openai_api_key: Option<String>,
         anthropic_api_key: Option<String>,
+        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         output_path: &Path,
@@ -242,6 +257,7 @@ impl WorkerCommands for ModelAwareCommands {
                         model,
                         openai_api_key,
                         anthropic_api_key,
+                        claude_code_oauth_token.clone(),
                         working_dir,
                         env,
                         output_path,
@@ -255,6 +271,7 @@ impl WorkerCommands for ModelAwareCommands {
                         model,
                         openai_api_key,
                         anthropic_api_key,
+                        claude_code_oauth_token,
                         working_dir,
                         env,
                         output_path,

@@ -42,6 +42,7 @@ pub struct TestEnvironment {
     pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     #[allow(dead_code)]
     pub state: AppState,
+    pub worker_claude_code_oauth_token: Option<String>,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
@@ -118,6 +119,7 @@ impl TestEnvironment {
             worker_dir,
             None,
             None,
+            self.worker_claude_code_oauth_token.clone(),
             None,
             &bash_commands,
             &context,
@@ -226,12 +228,32 @@ fn format_command_outputs(outputs: &[CommandOutput]) -> String {
 }
 
 pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnvironment> {
-    init_test_server_with_remote_and_github(repo_name, None).await
+    init_test_server_with_remote_internal(repo_name, None, None).await
 }
 
 pub async fn init_test_server_with_remote_and_github(
     repo_name: &str,
     github_app: Option<Octocrab>,
+) -> Result<TestEnvironment> {
+    init_test_server_with_remote_internal(repo_name, github_app, None).await
+}
+
+pub async fn init_test_server_with_remote_and_claude_token(
+    repo_name: &str,
+    claude_code_oauth_token: &str,
+) -> Result<TestEnvironment> {
+    init_test_server_with_remote_internal(
+        repo_name,
+        None,
+        Some(claude_code_oauth_token.to_string()),
+    )
+    .await
+}
+
+async fn init_test_server_with_remote_internal(
+    repo_name: &str,
+    github_app: Option<Octocrab>,
+    claude_code_oauth_token: Option<String>,
 ) -> Result<TestEnvironment> {
     let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
     let remote_url = init_service_remote(tempdir.path())?;
@@ -285,6 +307,7 @@ pub async fn init_test_server_with_remote_and_github(
         current_issue_id,
         agents,
         state,
+        worker_claude_code_oauth_token: claude_code_oauth_token,
     })
 }
 

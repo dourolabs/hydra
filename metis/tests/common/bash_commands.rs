@@ -98,6 +98,7 @@ impl WorkerCommands for BashCommands {
         _model: Option<&str>,
         _openai_api_key: Option<String>,
         _anthropic_api_key: Option<String>,
+        _claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         _output_path: &Path,
