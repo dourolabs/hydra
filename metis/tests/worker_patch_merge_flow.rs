@@ -6,7 +6,7 @@ use metis::command::jobs::worker_run::resolve_tracking_branch_override;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings, SearchIssuesQuery},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
 };
@@ -428,23 +428,41 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
 
     spawner.run_iteration().await;
 
+    let issues = env
+        .client
+        .list_issues(&SearchIssuesQuery::default())
+        .await?
+        .issues;
+    let merge_request_issue = issues
+        .iter()
+        .find(|issue| issue.id == merge_request_issue_id)
+        .context("expected merge request issue to exist")?;
+    assert_eq!(merge_request_issue.issue.status, IssueStatus::Closed);
+    let followup_issue = issues
+        .iter()
+        .find(|issue| {
+            issue.issue.issue_type == IssueType::Task
+                && issue.issue.dependencies.iter().any(|dependency| {
+                    dependency.dependency_type == IssueDependencyType::ChildOf
+                        && dependency.issue_id == merge_request_issue_id
+                })
+        })
+        .context("expected followup issue to be created")?;
+    let followup_issue_id = followup_issue.id.clone();
+
     let jobs = env
         .client
-        .list_jobs(&SearchJobsQuery::new(
-            None,
-            Some(merge_request_issue_id.clone()),
-        ))
+        .list_jobs(&SearchJobsQuery::new(None, Some(followup_issue_id.clone())))
         .await?
         .jobs;
     let job = jobs
         .first()
-        .context("expected review task to be spawned for merge request")?;
+        .context("expected review task to be spawned for followup issue")?;
     let job_id = job.id.clone();
 
     env.state.start_pending_task(job_id.clone()).await;
 
-    let override_branch =
-        resolve_tracking_branch_override(&env.client, &merge_request_issue_id).await?;
+    let override_branch = resolve_tracking_branch_override(&env.client, &followup_issue_id).await?;
     assert_eq!(override_branch.as_deref(), Some(head_ref));
 
     let worker_dir = tempfile::tempdir().context("failed to create worker tempdir")?;
@@ -464,7 +482,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         None,
         None,
         None,
-        Some(merge_request_issue_id.clone()),
+        Some(followup_issue_id.clone()),
         &bash_commands,
         &context,
     )

@@ -388,6 +388,15 @@ impl AppState {
         store.get_issue(issue_id).await
     }
 
+    pub(crate) async fn update_issue_unchecked(
+        &self,
+        issue_id: &IssueId,
+        issue: Issue,
+    ) -> Result<(), StoreError> {
+        let store = self.store.as_ref();
+        store.update_issue(issue_id, issue).await
+    }
+
     pub async fn get_issue_versions(
         &self,
         issue_id: &IssueId,

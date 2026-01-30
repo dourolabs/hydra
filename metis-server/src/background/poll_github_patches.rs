@@ -508,6 +508,7 @@ async fn create_followup_issues_on_new_review(
 
     let issues = state.list_issues().await?;
     let mut created_issue_ids = Vec::new();
+    let mut closed_issue_ids = Vec::new();
 
     for (issue_id, issue) in issues {
         let issue = issue.item;
@@ -540,7 +541,14 @@ async fn create_followup_issues_on_new_review(
         let followup_id = state
             .upsert_issue(None, UpsertIssueRequest::new(followup_issue, None))
             .await?;
-        created_issue_ids.push((issue_id, followup_id));
+        created_issue_ids.push((issue_id.clone(), followup_id));
+
+        let mut closed_issue = issue;
+        closed_issue.status = IssueStatus::Closed;
+        state
+            .update_issue_unchecked(&issue_id, closed_issue)
+            .await?;
+        closed_issue_ids.push(issue_id);
     }
 
     if !created_issue_ids.is_empty() {
@@ -549,7 +557,21 @@ async fn create_followup_issues_on_new_review(
             .map(|(parent_id, child_id)| format!("{parent_id}->{child_id}"))
             .collect::<Vec<_>>()
             .join(", ");
-        info!(patch_id = %patch_id, issues = %issues, "created followup issues for new review");
+        if !closed_issue_ids.is_empty() {
+            let closed = closed_issue_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            info!(
+                patch_id = %patch_id,
+                issues = %issues,
+                closed = %closed,
+                "created followup issues for new review"
+            );
+        } else {
+            info!(patch_id = %patch_id, issues = %issues, "created followup issues for new review");
+        }
     }
 
     Ok(())
@@ -1022,6 +1044,9 @@ mod tests {
             .await?;
 
         create_followup_issues_on_new_review(&handles.state, &patch_id, true).await?;
+
+        let parent_issue = handles.store.get_issue(&parent_issue_id).await?.item;
+        assert_eq!(parent_issue.status, IssueStatus::Closed);
 
         let children = handles.store.get_issue_children(&parent_issue_id).await?;
         assert_eq!(children.len(), 1);

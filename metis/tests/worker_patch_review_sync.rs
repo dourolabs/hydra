@@ -4,7 +4,7 @@ use httpmock::prelude::*;
 use jsonwebtoken::EncodingKey;
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{IssueDependencyType, IssueStatus, IssueType, JobSettings, SearchIssuesQuery},
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
 };
@@ -302,17 +302,36 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     let spawner = RunSpawnersWorker::new(env.state.clone());
     spawner.run_iteration().await;
 
+    let issues = env
+        .client
+        .list_issues(&SearchIssuesQuery::default())
+        .await?
+        .issues;
+    let merge_request_issue = issues
+        .iter()
+        .find(|issue| issue.id == merge_request_issue_id)
+        .context("expected merge request issue to exist")?;
+    assert_eq!(merge_request_issue.issue.status, IssueStatus::Closed);
+    let followup_issue = issues
+        .iter()
+        .find(|issue| {
+            issue.issue.issue_type == IssueType::Task
+                && issue.issue.dependencies.iter().any(|dependency| {
+                    dependency.dependency_type == IssueDependencyType::ChildOf
+                        && dependency.issue_id == merge_request_issue_id
+                })
+        })
+        .context("expected followup issue to be created")?;
+    let followup_issue_id = followup_issue.id.clone();
+
     let jobs = env
         .client
-        .list_jobs(&SearchJobsQuery::new(
-            None,
-            Some(merge_request_issue_id.clone()),
-        ))
+        .list_jobs(&SearchJobsQuery::new(None, Some(followup_issue_id.clone())))
         .await?
         .jobs;
     let job = jobs
         .first()
-        .context("expected review task to be spawned for merge request")?;
+        .context("expected review task to be spawned for followup issue")?;
 
     env.state
         .transition_task_to_running(&job.id)
@@ -328,7 +347,7 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         .context("expected worker output for HEAD rev-parse")?;
     assert_eq!(head_output.stdout.trim(), head_sha);
 
-    assert_eq!(job.task.spawned_from, Some(merge_request_issue_id.clone()));
+    assert_eq!(job.task.spawned_from, Some(followup_issue_id.clone()));
     assert_eq!(
         job.task
             .env_vars
@@ -338,7 +357,7 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     );
     assert_eq!(
         job.task.env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
-        Some(merge_request_issue_id.as_ref())
+        Some(followup_issue_id.as_ref())
     );
 
     Ok(())
