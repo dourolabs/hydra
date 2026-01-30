@@ -54,7 +54,12 @@ impl S3StorageClient {
 
         let mut builder = aws_sdk_s3::config::Builder::new()
             .region(region)
-            .endpoint_url(&config.endpoint_url);
+            .endpoint_url(&config.endpoint_url)
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .force_path_style(true)
+            .request_checksum_calculation(
+                aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired,
+            );
         if let Some(provider) = credentials_provider {
             builder = builder.credentials_provider(provider);
         }

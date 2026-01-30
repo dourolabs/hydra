@@ -1,13 +1,6 @@
-mod config;
-mod s3;
-
 use anyhow::Result;
-use axum::{Json, Router, routing::get};
-use config::AppConfig;
-use serde_json::json;
+use metis_s3::{build_router, config, config::AppConfig};
 use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::info;
 
 #[tokio::main]
@@ -29,7 +22,10 @@ async fn run() -> Result<()> {
         "metis-s3 configuration loaded"
     );
 
-    let app = build_router(&app_config);
+    let app = build_router(
+        storage_root.clone(),
+        app_config.server.request_body_limit_bytes,
+    );
     let listener = TcpListener::bind(&bind_addr).await?;
     let addr = listener.local_addr()?;
 
@@ -39,22 +35,4 @@ async fn run() -> Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-fn build_router(config: &AppConfig) -> Router {
-    let middleware = ServiceBuilder::new()
-        .layer(RequestBodyLimitLayer::new(
-            config.server.request_body_limit_bytes,
-        ))
-        .layer(TraceLayer::new_for_http());
-
-    Router::new()
-        .route("/healthz", get(healthz))
-        .merge(s3::router(config.storage_root()))
-        .layer(middleware)
-}
-
-async fn healthz() -> Json<serde_json::Value> {
-    info!("healthz invoked");
-    Json(json!({ "status": "ok" }))
 }

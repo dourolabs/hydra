@@ -19,3 +19,4 @@ async-trait = "0.1"
 git2 = { workspace = true }
 
 [dev-dependencies]
+metis-s3 = { path = "../metis-s3" }

@@ -59,6 +59,7 @@ impl RouterWithState {
     fn new(state: Arc<S3State>) -> Self {
         let router = axum::Router::new()
             .route("/:bucket", get(list_objects_v2))
+            .route("/:bucket/", get(list_objects_v2))
             .route("/:bucket/*key", put(put_object))
             .route("/:bucket/*key", get(get_object))
             .route("/:bucket/*key", head(head_object))
@@ -107,7 +108,7 @@ async fn list_objects_v2(
     Path(bucket): Path<String>,
     Query(query): Query<ListObjectsQuery>,
 ) -> Response {
-    let list_type = query.list_type.unwrap_or(0);
+    let list_type = query.list_type.unwrap_or(2);
     if list_type != 2 {
         return s3_error(
             StatusCode::BAD_REQUEST,
