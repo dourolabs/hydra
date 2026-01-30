@@ -393,6 +393,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         prompt: "Review patch".to_string(),
         max_tries: DEFAULT_AGENT_MAX_TRIES,
         max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+        match_unassigned: false,
     };
     {
         let mut agents = env.agents.write().await;

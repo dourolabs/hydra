@@ -8,6 +8,10 @@ fn default_max_simultaneous() -> u32 {
     u32::MAX
 }
 
+fn default_match_unassigned() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AgentRecord {
@@ -18,6 +22,8 @@ pub struct AgentRecord {
     pub max_tries: u32,
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: u32,
+    #[serde(default = "default_match_unassigned")]
+    pub match_unassigned: bool,
 }
 
 impl AgentRecord {
@@ -27,6 +33,7 @@ impl AgentRecord {
             String::new(),
             default_max_tries(),
             default_max_simultaneous(),
+            default_match_unassigned(),
         )
     }
 
@@ -35,12 +42,14 @@ impl AgentRecord {
         prompt: impl Into<String>,
         max_tries: u32,
         max_simultaneous: u32,
+        match_unassigned: bool,
     ) -> Self {
         Self {
             name: name.into(),
             prompt: prompt.into(),
             max_tries,
             max_simultaneous,
+            match_unassigned,
         }
     }
 }
@@ -54,6 +63,8 @@ pub struct UpsertAgentRequest {
     pub max_tries: u32,
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: u32,
+    #[serde(default = "default_match_unassigned")]
+    pub match_unassigned: bool,
 }
 
 impl UpsertAgentRequest {
@@ -63,6 +74,7 @@ impl UpsertAgentRequest {
             prompt: prompt.into(),
             max_tries: default_max_tries(),
             max_simultaneous: default_max_simultaneous(),
+            match_unassigned: default_match_unassigned(),
         }
     }
 
@@ -80,6 +92,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
             prompt: request.prompt,
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
+            match_unassigned: request.match_unassigned,
         }
     }
 }
@@ -91,6 +104,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
             prompt: record.prompt,
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
+            match_unassigned: record.match_unassigned,
         }
     }
 }

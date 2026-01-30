@@ -351,6 +351,7 @@ fn write_agent_details(agent: &AgentRecord, writer: &mut impl Write) -> Result<(
     writeln!(writer, "  prompt: {}", agent.prompt)?;
     writeln!(writer, "  max_tries: {}", agent.max_tries)?;
     writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
+    writeln!(writer, "  match_unassigned: {}", agent.match_unassigned)?;
     Ok(())
 }
 

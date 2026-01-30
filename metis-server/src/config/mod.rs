@@ -365,6 +365,8 @@ pub struct AgentQueueConfig {
     pub max_tries: u32,
     #[serde(default = "default_agent_max_simultaneous")]
     pub max_simultaneous: u32,
+    #[serde(default)]
+    pub match_unassigned: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]

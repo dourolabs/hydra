@@ -93,6 +93,8 @@ merge_request_followup_agent = "agent-a"
 name = "agent-a"
 # Prompt provided to the agent; forwarded directly to Codex.
 prompt = "You are agent-a working on assigned issues."
+# Match issues that have no assignee set.
+match_unassigned = false
 # Maximum number of times to spawn a task for the same issue state.
 max_tries = 3
 # Maximum number of simultaneously running jobs for this queue (defaults to unlimited).

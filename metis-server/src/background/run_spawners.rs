@@ -136,6 +136,7 @@ mod tests {
             prompt: format!("prompt for {name}"),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            match_unassigned: false,
         }
     }
 

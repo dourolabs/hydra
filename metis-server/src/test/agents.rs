@@ -22,6 +22,7 @@ fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             prompt: format!("prompt for {name}"),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            match_unassigned: false,
         })
         .collect();
     config.background.agent_queues = agents.clone();
@@ -94,6 +95,7 @@ async fn get_agent_returns_single_queue() -> anyhow::Result<()> {
     assert_eq!(body.agent.name, "alpha");
     assert_eq!(body.agent.prompt, "prompt for alpha");
     assert_eq!(body.agent.max_tries, DEFAULT_AGENT_MAX_TRIES);
+    assert!(!body.agent.match_unassigned);
     Ok(())
 }
 
@@ -118,6 +120,7 @@ async fn create_agent_adds_to_state() -> anyhow::Result<()> {
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "gamma");
     assert_eq!(agents[0].prompt, "prompt for gamma");
+    assert!(!agents[0].match_unassigned);
     Ok(())
 }
 

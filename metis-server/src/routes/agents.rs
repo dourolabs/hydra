@@ -100,6 +100,7 @@ fn normalize_agent(payload: UpsertAgentRequest) -> Result<AgentQueueConfig, ApiE
         prompt: normalize_non_empty("prompt", payload.prompt)?,
         max_tries: payload.max_tries,
         max_simultaneous: payload.max_simultaneous,
+        match_unassigned: payload.match_unassigned,
     })
 }
 
@@ -132,6 +133,7 @@ impl From<AgentQueueConfig> for AgentRecord {
             config.prompt,
             config.max_tries,
             config.max_simultaneous,
+            config.match_unassigned,
         )
     }
 }

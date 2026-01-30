@@ -44,6 +44,10 @@ pub struct CreateAgentArgs {
         default_value_t = u32::MAX
     )]
     pub max_simultaneous: u32,
+
+    /// Allow this agent to match issues without an assignee.
+    #[arg(long = "match-unassigned", default_value_t = false)]
+    pub match_unassigned: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -63,6 +67,10 @@ pub struct UpdateAgentArgs {
     /// Updated max simultaneous tasks for the agent.
     #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
     pub max_simultaneous: Option<u32>,
+
+    /// Updated unassigned issue matching setting.
+    #[arg(long = "match-unassigned", value_name = "MATCH_UNASSIGNED")]
+    pub match_unassigned: Option<bool>,
 }
 
 pub async fn run(
@@ -110,6 +118,7 @@ async fn create_agent(
         &args.prompt,
         args.max_tries,
         args.max_simultaneous,
+        args.match_unassigned,
     )?;
     let response = client
         .create_agent(&request)
@@ -141,6 +150,9 @@ async fn update_agent(
     if let Some(max_simultaneous) = args.max_simultaneous {
         request.max_simultaneous = max_simultaneous;
     }
+    if let Some(match_unassigned) = args.match_unassigned {
+        request.match_unassigned = match_unassigned;
+    }
 
     let response = client
         .update_agent(&name, &request)
@@ -163,6 +175,7 @@ fn build_upsert_request(
     prompt: &str,
     max_tries: u32,
     max_simultaneous: u32,
+    match_unassigned: bool,
 ) -> Result<UpsertAgentRequest> {
     let mut request = UpsertAgentRequest::new(
         normalize_non_empty(name, "agent name")?,
@@ -170,6 +183,7 @@ fn build_upsert_request(
     );
     request.max_tries = max_tries;
     request.max_simultaneous = max_simultaneous;
+    request.match_unassigned = match_unassigned;
 
     Ok(request)
 }
@@ -227,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_agents_prints_pretty_format() -> Result<()> {
-        let agents = vec![AgentRecord::with_details("alpha", "prompt", 2, 5)];
+        let agents = vec![AgentRecord::with_details("alpha", "prompt", 2, 5, false)];
         let mut output = Vec::new();
 
         render_agent_records(ResolvedOutputFormat::Pretty, &agents, &mut output)?;
@@ -237,6 +251,7 @@ mod tests {
         assert!(output.contains("prompt"));
         assert!(output.contains("max_tries: 2"));
         assert!(output.contains("max_simultaneous: 5"));
+        assert!(output.contains("match_unassigned: false"));
 
         Ok(())
     }
@@ -251,14 +266,22 @@ mod tests {
             prompt: "draft this".to_string(),
             max_tries: 2,
             max_simultaneous: 4,
+            match_unassigned: true,
         };
-        let response = AgentResponse::new(AgentRecord::with_details("writer", "draft this", 2, 4));
+        let response = AgentResponse::new(AgentRecord::with_details(
+            "writer",
+            "draft this",
+            2,
+            4,
+            true,
+        ));
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
                 "prompt": "draft this",
                 "max_tries": 2,
-                "max_simultaneous": 4
+                "max_simultaneous": 4,
+                "match_unassigned": true
             }));
             then.status(200).json_body_obj(&response);
         });
@@ -269,6 +292,7 @@ mod tests {
         assert_eq!(agent.name, "writer");
         assert_eq!(agent.max_tries, 2);
         assert_eq!(agent.max_simultaneous, 4);
+        assert!(agent.match_unassigned);
 
         Ok(())
     }
@@ -278,9 +302,15 @@ mod tests {
         let server = MockServer::start();
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-        let existing =
-            AgentResponse::new(AgentRecord::with_details("writer", "draft", 3, u32::MAX));
-        let updated = AgentResponse::new(AgentRecord::with_details("writer", "revised", 3, 10));
+        let existing = AgentResponse::new(AgentRecord::with_details(
+            "writer",
+            "draft",
+            3,
+            u32::MAX,
+            false,
+        ));
+        let updated =
+            AgentResponse::new(AgentRecord::with_details("writer", "revised", 3, 10, true));
 
         let get_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/agents/writer");
@@ -291,7 +321,8 @@ mod tests {
                 "name": "writer",
                 "prompt": "revised",
                 "max_tries": 3,
-                "max_simultaneous": 10
+                "max_simultaneous": 10,
+                "match_unassigned": true
             }));
             then.status(200).json_body_obj(&updated);
         });
@@ -301,6 +332,7 @@ mod tests {
             prompt: Some("revised".to_string()),
             max_tries: None,
             max_simultaneous: Some(10),
+            match_unassigned: Some(true),
         };
 
         let response = update_agent(&client, args).await?;
@@ -334,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn normalize_agent_name_rejects_empty() {
-        let error = build_upsert_request("", "prompt", 1, 1).unwrap_err();
+        let error = build_upsert_request("", "prompt", 1, 1, false).unwrap_err();
         assert!(error.to_string().contains("agent name must not be empty"));
     }
 }

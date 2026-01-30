@@ -273,6 +273,7 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         prompt: "Review patch".to_string(),
         max_tries: DEFAULT_AGENT_MAX_TRIES,
         max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+        match_unassigned: false,
     };
     {
         let mut agents = env.agents.write().await;

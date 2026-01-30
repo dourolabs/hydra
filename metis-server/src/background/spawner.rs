@@ -42,6 +42,7 @@ pub struct AgentQueue {
     pub prompt: String,
     pub max_tries: u32,
     pub max_simultaneous: u32,
+    pub match_unassigned: bool,
     spawn_attempts: RwLock<HashMap<IssueId, SpawnAttempt>>,
 }
 
@@ -52,6 +53,7 @@ impl AgentQueue {
             prompt: config.prompt.clone(),
             max_tries: config.max_tries,
             max_simultaneous: config.max_simultaneous,
+            match_unassigned: config.match_unassigned,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
@@ -62,6 +64,7 @@ impl AgentQueue {
             prompt: self.prompt.clone(),
             max_tries: self.max_tries,
             max_simultaneous: self.max_simultaneous,
+            match_unassigned: self.match_unassigned,
         }
     }
 
@@ -292,6 +295,7 @@ impl Spawner for AgentQueue {
             };
             if should_skip_for_assignee_mismatch(
                 &self.name,
+                self.match_unassigned,
                 followup_agent,
                 &issue,
                 last_patch_status,
@@ -413,11 +417,20 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
 
 fn should_skip_for_assignee_mismatch(
     agent_name: &str,
+    match_unassigned: bool,
     followup_agent: &str,
     issue: &Issue,
     last_patch_status: Option<PatchStatus>,
 ) -> bool {
-    let assignee_mismatch = issue.assignee.as_deref() != Some(agent_name);
+    let normalized_assignee = issue
+        .assignee
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let assignee_mismatch = match normalized_assignee {
+        Some(assignee) => assignee != agent_name,
+        None => !match_unassigned,
+    };
     assignee_mismatch
         && !(agent_name == followup_agent
             && !followup_agent.is_empty()
@@ -448,6 +461,7 @@ mod tests {
             prompt: "Fix the issue".to_string(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            match_unassigned: false,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
     }
@@ -631,6 +645,52 @@ mod tests {
         assert_eq!(
             spawned_from_issue_ids,
             HashSet::from([Some(assigned_issue_id), Some(in_progress_issue_id),])
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn does_not_spawn_for_unassigned_when_queue_requires_assignee() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        handles
+            .store
+            .add_issue(issue(
+                "Unassigned task",
+                IssueStatus::Open,
+                None,
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawns_for_unassigned_when_queue_allows_unassigned() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let unassigned_issue_id = handles
+            .store
+            .add_issue(issue(
+                "Unassigned task",
+                IssueStatus::Open,
+                None,
+                vec![],
+                &repo_name,
+            ))
+            .await?;
+
+        let mut queue = queue("agent-a");
+        queue.match_unassigned = true;
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
+            Some(unassigned_issue_id.as_ref())
         );
 
         Ok(())
@@ -1337,6 +1397,7 @@ mod tests {
             prompt: "Handle issues".to_string(),
             max_tries: DEFAULT_AGENT_MAX_TRIES,
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            match_unassigned: false,
         };
 
         let queue = AgentQueue::from_config(&config);
@@ -1345,6 +1406,7 @@ mod tests {
         assert_eq!(queue.prompt, "Handle issues");
         assert_eq!(queue.max_tries, DEFAULT_AGENT_MAX_TRIES);
         assert_eq!(queue.max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
+        assert!(!queue.match_unassigned);
     }
 
     #[tokio::test]
