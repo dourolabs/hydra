@@ -3,6 +3,7 @@ set -euo pipefail
 
 WORKER_IMAGE="${WORKER_IMAGE:-metis-worker:latest}"
 SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
+S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-local-dev}"
 
 require_cmd() {
@@ -28,6 +29,8 @@ fi
 
 docker build -t "${WORKER_IMAGE}" -f ./images/metis-worker.Dockerfile .
 docker build -t "${SERVER_IMAGE}" -f ./images/metis-server.Dockerfile .
+docker build -t "${S3_IMAGE}" -f ./images/metis-s3.Dockerfile .
 
 kind load docker-image "${WORKER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 kind load docker-image "${SERVER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
+kind load docker-image "${S3_IMAGE}" --name "${KIND_CLUSTER_NAME}"

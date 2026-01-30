@@ -10,6 +10,7 @@ COMMAND="${1:-start}"
 NAMESPACE="${NAMESPACE:-metis}"
 SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
 CLIENT_IMAGE="${CLIENT_IMAGE:-metis-worker:latest}"
+S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
 SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
 
 # Service type for external access:
@@ -20,6 +21,14 @@ SERVER_CONFIGMAP_NAME="${SERVER_CONFIGMAP_NAME:-metis-server-config}"
 SERVER_CONFIG_MOUNT_PATH="${SERVER_CONFIG_MOUNT_PATH:-/etc/metis}"
 SERVER_CONFIG_FILE_NAME="${SERVER_CONFIG_FILE_NAME:-config.toml}"
 SERVER_METIS_CONFIG_PATH="${SERVER_METIS_CONFIG_PATH:-${SERVER_CONFIG_MOUNT_PATH}/${SERVER_CONFIG_FILE_NAME}}"
+
+S3_SERVICE_NAME="${S3_SERVICE_NAME:-metis-s3}"
+S3_SERVICE_PORT="${S3_SERVICE_PORT:-9090}"
+S3_CONFIGMAP_NAME="${S3_CONFIGMAP_NAME:-metis-s3-config}"
+S3_CONFIG_MOUNT_PATH="${S3_CONFIG_MOUNT_PATH:-/etc/metis-s3}"
+S3_CONFIG_FILE_NAME="${S3_CONFIG_FILE_NAME:-config.toml}"
+S3_METIS_CONFIG_PATH="${S3_METIS_CONFIG_PATH:-${S3_CONFIG_MOUNT_PATH}/${S3_CONFIG_FILE_NAME}}"
+S3_STORAGE_ROOT="${S3_STORAGE_ROOT:-/var/lib/metis/s3}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 POSTGRES_SERVICE_NAME="${POSTGRES_SERVICE_NAME:-postgres}"
@@ -62,14 +71,19 @@ echo "Command:                  ${COMMAND}"
 echo "Namespace:                ${NAMESPACE}"
 echo "Server image:             ${SERVER_IMAGE}"
 echo "Client image:             ${CLIENT_IMAGE}"
+echo "S3 image:                 ${S3_IMAGE}"
 echo "Server replicas (start):  ${SERVER_REPLICAS}"
 echo "Server service type:      ${SERVER_SERVICE_TYPE}"
+echo "S3 service:               ${S3_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:${S3_SERVICE_PORT}"
 echo "Postgres image:           ${POSTGRES_IMAGE}"
 echo "Postgres service:         ${POSTGRES_SERVICE_NAME}.${NAMESPACE}.svc.cluster.local:${POSTGRES_PORT}"
 echo "Postgres database/user:   ${POSTGRES_DB}/${POSTGRES_USER}"
 echo "Server config ConfigMap:  ${SERVER_CONFIGMAP_NAME}"
 echo "Server config mount dir:  ${SERVER_CONFIG_MOUNT_PATH}"
 echo "Server METIS_CONFIG path: ${SERVER_METIS_CONFIG_PATH}"
+echo "S3 config ConfigMap:      ${S3_CONFIGMAP_NAME}"
+echo "S3 config mount dir:      ${S3_CONFIG_MOUNT_PATH}"
+echo "S3 METIS_CONFIG path:     ${S3_METIS_CONFIG_PATH}"
 echo
 
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -262,6 +276,18 @@ api_server = "${SERVER_KUBERNETES_API_SERVER}"
 EOF
 }
 
+generate_s3_config() {
+  cat <<EOF
+[server]
+bind_host = "0.0.0.0"
+bind_port = ${S3_SERVICE_PORT}
+request_body_limit_bytes = 134217728
+
+[storage]
+root_dir = "${S3_STORAGE_ROOT}"
+EOF
+}
+
 apply_manifests() {
   cat <<EOF | kubectl apply -f -
 ---
@@ -322,6 +348,15 @@ data:
 $(generate_server_config | sed 's/^/    /')
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${S3_CONFIGMAP_NAME}
+  namespace: ${NAMESPACE}
+data:
+  ${S3_CONFIG_FILE_NAME}: |
+$(generate_s3_config | sed 's/^/    /')
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: ${POSTGRES_SERVICE_NAME}
@@ -378,6 +413,50 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: ${S3_SERVICE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${S3_SERVICE_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${S3_SERVICE_NAME}
+    spec:
+      containers:
+        - name: metis-s3
+          image: ${S3_IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: ${S3_SERVICE_PORT}
+          env:
+            - name: METIS_CONFIG
+              value: ${S3_METIS_CONFIG_PATH}
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: s3-config
+              mountPath: ${S3_CONFIG_MOUNT_PATH}
+              readOnly: true
+            - name: s3-data
+              mountPath: ${S3_STORAGE_ROOT}
+      volumes:
+        - name: s3-config
+          configMap:
+            name: ${S3_CONFIGMAP_NAME}
+        - name: s3-data
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: server
   namespace: ${NAMESPACE}
 spec:
@@ -428,6 +507,20 @@ spec:
         - name: server-config
           configMap:
             name: ${SERVER_CONFIGMAP_NAME}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${S3_SERVICE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ${S3_SERVICE_NAME}
+  ports:
+    - name: http
+      port: ${S3_SERVICE_PORT}
+      targetPort: ${S3_SERVICE_PORT}
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
