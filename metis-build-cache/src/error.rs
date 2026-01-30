@@ -29,6 +29,8 @@ pub enum BuildCacheError {
     },
     #[error("cache apply would overwrite {count} tracked file(s): {sample}")]
     TrackedFiles { count: usize, sample: String },
+    #[error("cache apply would overwrite {count} home file(s): {sample}")]
+    HomeFiles { count: usize, sample: String },
 }
 
 impl BuildCacheError {
@@ -73,5 +75,19 @@ impl BuildCacheError {
             sample.push_str(&format!(" ({} more)", count - 5));
         }
         Self::TrackedFiles { count, sample }
+    }
+
+    pub fn home_files(conflicts: &[std::path::PathBuf]) -> Self {
+        let count = conflicts.len();
+        let mut sample = conflicts
+            .iter()
+            .take(5)
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if count > 5 {
+            sample.push_str(&format!(" ({} more)", count - 5));
+        }
+        Self::HomeFiles { count, sample }
     }
 }
