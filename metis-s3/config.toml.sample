@@ -1,0 +1,11 @@
+[server]
+# Host/IP address for the HTTP listener.
+bind_host = "0.0.0.0"
+# Port for the HTTP listener.
+bind_port = 9090
+# Maximum size (bytes) for incoming request bodies.
+request_body_limit_bytes = 134217728
+
+[storage]
+# Base filesystem path used to store S3 objects.
+root_dir = "/var/lib/metis/s3"
