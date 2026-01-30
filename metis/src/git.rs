@@ -395,10 +395,13 @@ mod tests {
     use std::path::Path;
 
     use anyhow::{Context, Result};
-    use git2::{Repository, Signature};
+    use git2::{
+        build::{CheckoutBuilder, RepoBuilder},
+        IndexAddOption, Oid, Repository, Signature,
+    };
     use tempfile::tempdir;
 
-    use super::workdir_diff;
+    use super::{checkout_revision, fetch_revision, workdir_diff};
     use metis_common::EnvGuard;
 
     #[test]
@@ -427,6 +430,139 @@ mod tests {
             !diff.contains('\u{1b}'),
             "diff unexpectedly contained ANSI escapes: {diff:?}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn clone_repo_checks_out_non_default_branch_with_slashes() -> Result<()> {
+        let tempdir = tempdir().context("failed to create tempdir")?;
+        let source_dir = tempdir.path().join("source");
+        let remote_dir = tempdir.path().join("remote");
+        let clone_dir = tempdir.path().join("clone");
+
+        let source = Repository::init(&source_dir).context("failed to init source repo")?;
+        let signature =
+            Signature::now("Clone Tester", "clone.tester@example.com").context("signature")?;
+
+        let readme_path = source_dir.join("README.md");
+        std::fs::write(&readme_path, "base\n")?;
+        commit_all(&source, &signature, "init")?;
+        ensure_branch_checked_out(&source, "main")?;
+
+        ensure_branch(&source, "feat/sample")?;
+        checkout_branch(&source, "feat/sample")?;
+        let feature_path = source_dir.join("feature.txt");
+        std::fs::write(&feature_path, "feature\n")?;
+        let feature_oid = commit_all(&source, &signature, "feature commit")?;
+
+        Repository::init_bare(&remote_dir).context("failed to init bare repo")?;
+        add_remote_and_push(
+            &source,
+            &remote_dir,
+            &[
+                "refs/heads/main:refs/heads/main",
+                "refs/heads/feat/sample:refs/heads/feat/sample",
+            ],
+        )?;
+
+        super::clone_repo(
+            remote_dir.to_str().context("remote path not utf-8")?,
+            "feat/sample",
+            &clone_dir,
+            None,
+        )?;
+
+        let cloned = Repository::open(&clone_dir).context("failed to open cloned repo")?;
+        let head = cloned.head().context("missing HEAD")?;
+        let head_commit = head.peel_to_commit().context("failed to peel HEAD")?;
+        assert_eq!(head_commit.id(), feature_oid);
+        assert_eq!(head.shorthand(), Some("feat/sample"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn checkout_remote_tracking_requires_fetch_revision() -> Result<()> {
+        let tempdir = tempdir().context("failed to create tempdir")?;
+        let source_dir = tempdir.path().join("source");
+        let remote_dir = tempdir.path().join("remote");
+        let clone_dir = tempdir.path().join("clone");
+
+        let source = Repository::init(&source_dir).context("failed to init source repo")?;
+        let signature =
+            Signature::now("Fetch Tester", "fetch.tester@example.com").context("signature")?;
+
+        let base_path = source_dir.join("base.txt");
+        std::fs::write(&base_path, "base\n")?;
+        commit_all(&source, &signature, "init")?;
+        ensure_branch_checked_out(&source, "main")?;
+
+        let remote_branch = "repo/t-abc123/head";
+        ensure_branch(&source, remote_branch)?;
+        checkout_branch(&source, remote_branch)?;
+        let feature_path = source_dir.join("remote.txt");
+        std::fs::write(&feature_path, "remote\n")?;
+        let remote_oid = commit_all(&source, &signature, "remote branch commit")?;
+
+        Repository::init_bare(&remote_dir).context("failed to init bare repo")?;
+        add_remote_and_push(
+            &source,
+            &remote_dir,
+            &[
+                "refs/heads/main:refs/heads/main",
+                "refs/heads/repo/t-abc123/head:refs/heads/repo/t-abc123/head",
+            ],
+        )?;
+
+        let cloned = RepoBuilder::new()
+            .clone(
+                remote_dir.to_str().context("remote path not utf-8")?,
+                &clone_dir,
+            )
+            .context("failed to clone remote")?;
+
+        assert!(
+            checkout_revision(&cloned, remote_branch).is_err(),
+            "checkout unexpectedly succeeded without fetching"
+        );
+
+        fetch_revision(&cloned, remote_branch, None)?;
+        checkout_revision(&cloned, remote_branch)?;
+        let head_commit = cloned
+            .head()
+            .context("missing HEAD")?
+            .peel_to_commit()
+            .context("failed to peel HEAD")?;
+        assert_eq!(head_commit.id(), remote_oid);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fetch_revision_no_op_for_head_main_and_sha() -> Result<()> {
+        let tempdir = tempdir().context("failed to create tempdir")?;
+        let repo = Repository::init(tempdir.path()).context("failed to init repo")?;
+        let signature =
+            Signature::now("Noop Tester", "noop.tester@example.com").context("signature")?;
+
+        let file_path = tempdir.path().join("noop.txt");
+        std::fs::write(&file_path, "noop\n")?;
+        let oid = commit_all(&repo, &signature, "init")?;
+        ensure_branch_checked_out(&repo, "main")?;
+
+        let oid_str = oid.to_string();
+        for rev in ["HEAD", "main", oid_str.as_str()] {
+            checkout_branch(&repo, "main")?;
+            fetch_revision(&repo, rev, None)?;
+            checkout_revision(&repo, rev)?;
+            let head_commit = repo
+                .head()
+                .context("missing HEAD")?
+                .peel_to_commit()
+                .context("failed to peel HEAD")?;
+            assert_eq!(head_commit.id(), oid);
+        }
 
         Ok(())
     }
@@ -464,6 +600,74 @@ mod tests {
         let tree = repo.find_tree(tree_id).context("failed to find tree")?;
         repo.commit(Some("HEAD"), signature, signature, message, &tree, &[])
             .context("failed to commit")?;
+        Ok(())
+    }
+
+    fn commit_all(repo: &Repository, signature: &Signature<'_>, message: &str) -> Result<Oid> {
+        let mut index = repo.index().context("failed to open index")?;
+        index
+            .add_all(["*"], IndexAddOption::DEFAULT, None)
+            .context("failed to add paths")?;
+        let tree_id = index.write_tree().context("failed to write tree")?;
+        let tree = repo.find_tree(tree_id).context("failed to find tree")?;
+        let parents: Vec<_> = repo
+            .head()
+            .ok()
+            .and_then(|head| head.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        let parent_refs: Vec<_> = parents.iter().collect();
+        repo.commit(
+            Some("HEAD"),
+            signature,
+            signature,
+            message,
+            &tree,
+            &parent_refs,
+        )
+        .context("failed to commit")
+    }
+
+    fn ensure_branch(repo: &Repository, branch: &str) -> Result<()> {
+        if repo.find_branch(branch, git2::BranchType::Local).is_ok() {
+            return Ok(());
+        }
+        let head_commit = repo
+            .head()
+            .context("failed to resolve HEAD")?
+            .peel_to_commit()
+            .context("failed to peel HEAD")?;
+        repo.branch(branch, &head_commit, true)
+            .with_context(|| format!("failed to create branch '{branch}'"))?;
+        Ok(())
+    }
+
+    fn ensure_branch_checked_out(repo: &Repository, branch: &str) -> Result<()> {
+        ensure_branch(repo, branch)?;
+        checkout_branch(repo, branch)?;
+        Ok(())
+    }
+
+    fn checkout_branch(repo: &Repository, branch: &str) -> Result<()> {
+        repo.set_head(&format!("refs/heads/{branch}"))
+            .with_context(|| format!("failed to set HEAD to '{branch}'"))?;
+        let mut checkout = CheckoutBuilder::new();
+        checkout.force();
+        repo.checkout_head(Some(&mut checkout))
+            .with_context(|| format!("failed to checkout branch '{branch}'"))?;
+        Ok(())
+    }
+
+    fn add_remote_and_push(repo: &Repository, remote_dir: &Path, refspecs: &[&str]) -> Result<()> {
+        let remote_url = remote_dir.to_str().context("remote path not utf-8")?;
+        repo.remote("origin", remote_url)
+            .context("failed to add origin remote")?;
+        let mut remote = repo
+            .find_remote("origin")
+            .context("failed to find origin remote")?;
+        remote
+            .push(refspecs, None)
+            .context("failed to push to origin")?;
         Ok(())
     }
 }
