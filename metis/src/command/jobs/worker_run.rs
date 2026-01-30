@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
+    constants::ENV_METIS_ISSUE_ID,
     issues::IssueType,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
@@ -31,7 +31,7 @@ pub async fn run(
     dest: PathBuf,
     openai_api_key: Option<String>,
     anthropic_api_key: Option<String>,
-    cli_claude_code_oauth_token: Option<String>,
+    claude_code_oauth_token: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
