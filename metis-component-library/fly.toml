@@ -1,13 +1,8 @@
-# fly.toml app configuration file generated for metis-component-library on 2026-01-29T14:20:42-08:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'metis-component-library'
 primary_region = 'lax'
 
 [build]
-  dockerfile = './images/metis-component-library.Dockerfile'
+  dockerfile = '../images/metis-component-library.Dockerfile'
 
 [http_service]
   internal_port = 8080
