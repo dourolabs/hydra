@@ -1,0 +1,13 @@
+@use "../form_field";
+@use "../../theme";
+
+.metis-textarea {
+  @include form_field.base;
+  @include form_field.size("md");
+
+  min-height: theme.spacing(16);
+  resize: vertical;
+}
+
+@include form_field.size-variants(".metis-textarea");
+@include form_field.state-variants(".metis-textarea");

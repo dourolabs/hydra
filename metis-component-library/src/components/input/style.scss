@@ -1,31 +1,9 @@
-@use "../../theme";
+@use "../form_field";
 
 .metis-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: theme.spacing(2.5) theme.spacing(3);
-  border-radius: theme.spacing(2.5);
-  border: 1px solid theme.color("input", "border");
-  background: theme.color("input", "background");
-  color: theme.color("input", "text");
-  font: inherit;
-  line-height: 1.2;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  @include form_field.base;
+  @include form_field.size("md");
 }
 
-.metis-input::placeholder {
-  color: theme.color("input", "placeholder");
-}
-
-.metis-input:focus-visible {
-  outline: none;
-  border-color: theme.color("input", "focus-border");
-  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("input", "focus-shadow");
-  background: theme.color("input", "focus-background");
-}
-
-.metis-input:disabled {
-  cursor: not-allowed;
-  color: theme.color("input", "disabled-text");
-  background: theme.color("input", "disabled-background");
-}
+@include form_field.size-variants(".metis-input");
+@include form_field.state-variants(".metis-input");

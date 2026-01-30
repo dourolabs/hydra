@@ -1,0 +1,92 @@
+@use "sass:map";
+@use "../theme";
+
+$field-sizes: (
+  "sm": (
+    "padding-y": theme.spacing(2),
+    "padding-x": theme.spacing(2.5),
+    "radius": theme.spacing(2),
+  ),
+  "md": (
+    "padding-y": theme.spacing(2.5),
+    "padding-x": theme.spacing(3),
+    "radius": theme.spacing(2.5),
+  ),
+  "lg": (
+    "padding-y": theme.spacing(3),
+    "padding-x": theme.spacing(3.5),
+    "radius": theme.spacing(3),
+  ),
+);
+
+@mixin size($size: "md") {
+  $entry: theme.map-get-strict($field-sizes, $size);
+
+  padding: map.get($entry, "padding-y") map.get($entry, "padding-x");
+  border-radius: map.get($entry, "radius");
+}
+
+@mixin base {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid theme.color("input", "border");
+  background: theme.color("input", "background");
+  color: theme.color("input", "text");
+  font: inherit;
+  line-height: 1.2;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+@mixin placeholder {
+  color: theme.color("input", "placeholder");
+}
+
+@mixin focus {
+  outline: none;
+  border-color: theme.color("input", "focus-border");
+  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("input", "focus-shadow");
+  background: theme.color("input", "focus-background");
+}
+
+@mixin disabled {
+  cursor: not-allowed;
+  color: theme.color("input", "disabled-text");
+  background: theme.color("input", "disabled-background");
+}
+
+@mixin error {
+  border-color: theme.color("input", "error-border");
+  box-shadow: 0 0 0 theme.spacing(0.75) theme.color("input", "error-shadow");
+  background: theme.color("input", "error-background");
+}
+
+@mixin size-variants($selector) {
+  #{$selector}--sm {
+    @include size("sm");
+  }
+
+  #{$selector}--lg {
+    @include size("lg");
+  }
+}
+
+@mixin state-variants($selector) {
+  #{$selector}::placeholder {
+    @include placeholder;
+  }
+
+  #{$selector}:focus-visible {
+    @include focus;
+  }
+
+  #{$selector}:disabled {
+    @include disabled;
+  }
+
+  #{$selector}.is-error,
+  #{$selector}[aria-invalid="true"],
+  #{$selector}.is-error:focus-visible,
+  #{$selector}[aria-invalid="true"]:focus-visible {
+    @include error;
+  }
+}

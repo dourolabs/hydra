@@ -124,6 +124,19 @@ $color-pallette: (
     900: #1e3a8a,
     950: #172554,
   ),
+  "red": (
+    50: #fef2f2,
+    100: #fee2e2,
+    200: #fecaca,
+    300: #fca5a5,
+    400: #f87171,
+    500: #ef4444,
+    600: #dc2626,
+    700: #b91c1c,
+    800: #991b1b,
+    900: #7f1d1d,
+    950: #450a0a,
+  ),
 );
 
 @function pallette-color($color...) {
@@ -145,6 +158,12 @@ $color: (
     "focus-background": light-dark(pallette-color("slate", 50), #0f141c),
     "disabled-text": light-dark(#9aa3af, pallette-color("slate", 500)),
     "disabled-background": light-dark(pallette-color("gray", 100), pallette-color("gray", 900)),
+    "error-border": light-dark(pallette-color("red", 500), pallette-color("red", 400)),
+    "error-shadow": light-dark(
+      rgba(pallette-color("red", 500), 0.2),
+      rgba(pallette-color("red", 400), 0.25)
+    ),
+    "error-background": light-dark(pallette-color("red", 50), #2a1012),
   ),
   "button": (
     "primary-background": light-dark(pallette-color("blue", 600), pallette-color("blue", 500)),
