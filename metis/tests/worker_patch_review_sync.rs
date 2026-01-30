@@ -246,10 +246,9 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
 
     let updated_patch = env.client.get_patch(&patch_id).await?.patch;
     assert_eq!(updated_patch.status, PatchStatus::ChangesRequested);
-    assert!(updated_patch
-        .reviews
-        .iter()
-        .any(|review| review.author == "reviewer" && review.contents == "please update"));
+    assert!(updated_patch.reviews.iter().any(|review| {
+        review.author == "reviewer" && review.review_message.as_deref() == Some("please update")
+    }));
 
     let spawner = RunSpawnersWorker::new(env.state.clone());
     spawner.run_iteration().await;

@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
+pub use metis_common::{Comment, Review};
 use metis_common::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
@@ -49,92 +49,6 @@ impl FromStr for PatchStatus {
                 Ok(PatchStatus::ChangesRequested)
             }
             other => Err(format!("unsupported patch status '{other}'")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Review {
-    #[serde(default)]
-    pub review_id: u64,
-    #[serde(default)]
-    pub author: String,
-    #[serde(default)]
-    pub review_state: String,
-    /// Timestamp for when the review was submitted.
-    #[serde(default)]
-    pub submitted_at: Option<DateTime<Utc>>,
-    pub review_message: Option<String>,
-    #[serde(default)]
-    pub comments: Vec<Comment>,
-}
-
-impl Review {
-    pub fn new(
-        review_id: u64,
-        author: String,
-        review_state: String,
-        submitted_at: Option<DateTime<Utc>>,
-        review_message: Option<String>,
-        comments: Vec<Comment>,
-    ) -> Self {
-        Self {
-            review_id,
-            author,
-            review_state,
-            submitted_at,
-            review_message,
-            comments,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Comment {
-    pub id: u64,
-    pub review_id: u64,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filepath: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_line: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_line: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub in_reply_to: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-impl Comment {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: u64,
-        review_id: u64,
-        text: String,
-        url: Option<String>,
-        filepath: Option<String>,
-        start_line: Option<u32>,
-        end_line: Option<u32>,
-        in_reply_to: Option<u64>,
-        created_at: Option<DateTime<Utc>>,
-        updated_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
-            id,
-            review_id,
-            text,
-            url,
-            filepath,
-            start_line,
-            end_line,
-            in_reply_to,
-            created_at,
-            updated_at,
         }
     }
 }
@@ -404,64 +318,6 @@ impl From<PatchStatus> for api::patches::PatchStatus {
     }
 }
 
-impl From<api::patches::Review> for Review {
-    fn from(value: api::patches::Review) -> Self {
-        Review {
-            review_id: value.review_id,
-            author: value.author,
-            review_state: value.review_state,
-            submitted_at: value.submitted_at,
-            review_message: value.review_message,
-            comments: value
-                .comments
-                .into_iter()
-                .map(|comment| Comment {
-                    id: comment.id,
-                    review_id: comment.review_id,
-                    text: comment.text,
-                    url: comment.url,
-                    filepath: comment.filepath,
-                    start_line: comment.start_line,
-                    end_line: comment.end_line,
-                    in_reply_to: comment.in_reply_to,
-                    created_at: comment.created_at,
-                    updated_at: comment.updated_at,
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<Review> for api::patches::Review {
-    fn from(value: Review) -> Self {
-        api::patches::Review::new(
-            value.review_id,
-            value.author,
-            value.review_state,
-            value.submitted_at,
-            value.review_message,
-            value
-                .comments
-                .into_iter()
-                .map(|comment| {
-                    api::patches::Comment::new(
-                        comment.id,
-                        comment.review_id,
-                        comment.text,
-                        comment.url,
-                        comment.filepath,
-                        comment.start_line,
-                        comment.end_line,
-                        comment.in_reply_to,
-                        comment.created_at,
-                        comment.updated_at,
-                    )
-                })
-                .collect(),
-        )
-    }
-}
-
 impl From<api::patches::GithubPr> for GithubPr {
     fn from(value: api::patches::GithubPr) -> Self {
         GithubPr {
@@ -511,7 +367,7 @@ impl From<api::patches::Patch> for Patch {
             status: value.status.into(),
             is_automatic_backup: value.is_automatic_backup,
             created_by: value.created_by,
-            reviews: value.reviews.into_iter().map(Into::into).collect(),
+            reviews: value.reviews,
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
         }
@@ -527,7 +383,7 @@ impl From<Patch> for api::patches::Patch {
             value.status.into(),
             value.is_automatic_backup,
             value.created_by,
-            value.reviews.into_iter().map(Into::into).collect(),
+            value.reviews,
             value.service_repo_name,
             value.github.map(Into::into),
         )

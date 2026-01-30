@@ -29,7 +29,14 @@ use tracing::{debug, info, warn};
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
 const WORKER_NAME: &str = "github_poller";
-type ReviewKey = (u64, String, String, Option<DateTime<Utc>>, Option<String>, Vec<u64>);
+type ReviewKey = (
+    u64,
+    String,
+    String,
+    Option<DateTime<Utc>>,
+    Option<String>,
+    Vec<u64>,
+);
 
 #[derive(Clone)]
 pub struct GithubPollerWorker {
