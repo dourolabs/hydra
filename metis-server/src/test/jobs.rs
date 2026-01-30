@@ -369,6 +369,8 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         }),
         include: Vec::new(),
         exclude: Vec::new(),
+        home_include: Vec::new(),
+        home_exclude: Vec::new(),
         max_entries_per_repo: Some(5),
     };
 

@@ -73,6 +73,10 @@ pub struct BuildCacheArgs {
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 
+    /// Home directory to include shared caches from.
+    #[arg(long = "home-dir", value_name = "DIR")]
+    pub home_dir: Option<PathBuf>,
+
     #[command(flatten)]
     pub storage: CacheStorageArgs,
 }
@@ -110,6 +114,10 @@ pub struct ApplyCacheArgs {
     #[arg(long = "nearest")]
     pub nearest: bool,
 
+    /// Home directory where shared cache entries should be restored.
+    #[arg(long = "home-dir", value_name = "DIR")]
+    pub home_dir: Option<PathBuf>,
+
     #[command(flatten)]
     pub storage: CacheStorageArgs,
 }
@@ -124,11 +132,12 @@ pub async fn run(command: CachesCommand, context: &CommandContext) -> Result<()>
 
 async fn build_cache(args: BuildCacheArgs, context: &CommandContext) -> Result<()> {
     let root = resolve_root(&args.root)?;
+    let home_dir = resolve_home_dir(&args.home_dir);
     let client = build_cache_client(&args.storage)?;
 
     if args.dry_run {
         let entries = client
-            .list_cache_entries(&root)
+            .list_cache_entries(&root, home_dir.as_deref())
             .context("failed to collect cache entries")?;
         return render_cache_paths(context.output_format, &entries);
     }
@@ -139,7 +148,7 @@ async fn build_cache(args: BuildCacheArgs, context: &CommandContext) -> Result<(
     let archive_path = temp.path().to_path_buf();
 
     client
-        .build_cache_archive_async(root.clone(), archive_path.clone())
+        .build_cache_archive_async(root.clone(), home_dir.clone(), archive_path.clone())
         .await
         .context("failed to build cache archive")?;
     client
@@ -162,6 +171,7 @@ async fn list_caches(args: ListCacheArgs, context: &CommandContext) -> Result<()
 
 async fn apply_cache(args: ApplyCacheArgs, context: &CommandContext) -> Result<()> {
     let root = resolve_root(&args.root)?;
+    let home_dir = resolve_home_dir(&args.home_dir);
     let client = build_cache_client(&args.storage)?;
 
     let (key, distance) = if args.nearest {
@@ -183,7 +193,7 @@ async fn apply_cache(args: ApplyCacheArgs, context: &CommandContext) -> Result<(
     };
 
     client
-        .download_and_apply_cache(&root, &key)
+        .download_and_apply_cache(&root, home_dir.as_deref(), &key)
         .await
         .context("failed to apply cache entry")?;
 
@@ -195,6 +205,10 @@ async fn apply_cache(args: ApplyCacheArgs, context: &CommandContext) -> Result<(
 
 fn resolve_root(root: &Path) -> Result<PathBuf> {
     Ok(config::expand_path(root))
+}
+
+fn resolve_home_dir(home: &Option<PathBuf>) -> Option<PathBuf> {
+    home.as_ref().map(config::expand_path)
 }
 
 fn resolve_git_sha(root: &Path, override_sha: Option<&str>) -> Result<String> {

@@ -1,12 +1,17 @@
 use crate::error::BuildCacheError;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use metis_common::build_cache::{default_build_cache_exclude, default_build_cache_include};
+use metis_common::build_cache::{
+    default_build_cache_exclude, default_build_cache_home_exclude,
+    default_build_cache_home_include, default_build_cache_include,
+};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildCacheConfig {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub home_include: Vec<String>,
+    pub home_exclude: Vec<String>,
     pub max_entries_per_repo: Option<usize>,
 }
 
@@ -30,21 +35,38 @@ impl Default for BuildCacheConfig {
         Self {
             include: default_build_cache_include(),
             exclude: default_build_cache_exclude(),
+            home_include: default_build_cache_home_include(),
+            home_exclude: default_build_cache_home_exclude(),
             max_entries_per_repo: None,
         }
     }
 }
 
 impl BuildCacheConfig {
-    pub fn matcher(&self) -> Result<BuildCacheMatcher, BuildCacheError> {
-        let include = build_glob_set(&self.include)?;
-        let exclude = build_glob_set(&self.exclude)?;
-        Ok(BuildCacheMatcher {
-            include,
-            exclude,
-            include_is_empty: self.include.is_empty(),
+    pub fn matchers(&self) -> Result<BuildCacheMatchers, BuildCacheError> {
+        Ok(BuildCacheMatchers {
+            repo: self.repo_matcher()?,
+            home: self.home_matcher()?,
         })
     }
+
+    pub fn repo_matcher(&self) -> Result<BuildCacheMatcher, BuildCacheError> {
+        build_matcher(&self.include, &self.exclude)
+    }
+
+    pub fn home_matcher(&self) -> Result<BuildCacheMatcher, BuildCacheError> {
+        build_matcher(&self.home_include, &self.home_exclude)
+    }
+
+    pub fn matcher(&self) -> Result<BuildCacheMatcher, BuildCacheError> {
+        self.repo_matcher()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildCacheMatchers {
+    pub repo: BuildCacheMatcher,
+    pub home: BuildCacheMatcher,
 }
 
 impl S3StorageConfig {
@@ -115,6 +137,19 @@ fn build_glob_set(patterns: &[String]) -> Result<GlobSet, BuildCacheError> {
         .map_err(|err| BuildCacheError::glob("<set>", err))
 }
 
+fn build_matcher(
+    include: &[String],
+    exclude: &[String],
+) -> Result<BuildCacheMatcher, BuildCacheError> {
+    let include_globs = build_glob_set(include)?;
+    let exclude_globs = build_glob_set(exclude)?;
+    Ok(BuildCacheMatcher {
+        include: include_globs,
+        exclude: exclude_globs,
+        include_is_empty: include.is_empty(),
+    })
+}
+
 fn normalize_glob_pattern(pattern: &str) -> String {
     let trimmed = pattern
         .trim()
@@ -181,6 +216,30 @@ mod tests {
             config.exclude,
             vec!["*.log".to_string(), "tmp/".to_string(), ".git/".to_string()]
         );
+        assert_eq!(
+            config.home_include,
+            vec![
+                ".cache/pip/".to_string(),
+                ".cache/pip-tools/".to_string(),
+                ".cache/pnpm/".to_string(),
+                ".cache/ms-playwright/".to_string(),
+                ".cache/Cypress/".to_string(),
+                ".cache/uv/".to_string(),
+                ".cache/bazel/".to_string(),
+                ".cargo/git/".to_string(),
+                ".cargo/registry/".to_string(),
+                ".rustup/toolchains/".to_string(),
+                ".npm/".to_string(),
+                ".pnpm-store/".to_string(),
+                ".yarn/".to_string(),
+                "go/pkg/mod/".to_string(),
+                ".gradle/caches/".to_string(),
+                ".m2/repository/".to_string(),
+                ".bundle/cache/".to_string(),
+                ".gem/".to_string(),
+            ]
+        );
+        assert!(config.home_exclude.is_empty());
         assert_eq!(config.max_entries_per_repo, None);
     }
 
@@ -202,6 +261,8 @@ mod tests {
         let config = BuildCacheConfig {
             include: vec!["target/".to_string()],
             exclude: vec!["tmp/".to_string()],
+            home_include: Vec::new(),
+            home_exclude: Vec::new(),
             max_entries_per_repo: None,
         };
         let matcher = config.matcher().expect("matcher");

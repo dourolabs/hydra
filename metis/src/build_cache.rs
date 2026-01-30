@@ -12,6 +12,8 @@ pub(crate) fn build_cache_client(context: &BuildCacheContext) -> Result<BuildCac
     let config = BuildCacheConfig {
         include: settings.include.clone(),
         exclude: settings.exclude.clone(),
+        home_include: settings.home_include.clone(),
+        home_exclude: settings.home_exclude.clone(),
         max_entries_per_repo: settings.max_entries_per_repo,
     };
     Ok(BuildCacheClient::new(config, storage))
@@ -104,13 +106,13 @@ mod tests {
             .to_string();
         let client = build_cache_client(&context).expect("cache client");
         client
-            .build_and_upload_cache(repo_root, repo_name.clone(), &git_sha)
+            .build_and_upload_cache(repo_root, None, repo_name.clone(), &git_sha)
             .await
             .expect("upload cache");
 
         fs::remove_dir_all(&target_dir).expect("remove target");
         let applied = client
-            .apply_nearest_cache(repo_root, repo_name.clone())
+            .apply_nearest_cache(repo_root, None, repo_name.clone())
             .await
             .expect("apply cache");
         assert!(applied.is_some());
