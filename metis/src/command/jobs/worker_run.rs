@@ -48,6 +48,7 @@ pub async fn run(
     ensure_clean_destination(&dest)?;
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
+    let worker_home_dir = resolve_worker_home_dir();
     let claude_code_oauth_token =
         cli_claude_code_oauth_token.filter(|value| !value.trim().is_empty());
     if let Some(token) = claude_code_oauth_token.as_ref() {
@@ -92,7 +93,11 @@ pub async fn run(
         if let Some(build_cache) = build_cache.as_ref() {
             match build_cache_client(build_cache) {
                 Ok(client) => match client
-                    .apply_nearest_cache(&dest, service_repo_name.clone())
+                    .apply_nearest_cache(
+                        &dest,
+                        worker_home_dir.as_deref(),
+                        service_repo_name.clone(),
+                    )
                     .await
                 {
                     Ok(Some(key)) => {
@@ -155,7 +160,12 @@ pub async fn run(
                     Ok(Some(head_oid)) => {
                         let git_sha = head_oid.to_string();
                         match client
-                            .build_and_upload_cache(&dest, service_repo_name.clone(), &git_sha)
+                            .build_and_upload_cache(
+                                &dest,
+                                worker_home_dir.as_deref(),
+                                service_repo_name.clone(),
+                                &git_sha,
+                            )
                             .await
                         {
                             Ok(key) => log_status(format!(
@@ -655,6 +665,10 @@ fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
 
 fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
+}
+
+fn resolve_worker_home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 #[cfg(test)]
