@@ -1,10 +1,14 @@
 use crate::{
     AppState,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
+    domain::issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, UpsertIssueRequest,
+    },
     domain::patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
         UpsertPatchRequest,
     },
+    domain::users::Username,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -236,11 +240,13 @@ async fn sync_patch_from_github(
     }
 
     let ci_status = fetch_ci_status(&client, &github, &pr).await?;
+    let review_updates = review_updates(&latest_patch.reviews, github_reviews);
+    let has_new_changes_requested = review_updates.has_new_changes_requested;
     let updated_patch = apply_github_sync(
         latest_patch.clone(),
         &github,
         &pr,
-        github_reviews,
+        review_updates,
         ci_status,
     );
 
@@ -255,6 +261,8 @@ async fn sync_patch_from_github(
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;
         info!(patch_id = %patch_id, "updated patch from GitHub metadata");
     }
+
+    create_followup_issues_on_new_review(state, patch_id, has_new_changes_requested).await?;
 
     Ok(())
 }
@@ -391,6 +399,22 @@ fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review
     merged_reviews
 }
 
+#[derive(Debug, Clone)]
+struct ReviewUpdates {
+    merged_reviews: Vec<Review>,
+    has_new_changes_requested: bool,
+}
+
+fn review_updates(existing: &[Review], github_reviews: Vec<Review>) -> ReviewUpdates {
+    let merged_reviews = merge_reviews(existing, github_reviews);
+    let has_new_changes_requested = has_new_non_approved_reviews(existing, &merged_reviews);
+
+    ReviewUpdates {
+        merged_reviews,
+        has_new_changes_requested,
+    }
+}
+
 fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) -> bool {
     let existing_keys: HashSet<_> = existing.iter().map(review_key).collect();
     github_reviews
@@ -435,13 +459,12 @@ fn apply_github_sync(
     mut latest_patch: Patch,
     github: &GithubPr,
     pr: &PullRequest,
-    github_reviews: Vec<Review>,
+    review_updates: ReviewUpdates,
     ci_status: GithubCiStatus,
 ) -> Patch {
     let pr_status = patch_status_from_github(pr);
-    let merged_reviews = merge_reviews(&latest_patch.reviews, github_reviews);
-    let has_new_changes_requested =
-        has_new_non_approved_reviews(&latest_patch.reviews, &merged_reviews);
+    let merged_reviews = review_updates.merged_reviews;
+    let has_new_changes_requested = review_updates.has_new_changes_requested;
     let new_status = match pr_status {
         PatchStatus::Closed | PatchStatus::Merged => pr_status,
         PatchStatus::Open | PatchStatus::ChangesRequested => {
@@ -466,6 +489,70 @@ fn apply_github_sync(
     latest_patch.github = Some(updated_github);
 
     latest_patch
+}
+
+async fn create_followup_issues_on_new_review(
+    state: &AppState,
+    patch_id: &PatchId,
+    has_new_changes_requested: bool,
+) -> anyhow::Result<()> {
+    if !has_new_changes_requested {
+        return Ok(());
+    }
+
+    let followup_agent = state.config.background.merge_request_followup_agent.trim();
+    if followup_agent.is_empty() {
+        warn!(patch_id = %patch_id, "merge_request_followup_agent not configured; skipping followup issue creation");
+        return Ok(());
+    }
+
+    let issues = state.list_issues().await?;
+    let mut created_issue_ids = Vec::new();
+
+    for (issue_id, issue) in issues {
+        let issue = issue.item;
+        if issue.issue_type != IssueType::MergeRequest {
+            continue;
+        }
+        if !matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress) {
+            continue;
+        }
+        if !issue.patches.contains(patch_id) {
+            continue;
+        }
+
+        let followup_issue = Issue::new(
+            IssueType::Task,
+            format!("Follow-up for review on patch {patch_id}"),
+            Username::from(""),
+            String::new(),
+            IssueStatus::Open,
+            Some(followup_agent.to_string()),
+            Some(issue.job_settings.clone()),
+            Vec::new(),
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                issue_id.clone(),
+            )],
+            issue.patches.clone(),
+        );
+
+        let followup_id = state
+            .upsert_issue(None, UpsertIssueRequest::new(followup_issue, None))
+            .await?;
+        created_issue_ids.push((issue_id, followup_id));
+    }
+
+    if !created_issue_ids.is_empty() {
+        let issues = created_issue_ids
+            .iter()
+            .map(|(parent_id, child_id)| format!("{parent_id}->{child_id}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        info!(patch_id = %patch_id, issues = %issues, "created followup issues for new review");
+    }
+
+    Ok(())
 }
 
 async fn fetch_ci_status(
@@ -591,6 +678,8 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::issues::{Issue, IssueStatus, IssueType, JobSettings};
+    use crate::domain::users::Username;
     use chrono::TimeZone;
     use metis_common::RepoName;
     use serde_json::json;
@@ -600,6 +689,13 @@ mod tests {
 
     fn sample_diff() -> String {
         "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
+    }
+
+    fn job_settings(repo_name: &RepoName) -> JobSettings {
+        JobSettings {
+            repo_name: Some(repo_name.clone()),
+            ..JobSettings::default()
+        }
     }
 
     #[tokio::test]
@@ -808,7 +904,13 @@ mod tests {
         )];
         let ci_status = GithubCiStatus::new(GithubCiState::Success, None);
 
-        let updated = apply_github_sync(patch, &github, &pr, reviews.clone(), ci_status.clone());
+        let updated = apply_github_sync(
+            patch,
+            &github,
+            &pr,
+            review_updates(&[], reviews.clone()),
+            ci_status.clone(),
+        );
 
         assert_eq!(updated.status, PatchStatus::ChangesRequested);
         assert_eq!(updated.reviews, reviews);
@@ -868,7 +970,7 @@ mod tests {
             patch,
             &github,
             &pr,
-            existing_reviews.clone(),
+            review_updates(&existing_reviews, existing_reviews.clone()),
             ci_status.clone(),
         );
 
@@ -882,6 +984,141 @@ mod tests {
             Some("https://example.com/pr/1")
         );
         assert_eq!(updated_github.ci, Some(ci_status));
+    }
+
+    #[tokio::test]
+    async fn followup_issue_created_for_open_merge_request_on_new_review() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch_id = handles
+            .store
+            .add_patch(Patch::new(
+                "Patch".to_string(),
+                "Patch description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Vec::new(),
+                repo_name.clone(),
+                None,
+            ))
+            .await?;
+
+        let parent_issue_id = handles
+            .store
+            .add_issue(Issue::new(
+                IssueType::MergeRequest,
+                "Review patch".to_string(),
+                Username::from("creator"),
+                String::new(),
+                IssueStatus::Open,
+                Some("pm".to_string()),
+                Some(job_settings(&repo_name)),
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            ))
+            .await?;
+
+        create_followup_issues_on_new_review(&handles.state, &patch_id, true).await?;
+
+        let children = handles.store.get_issue_children(&parent_issue_id).await?;
+        assert_eq!(children.len(), 1);
+        let child = handles.store.get_issue(&children[0]).await?.item;
+        assert_eq!(child.issue_type, IssueType::Task);
+        assert_eq!(child.status, IssueStatus::Open);
+        assert_eq!(child.assignee.as_deref(), Some("swe"));
+        assert_eq!(child.patches, vec![patch_id.clone()]);
+        assert_eq!(child.job_settings.repo_name.as_ref(), Some(&repo_name));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn followup_issue_skipped_without_new_review() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch_id = handles
+            .store
+            .add_patch(Patch::new(
+                "Patch".to_string(),
+                "Patch description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Vec::new(),
+                repo_name.clone(),
+                None,
+            ))
+            .await?;
+
+        let parent_issue_id = handles
+            .store
+            .add_issue(Issue::new(
+                IssueType::MergeRequest,
+                "Review patch".to_string(),
+                Username::from("creator"),
+                String::new(),
+                IssueStatus::Open,
+                Some("pm".to_string()),
+                Some(job_settings(&repo_name)),
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            ))
+            .await?;
+
+        create_followup_issues_on_new_review(&handles.state, &patch_id, false).await?;
+
+        let children = handles.store.get_issue_children(&parent_issue_id).await?;
+        assert!(children.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn followup_issue_skipped_for_closed_merge_request() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/api")?;
+        let patch_id = handles
+            .store
+            .add_patch(Patch::new(
+                "Patch".to_string(),
+                "Patch description".to_string(),
+                sample_diff(),
+                PatchStatus::Open,
+                false,
+                None,
+                Vec::new(),
+                repo_name.clone(),
+                None,
+            ))
+            .await?;
+
+        let parent_issue_id = handles
+            .store
+            .add_issue(Issue::new(
+                IssueType::MergeRequest,
+                "Review patch".to_string(),
+                Username::from("creator"),
+                String::new(),
+                IssueStatus::Closed,
+                Some("pm".to_string()),
+                Some(job_settings(&repo_name)),
+                Vec::new(),
+                Vec::new(),
+                vec![patch_id.clone()],
+            ))
+            .await?;
+
+        create_followup_issues_on_new_review(&handles.state, &patch_id, true).await?;
+
+        let children = handles.store.get_issue_children(&parent_issue_id).await?;
+        assert!(children.is_empty());
+
+        Ok(())
     }
 
     #[test]
