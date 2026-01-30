@@ -7,8 +7,7 @@ use metis_common::{
 mod common;
 
 use common::test_helpers::{
-    init_test_server_with_remote, init_test_server_with_remote_and_claude_token, job_id_for_prompt,
-    wait_for_status,
+    init_test_server_with_remote, job_id_for_prompt, wait_for_status,
 };
 
 #[tokio::test]
