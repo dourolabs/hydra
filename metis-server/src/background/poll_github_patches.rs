@@ -371,24 +371,24 @@ fn build_review_entries(
 }
 
 fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review> {
-    let mut merged = Vec::new();
+    let mut merged_reviews = Vec::new();
     let mut seen = HashSet::new();
 
     for review in github_reviews.into_iter().chain(existing.iter().cloned()) {
         let key = review_key(&review);
         if seen.insert(key) {
-            merged.push(review);
+            merged_reviews.push(review);
         }
     }
 
-    merged.sort_by_key(|review| {
+    merged_reviews.sort_by_key(|review| {
         let timestamp = review
             .submitted_at
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
         (timestamp, review.author.clone())
     });
 
-    merged
+    merged_reviews
 }
 
 fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) -> bool {
@@ -675,11 +675,11 @@ mod tests {
             Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
         )];
 
-        let merged = merge_reviews(&existing, github_reviews.clone());
+        let merged_reviews = merge_reviews(&existing, github_reviews.clone());
 
-        assert_eq!(merged.len(), 2);
-        assert!(merged.contains(&github_reviews[0]));
-        assert!(merged.contains(&existing[0]));
+        assert_eq!(merged_reviews.len(), 2);
+        assert!(merged_reviews.contains(&github_reviews[0]));
+        assert!(merged_reviews.contains(&existing[0]));
     }
 
     #[test]
