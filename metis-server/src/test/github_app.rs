@@ -20,6 +20,7 @@ async fn github_app_client_id_returns_configured_value() -> anyhow::Result<()> {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
+        None,
         agents,
     );
 

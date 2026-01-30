@@ -254,6 +254,8 @@ pub struct WorkerContext {
     pub variables: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_cache: Option<BuildCacheContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_code_oauth_token: Option<String>,
 }
 
 impl WorkerContext {
@@ -263,6 +265,7 @@ impl WorkerContext {
         model: Option<String>,
         variables: HashMap<String, String>,
         build_cache: Option<BuildCacheContext>,
+        claude_code_oauth_token: Option<String>,
     ) -> Self {
         Self {
             request_context,
@@ -270,6 +273,7 @@ impl WorkerContext {
             model,
             variables,
             build_cache,
+            claude_code_oauth_token,
         }
     }
 }

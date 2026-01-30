@@ -43,6 +43,7 @@ pub struct AppState {
     pub service_state: Arc<ServiceState>,
     store: Arc<dyn Store>,
     pub job_engine: Arc<dyn JobEngine>,
+    worker_claude_code_oauth_token: Option<String>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
 
@@ -263,6 +264,7 @@ impl AppState {
         service_state: Arc<ServiceState>,
         store: Arc<dyn Store>,
         job_engine: Arc<dyn JobEngine>,
+        worker_claude_code_oauth_token: Option<String>,
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
         Self {
@@ -271,8 +273,13 @@ impl AppState {
             service_state,
             store,
             job_engine,
+            worker_claude_code_oauth_token,
             agents,
         }
+    }
+
+    pub fn claude_code_oauth_token(&self) -> Option<String> {
+        self.worker_claude_code_oauth_token.clone()
     }
 
     pub async fn login_with_github_token(
@@ -2032,6 +2039,7 @@ mod tests {
             Arc::new(ServiceState::default()),
             Arc::new(MemoryStore::new()),
             Arc::new(MockJobEngine::new()),
+            None,
             Arc::new(RwLock::new(Vec::new())),
         )
     }

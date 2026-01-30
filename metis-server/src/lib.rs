@@ -224,7 +224,7 @@ pub async fn run() -> anyhow::Result<()> {
         namespace: app_config.metis.namespace.clone(),
         openai_api_key,
         anthropic_api_key,
-        claude_code_oauth_token,
+        claude_code_oauth_token: claude_code_oauth_token.clone(),
         server_hostname: app_config.metis.server_hostname.clone(),
         client: kube_client,
         image_pull_secrets: app_config.kubernetes.image_pull_secrets.clone(),
@@ -238,6 +238,7 @@ pub async fn run() -> anyhow::Result<()> {
         Arc::new(service_state),
         store,
         Arc::new(job_engine),
+        claude_code_oauth_token,
         agents,
     );
 

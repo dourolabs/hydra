@@ -379,6 +379,7 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
+        None,
         Arc::new(RwLock::new(Vec::<Arc<AgentQueue>>::new())),
     );
     let server = spawn_test_server_with_state(state, store).await?;
@@ -411,6 +412,48 @@ async fn job_context_includes_build_cache_settings() -> anyhow::Result<()> {
         }
     );
     assert_eq!(build_cache.settings.max_entries_per_repo, Some(5));
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_context_includes_claude_code_oauth_token() -> anyhow::Result<()> {
+    let store = Arc::new(MemoryStore::new());
+    let claude_token = "oauth-token-123".to_string();
+    let state = AppState::new(
+        Arc::new(test_app_config()),
+        None,
+        Arc::new(ServiceState::default()),
+        store.clone(),
+        Arc::new(MockJobEngine::new()),
+        Some(claude_token.clone()),
+        Arc::new(RwLock::new(Vec::<Arc<AgentQueue>>::new())),
+    );
+    let server = spawn_test_server_with_state(state, store).await?;
+
+    let client = test_client();
+    let response = client
+        .post(format!("{}/v1/jobs", server.base_url()))
+        .json(&json!({ "prompt": "0" }))
+        .send()
+        .await?;
+    assert!(response.status().is_success());
+    let body: CreateJobResponse = response.json().await?;
+
+    let context_response = client
+        .get(format!(
+            "{}/v1/jobs/{}/context",
+            server.base_url(),
+            body.job_id.as_ref()
+        ))
+        .send()
+        .await?;
+    assert!(context_response.status().is_success());
+
+    let worker_context: v1::jobs::WorkerContext = context_response.json().await?;
+    assert_eq!(
+        worker_context.claude_code_oauth_token.as_deref(),
+        Some(claude_token.as_str())
+    );
     Ok(())
 }
 

@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::ENV_METIS_ISSUE_ID,
+    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
     issues::IssueType,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
@@ -31,6 +31,7 @@ pub async fn run(
     dest: PathBuf,
     openai_api_key: Option<String>,
     anthropic_api_key: Option<String>,
+    cli_claude_code_oauth_token: Option<String>,
     issue_id: Option<IssueId>,
     commands: &dyn WorkerCommands,
     _context: &CommandContext,
@@ -41,12 +42,19 @@ pub async fn run(
         prompt,
         model,
         build_cache,
+        claude_code_oauth_token: server_claude_code_oauth_token,
         ..
     } = client.get_job_context(&job).await?;
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     ensure_clean_destination(&dest)?;
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
+    let claude_code_oauth_token = cli_claude_code_oauth_token
+        .filter(|value| !value.trim().is_empty())
+        .or(server_claude_code_oauth_token);
+    if let Some(token) = claude_code_oauth_token.as_ref() {
+        execution_env.insert(ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string(), token.clone());
+    }
     let issue_branch_id = issue_id
         .as_ref()
         .map(|value| value.to_string())
@@ -113,6 +121,7 @@ pub async fn run(
             model.as_deref(),
             openai_api_key.clone(),
             anthropic_api_key.clone(),
+            claude_code_oauth_token.clone(),
             &dest,
             &execution_env,
             &output_path,

@@ -463,6 +463,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         worker_dir.path().to_path_buf(),
         None,
         None,
+        None,
         Some(merge_request_issue_id.clone()),
         &bash_commands,
         &context,

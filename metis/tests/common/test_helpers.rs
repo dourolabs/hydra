@@ -119,6 +119,7 @@ impl TestEnvironment {
             None,
             None,
             None,
+            None,
             &bash_commands,
             &context,
         )
@@ -226,19 +227,44 @@ fn format_command_outputs(outputs: &[CommandOutput]) -> String {
 }
 
 pub async fn init_test_server_with_remote(repo_name: &str) -> Result<TestEnvironment> {
-    init_test_server_with_remote_and_github(repo_name, None).await
+    init_test_server_with_remote_internal(repo_name, None, None).await
 }
 
 pub async fn init_test_server_with_remote_and_github(
     repo_name: &str,
     github_app: Option<Octocrab>,
 ) -> Result<TestEnvironment> {
+    init_test_server_with_remote_internal(repo_name, github_app, None).await
+}
+
+pub async fn init_test_server_with_remote_and_claude_token(
+    repo_name: &str,
+    claude_code_oauth_token: &str,
+) -> Result<TestEnvironment> {
+    init_test_server_with_remote_internal(
+        repo_name,
+        None,
+        Some(claude_code_oauth_token.to_string()),
+    )
+    .await
+}
+
+async fn init_test_server_with_remote_internal(
+    repo_name: &str,
+    github_app: Option<Octocrab>,
+    claude_code_oauth_token: Option<String>,
+) -> Result<TestEnvironment> {
     let tempdir = tempfile::tempdir().context("failed to create tempdir for test")?;
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let (state, store, auth_token, agents) =
-        app_state_with_repo(&remote_url, &service_repo_name, github_app).await?;
+    let (state, store, auth_token, agents) = app_state_with_repo(
+        &remote_url,
+        &service_repo_name,
+        github_app,
+        claude_code_oauth_token,
+    )
+    .await?;
     let server = spawn_test_server_with_state(state.clone(), store)
         .await
         .context("failed to start test server")?;
@@ -427,6 +453,7 @@ async fn app_state_with_repo(
     remote_url: &str,
     repo_name: &RepoName,
     github_app: Option<Octocrab>,
+    claude_code_oauth_token: Option<String>,
 ) -> Result<(
     AppState,
     Arc<dyn Store>,
@@ -464,6 +491,7 @@ async fn app_state_with_repo(
             Arc::new(ServiceState::default()),
             store.clone(),
             Arc::new(MockJobEngine::new()),
+            claude_code_oauth_token,
             agents.clone(),
         ),
         store,
