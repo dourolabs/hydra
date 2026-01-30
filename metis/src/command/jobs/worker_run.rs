@@ -48,11 +48,6 @@ pub async fn run(
     ensure_clean_destination(&dest)?;
     let mut execution_env = variables;
     ensure_color_output_env(&mut execution_env);
-    let claude_code_oauth_token =
-        cli_claude_code_oauth_token.filter(|value| !value.trim().is_empty());
-    if let Some(token) = claude_code_oauth_token.as_ref() {
-        execution_env.insert(ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string(), token.clone());
-    }
     let issue_branch_id = issue_id
         .as_ref()
         .map(|value| value.to_string())
