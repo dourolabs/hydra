@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::ENV_METIS_ISSUE_ID,
+    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
     issues::IssueType,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
@@ -47,6 +47,14 @@ pub async fn run(
     let service_repo_name = resolve_service_repo_name(client, Some(&job)).await?;
     ensure_clean_destination(&dest)?;
     let mut execution_env = variables;
+    if let Some(token) = claude_code_oauth_token
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        execution_env
+            .entry(ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string())
+            .or_insert_with(|| token.to_string());
+    }
     ensure_color_output_env(&mut execution_env);
     let worker_home_dir = resolve_worker_home_dir();
     let issue_branch_id = issue_id
