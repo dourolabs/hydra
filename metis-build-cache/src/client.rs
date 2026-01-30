@@ -266,6 +266,7 @@ impl BuildCacheClient {
         archive_path: &Path,
     ) -> Result<(), BuildCacheError> {
         let tracked_paths = collect_tracked_paths(repo_root)?;
+        let mut existing_home_paths = collect_existing_home_paths(home_dir)?;
         let input = File::open(archive_path)
             .map_err(|err| BuildCacheError::io("opening cache archive", err))?;
         let decoder = zstd::Decoder::new(input)
@@ -295,8 +296,16 @@ impl BuildCacheClient {
                     let Some(home_root) = home_dir else {
                         continue;
                     };
+                    if entry_type.is_file()
+                        && existing_home_paths.contains(&archive_path.relative_path)
+                    {
+                        continue;
+                    }
                     let destination = home_root.join(&archive_path.relative_path);
-                    unpack_archive_entry(&mut entry, &destination)?
+                    unpack_archive_entry(&mut entry, &destination)?;
+                    if entry_type.is_file() {
+                        existing_home_paths.insert(archive_path.relative_path.clone());
+                    }
                 }
             }
         }
@@ -478,6 +487,35 @@ fn collect_tracked_paths(root: &Path) -> Result<HashSet<PathBuf>, BuildCacheErro
         tracked.insert(path);
     }
     Ok(tracked)
+}
+
+fn collect_existing_home_paths(
+    home_dir: Option<&Path>,
+) -> Result<HashSet<PathBuf>, BuildCacheError> {
+    let Some(root) = home_dir else {
+        return Ok(HashSet::new());
+    };
+    if !root.exists() {
+        return Ok(HashSet::new());
+    }
+
+    let mut existing = HashSet::new();
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = entry
+            .map_err(|err| BuildCacheError::io("walking home paths", io::Error::other(err)))?;
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let relative = path.strip_prefix(root).map_err(|err| {
+            BuildCacheError::io("computing relative home path", io::Error::other(err))
+        })?;
+        existing.insert(relative.to_path_buf());
+    }
+    Ok(existing)
 }
 
 #[derive(Debug)]
@@ -953,6 +991,46 @@ mod tests {
             .expect("apply archive");
 
         let contents = std::fs::read_to_string(&tracked_path).expect("read tracked file");
+        assert_eq!(contents, "local edits");
+    }
+
+    #[test]
+    fn apply_cache_archive_keeps_existing_home_files() {
+        let repo_dir = tempdir().expect("repo dir");
+        let repo = Repository::init(repo_dir.path()).expect("init repo");
+        let repo_file = repo_dir.path().join("src/lib.rs");
+        write_file(&repo_file, "tracked");
+        commit_file(&repo, &repo_file);
+
+        let home_dir = tempdir().expect("home dir");
+        let restore_home = tempdir().expect("restore home");
+        let home_file = PathBuf::from(".cargo/registry/cache.bin");
+        write_file(&home_dir.path().join(&home_file), "cache payload");
+
+        let archive_dir = tempdir().expect("archive dir");
+        let archive_path = archive_dir.path().join("cache.tar.zst");
+        let storage = Arc::new(MockStorageClient::new());
+        let config = BuildCacheConfig {
+            include: vec!["src/".to_string()],
+            exclude: Vec::new(),
+            home_include: vec![".cargo/**".to_string()],
+            home_exclude: Vec::new(),
+            max_entries_per_repo: None,
+        };
+        let client = BuildCacheClient::new(config, storage);
+
+        client
+            .build_cache_archive(repo_dir.path(), Some(home_dir.path()), &archive_path)
+            .expect("build archive with home entries");
+
+        write_file(&restore_home.path().join(&home_file), "local edits");
+
+        client
+            .apply_cache_archive(repo_dir.path(), Some(restore_home.path()), &archive_path)
+            .expect("apply archive without overwriting existing home files");
+
+        let contents = std::fs::read_to_string(restore_home.path().join(&home_file))
+            .expect("read existing home file");
         assert_eq!(contents, "local edits");
     }
 }
