@@ -238,7 +238,6 @@ pub async fn run() -> anyhow::Result<()> {
         Arc::new(service_state),
         store,
         Arc::new(job_engine),
-        claude_code_oauth_token,
         agents,
     );
 

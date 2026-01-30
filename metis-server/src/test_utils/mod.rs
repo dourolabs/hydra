@@ -110,7 +110,6 @@ pub fn test_state_with_store_and_engine(
         Arc::new(ServiceState::default()),
         store.clone(),
         job_engine,
-        None,
         agents.clone(),
     );
 

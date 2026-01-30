@@ -39,7 +39,6 @@ fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
         Arc::new(ServiceState::default()),
         store.clone(),
         Arc::new(MockJobEngine::new()),
-        None,
         agents.clone(),
     );
 

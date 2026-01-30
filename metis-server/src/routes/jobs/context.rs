@@ -26,7 +26,6 @@ pub async fn get_job_context(
         task.model.clone(),
         resolved.env_vars,
         build_cache,
-        state.claude_code_oauth_token(),
     );
     info!(job_id = %job_id, "get_job_context completed");
     Ok(Json(context))

@@ -42,6 +42,7 @@ pub struct TestEnvironment {
     pub agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     #[allow(dead_code)]
     pub state: AppState,
+    pub worker_claude_code_oauth_token: Option<String>,
 }
 
 pub fn metis_bin() -> std::path::PathBuf {
@@ -118,7 +119,7 @@ impl TestEnvironment {
             worker_dir,
             None,
             None,
-            None,
+            self.worker_claude_code_oauth_token.clone(),
             None,
             &bash_commands,
             &context,
@@ -258,13 +259,8 @@ async fn init_test_server_with_remote_internal(
     let remote_url = init_service_remote(tempdir.path())?;
     let service_repo_name = RepoName::from_str(repo_name)
         .with_context(|| format!("failed to parse service repo name: {repo_name}"))?;
-    let (state, store, auth_token, agents) = app_state_with_repo(
-        &remote_url,
-        &service_repo_name,
-        github_app,
-        claude_code_oauth_token,
-    )
-    .await?;
+    let (state, store, auth_token, agents) =
+        app_state_with_repo(&remote_url, &service_repo_name, github_app).await?;
     let server = spawn_test_server_with_state(state.clone(), store)
         .await
         .context("failed to start test server")?;
@@ -311,6 +307,7 @@ async fn init_test_server_with_remote_internal(
         current_issue_id,
         agents,
         state,
+        worker_claude_code_oauth_token: claude_code_oauth_token,
     })
 }
 
@@ -453,7 +450,6 @@ async fn app_state_with_repo(
     remote_url: &str,
     repo_name: &RepoName,
     github_app: Option<Octocrab>,
-    claude_code_oauth_token: Option<String>,
 ) -> Result<(
     AppState,
     Arc<dyn Store>,
@@ -491,7 +487,6 @@ async fn app_state_with_repo(
             Arc::new(ServiceState::default()),
             store.clone(),
             Arc::new(MockJobEngine::new()),
-            claude_code_oauth_token,
             agents.clone(),
         ),
         store,
