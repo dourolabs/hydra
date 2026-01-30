@@ -823,16 +823,22 @@ async fn review_patch(
     if contents.is_empty() {
         bail!("Review contents must not be empty.");
     }
+    let review_state = review_state_from_flag(approve);
+    let review_id = generate_review_id();
 
     let mut record = client
         .get_patch(&id)
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
 
-    record
-        .patch
-        .reviews
-        .push(Review::new(contents, approve, author, Some(Utc::now())));
+    record.patch.reviews.push(Review::new(
+        review_id,
+        author,
+        review_state,
+        Some(Utc::now()),
+        Some(contents),
+        Vec::new(),
+    ));
 
     let response = client
         .update_patch(&id, &UpsertPatchRequest::new(record.patch))
@@ -841,6 +847,23 @@ async fn review_patch(
 
     println!("{}", response.patch_id);
     Ok(())
+}
+
+fn review_state_from_flag(approve: bool) -> String {
+    if approve {
+        "approved".to_string()
+    } else {
+        "changes_requested".to_string()
+    }
+}
+
+fn generate_review_id() -> u64 {
+    let timestamp = Utc::now().timestamp_millis();
+    if timestamp < 0 {
+        0
+    } else {
+        timestamp as u64
+    }
 }
 
 fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
@@ -899,6 +922,7 @@ mod tests {
     };
     use crate::test_utils::ids::{issue_id, patch_id, task_id};
     use anyhow::{anyhow, Context};
+    use chrono::{DateTime, Utc};
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
     use metis_common::{
@@ -927,6 +951,23 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    fn review_for_test(
+        review_id: u64,
+        author: &str,
+        review_state: &str,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<&str>,
+    ) -> Review {
+        Review::new(
+            review_id,
+            author.to_string(),
+            review_state.to_string(),
+            submitted_at,
+            review_message.map(|value| value.to_string()),
+            Vec::new(),
+        )
     }
 
     fn metis_client(server: &MockServer) -> MetisClient {
@@ -1543,11 +1584,12 @@ mod tests {
         let patch_id = patch_id("p-review");
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
         let expected_diff = git_diff_commit_range(&repo_path, &commit_range.clone().unwrap())?;
-        let reviews = vec![Review::new(
-            "needs adjustments".to_string(),
-            false,
-            "reviewer".to_string(),
+        let reviews = vec![review_for_test(
+            101,
+            "reviewer",
+            "changes_requested",
             None,
+            Some("needs adjustments"),
         )];
         let existing_patch = Patch::new(
             "old title".to_string(),
@@ -1798,11 +1840,12 @@ mod tests {
     #[tokio::test]
     async fn review_patch_appends_review() -> Result<()> {
         let existing_submitted_at = Utc::now();
-        let existing_review = Review::new(
-            "needs work".to_string(),
-            false,
-            "bob".to_string(),
+        let existing_review = review_for_test(
+            202,
+            "bob",
+            "changes_requested",
             Some(existing_submitted_at),
+            Some("needs work"),
         );
         let review_patch_id = patch_id("p-review");
         let patch_record = PatchRecord::new(
@@ -1826,18 +1869,13 @@ mod tests {
         let update_mock = server.mock(move |when, then| {
             when.method(PUT)
                 .path(format!("/v1/patches/{}", patch_id_for_mock.as_ref()))
-                .json_body_partial(
-                    r#"{
-                        "patch": {
-                            "title": "reviewed patch",
-                            "description": "description",
-                            "reviews": [
-                                {"contents": "needs work", "is_approved": false, "author": "bob"},
-                                {"contents": "looks good now", "is_approved": true, "author": "alice"}
-                            ]
-                        }
-                    }"#,
-                )
+                .body_contains("\"title\":\"reviewed patch\"")
+                .body_contains("\"description\":\"description\"")
+                .body_contains("\"review_id\":202")
+                .body_contains("\"review_state\":\"changes_requested\"")
+                .body_contains("\"review_message\":\"needs work\"")
+                .body_contains("\"review_state\":\"approved\"")
+                .body_contains("\"review_message\":\"looks good now\"")
                 .body_contains("submitted_at");
             then.status(200)
                 .json_body_obj(&UpsertPatchResponse::new(patch_id("p-123")));
@@ -1869,11 +1907,12 @@ mod tests {
                 PatchStatus::Open,
                 false,
                 None,
-                vec![Review::new(
-                    "looks ok".to_string(),
-                    false,
-                    "sam".to_string(),
+                vec![review_for_test(
+                    301,
+                    "sam",
+                    "changes_requested",
                     None,
+                    Some("looks ok"),
                 )],
                 sample_repo_name(),
                 None,
@@ -1886,11 +1925,12 @@ mod tests {
             PatchStatus::Closed,
             false,
             None,
-            vec![Review::new(
-                "looks ok".to_string(),
-                false,
-                "sam".to_string(),
+            vec![review_for_test(
+                301,
+                "sam",
+                "changes_requested",
                 None,
+                Some("looks ok"),
             )],
             sample_repo_name(),
             None,

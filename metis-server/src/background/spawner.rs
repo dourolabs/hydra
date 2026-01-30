@@ -224,16 +224,32 @@ impl AgentQueue {
 
 fn build_review_summary(reviews: &[Review]) -> Option<String> {
     let mut lines = Vec::new();
-    for review in reviews.iter().filter(|review| !review.is_approved) {
-        let contents = review.contents.trim();
-        if contents.is_empty() {
-            continue;
+    for review in reviews.iter().filter(|review| !review_is_approved(review)) {
+        if let Some(message) = review
+            .review_message
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            let when = review
+                .submitted_at
+                .map(|timestamp| format!(" @ {}", timestamp.to_rfc3339()))
+                .unwrap_or_default();
+            lines.push(format!("{}{}: {}", review.author, when, message));
         }
-        let when = review
-            .submitted_at
-            .map(|timestamp| format!(" @ {}", timestamp.to_rfc3339()))
-            .unwrap_or_default();
-        lines.push(format!("{}{}: {}", review.author, when, contents));
+
+        for comment in &review.comments {
+            let text = comment.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let when = comment
+                .created_at
+                .or(review.submitted_at)
+                .map(|timestamp| format!(" @ {}", timestamp.to_rfc3339()))
+                .unwrap_or_default();
+            lines.push(format!("{}{}: {}", review.author, when, text));
+        }
     }
 
     if lines.is_empty() {
@@ -247,6 +263,10 @@ fn build_review_summary(reviews: &[Review]) -> Option<String> {
         summary.push('\n');
     }
     Some(summary.trim_end().to_string())
+}
+
+fn review_is_approved(review: &Review) -> bool {
+    review.review_state.eq_ignore_ascii_case("approved")
 }
 
 #[async_trait]
@@ -431,7 +451,7 @@ mod tests {
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
         test::{TestStateHandles, test_state_with_repo_handles},
     };
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
 
     fn default_user() -> Username {
         Username::from("spawner")
@@ -473,6 +493,23 @@ mod tests {
             image: Some("repo-image".to_string()),
             ..JobSettings::default()
         }
+    }
+
+    fn review_for_test(
+        review_id: u64,
+        author: &str,
+        review_state: &str,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<&str>,
+    ) -> Review {
+        Review::new(
+            review_id,
+            author.to_string(),
+            review_state.to_string(),
+            submitted_at,
+            review_message.map(|value| value.to_string()),
+            Vec::new(),
+        )
     }
 
     async fn state_with_repository() -> anyhow::Result<(TestStateHandles, RepoName)> {
@@ -680,11 +717,12 @@ mod tests {
             PatchStatus::ChangesRequested,
             false,
             None,
-            vec![Review::new(
-                "Please handle the edge case.".to_string(),
-                false,
-                "alex".to_string(),
+            vec![review_for_test(
+                601,
+                "alex",
+                "changes_requested",
                 Some(review_time),
+                Some("Please handle the edge case."),
             )],
             repo_name.clone(),
             None,
@@ -756,11 +794,12 @@ mod tests {
         let mut updated_patch = updated_patch.item;
         updated_patch.status = PatchStatus::ChangesRequested;
         updated_patch.diff = "diff --git a/file b/file\n+change\n".to_string();
-        updated_patch.reviews = vec![Review::new(
-            "needs adjustments".to_string(),
-            false,
-            "reviewer".to_string(),
+        updated_patch.reviews = vec![review_for_test(
+            602,
+            "reviewer",
+            "changes_requested",
             None,
+            Some("needs adjustments"),
         )];
         handles.store.update_patch(&patch_id, updated_patch).await?;
 
@@ -786,11 +825,12 @@ mod tests {
             PatchStatus::ChangesRequested,
             false,
             None,
-            vec![Review::new(
-                "fix the issues".to_string(),
-                false,
-                "alex".to_string(),
+            vec![review_for_test(
+                603,
+                "alex",
+                "changes_requested",
                 None,
+                Some("fix the issues"),
             )],
             repo_name.clone(),
             None,
@@ -834,11 +874,12 @@ mod tests {
             PatchStatus::ChangesRequested,
             false,
             None,
-            vec![Review::new(
-                "fix the issues".to_string(),
-                false,
-                "alex".to_string(),
+            vec![review_for_test(
+                604,
+                "alex",
+                "changes_requested",
                 None,
+                Some("fix the issues"),
             )],
             repo_name.clone(),
             Some(GithubPr::new(

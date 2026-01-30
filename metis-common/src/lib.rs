@@ -22,7 +22,7 @@ pub use api::v1::{
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use ids::{IssueId, MetisId, MetisIdError, PatchId, TaskId};
-pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
+pub use models::reviews::{Comment, Review};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
     CreateRepositoryRequest, ListRepositoriesResponse, Repository, RepositoryRecord,

@@ -4,6 +4,8 @@ use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
+pub use crate::models::reviews::{Comment, Review};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PatchStatus {
@@ -52,33 +54,6 @@ impl FromStr for PatchStatus {
                 Ok(PatchStatus::ChangesRequested)
             }
             other => Err(format!("unsupported patch status '{other}'")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct Review {
-    pub contents: String,
-    pub is_approved: bool,
-    pub author: String,
-    /// Timestamp for when the review was recorded.
-    #[serde(default)]
-    pub submitted_at: Option<DateTime<Utc>>,
-}
-
-impl Review {
-    pub fn new(
-        contents: String,
-        is_approved: bool,
-        author: String,
-        submitted_at: Option<DateTime<Utc>>,
-    ) -> Self {
-        Self {
-            contents,
-            is_approved,
-            author,
-            submitted_at,
         }
     }
 }

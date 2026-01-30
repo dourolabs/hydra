@@ -1773,7 +1773,7 @@ fn build_review_summary(reviews: &[Review]) -> Option<PatchReviewSummary> {
     let mut latest_by_author = HashMap::new();
 
     for (index, review) in reviews.iter().enumerate() {
-        if review.is_approved {
+        if review_is_approved(review) {
             approvals += 1;
         } else {
             change_requests += 1;
@@ -1798,7 +1798,7 @@ fn build_review_summary(reviews: &[Review]) -> Option<PatchReviewSummary> {
             let review = &reviews[index];
             ReviewSnapshot {
                 author: author.to_string(),
-                is_approved: review.is_approved,
+                is_approved: review_is_approved(review),
                 submitted_at: review.submitted_at,
             }
         })
@@ -1813,7 +1813,7 @@ fn build_review_summary(reviews: &[Review]) -> Option<PatchReviewSummary> {
         change_requests,
         latest_review: ReviewSnapshot {
             author: latest.author.clone(),
-            is_approved: latest.is_approved,
+            is_approved: review_is_approved(latest),
             submitted_at: latest.submitted_at,
         },
         reviewer_statuses,
@@ -1837,6 +1837,10 @@ fn review_decision(is_approved: bool) -> &'static str {
     } else {
         "changes requested"
     }
+}
+
+fn review_is_approved(review: &Review) -> bool {
+    review.review_state.eq_ignore_ascii_case("approved")
 }
 
 fn write_todo_list(indent: &str, todo_list: &[TodoItem], writer: &mut impl Write) -> Result<()> {
@@ -1878,7 +1882,7 @@ mod tests {
     use super::*;
     use crate::client::MetisClient;
     use crate::test_utils::ids::{issue_id, patch_id, task_id};
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
     use httpmock::prelude::*;
     use metis_common::issues::{
         AddTodoItemRequest, Issue, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
@@ -1898,6 +1902,23 @@ mod tests {
     };
     use reqwest::Client as HttpClient;
     use std::collections::HashMap;
+
+    fn review_for_test(
+        review_id: u64,
+        author: &str,
+        review_state: &str,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<&str>,
+    ) -> Review {
+        Review::new(
+            review_id,
+            author.to_string(),
+            review_state.to_string(),
+            submitted_at,
+            review_message.map(|value| value.to_string()),
+            Vec::new(),
+        )
+    }
     use std::str::FromStr;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -3623,24 +3644,21 @@ mod tests {
         let earliest_review = Utc.with_ymd_and_hms(2024, 5, 1, 11, 50, 0).unwrap();
         let latest_review = earliest_review + Duration::minutes(10);
         let patch_reviews = vec![
-            Review::new(
-                "needs work".to_string(),
-                false,
-                "alex".to_string(),
+            review_for_test(
+                401,
+                "alex",
+                "changes_requested",
                 Some(earliest_review),
+                Some("needs work"),
             ),
-            Review::new(
-                "fixed now".to_string(),
-                false,
-                "sam".to_string(),
+            review_for_test(
+                402,
+                "sam",
+                "changes_requested",
                 Some(earliest_review + Duration::minutes(5)),
+                Some("fixed now"),
             ),
-            Review::new(
-                "ship it".to_string(),
-                true,
-                "sam".to_string(),
-                Some(latest_review),
-            ),
+            review_for_test(403, "sam", "approved", Some(latest_review), Some("ship it")),
         ];
         let description = IssueDescription {
             issue: IssueWithPatches {

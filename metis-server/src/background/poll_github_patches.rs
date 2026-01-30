@@ -2,8 +2,8 @@ use crate::{
     AppState,
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::patches::{
-        GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
-        UpsertPatchRequest,
+        Comment, GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus,
+        Review, UpsertPatchRequest,
     },
 };
 use anyhow::Context;
@@ -19,13 +19,17 @@ use octocrab::{
     },
     params::repos::Commitish,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 const AUTHENTICATED_RATE_LIMIT_PER_HOUR: u64 = 5_000;
 const REQUESTS_PER_PATCH: u64 = 6;
 const WORKER_NAME: &str = "github_poller";
+type ReviewKey = (u64, String, String, Option<DateTime<Utc>>, Option<String>, Vec<u64>);
 
 #[derive(Clone)]
 pub struct GithubPollerWorker {
@@ -307,30 +311,31 @@ fn build_review_entries(
     review_comments: Vec<PullRequestComment>,
     issue_comments: Vec<IssueComment>,
 ) -> Vec<Review> {
-    let mut entries = Vec::new();
+    let mut review_map = HashMap::new();
 
     for review in reviews {
-        let Some(body) = review.body.as_ref().map(|value| value.trim().to_string()) else {
-            continue;
-        };
-        if body.is_empty() {
-            continue;
-        }
-
         let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
+        let review_state = review_state_from_github(review.state.as_ref());
+        let review_message = review
+            .body
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
 
-        entries.push(Review::new(
-            body,
-            review
-                .state
-                .as_ref()
-                .map(|state| state == &octocrab::models::pulls::ReviewState::Approved)
-                .unwrap_or(false),
-            author,
-            review.submitted_at,
-        ));
+        let review_id = review.id.0;
+        review_map.insert(
+            review_id,
+            Review::new(
+                review_id,
+                author,
+                review_state,
+                review.submitted_at,
+                review_message,
+                Vec::new(),
+            ),
+        );
     }
 
     for comment in review_comments {
@@ -343,11 +348,34 @@ fn build_review_entries(
             continue;
         };
 
-        entries.push(Review::new(
+        let review_id = comment
+            .pull_request_review_id
+            .map(|id| id.0)
+            .unwrap_or(comment.id.0);
+        let entry = review_map.entry(review_id).or_insert_with(|| {
+            Review::new(
+                review_id,
+                author,
+                "commented".to_string(),
+                Some(comment.created_at),
+                None,
+                Vec::new(),
+            )
+        });
+
+        let url = Some(comment.html_url.clone());
+
+        entry.comments.push(Comment::new(
+            comment.id.0,
+            review_id,
             body.to_string(),
-            false,
-            author,
+            url,
+            Some(comment.path.clone()),
+            comment.start_line.map(|value| value as u32),
+            comment.line.map(|value| value as u32),
+            comment.in_reply_to_id.map(|id| id.0),
             Some(comment.created_at),
+            Some(comment.updated_at),
         ));
     }
 
@@ -359,15 +387,20 @@ fn build_review_entries(
             continue;
         }
 
-        entries.push(Review::new(
-            body.to_string(),
-            false,
-            comment.user.login.clone(),
-            Some(comment.created_at),
-        ));
+        let review_id = comment.id.0;
+        review_map.entry(review_id).or_insert_with(|| {
+            Review::new(
+                review_id,
+                comment.user.login.clone(),
+                "commented".to_string(),
+                Some(comment.created_at),
+                Some(body.to_string()),
+                Vec::new(),
+            )
+        });
     }
 
-    dedupe_reviews(entries)
+    dedupe_reviews(review_map.into_values().collect())
 }
 
 fn merge_reviews(existing: &[Review], github_reviews: Vec<Review>) -> Vec<Review> {
@@ -395,7 +428,7 @@ fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) 
     let existing_keys: HashSet<_> = existing.iter().map(review_key).collect();
     github_reviews
         .iter()
-        .any(|review| !review.is_approved && !existing_keys.contains(&review_key(review)))
+        .any(|review| !is_review_approved(review) && !existing_keys.contains(&review_key(review)))
 }
 
 fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
@@ -412,13 +445,31 @@ fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
     unique
 }
 
-fn review_key(review: &Review) -> (String, bool, String, Option<DateTime<Utc>>) {
+fn review_key(review: &Review) -> ReviewKey {
     (
+        review.review_id,
         review.author.clone(),
-        review.is_approved,
-        review.contents.clone(),
+        review.review_state.clone(),
         review.submitted_at,
+        review.review_message.clone(),
+        review.comments.iter().map(|comment| comment.id).collect(),
     )
+}
+
+fn review_state_from_github(state: Option<&octocrab::models::pulls::ReviewState>) -> String {
+    match state {
+        Some(octocrab::models::pulls::ReviewState::Approved) => "approved".to_string(),
+        Some(octocrab::models::pulls::ReviewState::ChangesRequested) => {
+            "changes_requested".to_string()
+        }
+        Some(octocrab::models::pulls::ReviewState::Commented) => "commented".to_string(),
+        Some(_) => "commented".to_string(),
+        None => "commented".to_string(),
+    }
+}
+
+fn is_review_approved(review: &Review) -> bool {
+    review.review_state.eq_ignore_ascii_case("approved")
 }
 
 fn patch_status_from_github(pr: &PullRequest) -> PatchStatus {
@@ -591,7 +642,7 @@ fn state_from_combined_status(combined_status: &CombinedStatus) -> GithubCiState
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{DateTime, TimeZone, Utc};
     use metis_common::RepoName;
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};
@@ -600,6 +651,23 @@ mod tests {
 
     fn sample_diff() -> String {
         "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n".to_string()
+    }
+
+    fn review_for_test(
+        review_id: u64,
+        author: &str,
+        review_state: &str,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<&str>,
+    ) -> Review {
+        Review::new(
+            review_id,
+            author.to_string(),
+            review_state.to_string(),
+            submitted_at,
+            review_message.map(|value| value.to_string()),
+            Vec::new(),
+        )
     }
 
     #[tokio::test]
@@ -662,17 +730,19 @@ mod tests {
 
     #[test]
     fn merge_reviews_preserves_existing() {
-        let existing = vec![Review::new(
-            "local".to_string(),
-            false,
-            "alice".to_string(),
+        let existing = vec![review_for_test(
+            501,
+            "alice",
+            "changes_requested",
             None,
+            Some("local"),
         )];
-        let github_reviews = vec![Review::new(
-            "approved".to_string(),
-            true,
-            "bob".to_string(),
+        let github_reviews = vec![review_for_test(
+            502,
+            "bob",
+            "approved",
             Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+            Some("approved"),
         )];
 
         let merged_reviews = merge_reviews(&existing, github_reviews.clone());
@@ -684,35 +754,38 @@ mod tests {
 
     #[test]
     fn new_non_approved_reviews_trigger_changes_requested() {
-        let existing = vec![Review::new(
-            "looks fine".to_string(),
-            true,
-            "alice".to_string(),
+        let existing = vec![review_for_test(
+            503,
+            "alice",
+            "approved",
             None,
+            Some("looks fine"),
         )];
         let github_reviews = vec![
             existing[0].clone(),
-            Review::new("please update".to_string(), false, "bob".to_string(), None),
+            review_for_test(504, "bob", "changes_requested", None, Some("please update")),
         ];
 
         assert!(has_new_non_approved_reviews(&existing, &github_reviews));
 
-        let approvals_only = vec![Review::new(
-            "lgtm".to_string(),
-            true,
-            "carol".to_string(),
+        let approvals_only = vec![review_for_test(
+            505,
+            "carol",
+            "approved",
             None,
+            Some("lgtm"),
         )];
         assert!(!has_new_non_approved_reviews(&existing, &approvals_only));
     }
 
     #[test]
     fn dedupe_reviews_removes_duplicates() {
-        let review = Review::new(
-            "same".to_string(),
-            false,
-            "alice".to_string(),
+        let review = review_for_test(
+            506,
+            "alice",
+            "changes_requested",
             Some(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+            Some("same"),
         );
         let result = dedupe_reviews(vec![review.clone(), review.clone()]);
         assert_eq!(result.len(), 1);
@@ -800,11 +873,12 @@ mod tests {
             "base": { "ref": "main", "sha": "def456", "user": null, "repo": null }
         }))
         .unwrap();
-        let reviews = vec![Review::new(
-            "please update".to_string(),
-            false,
-            "alice".to_string(),
+        let reviews = vec![review_for_test(
+            507,
+            "alice",
+            "changes_requested",
             None,
+            Some("please update"),
         )];
         let ci_status = GithubCiStatus::new(GithubCiState::Success, None);
 
@@ -833,11 +907,12 @@ mod tests {
             None,
             None,
         );
-        let existing_reviews = vec![Review::new(
-            "please update".to_string(),
-            false,
-            "alice".to_string(),
+        let existing_reviews = vec![review_for_test(
+            508,
+            "alice",
+            "changes_requested",
             None,
+            Some("please update"),
         )];
         let patch = Patch::new(
             "Patch".to_string(),
