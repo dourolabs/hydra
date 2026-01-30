@@ -4192,6 +4192,7 @@ dependencies = [
  "git2",
  "globset",
  "metis-common",
+ "metis-s3",
  "tar",
  "tempfile",
  "thiserror 1.0.69",
