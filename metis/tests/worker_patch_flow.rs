@@ -6,9 +6,7 @@ use metis_common::{
 
 mod common;
 
-use common::test_helpers::{
-    init_test_server_with_remote, job_id_for_prompt, wait_for_status,
-};
+use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {
