@@ -267,7 +267,6 @@ impl BuildCacheClient {
     ) -> Result<(), BuildCacheError> {
         let tracked_paths = collect_tracked_paths(repo_root)?;
         let mut existing_home_paths = collect_existing_home_paths(home_dir)?;
-        let mut home_conflicts = Vec::new();
         let input = File::open(archive_path)
             .map_err(|err| BuildCacheError::io("opening cache archive", err))?;
         let decoder = zstd::Decoder::new(input)
@@ -300,7 +299,6 @@ impl BuildCacheClient {
                     if entry_type.is_file()
                         && existing_home_paths.contains(&archive_path.relative_path)
                     {
-                        home_conflicts.push(archive_path.relative_path.clone());
                         continue;
                     }
                     let destination = home_root.join(&archive_path.relative_path);
@@ -311,11 +309,7 @@ impl BuildCacheClient {
                 }
             }
         }
-        if home_conflicts.is_empty() {
-            Ok(())
-        } else {
-            Err(BuildCacheError::home_files(&home_conflicts))
-        }
+        Ok(())
     }
 }
 
@@ -1001,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_cache_archive_errors_on_existing_home_files() {
+    fn apply_cache_archive_keeps_existing_home_files() {
         let repo_dir = tempdir().expect("repo dir");
         let repo = Repository::init(repo_dir.path()).expect("init repo");
         let repo_file = repo_dir.path().join("src/lib.rs");
@@ -1031,12 +1025,9 @@ mod tests {
 
         write_file(&restore_home.path().join(&home_file), "local edits");
 
-        let result =
-            client.apply_cache_archive(repo_dir.path(), Some(restore_home.path()), &archive_path);
-        match result {
-            Err(BuildCacheError::HomeFiles { count, .. }) => assert_eq!(count, 1),
-            other => panic!("expected home conflict error, got {other:?}"),
-        };
+        client
+            .apply_cache_archive(repo_dir.path(), Some(restore_home.path()), &archive_path)
+            .expect("apply archive without overwriting existing home files");
 
         let contents = std::fs::read_to_string(restore_home.path().join(&home_file))
             .expect("read existing home file");
