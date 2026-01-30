@@ -6,16 +6,20 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 axum = "0.7"
+chrono = { version = "0.4", features = ["clock"] }
+httpdate = "1.0"
+md5 = "0.7"
 metis-common = { path = "../metis-common" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 shellexpand = "3.1"
-tokio = { version = "1.41", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.41", features = ["fs", "io-util", "macros", "rt-multi-thread"] }
 toml = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+walkdir = "2.5"
 
 [dev-dependencies]
 tempfile = "3.14"
