@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
-    constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
+    constants::ENV_METIS_ISSUE_ID,
     issues::IssueType,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
@@ -50,9 +50,6 @@ pub async fn run(
     ensure_color_output_env(&mut execution_env);
     let claude_code_oauth_token =
         cli_claude_code_oauth_token.filter(|value| !value.trim().is_empty());
-    if let Some(token) = claude_code_oauth_token.as_ref() {
-        execution_env.insert(ENV_CLAUDE_CODE_OAUTH_TOKEN.to_string(), token.clone());
-    }
     let issue_branch_id = issue_id
         .as_ref()
         .map(|value| value.to_string())

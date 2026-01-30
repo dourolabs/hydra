@@ -126,7 +126,19 @@ impl TestEnvironment {
         )
         .await;
 
-        let outputs = bash_commands.outputs();
+        let mut outputs = bash_commands.outputs();
+        let claude_token_probe =
+            bash_commands
+                .last_claude_code_oauth_token()
+                .map(|token| CommandOutput {
+                    command: "claude_token_probe".into(),
+                    stdout: token,
+                    stderr: String::new(),
+                    status: 0,
+                });
+        if let Some(probe) = claude_token_probe {
+            outputs.push(probe);
+        }
 
         if let Err(err) = run_result {
             let formatted_output = format_command_outputs(&outputs);

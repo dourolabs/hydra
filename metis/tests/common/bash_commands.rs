@@ -22,6 +22,7 @@ pub struct BashCommands {
     pub commands: Vec<String>,
     outputs: Arc<Mutex<Vec<CommandOutput>>>,
     fail_after_run: bool,
+    last_claude_code_oauth_token: Arc<Mutex<Option<String>>>,
 }
 
 impl BashCommands {
@@ -30,6 +31,7 @@ impl BashCommands {
             commands,
             outputs: Arc::new(Mutex::new(Vec::new())),
             fail_after_run,
+            last_claude_code_oauth_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -37,6 +39,13 @@ impl BashCommands {
         self.outputs
             .lock()
             .expect("failed to lock command outputs")
+            .clone()
+    }
+
+    pub fn last_claude_code_oauth_token(&self) -> Option<String> {
+        self.last_claude_code_oauth_token
+            .lock()
+            .expect("failed to read last claude token")
             .clone()
     }
 
@@ -98,11 +107,15 @@ impl WorkerCommands for BashCommands {
         _model: Option<&str>,
         _openai_api_key: Option<String>,
         _anthropic_api_key: Option<String>,
-        _claude_code_oauth_token: Option<String>,
+        claude_code_oauth_token: Option<String>,
         working_dir: &Path,
         env: &HashMap<String, String>,
         _output_path: &Path,
     ) -> Result<String> {
+        *self
+            .last_claude_code_oauth_token
+            .lock()
+            .expect("failed to store last claude token") = claude_code_oauth_token.clone();
         let mut last_output = String::new();
         for command_string in &self.commands {
             let output = self

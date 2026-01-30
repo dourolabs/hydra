@@ -98,11 +98,18 @@ async fn worker_run_receives_claude_code_oauth_token_from_server() -> Result<()>
             job_id.clone(),
         )
         .await?;
-    let observed = outputs
-        .last()
+    let observed_in_env = outputs
+        .iter()
+        .find(|output| output.command.contains("CLAUDE_CODE_OAUTH_TOKEN"))
         .map(|output| output.stdout.trim().to_string())
         .unwrap_or_default();
-    assert_eq!(observed, claude_token);
+    assert_ne!(observed_in_env, claude_token);
+    let observed_in_worker = outputs
+        .iter()
+        .find(|output| output.command == "claude_token_probe")
+        .map(|output| output.stdout.trim().to_string())
+        .unwrap_or_default();
+    assert_eq!(observed_in_worker, claude_token);
 
     wait_for_status(&env.client, &job_id, Status::Complete).await?;
     Ok(())
