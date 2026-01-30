@@ -182,8 +182,6 @@ impl AgentQueue {
                                 "Merge request follow-up:\n\
                                 Patch {patch_id} has changes requested. \
                                 Address the review feedback below and update the existing patch/branch (do not open a new patch).\n\
-                                Once you are done, please mark the issue as open by running \
-                                `metis issues update $$METIS_ISSUE_ID --progress <progress> --status open`.\n\
                                 {review_summary}"
                             ));
                         }
@@ -718,6 +716,8 @@ mod tests {
         assert!(prompt.contains(&patch_id.to_string()));
         assert!(prompt.contains("Please handle the edge case."));
         assert!(prompt.contains("Review feedback:"));
+        assert!(!prompt.contains("mark the issue as open"));
+        assert!(!prompt.contains("metis issues update"));
 
         Ok(())
     }

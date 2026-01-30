@@ -1715,7 +1715,20 @@ impl AppState {
             }
         }
 
-        store.update_task(task_id, updated).await
+        let updated_task = store.update_task(task_id, updated).await?;
+
+        if let Some(issue_id) = updated_task.item.spawned_from.as_ref() {
+            let mut issue = store.get_issue(issue_id).await?.item;
+            if issue.issue_type == IssueType::MergeRequest
+                && matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress)
+                && issue.status != IssueStatus::Open
+            {
+                issue.status = IssueStatus::Open;
+                store.update_issue(issue_id, issue).await?;
+            }
+        }
+
+        Ok(updated_task)
     }
 
     pub async fn transition_task_to_pending(
@@ -2073,6 +2086,21 @@ mod tests {
             None,
             Vec::new(),
             dependencies,
+            Vec::new(),
+        )
+    }
+
+    fn merge_request_issue_with_status(description: &str, status: IssueStatus) -> Issue {
+        Issue::new(
+            IssueType::MergeRequest,
+            description.to_string(),
+            Username::from("creator"),
+            String::new(),
+            status,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
         )
     }
@@ -2470,6 +2498,103 @@ mod tests {
         };
 
         assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn merge_request_followup_completion_keeps_open_issue_open() -> anyhow::Result<()> {
+        let state = test_state();
+        let issue_id = {
+            let store = state.store.as_ref();
+            store
+                .add_issue(merge_request_issue_with_status(
+                    "merge request",
+                    IssueStatus::Open,
+                ))
+                .await
+                .unwrap()
+        };
+        let task_id = {
+            let store = state.store.as_ref();
+            store
+                .add_task(task_for_issue(&issue_id), Utc::now())
+                .await
+                .unwrap()
+        };
+
+        state.transition_task_to_pending(&task_id).await?;
+        state.transition_task_to_running(&task_id).await?;
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None)
+            .await?;
+
+        let updated = state.store.as_ref().get_issue(&issue_id).await?;
+        assert_eq!(updated.item.status, IssueStatus::Open);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_request_followup_completion_reopens_in_progress_issue() -> anyhow::Result<()> {
+        let state = test_state();
+        let issue_id = {
+            let store = state.store.as_ref();
+            store
+                .add_issue(merge_request_issue_with_status(
+                    "merge request",
+                    IssueStatus::InProgress,
+                ))
+                .await
+                .unwrap()
+        };
+        let task_id = {
+            let store = state.store.as_ref();
+            store
+                .add_task(task_for_issue(&issue_id), Utc::now())
+                .await
+                .unwrap()
+        };
+
+        state.transition_task_to_pending(&task_id).await?;
+        state.transition_task_to_running(&task_id).await?;
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None)
+            .await?;
+
+        let updated = state.store.as_ref().get_issue(&issue_id).await?;
+        assert_eq!(updated.item.status, IssueStatus::Open);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn merge_request_followup_completion_does_not_reopen_closed_issue() -> anyhow::Result<()>
+    {
+        let state = test_state();
+        let issue_id = {
+            let store = state.store.as_ref();
+            store
+                .add_issue(merge_request_issue_with_status(
+                    "merge request",
+                    IssueStatus::Closed,
+                ))
+                .await
+                .unwrap()
+        };
+        let task_id = {
+            let store = state.store.as_ref();
+            store
+                .add_task(task_for_issue(&issue_id), Utc::now())
+                .await
+                .unwrap()
+        };
+
+        state.transition_task_to_pending(&task_id).await?;
+        state.transition_task_to_running(&task_id).await?;
+        state
+            .transition_task_to_completion(&task_id, Ok(()), None)
+            .await?;
+
+        let updated = state.store.as_ref().get_issue(&issue_id).await?;
+        assert_eq!(updated.item.status, IssueStatus::Closed);
+        Ok(())
     }
 
     #[tokio::test]
