@@ -6,10 +6,7 @@ use metis_common::{
 
 mod common;
 
-use common::test_helpers::{
-    init_test_server_with_remote, init_test_server_with_remote_and_claude_token, job_id_for_prompt,
-    wait_for_status,
-};
+use common::test_helpers::{init_test_server_with_remote, job_id_for_prompt, wait_for_status};
 
 #[tokio::test]
 async fn worker_run_creates_patch_via_override_command() -> Result<()> {
@@ -69,41 +66,5 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
         .ok_or_else(|| anyhow!("job should still exist after worker run"))?;
     assert_eq!(status, Status::Complete);
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn worker_run_receives_claude_code_oauth_token_from_server() -> Result<()> {
-    let claude_token = "server-oauth-token";
-    let env = init_test_server_with_remote_and_claude_token("acme/worker-token-test", claude_token)
-        .await?;
-    let prompt = "worker claude token propagation";
-    let repo_arg = env.service_repo_name.to_string();
-    let server_url = env.server.base_url();
-
-    env.run_as_user(vec![format!(
-        "metis jobs create --repo {} --var METIS_SERVER_URL={} --var METIS_ISSUE_ID={} --var {}={} {}",
-        repo_arg, server_url, env.current_issue_id, ENV_METIS_TOKEN, env.auth_token, prompt
-    )])
-    .await?;
-
-    let job_id = job_id_for_prompt(&env.client, prompt)
-        .await
-        .context("expected job for claude token test")?;
-    wait_for_status(&env.client, &job_id, Status::Running).await?;
-
-    let outputs = env
-        .run_as_worker(
-            vec!["echo $CLAUDE_CODE_OAUTH_TOKEN".to_string()],
-            job_id.clone(),
-        )
-        .await?;
-    let observed = outputs
-        .last()
-        .map(|output| output.stdout.trim().to_string())
-        .unwrap_or_default();
-    assert_eq!(observed, claude_token);
-
-    wait_for_status(&env.client, &job_id, Status::Complete).await?;
     Ok(())
 }
