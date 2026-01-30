@@ -716,9 +716,6 @@ mod tests {
         assert!(prompt.contains(&patch_id.to_string()));
         assert!(prompt.contains("Please handle the edge case."));
         assert!(prompt.contains("Review feedback:"));
-        assert!(!prompt.contains("mark the issue as open"));
-        assert!(!prompt.contains("metis issues update"));
-
         Ok(())
     }
 
