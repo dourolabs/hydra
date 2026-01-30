@@ -179,7 +179,12 @@ impl AgentQueue {
                                 prompt.push_str("\n\n");
                             }
                             prompt.push_str(&format!(
-                                "Merge request follow-up:\nPatch {patch_id} has changes requested. Address the review feedback below and update the existing patch/branch (do not open a new patch).\n{review_summary}"
+                                "Merge request follow-up:\n\
+                                Patch {patch_id} has changes requested. \
+                                Address the review feedback below and update the existing patch/branch (do not open a new patch).\n\
+                                Once you are done, please mark the issue as open by running \
+                                `metis issues update $$METIS_ISSUE_ID --progress <progress> --status open`.\n\
+                                {review_summary}"
                             ));
                         }
                     }
