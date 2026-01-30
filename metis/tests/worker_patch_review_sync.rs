@@ -314,6 +314,11 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         .first()
         .context("expected review task to be spawned for merge request")?;
 
+    env.state
+        .transition_task_to_running(&job.id)
+        .await
+        .context("failed to mark review job as running")?;
+
     let outputs = env
         .run_as_worker(vec!["git rev-parse HEAD".to_string()], job.id.clone())
         .await
