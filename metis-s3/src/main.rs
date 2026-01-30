@@ -1,12 +1,8 @@
 mod config;
+mod s3;
 
 use anyhow::Result;
-use axum::{
-    Json, Router,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{any, get},
-};
+use axum::{Json, Router, routing::get};
 use config::AppConfig;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -54,25 +50,11 @@ fn build_router(config: &AppConfig) -> Router {
 
     Router::new()
         .route("/healthz", get(healthz))
-        .nest("/s3", s3_router())
+        .merge(s3::router(config.storage_root()))
         .layer(middleware)
 }
 
 async fn healthz() -> Json<serde_json::Value> {
     info!("healthz invoked");
     Json(json!({ "status": "ok" }))
-}
-
-fn s3_router() -> Router {
-    Router::new()
-        .route("/", any(s3_not_implemented))
-        .route("/*path", any(s3_not_implemented))
-}
-
-async fn s3_not_implemented() -> impl IntoResponse {
-    info!("s3 placeholder invoked");
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "S3 endpoint not implemented" })),
-    )
 }
