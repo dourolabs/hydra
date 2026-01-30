@@ -1,11 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::components::select::{
+use metis_component_library::{
     Select, SelectGroup, SelectGroupLabel, SelectItemIndicator, SelectList, SelectOption,
     SelectTrigger, SelectValue,
 };
-
-mod components;
 
 const STAGING_URL: &str = "http://metis-staging.monster-vibes.ts.net";
 const APP_CSS: Asset = asset!("/assets/app.css");
