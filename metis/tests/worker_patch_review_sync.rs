@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
 use httpmock::prelude::*;
 use jsonwebtoken::EncodingKey;
@@ -19,7 +19,10 @@ use octocrab::models::AppId;
 use octocrab::Octocrab;
 use openssl::rsa::Rsa;
 use serde_json::json;
+use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
+use tempfile::TempDir;
 
 mod common;
 
@@ -27,6 +30,40 @@ use common::test_helpers::init_test_server_with_remote_and_github;
 
 fn generate_test_rsa_key() -> Result<Vec<u8>> {
     Ok(Rsa::generate(2048)?.private_key_to_pem()?)
+}
+
+fn git_output(args: &[&str], cwd: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("failed to run git {args:?}"))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn create_branch_with_commit(remote_url: &str, branch: &str, line: &str) -> Result<String> {
+    let tempdir = TempDir::new().context("failed to create tempdir for branch setup")?;
+    let repo_path = tempdir.path();
+
+    git_output(&["clone", remote_url, "."], repo_path)?;
+    git_output(&["config", "user.name", "Test User"], repo_path)?;
+    git_output(&["config", "user.email", "test@example.com"], repo_path)?;
+    git_output(&["checkout", "-b", branch], repo_path)?;
+    std::fs::write(repo_path.join("README.md"), format!("base content\n{line}"))
+        .context("failed to write README content")?;
+    git_output(&["add", "README.md"], repo_path)?;
+    git_output(&["commit", "-m", "feature change"], repo_path)?;
+    git_output(&["push", "-u", "origin", branch], repo_path)?;
+
+    git_output(&["rev-parse", "HEAD"], repo_path)
 }
 
 #[tokio::test]
@@ -38,7 +75,32 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     let pr_number = 99;
     let repo_owner = "octo";
     let repo_name = "repo";
-    let head_sha = "abc123";
+    let review_branch = "feature/review";
+
+    let private_key = generate_test_rsa_key().context("failed to generate test RSA key")?;
+    let github_app = Octocrab::builder()
+        .base_uri(github_base_url.clone())
+        .context("failed to set mock GitHub base url")?
+        .app(
+            AppId::from(1),
+            EncodingKey::from_rsa_pem(&private_key)
+                .context("failed to parse test GitHub App key")?,
+        )
+        .build()
+        .context("failed to build mock GitHub client")?;
+
+    let env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
+    let repository = env
+        .state
+        .repository_from_store(&env.service_repo_name)
+        .await
+        .context("failed to load service repository config")?;
+    let head_sha =
+        create_branch_with_commit(&repository.remote_url, review_branch, "review change\n")
+            .context("failed to create review branch")?;
+    let head_sha_for_pr = head_sha.clone();
+    let head_sha_for_status = head_sha.clone();
+    let head_sha_for_checks = head_sha.clone();
 
     let installation_mock = github_server.mock(|when, then| {
         when.method(GET)
@@ -89,7 +151,7 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
             "html_url": "https://example.com/pr/99",
             "merged": false,
             "merged_at": null,
-            "head": { "ref": "feature/review", "sha": head_sha, "user": null, "repo": null },
+            "head": { "ref": review_branch, "sha": head_sha_for_pr, "user": null, "repo": null },
             "base": { "ref": "main", "sha": "def456", "user": null, "repo": null }
         }));
     });
@@ -135,11 +197,11 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
 
     let status_mock = github_server.mock(|when, then| {
         when.method(GET).path(format!(
-            "/repos/{repo_owner}/{repo_name}/commits/{head_sha}/status"
+            "/repos/{repo_owner}/{repo_name}/commits/{head_sha_for_status}/status"
         ));
         then.status(200).json_body(json!({
             "state": "success",
-            "sha": head_sha,
+            "sha": head_sha_for_status,
             "total_count": 0,
             "statuses": []
         }));
@@ -148,26 +210,12 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     let checks_mock = github_server.mock(|when, then| {
         when.method(GET)
             .path(format!(
-                "/repos/{repo_owner}/{repo_name}/commits/{head_sha}/check-runs"
+                "/repos/{repo_owner}/{repo_name}/commits/{head_sha_for_checks}/check-runs"
             ))
             .query_param("per_page", "100");
         then.status(200)
             .json_body(json!({ "total_count": 0, "check_runs": [] }));
     });
-
-    let private_key = generate_test_rsa_key().context("failed to generate test RSA key")?;
-    let github_app = Octocrab::builder()
-        .base_uri(github_base_url)
-        .context("failed to set mock GitHub base url")?
-        .app(
-            AppId::from(1),
-            EncodingKey::from_rsa_pem(&private_key)
-                .context("failed to parse test GitHub App key")?,
-        )
-        .build()
-        .context("failed to build mock GitHub client")?;
-
-    let env = init_test_server_with_remote_and_github("octo/repo", Some(github_app)).await?;
 
     let mut job_settings = JobSettings::default();
     job_settings.repo_name = Some(env.service_repo_name.clone());
@@ -265,6 +313,15 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     let job = jobs
         .first()
         .context("expected review task to be spawned for merge request")?;
+
+    let outputs = env
+        .run_as_worker(vec!["git rev-parse HEAD".to_string()], job.id.clone())
+        .await
+        .context("failed to run worker job for review branch")?;
+    let head_output = outputs
+        .last()
+        .context("expected worker output for HEAD rev-parse")?;
+    assert_eq!(head_output.stdout.trim(), head_sha);
 
     assert_eq!(job.task.spawned_from, Some(merge_request_issue_id.clone()));
     assert_eq!(
