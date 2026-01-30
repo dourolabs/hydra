@@ -100,6 +100,10 @@ pub struct BuildCacheSection {
     #[serde(default)]
     pub exclude: Vec<String>,
     #[serde(default)]
+    pub home_include: Vec<String>,
+    #[serde(default)]
+    pub home_exclude: Vec<String>,
+    #[serde(default)]
     pub max_entries_per_repo: Option<usize>,
 }
 
@@ -112,6 +116,12 @@ impl BuildCacheSection {
         }
         if !self.exclude.is_empty() {
             settings.exclude = self.exclude.clone();
+        }
+        if !self.home_include.is_empty() {
+            settings.home_include = self.home_include.clone();
+        }
+        if !self.home_exclude.is_empty() {
+            settings.home_exclude = self.home_exclude.clone();
         }
         if self.max_entries_per_repo.is_some() {
             settings.max_entries_per_repo = self.max_entries_per_repo;

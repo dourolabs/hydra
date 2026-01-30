@@ -48,6 +48,8 @@ idle_timeout_secs = 300
 # Omit this section to disable build caching.
 # include = ["target/", "dist/"]
 # exclude = ["tmp/", "*.log"]
+# home_include = [".cargo/registry/", ".cache/pip/"]
+# home_exclude = [".cache/pnpm/diagnostics/"]
 # max_entries_per_repo = 10
 
 ## Local filesystem storage

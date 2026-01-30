@@ -6,7 +6,7 @@ use crate::storage::{StorageClient, StorageObject};
 use git2::{ErrorCode, Repository};
 use std::collections::HashSet;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -36,54 +36,69 @@ impl BuildCacheClient {
 
     pub fn build_cache_archive(
         &self,
-        root: impl AsRef<Path>,
+        repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
         output_path: impl AsRef<Path>,
     ) -> Result<(), BuildCacheError> {
-        self.build_cache_archive_impl(root.as_ref(), output_path.as_ref())
+        self.build_cache_archive_impl(repo_root.as_ref(), home_dir, output_path.as_ref())
     }
 
     pub fn list_cache_entries(
         &self,
-        root: impl AsRef<Path>,
+        repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
     ) -> Result<Vec<PathBuf>, BuildCacheError> {
-        let matcher = self.config.matcher()?;
-        let entries = collect_entries(root.as_ref(), &matcher)?;
+        let matchers = self.config.matchers()?;
+        let mut entries = collect_entries(repo_root.as_ref(), &matchers.repo, CacheLocation::Repo)?;
+        if let Some(home_root) = home_dir {
+            entries.extend(collect_entries(
+                home_root,
+                &matchers.home,
+                CacheLocation::Home,
+            )?);
+        }
+        sort_entries(&mut entries);
         Ok(entries
             .into_iter()
-            .map(|entry| entry.relative_path)
+            .map(|entry| entry.archive_path())
             .collect())
     }
 
     pub async fn build_cache_archive_async(
         &self,
-        root: PathBuf,
+        repo_root: PathBuf,
+        home_dir: Option<PathBuf>,
         output_path: PathBuf,
     ) -> Result<(), BuildCacheError> {
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.build_cache_archive(&root, &output_path))
-            .await
-            .map_err(|err| {
-                BuildCacheError::io("joining cache archive task", io::Error::other(err))
-            })?
+        tokio::task::spawn_blocking(move || {
+            client.build_cache_archive(&repo_root, home_dir.as_deref(), &output_path)
+        })
+        .await
+        .map_err(|err| BuildCacheError::io("joining cache archive task", io::Error::other(err)))?
     }
 
     pub fn apply_cache_archive(
         &self,
-        root: impl AsRef<Path>,
+        repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
         archive_path: impl AsRef<Path>,
     ) -> Result<(), BuildCacheError> {
-        self.apply_cache_archive_impl(root.as_ref(), archive_path.as_ref())
+        self.apply_cache_archive_impl(repo_root.as_ref(), home_dir, archive_path.as_ref())
     }
 
     pub async fn apply_cache_archive_async(
         &self,
-        root: PathBuf,
+        repo_root: PathBuf,
+        home_dir: Option<PathBuf>,
         archive_path: PathBuf,
     ) -> Result<(), BuildCacheError> {
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.apply_cache_archive(&root, &archive_path))
-            .await
-            .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
+        tokio::task::spawn_blocking(move || {
+            client.apply_cache_archive(&repo_root, home_dir.as_deref(), &archive_path)
+        })
+        .await
+        .map_err(|err| BuildCacheError::io("joining cache apply task", io::Error::other(err)))?
     }
 
     pub async fn upload_cache(
@@ -148,21 +163,27 @@ impl BuildCacheClient {
 
     pub async fn download_and_apply_cache(
         &self,
-        root: impl AsRef<Path>,
+        repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
         key: &BuildCacheKey,
     ) -> Result<(), BuildCacheError> {
         let temp = tempfile::NamedTempFile::new()
             .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
         let path = temp.path().to_path_buf();
         self.download_cache(key, &path).await?;
-        self.apply_cache_archive_async(root.as_ref().to_path_buf(), path)
-            .await?;
+        self.apply_cache_archive_async(
+            repo_root.as_ref().to_path_buf(),
+            home_dir.map(Path::to_path_buf),
+            path,
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn apply_nearest_cache(
         &self,
         repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
         repo_name: metis_common::RepoName,
     ) -> Result<Option<BuildCacheKey>, BuildCacheError> {
         let entries = self.list_caches(repo_name.clone()).await?;
@@ -171,7 +192,7 @@ impl BuildCacheClient {
         let Some(nearest) = nearest else {
             return Ok(None);
         };
-        self.download_and_apply_cache(repo_root, &nearest.key)
+        self.download_and_apply_cache(repo_root, home_dir, &nearest.key)
             .await?;
         Ok(Some(nearest.key))
     }
@@ -179,6 +200,7 @@ impl BuildCacheClient {
     pub async fn build_and_upload_cache(
         &self,
         repo_root: impl AsRef<Path>,
+        home_dir: Option<&Path>,
         repo_name: metis_common::RepoName,
         git_sha: &str,
     ) -> Result<BuildCacheKey, BuildCacheError> {
@@ -186,19 +208,32 @@ impl BuildCacheClient {
         let temp = tempfile::NamedTempFile::new()
             .map_err(|err| BuildCacheError::io("creating temp cache file", err))?;
         let archive_path = temp.path().to_path_buf();
-        self.build_cache_archive_async(repo_root.as_ref().to_path_buf(), archive_path.clone())
-            .await?;
+        self.build_cache_archive_async(
+            repo_root.as_ref().to_path_buf(),
+            home_dir.map(Path::to_path_buf),
+            archive_path.clone(),
+        )
+        .await?;
         self.upload_cache(&key, archive_path).await?;
         Ok(key)
     }
 
     fn build_cache_archive_impl(
         &self,
-        root: &Path,
+        repo_root: &Path,
+        home_dir: Option<&Path>,
         output_path: &Path,
     ) -> Result<(), BuildCacheError> {
-        let matcher = self.config.matcher()?;
-        let entries = collect_entries(root, &matcher)?;
+        let matchers = self.config.matchers()?;
+        let mut entries = collect_entries(repo_root, &matchers.repo, CacheLocation::Repo)?;
+        if let Some(home_root) = home_dir {
+            entries.extend(collect_entries(
+                home_root,
+                &matchers.home,
+                CacheLocation::Home,
+            )?);
+        }
+        sort_entries(&mut entries);
 
         let output = File::create(output_path)
             .map_err(|err| BuildCacheError::io("creating cache archive", err))?;
@@ -207,10 +242,11 @@ impl BuildCacheClient {
         let mut builder = Builder::new(encoder);
 
         for entry in entries {
+            let archive_path = entry.archive_path();
             if entry.is_dir {
-                append_directory(&mut builder, &entry.relative_path)?;
+                append_directory(&mut builder, &archive_path)?;
             } else {
-                append_file(&mut builder, &entry.relative_path, &entry.full_path)?;
+                append_file(&mut builder, &archive_path, &entry.full_path)?;
             }
         }
 
@@ -225,10 +261,11 @@ impl BuildCacheClient {
 
     fn apply_cache_archive_impl(
         &self,
-        root: &Path,
+        repo_root: &Path,
+        home_dir: Option<&Path>,
         archive_path: &Path,
     ) -> Result<(), BuildCacheError> {
-        let tracked_paths = collect_tracked_paths(root)?;
+        let tracked_paths = collect_tracked_paths(repo_root)?;
         let input = File::open(archive_path)
             .map_err(|err| BuildCacheError::io("opening cache archive", err))?;
         let decoder = zstd::Decoder::new(input)
@@ -245,13 +282,23 @@ impl BuildCacheClient {
             let path = entry
                 .path()
                 .map_err(|err| BuildCacheError::io("reading cache archive entry path", err))?;
-            let normalized = normalize_archive_path(&path)?;
-            if entry_type.is_file() && tracked_paths.contains(&normalized) {
-                continue;
+            let archive_path = normalize_archive_path(&path)?;
+            match archive_path.location {
+                CacheLocation::Repo => {
+                    if entry_type.is_file() && tracked_paths.contains(&archive_path.relative_path) {
+                        continue;
+                    }
+                    let destination = repo_root.join(&archive_path.relative_path);
+                    unpack_archive_entry(&mut entry, &destination)?
+                }
+                CacheLocation::Home => {
+                    let Some(home_root) = home_dir else {
+                        continue;
+                    };
+                    let destination = home_root.join(&archive_path.relative_path);
+                    unpack_archive_entry(&mut entry, &destination)?
+                }
             }
-            entry
-                .unpack_in(root)
-                .map_err(|err| BuildCacheError::io("unpacking cache archive entry", err))?;
         }
         Ok(())
     }
@@ -272,17 +319,45 @@ impl From<StorageObject> for BuildCacheEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CacheLocation {
+    Repo,
+    Home,
+}
+
+impl CacheLocation {
+    fn prefix(&self) -> &'static str {
+        match self {
+            CacheLocation::Repo => "repo",
+            CacheLocation::Home => "home",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct CacheEntry {
     relative_path: PathBuf,
     full_path: PathBuf,
     is_dir: bool,
+    location: CacheLocation,
+}
+
+impl CacheEntry {
+    fn archive_path(&self) -> PathBuf {
+        let mut path = PathBuf::from(self.location.prefix());
+        path.push(&self.relative_path);
+        path
+    }
 }
 
 fn collect_entries(
     root: &Path,
     matcher: &crate::config::BuildCacheMatcher,
+    location: CacheLocation,
 ) -> Result<Vec<CacheEntry>, BuildCacheError> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
     let mut entries = Vec::new();
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = entry
@@ -313,11 +388,20 @@ fn collect_entries(
             relative_path: relative.to_path_buf(),
             full_path: path.to_path_buf(),
             is_dir,
+            location,
         });
     }
 
-    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(entries)
+}
+
+fn sort_entries(entries: &mut [CacheEntry]) {
+    entries.sort_by(|a, b| {
+        a.location
+            .cmp(&b.location)
+            .then(a.relative_path.cmp(&b.relative_path))
+            .then_with(|| a.is_dir.cmp(&b.is_dir))
+    });
 }
 
 fn append_directory(
@@ -396,9 +480,28 @@ fn collect_tracked_paths(root: &Path) -> Result<HashSet<PathBuf>, BuildCacheErro
     Ok(tracked)
 }
 
-fn normalize_archive_path(path: &Path) -> Result<PathBuf, BuildCacheError> {
+#[derive(Debug)]
+struct ArchiveEntryPath {
+    location: CacheLocation,
+    relative_path: PathBuf,
+}
+
+fn normalize_archive_path(path: &Path) -> Result<ArchiveEntryPath, BuildCacheError> {
+    let mut components = path.components().peekable();
+    let mut location = CacheLocation::Repo;
+    if let Some(Component::Normal(part)) = components.peek() {
+        if let Some(part_str) = part.to_str() {
+            if part_str == CacheLocation::Repo.prefix() {
+                components.next();
+            } else if part_str == CacheLocation::Home.prefix() {
+                location = CacheLocation::Home;
+                components.next();
+            }
+        }
+    }
+
     let mut normalized = PathBuf::new();
-    for component in path.components() {
+    for component in components {
         match component {
             Component::CurDir => continue,
             Component::Normal(part) => normalized.push(part),
@@ -410,7 +513,28 @@ fn normalize_archive_path(path: &Path) -> Result<PathBuf, BuildCacheError> {
             }
         }
     }
-    Ok(normalized)
+
+    Ok(ArchiveEntryPath {
+        location,
+        relative_path: normalized,
+    })
+}
+
+fn unpack_archive_entry<R>(
+    entry: &mut tar::Entry<'_, R>,
+    destination: &Path,
+) -> Result<(), BuildCacheError>
+where
+    R: Read,
+{
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| BuildCacheError::io("creating cache entry parent directory", err))?;
+    }
+    entry
+        .unpack(destination)
+        .map(|_| ())
+        .map_err(|err| BuildCacheError::io("unpacking cache archive entry", err))
 }
 
 #[cfg(test)]
@@ -535,14 +659,14 @@ mod tests {
         {
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
             client
-                .build_cache_archive(source_dir.path(), &archive_path)
+                .build_cache_archive(source_dir.path(), None, &archive_path)
                 .expect("build archive");
         }
 
         {
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
             client
-                .apply_cache_archive(destination_dir.path(), &archive_path)
+                .apply_cache_archive(destination_dir.path(), None, &archive_path)
                 .expect("apply archive");
         }
 
@@ -556,6 +680,79 @@ mod tests {
 
         let contents = std::fs::read_to_string(&artifact_path).expect("read artifact");
         assert_eq!(contents, "artifact");
+    }
+
+    #[test]
+    fn cache_archive_includes_home_directories_when_home_dir_provided() {
+        let repo_dir = tempdir().expect("repo dir");
+        let home_dir = tempdir().expect("home dir");
+        let restore_repo = tempdir().expect("restore repo");
+        let restore_home = tempdir().expect("restore home");
+        let archive_dir = tempdir().expect("archive dir");
+
+        write_file(
+            &home_dir.path().join(".cargo/registry/cache.bin"),
+            "home artifact",
+        );
+
+        let archive_path = archive_dir.path().join("cache.tar.zst");
+        let storage = Arc::new(MockStorageClient::new());
+        let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
+
+        client
+            .build_cache_archive(repo_dir.path(), Some(home_dir.path()), &archive_path)
+            .expect("build archive");
+        client
+            .apply_cache_archive(
+                restore_repo.path(),
+                Some(restore_home.path()),
+                &archive_path,
+            )
+            .expect("apply archive");
+
+        let restored =
+            std::fs::read_to_string(restore_home.path().join(".cargo/registry/cache.bin"))
+                .expect("read restored home file");
+        assert_eq!(restored, "home artifact");
+        assert!(
+            !restore_repo
+                .path()
+                .join(".cargo/registry/cache.bin")
+                .exists(),
+            "home entries should not be unpacked into the repo root"
+        );
+    }
+
+    #[test]
+    fn home_entries_are_skipped_when_home_dir_missing() {
+        let repo_dir = tempdir().expect("repo dir");
+        let archive_dir = tempdir().expect("archive dir");
+        let home_dir = tempdir().expect("home dir");
+        write_file(
+            &home_dir.path().join(".cargo/registry/cache.bin"),
+            "home artifact",
+        );
+
+        let archive_path = archive_dir.path().join("cache.tar.zst");
+        let storage = Arc::new(MockStorageClient::new());
+        let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
+
+        client
+            .build_cache_archive(repo_dir.path(), Some(home_dir.path()), &archive_path)
+            .expect("build archive");
+
+        let restore_repo = tempdir().expect("restore repo");
+        client
+            .apply_cache_archive(restore_repo.path(), None, &archive_path)
+            .expect("apply archive without home dir");
+
+        assert!(
+            !restore_repo
+                .path()
+                .join(".cargo/registry/cache.bin")
+                .exists(),
+            "home entries should be skipped when no destination home dir is provided"
+        );
     }
 
     #[tokio::test]
@@ -627,7 +824,7 @@ mod tests {
         {
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage.clone());
             client
-                .build_cache_archive(source_dir.path(), &archive_path)
+                .build_cache_archive(source_dir.path(), None, &archive_path)
                 .expect("build archive");
             client
                 .upload_cache(&key, &archive_path)
@@ -638,7 +835,7 @@ mod tests {
         {
             let client = BuildCacheClient::new(BuildCacheConfig::default(), storage);
             client
-                .download_and_apply_cache(destination_dir.path(), &key)
+                .download_and_apply_cache(destination_dir.path(), None, &key)
                 .await
                 .expect("download apply");
         }
@@ -740,17 +937,19 @@ mod tests {
         let config = BuildCacheConfig {
             include: vec!["src/".to_string()],
             exclude: Vec::new(),
+            home_include: Vec::new(),
+            home_exclude: Vec::new(),
             max_entries_per_repo: None,
         };
         let client = BuildCacheClient::new(config, storage);
         client
-            .build_cache_archive(repo_dir.path(), &archive_path)
+            .build_cache_archive(repo_dir.path(), None, &archive_path)
             .expect("build archive");
 
         write_file(&tracked_path, "local edits");
 
         client
-            .apply_cache_archive(repo_dir.path(), &archive_path)
+            .apply_cache_archive(repo_dir.path(), None, &archive_path)
             .expect("apply archive");
 
         let contents = std::fs::read_to_string(&tracked_path).expect("read tracked file");
