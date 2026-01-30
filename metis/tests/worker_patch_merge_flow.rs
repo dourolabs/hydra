@@ -309,7 +309,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
     let repo_owner = "octo";
     let repo_name = "repo";
     let pr_number = 99;
-    let head_ref = "feature/review";
+    let head_ref = "repo/t-abc123/head";
 
     let private_key = generate_test_rsa_key().context("failed to generate test RSA key")?;
     let github_app = Octocrab::builder()
@@ -332,7 +332,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
 
     let (head_sha, patch_diff) =
         create_branch_with_diff(&repo_config.remote_url, head_ref, "feature change\n")?;
-    set_remote_head(&repo_config.remote_url, head_ref)?;
+    set_remote_head(&repo_config.remote_url, "main")?;
 
     let mocks = setup_github_mocks(
         &github_server,
