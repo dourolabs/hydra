@@ -16,12 +16,14 @@ use metis_common::{
         UpsertIssueRequest,
     },
     jobs::{JobRecord, SearchJobsQuery, Task},
-    patches::{PatchRecord, Review},
+    patches::{PatchRecord, PatchStatus, Review},
+    task_status::Status,
     users::Username,
     whoami::ActorIdentity,
-    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, PatchId, RepoName, TaskId,
-    Versioned,
+    ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange, MetisId, PatchId, RepoName,
+    TaskId, VersionNumber, Versioned,
 };
+use owo_colors::OwoColorize;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::{
@@ -263,6 +265,10 @@ pub enum IssueCommands {
         /// Issue ID to describe.
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
+
+        /// Emit the complete JSONL output instead of the summarized view.
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -385,11 +391,13 @@ pub async fn run(
             )
             .await
         }
-        IssueCommands::Describe { id } => describe_issue(client, id, context.output_format).await,
+        IssueCommands::Describe { id, verbose } => {
+            describe_issue(client, id, context.output_format, verbose).await
+        }
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
 struct IssueWithPatches {
     issue: IssueRecord,
     patches: Vec<PatchRecord>,
@@ -404,6 +412,72 @@ struct IssueDescription {
 }
 
 #[derive(Debug, Serialize)]
+struct IssueDescriptionSummary {
+    issue: IssueWithPatches,
+    parents: Vec<IssueId>,
+    children: Vec<IssueId>,
+    activity_log: Vec<ActivityLogEntrySummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityLogEntrySummary {
+    object_id: MetisId,
+    object_kind: ActivityObjectKind,
+    version: VersionNumber,
+    timestamp: DateTime<Utc>,
+    event: ActivityEventSummary,
+    object: ActivityObjectSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ActivityEventSummary {
+    Created,
+    Updated {
+        changes: Vec<ActivityFieldChangeSummary>,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        other_changes: Vec<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityFieldChangeSummary {
+    field: String,
+    before: Value,
+    after: Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ActivityObjectSummary {
+    Issue {
+        issue_type: IssueType,
+        status: IssueStatus,
+        description: String,
+        assignee: Option<String>,
+        progress: String,
+    },
+    Patch {
+        title: String,
+        description: String,
+        status: PatchStatus,
+        repo: RepoName,
+        created_by_job: Option<TaskId>,
+        reviews: Vec<ReviewSummary>,
+    },
+    Job {
+        status: Status,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewSummary {
+    contents: String,
+    is_approved: bool,
+    author: String,
+}
+
+#[derive(Debug, Serialize)]
 struct TodoListOutput<'a> {
     issue_id: &'a IssueId,
     todo_list: &'a [TodoItem],
@@ -413,17 +487,24 @@ async fn describe_issue(
     client: &dyn MetisClientInterface,
     id: IssueId,
     output_format: ResolvedOutputFormat,
+    verbose: bool,
 ) -> Result<()> {
     let description = collect_issue_description(client, id).await?;
+    let summary = summarize_issue_description(&description)?;
 
     let mut buffer = Vec::new();
-    match output_format {
-        ResolvedOutputFormat::Pretty => {
-            print_issue_description_pretty(&description, &mut buffer)?;
-        }
-        ResolvedOutputFormat::Jsonl => {
-            serde_json::to_writer(&mut buffer, &description)?;
-            buffer.write_all(b"\n")?;
+    if verbose {
+        serde_json::to_writer(&mut buffer, &description)?;
+        buffer.write_all(b"\n")?;
+    } else {
+        match output_format {
+            ResolvedOutputFormat::Pretty => {
+                print_issue_description_pretty(&summary, &mut buffer)?;
+            }
+            ResolvedOutputFormat::Jsonl => {
+                serde_json::to_writer(&mut buffer, &summary)?;
+                buffer.write_all(b"\n")?;
+            }
         }
     }
     io::stdout().write_all(&buffer)?;
@@ -462,6 +543,264 @@ async fn collect_issue_description(
         children: children_with_patches,
         activity_log,
     })
+}
+
+fn summarize_issue_description(description: &IssueDescription) -> Result<IssueDescriptionSummary> {
+    Ok(IssueDescriptionSummary {
+        issue: description.issue.clone(),
+        parents: description
+            .parents
+            .iter()
+            .map(|parent| parent.issue.id.clone())
+            .collect(),
+        children: description
+            .children
+            .iter()
+            .map(|child| child.issue.id.clone())
+            .collect(),
+        activity_log: summarize_activity_log(&description.activity_log)?,
+    })
+}
+
+fn summarize_activity_log(entries: &[ActivityLogEntry]) -> Result<Vec<ActivityLogEntrySummary>> {
+    entries.iter().map(summarize_activity_log_entry).collect()
+}
+
+fn summarize_activity_log_entry(entry: &ActivityLogEntry) -> Result<ActivityLogEntrySummary> {
+    let object = summarize_activity_object(entry)?;
+    let event = summarize_activity_event(entry, &object)?;
+
+    Ok(ActivityLogEntrySummary {
+        object_id: entry.object_id.clone(),
+        object_kind: entry.object_kind.clone(),
+        version: entry.version,
+        timestamp: entry.timestamp,
+        event,
+        object,
+    })
+}
+
+fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObjectSummary> {
+    match entry.object_kind {
+        ActivityObjectKind::Issue => {
+            let issue: Issue = decode_activity_object(entry)?;
+            Ok(ActivityObjectSummary::Issue {
+                issue_type: issue.issue_type,
+                status: issue.status,
+                description: issue.description,
+                assignee: issue.assignee,
+                progress: issue.progress,
+            })
+        }
+        ActivityObjectKind::Patch => {
+            let patch: metis_common::patches::Patch = decode_activity_object(entry)?;
+            Ok(ActivityObjectSummary::Patch {
+                title: if patch.title.trim().is_empty() {
+                    "(untitled)".to_string()
+                } else {
+                    patch.title
+                },
+                description: patch.description,
+                status: patch.status,
+                repo: patch.service_repo_name,
+                created_by_job: patch.created_by,
+                reviews: patch
+                    .reviews
+                    .into_iter()
+                    .map(|review| ReviewSummary {
+                        contents: review.contents,
+                        is_approved: review.is_approved,
+                        author: review.author,
+                    })
+                    .collect(),
+            })
+        }
+        ActivityObjectKind::Job => {
+            let task: Task = decode_activity_object(entry)?;
+            Ok(ActivityObjectSummary::Job {
+                status: task.status,
+            })
+        }
+        _ => Ok(ActivityObjectSummary::Job {
+            status: Status::Unknown,
+        }),
+    }
+}
+
+fn summarize_activity_event(
+    entry: &ActivityLogEntry,
+    object: &ActivityObjectSummary,
+) -> Result<ActivityEventSummary> {
+    match &entry.event {
+        ActivityEvent::Created => Ok(ActivityEventSummary::Created),
+        ActivityEvent::Updated { changes } => {
+            let (summaries, other_changes) = summarize_activity_changes(entry, changes, object)?;
+            Ok(ActivityEventSummary::Updated {
+                changes: summaries,
+                other_changes,
+            })
+        }
+        _ => Ok(ActivityEventSummary::Updated {
+            changes: Vec::new(),
+            other_changes: vec!["<unsupported event>".to_string()],
+        }),
+    }
+}
+
+fn summarize_activity_changes(
+    entry: &ActivityLogEntry,
+    changes: &[FieldChange],
+    object: &ActivityObjectSummary,
+) -> Result<(Vec<ActivityFieldChangeSummary>, Vec<String>)> {
+    let mut summaries = Vec::new();
+    let mut other_changes = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut before_patch: Option<metis_common::patches::Patch> = None;
+    let mut after_patch: Option<metis_common::patches::Patch> = None;
+    if matches!(object, ActivityObjectSummary::Patch { .. })
+        && changes
+            .iter()
+            .any(|change| change.path.starts_with("/reviews"))
+    {
+        if let Some(before_value) = reconstruct_before_object(entry) {
+            before_patch = serde_json::from_value(before_value).ok();
+        }
+        after_patch = serde_json::from_value(entry.object.clone()).ok();
+    }
+
+    for change in changes {
+        if let Some(field) = tracked_field_for_path(&entry.object_kind, &change.path) {
+            if seen.contains(field) {
+                continue;
+            }
+            seen.insert(field);
+
+            if field == "Reviews" {
+                let before_value = summarize_reviews_value(
+                    before_patch.as_ref().map(|patch| patch.reviews.as_slice()),
+                );
+                let after_value = summarize_reviews_value(
+                    after_patch.as_ref().map(|patch| patch.reviews.as_slice()),
+                );
+                summaries.push(ActivityFieldChangeSummary {
+                    field: field.to_string(),
+                    before: before_value,
+                    after: after_value,
+                });
+            } else {
+                summaries.push(ActivityFieldChangeSummary {
+                    field: field.to_string(),
+                    before: change.before.clone(),
+                    after: change.after.clone(),
+                });
+            }
+        } else {
+            other_changes.push(change.path.clone());
+        }
+    }
+
+    Ok((summaries, other_changes))
+}
+
+fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&'static str> {
+    match kind {
+        ActivityObjectKind::Issue => match path {
+            "/type" => Some("Type"),
+            "/status" => Some("Status"),
+            "/description" => Some("Description"),
+            "/assignee" => Some("Assignee"),
+            "/progress" => Some("Progress"),
+            _ => None,
+        },
+        ActivityObjectKind::Patch => {
+            if path.starts_with("/reviews") {
+                Some("Reviews")
+            } else {
+                match path {
+                    "/title" => Some("Title"),
+                    "/description" => Some("Description"),
+                    "/status" => Some("Status"),
+                    "/service_repo_name" => Some("Repo"),
+                    "/created_by" => Some("Created By Job"),
+                    _ => None,
+                }
+            }
+        }
+        ActivityObjectKind::Job => match path {
+            "/status" => Some("Status"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn summarize_reviews_value(reviews: Option<&[Review]>) -> Value {
+    let summaries: Vec<ReviewSummary> = reviews
+        .unwrap_or(&[])
+        .iter()
+        .map(|review| ReviewSummary {
+            contents: review.contents.clone(),
+            is_approved: review.is_approved,
+            author: review.author.clone(),
+        })
+        .collect();
+    serde_json::to_value(summaries).unwrap_or(Value::Null)
+}
+
+fn reconstruct_before_object(entry: &ActivityLogEntry) -> Option<Value> {
+    let ActivityEvent::Updated { changes } = &entry.event else {
+        return None;
+    };
+
+    let mut before = entry.object.clone();
+    for change in changes {
+        apply_change(&mut before, &change.path, change.before.clone());
+    }
+    Some(before)
+}
+
+fn apply_change(value: &mut Value, path: &str, new_value: Value) {
+    if path == "/" {
+        *value = new_value;
+        return;
+    }
+
+    let mut current = value;
+    let mut segments = path.trim_start_matches('/').split('/').peekable();
+
+    while let Some(segment) = segments.next() {
+        let is_last = segments.peek().is_none();
+        match current {
+            Value::Object(map) => {
+                if is_last {
+                    map.insert(segment.to_string(), new_value);
+                    return;
+                }
+                current = map
+                    .entry(segment)
+                    .or_insert_with(|| Value::Object(Default::default()));
+            }
+            Value::Array(list) => {
+                let Ok(index) = segment.parse::<usize>() else {
+                    return;
+                };
+                if index >= list.len() {
+                    list.resize_with(index + 1, || Value::Null);
+                }
+                if is_last {
+                    list[index] = new_value;
+                    return;
+                }
+                current = &mut list[index];
+            }
+            _ => return,
+        }
+    }
+}
+
+fn decode_activity_object<T: DeserializeOwned>(entry: &ActivityLogEntry) -> Result<T> {
+    serde_json::from_value(entry.object.clone()).context("failed to decode activity log object")
 }
 
 async fn fetch_parent_issues(
@@ -1332,34 +1671,32 @@ fn parse_issue_dependency(raw: &str) -> Result<IssueDependency, String> {
 }
 
 fn print_issue_description_pretty(
-    description: &IssueDescription,
+    description: &IssueDescriptionSummary,
     writer: &mut impl Write,
 ) -> Result<()> {
-    writeln!(writer, "Issue")?;
+    writeln!(writer, "{}", colorize_header("Issue"))?;
     write_issue_details_pretty(&description.issue, "  ", true, writer)?;
     writeln!(writer)?;
 
-    writeln!(writer, "Parents:")?;
+    writeln!(writer, "{}", colorize_header("Parents:"))?;
     if description.parents.is_empty() {
         writeln!(writer, "  none")?;
     } else {
         for parent in &description.parents {
-            write_issue_details_pretty(parent, "  ", false, writer)?;
-            writeln!(writer)?;
+            writeln!(writer, "  {parent}")?;
         }
     }
 
-    writeln!(writer, "Children (transitive):")?;
+    writeln!(writer, "{}", colorize_header("Children (transitive):"))?;
     if description.children.is_empty() {
         writeln!(writer, "  none")?;
     } else {
         for child in &description.children {
-            write_issue_details_pretty(child, "  ", false, writer)?;
-            writeln!(writer)?;
+            writeln!(writer, "  {child}")?;
         }
     }
 
-    writeln!(writer, "History:")?;
+    writeln!(writer, "{}", colorize_header("History:"))?;
     if description.activity_log.is_empty() {
         writeln!(writer, "  none")?;
     } else {
@@ -1465,7 +1802,10 @@ fn write_issue_details_pretty(
     Ok(())
 }
 
-fn write_activity_log_pretty(entries: &[ActivityLogEntry], writer: &mut impl Write) -> Result<()> {
+fn write_activity_log_pretty(
+    entries: &[ActivityLogEntrySummary],
+    writer: &mut impl Write,
+) -> Result<()> {
     for (index, entry) in entries.iter().enumerate() {
         write_activity_log_entry_pretty(entry, "  ", writer)?;
         if index + 1 < entries.len() {
@@ -1476,7 +1816,7 @@ fn write_activity_log_pretty(entries: &[ActivityLogEntry], writer: &mut impl Wri
 }
 
 fn write_activity_log_entry_pretty(
-    entry: &ActivityLogEntry,
+    entry: &ActivityLogEntrySummary,
     indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -1488,177 +1828,211 @@ fn write_activity_log_entry_pretty(
         _ => "Activity",
     };
     let event_label = match entry.event {
-        ActivityEvent::Created => "created",
-        ActivityEvent::Updated { .. } => "updated",
-        _ => "updated",
+        ActivityEventSummary::Created => "created",
+        ActivityEventSummary::Updated { .. } => "updated",
     };
 
     writeln!(
         writer,
-        "{indent}{timestamp} {kind_label} {} v{} {event_label}",
-        entry.object_id, entry.version
+        "{indent}{} {} {} v{} {}",
+        colorize_dimmed(&timestamp),
+        colorize_bold(kind_label),
+        entry.object_id,
+        entry.version,
+        event_label
     )?;
 
     let detail_indent = format!("{indent}  ");
-    match entry.object_kind {
-        ActivityObjectKind::Issue => {
-            if let Ok(issue) = decode_activity_object::<Issue>(entry) {
-                write_issue_activity_details(
-                    &issue,
-                    &detail_indent,
-                    writer,
-                    matches!(entry.event, ActivityEvent::Created),
-                )?;
-            } else {
-                write_activity_object_fallback(entry, &detail_indent, writer)?;
-            }
-        }
-        ActivityObjectKind::Patch => {
-            if let Ok(patch) = decode_activity_object::<metis_common::patches::Patch>(entry) {
-                write_patch_activity_details(
-                    &patch,
-                    &detail_indent,
-                    writer,
-                    matches!(entry.event, ActivityEvent::Created),
-                )?;
-            } else {
-                write_activity_object_fallback(entry, &detail_indent, writer)?;
-            }
-        }
-        ActivityObjectKind::Job => {
-            if let Ok(task) = decode_activity_object::<Task>(entry) {
-                write_job_activity_details(
-                    &task,
-                    &detail_indent,
-                    writer,
-                    matches!(entry.event, ActivityEvent::Created),
-                )?;
-            } else {
-                write_activity_object_fallback(entry, &detail_indent, writer)?;
-            }
-        }
-        _ => {
-            write_activity_object_fallback(entry, &detail_indent, writer)?;
-        }
-    }
-
-    if let ActivityEvent::Updated { changes } = &entry.event {
-        write_activity_changes(changes, &detail_indent, writer)?;
-    }
+    write_activity_object_summary(&entry.object, &entry.event, &detail_indent, writer)?;
 
     Ok(())
 }
 
-fn decode_activity_object<T: DeserializeOwned>(entry: &ActivityLogEntry) -> Result<T> {
-    serde_json::from_value(entry.object.clone()).context("failed to decode activity log object")
-}
-
-fn write_activity_object_fallback(
-    entry: &ActivityLogEntry,
+fn write_activity_object_summary(
+    object: &ActivityObjectSummary,
+    event: &ActivityEventSummary,
     indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
-    let serialized =
-        serde_json::to_string(&entry.object).unwrap_or_else(|_| "<unavailable>".into());
-    writeln!(writer, "{indent}Object: {serialized}")?;
-    Ok(())
-}
-
-fn write_issue_activity_details(
-    issue: &Issue,
-    indent: &str,
-    writer: &mut impl Write,
-    include_long_fields: bool,
-) -> Result<()> {
-    writeln!(writer, "{indent}Type: {}", issue.issue_type)?;
-    writeln!(writer, "{indent}Status: {}", issue.status)?;
-    writeln!(writer, "{indent}Creator: {}", issue.creator.as_ref())?;
-    writeln!(
-        writer,
-        "{indent}Assignee: {}",
-        issue.assignee.as_deref().unwrap_or("-")
-    )?;
-
-    if include_long_fields {
-        write_multiline_field(indent, "Description", &issue.description, writer)?;
-        write_multiline_field(indent, "Progress", &issue.progress, writer)?;
-        if issue.dependencies.is_empty() {
-            writeln!(writer, "{indent}Dependencies: none")?;
-        } else {
-            writeln!(writer, "{indent}Dependencies:")?;
-            for dependency in &issue.dependencies {
-                writeln!(
-                    writer,
-                    "{indent}  - {} {}",
-                    dependency.dependency_type, dependency.issue_id
-                )?;
-            }
-        }
-
-        if issue.patches.is_empty() {
-            writeln!(writer, "{indent}Patches: none")?;
-        } else {
-            writeln!(writer, "{indent}Patches:")?;
-            for patch_id in &issue.patches {
-                writeln!(writer, "{indent}  - {patch_id}")?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn write_patch_activity_details(
-    patch: &metis_common::patches::Patch,
-    indent: &str,
-    writer: &mut impl Write,
-    include_long_fields: bool,
-) -> Result<()> {
-    let title = if patch.title.trim().is_empty() {
-        "(untitled)"
-    } else {
-        patch.title.as_str()
+    let change_map = match event {
+        ActivityEventSummary::Updated { changes, .. } => changes
+            .iter()
+            .map(|change| (change.field.as_str(), change))
+            .collect::<HashMap<_, _>>(),
+        ActivityEventSummary::Created => HashMap::new(),
     };
-    writeln!(writer, "{indent}Title: {title}")?;
-    writeln!(writer, "{indent}Status: {}", patch.status)?;
-    writeln!(writer, "{indent}Repo: {}", patch.service_repo_name)?;
-    if let Some(created_by) = &patch.created_by {
-        writeln!(writer, "{indent}Created by job: {created_by}")?;
+
+    match object {
+        ActivityObjectSummary::Issue {
+            issue_type,
+            status,
+            description,
+            assignee,
+            progress,
+        } => {
+            write_activity_scalar_field(
+                "Type",
+                &Value::String(issue_type.to_string()),
+                change_map.get("Type").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_scalar_field(
+                "Status",
+                &Value::String(status.to_string()),
+                change_map.get("Status").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_optional_scalar_field(
+                "Assignee",
+                assignee.as_deref(),
+                change_map.get("Assignee").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_multiline_field(
+                "Description",
+                description,
+                change_map.get("Description").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_multiline_field(
+                "Progress",
+                progress,
+                change_map.get("Progress").copied(),
+                indent,
+                writer,
+            )?;
+        }
+        ActivityObjectSummary::Patch {
+            title,
+            description,
+            status,
+            repo,
+            created_by_job,
+            reviews,
+        } => {
+            write_activity_scalar_field(
+                "Title",
+                &Value::String(title.clone()),
+                change_map.get("Title").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_scalar_field(
+                "Status",
+                &Value::String(status.to_string()),
+                change_map.get("Status").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_scalar_field(
+                "Repo",
+                &Value::String(repo.to_string()),
+                change_map.get("Repo").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_optional_scalar_field(
+                "Created By Job",
+                created_by_job.as_ref().map(|id| id.to_string()).as_deref(),
+                change_map.get("Created By Job").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_multiline_field(
+                "Description",
+                description,
+                change_map.get("Description").copied(),
+                indent,
+                writer,
+            )?;
+            write_activity_reviews(reviews, indent, writer)?;
+        }
+        ActivityObjectSummary::Job { status } => {
+            write_activity_scalar_field(
+                "Status",
+                &Value::String(format_job_status(*status).to_string()),
+                change_map.get("Status").copied(),
+                indent,
+                writer,
+            )?;
+        }
     }
-    if include_long_fields {
-        write_multiline_field(indent, "Description", &patch.description, writer)?;
+
+    if let ActivityEventSummary::Updated { other_changes, .. } = event {
+        if !other_changes.is_empty() {
+            let joined = other_changes.join(", ");
+            writeln!(writer, "{indent}Other changes: {}", joined.dimmed())?;
+        }
     }
+
     Ok(())
 }
 
-fn write_job_activity_details(
-    task: &Task,
+fn write_activity_scalar_field(
+    label: &str,
+    current: &Value,
+    change: Option<&ActivityFieldChangeSummary>,
     indent: &str,
     writer: &mut impl Write,
-    include_long_fields: bool,
 ) -> Result<()> {
-    writeln!(writer, "{indent}Status: {:?}", task.status)?;
-    if let Some(spawned_from) = &task.spawned_from {
-        writeln!(writer, "{indent}Spawned from: {spawned_from}")?;
-    }
-    if let Some(image) = &task.image {
-        writeln!(writer, "{indent}Image: {image}")?;
-    }
-    if let Some(last_message) = &task.last_message {
-        writeln!(writer, "{indent}Last message: {last_message}")?;
-    }
-    if include_long_fields {
-        write_multiline_field(indent, "Prompt", &task.prompt, writer)?;
+    if let Some(change) = change {
+        writeln!(
+            writer,
+            "{indent}{label}: {} -> {}",
+            format_struck_value_for_label(label, &change.before),
+            format_activity_value_pretty_for_label(label, &change.after)
+        )?;
+    } else {
+        writeln!(
+            writer,
+            "{indent}{label}: {}",
+            format_activity_value_pretty_for_label(label, current)
+        )?;
     }
     Ok(())
 }
 
-fn write_multiline_field(
+fn write_activity_optional_scalar_field(
+    label: &str,
+    current: Option<&str>,
+    change: Option<&ActivityFieldChangeSummary>,
     indent: &str,
+    writer: &mut impl Write,
+) -> Result<()> {
+    if let Some(change) = change {
+        writeln!(
+            writer,
+            "{indent}{label}: {} -> {}",
+            format_struck_value_for_label(label, &change.before),
+            format_activity_value_pretty_for_label(label, &change.after)
+        )?;
+    } else {
+        writeln!(writer, "{indent}{label}: {}", current.unwrap_or("-"))?;
+    }
+    Ok(())
+}
+
+fn write_activity_multiline_field(
     label: &str,
     value: &str,
+    change: Option<&ActivityFieldChangeSummary>,
+    indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
+    if let Some(change) = change {
+        writeln!(
+            writer,
+            "{indent}{label}: {} -> {}",
+            format_struck_value_for_label(label, &change.before),
+            format_activity_value_pretty_for_label(label, &change.after)
+        )?;
+        return Ok(());
+    }
+
     writeln!(writer, "{indent}{label}:")?;
     if value.trim().is_empty() {
         writeln!(writer, "{indent}  -")?;
@@ -1670,27 +2044,113 @@ fn write_multiline_field(
     Ok(())
 }
 
-fn write_activity_changes(
-    changes: &[FieldChange],
+fn write_activity_reviews(
+    reviews: &[ReviewSummary],
     indent: &str,
     writer: &mut impl Write,
 ) -> Result<()> {
-    if changes.is_empty() {
-        writeln!(writer, "{indent}Changes: -")?;
+    if reviews.is_empty() {
+        writeln!(writer, "{indent}Reviews: none")?;
         return Ok(());
     }
 
-    writeln!(writer, "{indent}Changes:")?;
-    for change in changes {
+    writeln!(writer, "{indent}Reviews:")?;
+    for review in reviews {
         writeln!(
             writer,
-            "{indent}  - {}: {} -> {}",
-            change.path,
-            format_activity_value(&change.before),
-            format_activity_value(&change.after)
+            "{indent}  - {}: {} ({})",
+            review.author,
+            colorize_review_decision(review.is_approved),
+            review.contents
         )?;
     }
     Ok(())
+}
+
+fn format_activity_value_pretty(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => "-".to_string(),
+        _ => format_activity_value(value),
+    }
+}
+
+fn format_activity_value_pretty_for_label(label: &str, value: &Value) -> String {
+    let rendered = format_activity_value_pretty(value);
+    if label == "Status" {
+        rendered.replace('_', "-")
+    } else {
+        rendered
+    }
+}
+
+fn format_struck_value_for_label(label: &str, value: &Value) -> String {
+    let rendered = format_activity_value_pretty_for_label(label, value);
+    if supports_ansi() {
+        format!("\x1b[9m{rendered}\x1b[0m")
+    } else {
+        rendered
+    }
+}
+
+fn supports_ansi() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    !matches!(std::env::var("TERM"), Ok(term) if term == "dumb")
+}
+
+fn colorize_header(text: &str) -> String {
+    if supports_ansi() {
+        text.bold().bright_blue().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+fn colorize_dimmed(text: &str) -> String {
+    if supports_ansi() {
+        text.dimmed().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+fn colorize_bold(text: &str) -> String {
+    if supports_ansi() {
+        text.bold().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+fn colorize_review_decision(is_approved: bool) -> String {
+    let text = if is_approved {
+        "approved"
+    } else {
+        "changes requested"
+    };
+    if supports_ansi() {
+        if is_approved {
+            text.green().to_string()
+        } else {
+            text.red().to_string()
+        }
+    } else {
+        text.to_string()
+    }
+}
+
+fn format_job_status(status: Status) -> &'static str {
+    match status {
+        Status::Created => "created",
+        Status::Pending => "pending",
+        Status::Running => "running",
+        Status::Complete => "complete",
+        Status::Failed => "failed",
+        Status::Unknown => "unknown",
+        _ => "unknown",
+    }
 }
 
 fn format_activity_value(value: &Value) -> String {
@@ -1930,6 +2390,24 @@ mod tests {
     fn metis_client(server: &MockServer) -> MetisClient {
         MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())
             .unwrap()
+    }
+
+    fn strip_ansi_codes(input: &str) -> String {
+        let mut output = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            output.push(ch);
+        }
+        output
     }
 
     fn api_issue_record(
@@ -3343,12 +3821,14 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        print_issue_description_pretty(&description, &mut output).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
+        let summary = summarize_issue_description(&description).unwrap();
+        print_issue_description_pretty(&summary, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
 
         assert!(rendered.contains("Issue"));
         assert!(rendered.contains("Parents:"));
         assert!(rendered.contains("Children (transitive):"));
+        assert!(rendered.contains("i-parent"));
         assert!(rendered.contains("main patch (p-main) [open]"));
         assert!(rendered.contains("      Description:\n        desc"));
         assert!(rendered.contains("Reviews: none"));
@@ -3464,15 +3944,15 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        print_issue_description_pretty(&description, &mut output).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
+        let summary = summarize_issue_description(&description).unwrap();
+        print_issue_description_pretty(&summary, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
 
         assert!(rendered.contains("History:"));
         assert!(rendered.contains("2024-01-01T12:00:00Z Issue i-main v1 created"));
         assert!(rendered.contains("2024-01-02T09:00:00Z Patch p-main v1 created"));
         assert!(rendered.contains("2024-01-02T12:00:00Z Job t-main v1 created"));
-        assert!(rendered.contains("Changes:"));
-        assert!(rendered.contains("/status"));
+        assert!(rendered.contains("Status: open -> in-progress"));
     }
 
     #[test]
@@ -3536,12 +4016,13 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        print_issue_description_pretty(&description, &mut output).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
+        let summary = summarize_issue_description(&description).unwrap();
+        print_issue_description_pretty(&summary, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
 
         assert!(rendered.contains("Progress:\n    Main progress"));
-        assert!(rendered.contains("Parents:\n  Issue i-parent (feature, open)\n  Creator: \n  Assignee: -\n  Description:\n    Parent\n  Progress:\n    -"));
-        assert!(rendered.contains("Children (transitive):\n  Issue i-child (bug, in-progress)\n  Creator: \n  Assignee: -\n  Description:\n    Child\n  Progress:\n    Child update"));
+        assert!(rendered.contains("Parents:\n  i-parent"));
+        assert!(rendered.contains("Children (transitive):\n  i-child"));
     }
 
     #[test]
@@ -3609,8 +4090,9 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        print_issue_description_pretty(&description, &mut output).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
+        let summary = summarize_issue_description(&description).unwrap();
+        print_issue_description_pretty(&summary, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
 
         assert!(rendered.contains("Todos:\n    1. [ ] root todo\n    2. [x] root done"));
         assert!(!rendered.contains("parent todo"));
@@ -3680,8 +4162,9 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        print_issue_description_pretty(&description, &mut output).unwrap();
-        let rendered = String::from_utf8(output).unwrap();
+        let summary = summarize_issue_description(&description).unwrap();
+        print_issue_description_pretty(&summary, &mut output).unwrap();
+        let rendered = strip_ansi_codes(&String::from_utf8(output).unwrap());
 
         assert!(
             rendered.contains("Latest: approved by sam @ 2024-05-01T12:00:00Z"),
