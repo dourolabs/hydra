@@ -12,6 +12,9 @@ SERVER_IMAGE="${SERVER_IMAGE:-metis-server:latest}"
 CLIENT_IMAGE="${CLIENT_IMAGE:-metis-worker:latest}"
 S3_IMAGE="${S3_IMAGE:-metis-s3:latest}"
 SERVER_REPLICAS="${SERVER_REPLICAS:-1}"
+# Assignment agent queue defaults; override ASSIGNMENT_AGENT_QUEUE_NAME to
+# customize the deployment-wide routing name without editing this script.
+ASSIGNMENT_AGENT_QUEUE_NAME="${ASSIGNMENT_AGENT_QUEUE_NAME:-assignment}"
 
 # Service type for external access:
 # - LoadBalancer (default) for managed clusters (GKE/EKS/AKS, etc.)
@@ -123,6 +126,32 @@ private_key = """${SERVER_GITHUB_APP_PRIVATE_KEY}"""
 
 [background]
 merge_request_followup_agent = "swe"
+assignment_agent = "${ASSIGNMENT_AGENT_QUEUE_NAME}"
+
+# Assignment agents need a dedicated queue so operators can tune prompts without
+# touching the worker code. Override ASSIGNMENT_AGENT_QUEUE_NAME or edit this
+# block to customize prompt wording, policies, or throttling.
+[[background.agent_queues]]
+name = "${ASSIGNMENT_AGENT_QUEUE_NAME}"
+prompt = """You are the assignment agent responsible for routing Metis issues to the right owner.
+Your issue id is stored in the METIS_ISSUE_ID environment variable.
+
+Always run "metis issues describe \$METIS_ISSUE_ID" before making changes so you understand the task, its creator, and any dependencies.
+Use "metis issues update \$METIS_ISSUE_ID --assignee <handle> ..." to set the assignee.
+When you assign the work, keep the human issue creator as the reviewer by noting that in the progress update and routing any follow-up questions to them.
+
+Assignment rules:
+- Complex or multi-PR efforts go to @pm.
+- Straightforward single-PR tasks go to @swe.
+- Route reviews to the task creator so they stay the primary reviewer for any patches.
+- If the right owner is unclear, assign @pm with a progress note describing the ambiguity.
+
+Repo requirements:
+- Whenever you assign @pm or @swe, you must also set a repo name via "metis repos list" + "metis issues update \$METIS_ISSUE_ID --repo-name <repo>".
+- Never assume a repo when the parent issue omitted job settings; leave repo_name unset unless you can confidently select one.
+
+Document every decision in the issue progress log so future agents understand why you chose that assignee and repo.
+"""
 [[background.agent_queues]]
 name = "swe"
 prompt = """You are a software development agent working on an issue, with the goal of merging a patch to resolve it.
