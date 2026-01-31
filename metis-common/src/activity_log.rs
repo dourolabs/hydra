@@ -1,4 +1,4 @@
-use crate::{IssueId, MetisId, PatchId, TaskId, VersionNumber, Versioned};
+use crate::{DocumentId, IssueId, MetisId, PatchId, TaskId, VersionNumber, Versioned};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde::{Deserialize, Serialize as SerdeSerialize};
@@ -12,6 +12,7 @@ pub enum ActivityObjectKind {
     Issue,
     Patch,
     Job,
+    Document,
 }
 
 #[derive(Debug, Clone, PartialEq, SerdeSerialize, Deserialize)]
@@ -53,6 +54,13 @@ pub fn activity_log_for_patch_versions(
     versions: &[Versioned<crate::api::v1::patches::Patch>],
 ) -> Vec<ActivityLogEntry> {
     activity_log_from_versions(patch_id.into(), ActivityObjectKind::Patch, versions)
+}
+
+pub fn activity_log_for_document_versions(
+    document_id: DocumentId,
+    versions: &[Versioned<crate::api::v1::documents::Document>],
+) -> Vec<ActivityLogEntry> {
+    activity_log_from_versions(document_id.into(), ActivityObjectKind::Document, versions)
 }
 
 pub fn activity_log_for_job_versions<T: Serialize>(
@@ -166,12 +174,13 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivityEvent, ActivityObjectKind, activity_log_for_issue_versions,
-        activity_log_for_patch_versions,
+        ActivityEvent, ActivityObjectKind, activity_log_for_document_versions,
+        activity_log_for_issue_versions, activity_log_for_patch_versions,
     };
+    use crate::api::v1::documents::Document;
     use crate::api::v1::issues::{Issue, IssueStatus, IssueType};
     use crate::api::v1::patches::{Patch, PatchStatus};
-    use crate::{IssueId, PatchId, RepoName, Versioned};
+    use crate::{DocumentId, IssueId, PatchId, RepoName, Versioned};
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -261,5 +270,41 @@ mod tests {
         assert!(matches!(log[0].event, ActivityEvent::Created));
         assert!(matches!(log[1].event, ActivityEvent::Updated { .. }));
         assert!(log[0].timestamp < log[1].timestamp);
+    }
+
+    #[test]
+    fn activity_log_captures_document_path_changes() {
+        let document_id = DocumentId::new();
+        let document_v1 = Document::new("Doc".to_string(), "body".to_string());
+        let document_v2 = Document {
+            path: Some("docs/guide.md".to_string()),
+            ..document_v1.clone()
+        };
+        let versions = vec![
+            Versioned::new(
+                document_v1,
+                1,
+                Utc.with_ymd_and_hms(2024, 1, 1, 8, 0, 0).unwrap(),
+            ),
+            Versioned::new(
+                document_v2,
+                2,
+                Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(),
+            ),
+        ];
+
+        let log = activity_log_for_document_versions(document_id, &versions);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].object_kind, ActivityObjectKind::Document);
+        assert!(matches!(log[0].event, ActivityEvent::Created));
+        match &log[1].event {
+            ActivityEvent::Updated { changes } => {
+                assert_eq!(changes.len(), 1);
+                assert_eq!(changes[0].path, "/path");
+                assert_eq!(changes[0].before, serde_json::Value::Null);
+                assert_eq!(changes[0].after, "docs/guide.md");
+            }
+            other => panic!("expected updated event, got {other:?}"),
+        }
     }
 }

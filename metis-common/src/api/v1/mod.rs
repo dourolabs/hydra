@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod documents;
 pub mod error;
 pub mod issues;
 pub mod job_status;
