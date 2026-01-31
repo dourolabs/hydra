@@ -3689,7 +3689,12 @@ mod tests {
     fn repo_record(name: &str) -> RepositoryRecord {
         RepositoryRecord::new(
             RepoName::from_str(name).expect("invalid repo name"),
-            Repository::new("git@github.com:example/repo.git".to_string(), None, None),
+            Repository::new(
+                "git@github.com:example/repo.git".to_string(),
+                None,
+                None,
+                None,
+            ),
         )
     }
 

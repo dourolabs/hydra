@@ -466,6 +466,7 @@ async fn app_state_with_repo(
                 remote_url.to_string(),
                 Some("main".to_string()),
                 None,
+                None,
             ),
         )
         .await?;

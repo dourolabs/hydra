@@ -9,6 +9,8 @@ pub struct Repository {
     pub default_branch: Option<String>,
     #[serde(default)]
     pub default_image: Option<String>,
+    #[serde(default)]
+    pub content_summary: Option<String>,
 }
 
 impl Repository {
@@ -16,11 +18,13 @@ impl Repository {
         remote_url: String,
         default_branch: Option<String>,
         default_image: Option<String>,
+        content_summary: Option<String>,
     ) -> Self {
         Self {
             remote_url,
             default_branch,
             default_image,
+            content_summary,
         }
     }
 }

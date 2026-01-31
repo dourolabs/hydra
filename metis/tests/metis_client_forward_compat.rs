@@ -492,6 +492,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         "https://example.com/repo.git".to_string(),
         Some("main".to_string()),
         None,
+        None,
     );
     let repo_create = CreateRepositoryRequest::new(repo_name.clone(), repo_config.clone());
     let repo_update = UpdateRepositoryRequest::new(repo_config);
