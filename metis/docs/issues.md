@@ -6,8 +6,6 @@ The `metis issues` command drives the complete lifecycle of Metis tasks: listing
 
 All subcommands inherit the global `metis` flags such as `--server-url`, `--token`, and `--output-format` (defaults to pretty). Switch to `--output-format jsonl` when you need structured machine-readable output or want to pipe results into other tooling. Pretty output shows truncated descriptions and progress notes, while JSONL preserves the full payload.
 
-Set `METIS_ISSUE_ID` in your environment to point at the issue currently driving a job. `metis issues create --current-issue-id` uses that value by default to inherit job settings (repo, branch, container image, model) from the parent issue so follow-up tasks stay in the same workspace.
-
 ## Subcommands
 
 ### List
@@ -49,7 +47,7 @@ metis issues create \
   "DESCRIPTION"
 ```
 
-Descriptions are required; progress defaults to an empty string but may be set inline. Dependencies follow the `TYPE:ISSUE_ID` format (e.g. `child-of:i-abcd`, `blocked-on:i-efgh`); pass `--deps` multiple times to add more than one relationship. `--patches` takes a comma-separated list of existing patch ids. Job settings fields let you pin future jobs to a repo, container image, or branch; inheriting via `--current-issue-id` (or automatically from `METIS_ISSUE_ID`) keeps child tasks aligned with their parent issue’s execution environment.
+Descriptions are required; progress defaults to an empty string but may be set inline. Dependencies follow the `TYPE:ISSUE_ID` format (e.g. `child-of:i-abcd`, `blocked-on:i-efgh`); pass `--deps` multiple times to add more than one relationship. `--patches` takes a comma-separated list of existing patch ids. Job settings fields let you pin future jobs to a repo, container image, or branch; inheriting via `--current-issue-id` keeps child tasks aligned with their parent issue’s execution environment.
 
 ### Update
 
@@ -79,8 +77,8 @@ Append todos with `--add`; prefix the text with `[x]` to mark the entry complete
 
 ```bash
 # File a bug that inherits the current job's repo/image
-METIS_ISSUE_ID=i-root \
 metis issues create \
+  --current-issue-id i-root \
   --type bug --assignee swe --repo-name dourolabs/metis \
   --deps child-of:i-root --progress "Triaging logs" \
   "API times out when payload > 5MB"
