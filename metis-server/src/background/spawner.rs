@@ -70,6 +70,7 @@ impl AgentQueue {
         state: &AppState,
         issue_id: &IssueId,
         issue: &Issue,
+        is_assignment_agent: bool,
     ) -> anyhow::Result<Option<Task>> {
         let branch_override = self
             .branch_override_for_issue(state, issue)
@@ -104,6 +105,7 @@ impl AgentQueue {
                     rev,
                 }
             }
+            _ if is_assignment_agent => BundleSpec::None,
             _ => return Ok(None),
         };
 
@@ -277,6 +279,15 @@ impl Spawner for AgentQueue {
 
         let mut remaining_capacity = max_simultaneous - active_tasks;
 
+        let followup_agent = state
+            .config
+            .background
+            .merge_request_followup_agent
+            .trim()
+            .to_string();
+        let assignment_agent = state.config.background.assignment_agent.trim().to_string();
+        let is_assignment_agent = !assignment_agent.is_empty() && self.name == assignment_agent;
+
         let issues = state
             .list_issues()
             .await
@@ -285,14 +296,20 @@ impl Spawner for AgentQueue {
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
-            let followup_agent = state.config.background.merge_request_followup_agent.trim();
             let last_patch_status = match issue.patches.last() {
                 Some(patch_id) => state.get_patch(patch_id).await.ok().map(|p| p.item.status),
                 None => None,
             };
-            if should_skip_for_assignee_mismatch(
+            if is_assignment_agent {
+                if issue.assignee.is_some() {
+                    continue;
+                }
+                if !matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress) {
+                    continue;
+                }
+            } else if should_skip_for_assignee_mismatch(
                 &self.name,
-                followup_agent,
+                followup_agent.as_str(),
                 &issue,
                 last_patch_status,
             ) {
@@ -324,7 +341,9 @@ impl Spawner for AgentQueue {
                 continue;
             }
 
-            let maybe_task = self.build_task(state, &issue_id, &issue).await?;
+            let maybe_task = self
+                .build_task(state, &issue_id, &issue, is_assignment_agent)
+                .await?;
             let Some(task) = maybe_task else {
                 continue;
             };
@@ -434,7 +453,7 @@ mod tests {
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
-        test::{TestStateHandles, test_state_with_repo_handles},
+        test::{TestStateHandles, test_state_handles, test_state_with_repo_handles},
     };
     use chrono::Utc;
 
@@ -534,6 +553,21 @@ mod tests {
             dependencies,
             repo_name,
         )
+    }
+
+    fn issue_without_repo(description: &str, status: IssueStatus, assignee: Option<&str>) -> Issue {
+        Issue {
+            issue_type: IssueType::Task,
+            description: description.to_string(),
+            creator: default_user(),
+            progress: String::new(),
+            status,
+            assignee: assignee.map(str::to_string),
+            job_settings: JobSettings::default(),
+            todo_list: Vec::new(),
+            dependencies: Vec::new(),
+            patches: Vec::new(),
+        }
     }
 
     fn task(
@@ -947,6 +981,52 @@ mod tests {
             .await?;
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
+        assert!(tasks.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_spawns_for_unassigned_issue() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        let issue_id = handles
+            .store
+            .add_issue(issue_without_repo(
+                "Needs assignment",
+                IssueStatus::Open,
+                None,
+            ))
+            .await?;
+
+        let queue = queue("assignment");
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].context, BundleSpec::None);
+        assert_eq!(
+            tasks[0]
+                .env_vars
+                .get(ISSUE_ID_ENV_VAR)
+                .map(|value| value.as_str()),
+            Some(issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_assignment_agent_skips_unassigned_issue() -> anyhow::Result<()> {
+        let handles = test_state_handles();
+        handles
+            .store
+            .add_issue(issue_without_repo(
+                "Needs assignment",
+                IssueStatus::Open,
+                None,
+            ))
+            .await?;
+
+        let queue = queue("agent-a");
+        let tasks = queue.spawn(&handles.state).await?;
         assert!(tasks.is_empty());
 
         Ok(())
