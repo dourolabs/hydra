@@ -11,3 +11,6 @@ pub const ENV_METIS_ID: &str = "METIS_ID";
 pub const ENV_METIS_ISSUE_ID: &str = "METIS_ISSUE_ID";
 pub const ENV_METIS_TOKEN: &str = "METIS_TOKEN";
 pub const ENV_BROWSER: &str = "BROWSER";
+
+/// Maximum allowed size (in bytes) for repository content summaries.
+pub const MAX_REPOSITORY_SUMMARY_BYTES: usize = 32 * 1024;

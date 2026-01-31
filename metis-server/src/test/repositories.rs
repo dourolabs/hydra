@@ -5,10 +5,11 @@ use crate::{
 use git2::{Repository as GitRepository, Signature};
 use metis_common::{
     RepoName,
-    repositories::{
-        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-        UpsertRepositoryResponse,
+    api::v1::repositories::{
+        CreateRepositoryRequest, GetRepositoryResponse, ListRepositoriesResponse,
+        SetRepositorySummaryRequest, UpdateRepositoryRequest, UpsertRepositoryResponse,
     },
+    constants::MAX_REPOSITORY_SUMMARY_BYTES,
 };
 use reqwest::StatusCode;
 use std::{path::Path, str::FromStr};
@@ -198,6 +199,149 @@ async fn update_unknown_repository_returns_not_found() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_repository_returns_record_with_summary() -> anyhow::Result<()> {
+    let (name, repository) = crate::test::common::service_repository();
+    let handles = test_state_handles();
+    handles
+        .state
+        .create_repository(name.clone(), repository.clone())
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/repositories/{}/{}",
+            server.base_url(),
+            name.organization,
+            name.repo
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: GetRepositoryResponse = response.json().await?;
+    assert_eq!(body.repository.name, name);
+    assert_eq!(
+        body.repository.repository.content_summary,
+        repository.content_summary
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_repository_missing_returns_not_found() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let response = client
+        .get(format!(
+            "{}/v1/repositories/{}/{}",
+            server.base_url(),
+            "dourolabs",
+            "unknown"
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_repository_summary_updates_value() -> anyhow::Result<()> {
+    let (name, mut repository) = crate::test::common::service_repository();
+    repository.content_summary = None;
+    let handles = test_state_handles();
+    let check_state = handles.state.clone();
+    handles
+        .state
+        .create_repository(name.clone(), repository)
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let payload = SetRepositorySummaryRequest::new(Some("## New summary".to_string()));
+    let response = client
+        .put(format!(
+            "{}/v1/repositories/{}/{}/content-summary",
+            server.base_url(),
+            name.organization,
+            name.repo
+        ))
+        .json(&payload)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stored = check_state.repository_from_store(&name).await?;
+    assert_eq!(stored.content_summary.as_deref(), Some("## New summary"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_repository_summary_clears_value() -> anyhow::Result<()> {
+    let (name, repository) = crate::test::common::service_repository();
+    let handles = test_state_handles();
+    let check_state = handles.state.clone();
+    handles
+        .state
+        .create_repository(name.clone(), repository)
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let payload = SetRepositorySummaryRequest::new(None);
+    let response = client
+        .put(format!(
+            "{}/v1/repositories/{}/{}/content-summary",
+            server.base_url(),
+            name.organization,
+            name.repo
+        ))
+        .json(&payload)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let stored = check_state.repository_from_store(&name).await?;
+    assert!(stored.content_summary.is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_repository_summary_rejects_large_payload() -> anyhow::Result<()> {
+    let (name, repository) = crate::test::common::service_repository();
+    let handles = test_state_handles();
+    handles
+        .state
+        .create_repository(name.clone(), repository)
+        .await?;
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+    let oversized = "a".repeat(MAX_REPOSITORY_SUMMARY_BYTES + 1);
+    let payload = SetRepositorySummaryRequest::new(Some(oversized));
+
+    let response = client
+        .put(format!(
+            "{}/v1/repositories/{}/{}/content-summary",
+            server.base_url(),
+            name.organization,
+            name.repo
+        ))
+        .json(&payload)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     Ok(())
 }

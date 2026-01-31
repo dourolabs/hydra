@@ -16,7 +16,9 @@ use metis_common::{
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
-    repositories::{CreateRepositoryRequest, Repository, UpdateRepositoryRequest},
+    repositories::{
+        CreateRepositoryRequest, Repository, SetRepositorySummaryRequest, UpdateRepositoryRequest,
+    },
     task_status::{Event, Status},
     users::Username,
     whoami::ActorIdentity,
@@ -273,12 +275,30 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         );
     });
 
+    let repo_get_path = repo_path.clone();
+    let repository_body_for_get = repository_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(repo_get_path.as_str());
+        then.status(200).json_body(
+            json!({ "repository": repository_body_for_get.clone(), "note": "get-repo" }),
+        );
+    });
+
     let repo_update_path = repo_path.clone();
     let repository_body_for_update = repository_body.clone();
     server.mock(move |when, then| {
         when.method(PUT).path(repo_update_path.as_str());
         then.status(200).json_body(
             json!({ "repository": repository_body_for_update.clone(), "note": "update-repo" }),
+        );
+    });
+
+    let summary_path = format!("{repo_path}/content-summary");
+    let repository_body_for_summary = repository_body.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(summary_path.as_str());
+        then.status(200).json_body(
+            json!({ "repository": repository_body_for_summary.clone(), "note": "summary" }),
         );
     });
 
@@ -505,6 +525,15 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let repos = client.list_repositories().await?;
     assert_eq!(repos.repositories.len(), 1);
+    let fetched_repo = client.get_repository(&repo_name).await?;
+    assert_eq!(fetched_repo.repository.name, repo_name);
+
+    let summary_request =
+        SetRepositorySummaryRequest::new(Some("## regenerated summary".to_string()));
+    let summary_response = client
+        .set_repository_summary(&repo_name, &summary_request)
+        .await?;
+    assert_eq!(summary_response.repository.name, repo_name);
 
     let github_token = client.get_github_token().await?;
     assert_eq!(github_token, "gho_forward_compat");

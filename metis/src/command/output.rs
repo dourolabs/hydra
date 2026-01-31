@@ -400,6 +400,25 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
         "  default_image: {}",
         config.default_image.as_deref().unwrap_or("<none>")
     )?;
+    match config.content_summary.as_deref() {
+        Some(summary) => {
+            writeln!(writer, "  content_summary:")?;
+            if summary.is_empty() {
+                writeln!(writer, "    <empty>")?;
+            } else {
+                for line in summary.lines() {
+                    if line.is_empty() {
+                        writeln!(writer, "    ")?;
+                    } else {
+                        writeln!(writer, "    {line}")?;
+                    }
+                }
+            }
+        }
+        None => {
+            writeln!(writer, "  content_summary: <none>")?;
+        }
+    }
     Ok(())
 }
 

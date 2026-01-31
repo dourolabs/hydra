@@ -62,6 +62,21 @@ After running this command, you should see the issue in the dashboard, and the a
 Once the agent is done, it will create an issue assigned to you to review the PR.
 The PR is copied to Github -- you can submit your review feedback there.
 
+### Keep repository summaries up to date
+
+Operators can store a markdown overview for each repository so agents and humans can understand the codebase faster.
+
+```bash
+# Print the latest summary (pretty output prints raw markdown).
+metis repos summary show dourolabs/metis
+
+# Update the summary from a file (max 32 KB) or stdin with --file -.
+metis repos summary set dourolabs/metis --file summary.md
+
+# Clear the stored summary.
+metis repos summary set dourolabs/metis --clear
+```
+
 ## 5) Try a more complicated issue
 
 Metis also has a product manager agent named `pm` who can break down more complicated features and projects

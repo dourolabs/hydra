@@ -619,6 +619,53 @@ impl AppState {
         Ok(RepositoryRecord::from((name, config)))
     }
 
+    pub async fn get_repository(
+        &self,
+        name: RepoName,
+    ) -> Result<RepositoryRecord, RepositoryError> {
+        let store = self.store.as_ref();
+        let repository = store
+            .get_repository(&name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                other => RepositoryError::Store { source: other },
+            })?;
+
+        Ok(RepositoryRecord::from((name, repository.item)))
+    }
+
+    pub async fn set_repository_summary(
+        &self,
+        name: RepoName,
+        content_summary: Option<String>,
+    ) -> Result<RepositoryRecord, RepositoryError> {
+        let store = self.store.as_ref();
+        let mut repository = store
+            .get_repository(&name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                other => RepositoryError::Store { source: other },
+            })?
+            .item;
+
+        repository.content_summary = content_summary;
+
+        store
+            .update_repository(name.clone(), repository.clone())
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                StoreError::RepositoryAlreadyExists(_) => {
+                    RepositoryError::AlreadyExists(name.clone())
+                }
+                other => RepositoryError::Store { source: other },
+            })?;
+
+        Ok(RepositoryRecord::from((name, repository)))
+    }
+
     pub async fn list_agent_configs(&self) -> Vec<AgentQueueConfig> {
         self.agents
             .read()
