@@ -1,6 +1,7 @@
 use crate::{
     domain::{
         actors::Actor,
+        documents::{Document, SearchDocumentsQuery},
         issues::{Issue, IssueGraphFilter},
         patches::Patch,
         users::{User, Username},
@@ -9,7 +10,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository};
+use metis_common::{
+    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
+};
 use std::collections::HashSet;
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
@@ -92,6 +95,43 @@ impl Store for FailingStore {
     }
 
     async fn get_issues_for_patch(&self, _patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
+        fail()
+    }
+
+    async fn add_document(&self, _document: Document) -> Result<DocumentId, StoreError> {
+        fail()
+    }
+
+    async fn get_document(&self, _id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
+        fail()
+    }
+
+    async fn get_document_versions(
+        &self,
+        _id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError> {
+        fail()
+    }
+
+    async fn update_document(
+        &self,
+        _id: &DocumentId,
+        _document: Document,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn list_documents(
+        &self,
+        _query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        fail()
+    }
+
+    async fn get_documents_by_path(
+        &self,
+        _path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         fail()
     }
 
