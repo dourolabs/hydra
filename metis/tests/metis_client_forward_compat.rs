@@ -6,6 +6,7 @@ use futures::StreamExt;
 use httpmock::prelude::*;
 use metis::client::{MetisClient, MetisClientUnauthenticated};
 use metis_common::{
+    documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{
         AddTodoItemRequest, Issue, IssueDependencyType, IssueStatus, IssueType,
         ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest, TodoItem,
@@ -20,7 +21,7 @@ use metis_common::{
     task_status::{Event, Status},
     users::Username,
     whoami::ActorIdentity,
-    IssueId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, PatchId, RepoName, TaskId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -53,6 +54,11 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_record_body = forward_patch_json(&patch_id, &repo_name, &job_id, now);
     let patch_record_for_get = patch_record_body.clone();
     let patch_record_for_list = patch_record_body.clone();
+    let document_id = DocumentId::new();
+    let document_record_body = forward_document_json(&document_id, &job_id);
+    let document_record_for_get = document_record_body.clone();
+    let document_record_for_list = document_record_body.clone();
+    let document_version_body = forward_document_version_json(&document_id, 2, now, &job_id);
     let repository_body = forward_repo_info(&repo_name);
     let todo_response = forward_todo_response(&issue_id);
     let todo_response_for_replace = todo_response.clone();
@@ -66,6 +72,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let todo_path = format!("/v1/issues/{issue_id}/todo-items");
     let todo_item_path = format!("{todo_path}/1");
     let patch_path = format!("/v1/patches/{patch_id}");
+    let document_path = format!("/v1/documents/{document_id}");
+    let document_versions_path = format!("{document_path}/versions");
+    let document_version_path = format!("{document_versions_path}/2");
     let repo_path = format!(
         "/v1/repositories/{}/{}",
         repo_name.organization, repo_name.repo
@@ -87,6 +96,8 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_id_for_update = patch_id.clone();
     let patch_id_for_merge = patch_id.clone();
     let patch_id_for_enqueue = patch_id.clone();
+    let document_id_for_create = document_id.clone();
+    let document_id_for_update = document_id.clone();
     let username_for_whoami = username.clone();
 
     server.mock(|when, then| {
@@ -255,6 +266,60 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(GET).path("/v1/patches");
         then.status(200)
             .json_body(json!({ "patches": [patch_record_for_list_clone], "extra": "list" }));
+    });
+
+    let document_id_for_create_clone = document_id_for_create.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/documents");
+        then.status(200).json_body(json!({
+            "document_id": document_id_for_create_clone,
+            "note": "create-document"
+        }));
+    });
+
+    let document_update_path = document_path.clone();
+    let document_id_for_update_clone = document_id_for_update.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(document_update_path.as_str());
+        then.status(200).json_body(json!({
+            "document_id": document_id_for_update_clone,
+            "extra": "update-document"
+        }));
+    });
+
+    let document_get_path = document_path.clone();
+    let document_record_for_get_clone = document_record_for_get.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(document_get_path.as_str());
+        then.status(200)
+            .json_body(document_record_for_get_clone.clone());
+    });
+
+    let document_record_for_list_clone = document_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/documents");
+        then.status(200).json_body(json!({
+            "documents": [document_record_for_list_clone.clone()],
+            "extra": "documents"
+        }));
+    });
+
+    let document_versions_path_clone = document_versions_path.clone();
+    let document_version_body_clone = document_version_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(document_versions_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "versions": [document_version_body_clone.clone()],
+            "note": "document-versions"
+        }));
+    });
+
+    let document_version_path_clone = document_version_path.clone();
+    let document_version_body_for_get = document_version_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(document_version_path_clone.as_str());
+        then.status(200)
+            .json_body(document_version_body_for_get.clone());
     });
 
     let repository_body_for_list = repository_body.clone();
@@ -487,6 +552,44 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let patches = client.list_patches(&SearchPatchesQuery::default()).await?;
     assert_eq!(patches.patches.len(), 1);
 
+    // Documents
+    let document = Document::new("forward doc".to_string(), "# Runbook".to_string())
+        .with_path("docs/runbook.md")
+        .with_created_by(job_id.clone());
+    let upsert_document = UpsertDocumentRequest::new(document);
+
+    let created_document = client.create_document(&upsert_document).await?;
+    assert_eq!(created_document.document_id, document_id);
+
+    let updated_document = client
+        .update_document(&document_id, &upsert_document)
+        .await?;
+    assert_eq!(updated_document.document_id, document_id);
+
+    let fetched_document = client.get_document(&document_id).await?;
+    assert_eq!(fetched_document.id, document_id);
+    assert_eq!(
+        fetched_document.document.path.as_deref(),
+        Some("docs/runbook.md")
+    );
+
+    let documents = client
+        .list_documents(&SearchDocumentsQuery::new(
+            Some("runbook".to_string()),
+            Some("docs/".to_string()),
+            Some(job_id.clone()),
+        ))
+        .await?;
+    assert_eq!(documents.documents.len(), 1);
+
+    let versions = client.list_document_versions(&document_id).await?;
+    assert_eq!(versions.versions.len(), 1);
+    let version_number = versions.versions[0].version;
+    let document_version = client
+        .get_document_version(&document_id, &version_number)
+        .await?;
+    assert_eq!(document_version.version, version_number);
+
     // Repositories
     let repo_config = Repository::new(
         "https://example.com/repo.git".to_string(),
@@ -631,6 +734,41 @@ fn forward_patch_json(
             },
             "bonus": "field"
         }
+    })
+}
+
+fn forward_document_json(document_id: &DocumentId, job_id: &TaskId) -> Value {
+    json!({
+        "id": document_id,
+        "document": {
+            "title": "forward doc",
+            "body_markdown": "# Runbook",
+            "path": "docs/runbook.md",
+            "created_by": job_id,
+            "extra": "document"
+        },
+        "note": "document"
+    })
+}
+
+fn forward_document_version_json(
+    document_id: &DocumentId,
+    version: u64,
+    timestamp: DateTime<Utc>,
+    job_id: &TaskId,
+) -> Value {
+    json!({
+        "document_id": document_id,
+        "version": version,
+        "timestamp": timestamp,
+        "document": {
+            "title": format!("forward doc v{version}"),
+            "body_markdown": "# Body",
+            "path": "docs/runbook.md",
+            "created_by": job_id,
+            "extra": "document-version"
+        },
+        "note": "document-version"
     })
 }
 

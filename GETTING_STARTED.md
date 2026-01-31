@@ -70,3 +70,7 @@ into smaller tasks for development. Try writing a more complex feature descripti
 ```bash
 metis issues create --assignee pm --repo-name your-org/your-repo "Feature: please build XYZ"
 ```
+
+## Maintain Shared Documents
+
+Use `metis documents` to capture design docs, runbooks, and other markdown artifacts in the server store. See [metis/docs/documents.md](metis/docs/documents.md) for a complete tour of the subcommands, input flags, and examples.
