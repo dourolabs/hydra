@@ -1,5 +1,6 @@
 use crate::{
     app::Repository,
+    domain::issues::{IssueStatus, IssueType},
     test::{spawn_test_server_with_state, test_client, test_state_handles},
 };
 use git2::{Repository as GitRepository, Signature};
@@ -100,6 +101,58 @@ async fn create_repository_initializes_cache_and_merge_queue() -> anyhow::Result
 
     let cache_paths = service_state.cached_repository_paths().await;
     assert!(cache_paths.contains_key(&name));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_repository_creates_indexing_issue_for_assignment_agent() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let check_state = handles.state.clone();
+    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+    let client = test_client();
+
+    let remote_dir = create_remote_repository()?;
+    let remote_url = repo_url(&remote_dir);
+    let name = RepoName::from_str("dourolabs/index-me")?;
+
+    let initial_issue_count = check_state.list_issues().await?.len();
+
+    let payload = CreateRepositoryRequest::new(
+        name.clone(),
+        Repository::new(
+            remote_url,
+            Some("main".to_string()),
+            Some("ghcr.io/example/index-me:latest".to_string()),
+        ),
+    );
+
+    let response = client
+        .post(format!("{}/v1/repositories", server.base_url()))
+        .json(&payload)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let issues = check_state.list_issues().await?;
+    assert_eq!(issues.len(), initial_issue_count + 1);
+
+    let indexing_issue = issues
+        .into_iter()
+        .map(|(_, issue)| issue.item)
+        .find(|issue| {
+            issue.assignee.as_deref() == Some("assignment")
+                && issue.job_settings.repo_name.as_ref() == Some(&name)
+        })
+        .expect("indexing issue should be created");
+
+    assert_eq!(indexing_issue.issue_type, IssueType::Task);
+    assert_eq!(indexing_issue.status, IssueStatus::Open);
+    assert_eq!(indexing_issue.creator.as_str(), "system");
+    assert_eq!(
+        indexing_issue.description,
+        format!("Index newly created repository {name}")
+    );
 
     Ok(())
 }

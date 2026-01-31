@@ -130,6 +130,12 @@ pub enum RepositoryError {
         #[source]
         source: MergeQueueError,
     },
+    #[error("failed to create indexing issue for repository '{repo_name}'")]
+    IssueCreation {
+        repo_name: RepoName,
+        #[source]
+        source: UpsertIssueError,
+    },
 }
 
 #[allow(dead_code)]
