@@ -3,6 +3,7 @@ use crate::{
     config::{AgentQueueConfig, AppConfig, non_empty},
     domain::{
         actors::Actor,
+        documents::{Document, SearchDocumentsQuery},
         issues::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
             TodoItem, UpsertIssueRequest,
@@ -16,7 +17,7 @@ use crate::{
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::{
-    PatchId, RepoName, TaskId, Versioned,
+    DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
     constants::ENV_METIS_ID,
     issues::IssueId,
@@ -420,6 +421,52 @@ impl AppState {
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let store = self.store.as_ref();
         store.list_patches().await
+    }
+
+    pub async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
+        let store = self.store.as_ref();
+        store.add_document(document).await
+    }
+
+    pub async fn get_document(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<Versioned<Document>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_document(document_id).await
+    }
+
+    pub async fn get_document_versions(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_document_versions(document_id).await
+    }
+
+    pub async fn update_document(
+        &self,
+        document_id: &DocumentId,
+        document: Document,
+    ) -> Result<(), StoreError> {
+        let store = self.store.as_ref();
+        store.update_document(document_id, document).await
+    }
+
+    pub async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_documents(query).await
+    }
+
+    pub async fn get_documents_by_path(
+        &self,
+        path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_documents_by_path(path_prefix).await
     }
 
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {

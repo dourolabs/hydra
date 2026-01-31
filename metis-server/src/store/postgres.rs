@@ -2,6 +2,7 @@ use crate::{
     config::DatabaseSection,
     domain::{
         actors::Actor,
+        documents::{Document, SearchDocumentsQuery},
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
         users::{User, Username},
@@ -12,7 +13,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::{
-    IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    repositories::Repository,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -34,6 +36,7 @@ pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 3;
 pub const REPOSITORY_SCHEMA_VERSION: i32 = 2;
 pub const ACTOR_SCHEMA_VERSION: i32 = 3;
+pub const DOCUMENT_SCHEMA_VERSION: i32 = 1;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -115,6 +118,11 @@ const PAYLOAD_TABLES: &[PayloadTable] = &[
         table: TABLE_ACTORS,
         target_version: ACTOR_SCHEMA_VERSION,
     },
+    PayloadTable {
+        object_type: "document",
+        table: TABLE_DOCUMENTS,
+        target_version: DOCUMENT_SCHEMA_VERSION,
+    },
 ];
 
 /// Migrate any outdated payloads to the current schema versions using the
@@ -160,6 +168,7 @@ const TABLE_TASKS: &str = "metis.tasks";
 const TABLE_USERS: &str = "metis.users";
 const TABLE_REPOSITORIES: &str = "metis.repositories";
 const TABLE_ACTORS: &str = "metis.actors";
+const TABLE_DOCUMENTS: &str = "metis.documents";
 
 #[derive(Clone)]
 pub struct PostgresStore {
@@ -366,6 +375,98 @@ impl PostgresStore {
         }
 
         Ok(results)
+    }
+
+    async fn fetch_latest_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct DocumentRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        let mut sql = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {TABLE_DOCUMENTS}"
+        );
+        let mut predicates = Vec::new();
+        let mut bindings = Vec::new();
+
+        if let Some(path_prefix) = query.path_prefix.as_ref() {
+            predicates.push(format!(
+                "COALESCE(payload->>'path','') LIKE ${}",
+                bindings.len() + 1
+            ));
+            bindings.push(format!("{path_prefix}%"));
+        }
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            predicates.push(format!("payload->>'created_by' = ${}", bindings.len() + 1));
+            bindings.push(created_by.as_ref().to_string());
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let idx_title = bindings.len() + 1;
+            let idx_body = bindings.len() + 2;
+            let idx_path = bindings.len() + 3;
+            predicates.push(format!(
+                "(LOWER(payload->>'title') LIKE ${idx_title} \
+                 OR LOWER(payload->>'body_markdown') LIKE ${idx_body} \
+                 OR LOWER(COALESCE(payload->>'path','')) LIKE ${idx_path})"
+            ));
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone());
+            bindings.push(pattern.clone());
+            bindings.push(pattern);
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY id, version_number DESC");
+
+        let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut documents = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version("document", row.schema_version, DOCUMENT_SCHEMA_VERSION)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for document '{}'",
+                    row.id
+                ))
+            })?;
+            let document: Document =
+                serde_json::from_value(row.payload).map_err(map_serde_error("document"))?;
+            let document_id = row.id.parse::<DocumentId>().map_err(|err| {
+                StoreError::Internal(format!("invalid document id stored in database: {err}"))
+            })?;
+            documents.push((
+                document_id,
+                Versioned::new(document, version, row.created_at),
+            ));
+        }
+
+        Ok(documents)
     }
 
     async fn insert_payload<T: Serialize>(
@@ -706,6 +807,80 @@ impl Store for PostgresStore {
             .collect())
     }
 
+    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
+        let id = DocumentId::new();
+        self.insert_payload(
+            TABLE_DOCUMENTS,
+            "document",
+            id.as_ref(),
+            DOCUMENT_SCHEMA_VERSION,
+            1,
+            &document,
+        )
+        .await?;
+        Ok(id)
+    }
+
+    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
+        self.fetch_versioned_payload(
+            TABLE_DOCUMENTS,
+            "document",
+            id.as_ref(),
+            DOCUMENT_SCHEMA_VERSION,
+        )
+        .await?
+        .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+    }
+
+    async fn get_document_versions(
+        &self,
+        id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError> {
+        let versions = self
+            .fetch_versioned_payloads(
+                TABLE_DOCUMENTS,
+                "document",
+                id.as_ref(),
+                DOCUMENT_SCHEMA_VERSION,
+            )
+            .await?;
+        if versions.is_empty() {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        Ok(versions)
+    }
+
+    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
+        self.get_document(id).await?;
+        self.update_payload(
+            TABLE_DOCUMENTS,
+            "document",
+            id.as_ref(),
+            DOCUMENT_SCHEMA_VERSION,
+            &document,
+        )
+        .await
+    }
+
+    async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        self.fetch_latest_documents(query).await
+    }
+
+    async fn get_documents_by_path(
+        &self,
+        path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        self.list_documents(&SearchDocumentsQuery {
+            q: None,
+            path_prefix: Some(path_prefix.to_string()),
+            created_by: None,
+        })
+        .await
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let issues = self.list_issues().await?;
@@ -1021,6 +1196,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
+            documents::{Document, SearchDocumentsQuery},
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
             },
@@ -1030,7 +1206,7 @@ mod tests {
         },
         test_utils::test_state_with_store,
     };
-    use metis_common::{RepoName, VersionNumber, Versioned, repositories::Repository};
+    use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
@@ -1071,6 +1247,16 @@ mod tests {
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
         )
+    }
+
+    #[allow(dead_code)]
+    fn sample_document(path: &str, created_by: Option<TaskId>) -> Document {
+        Document {
+            title: "Doc".to_string(),
+            body_markdown: "Body".to_string(),
+            path: Some(path.to_string()),
+            created_by,
+        }
     }
 
     #[allow(dead_code)]
@@ -1458,6 +1644,67 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert!(all_tasks.contains(&explicit_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn documents_round_trip(pool: PgStorePool) {
+        let store = PostgresStore::new(pool);
+        let doc_id = store
+            .add_document(sample_document("docs/guide.md", None))
+            .await
+            .unwrap();
+
+        let fetched = store.get_document(&doc_id).await.unwrap();
+        assert_eq!(fetched.item.title, "Doc");
+        assert_eq!(fetched.version, 1);
+
+        let mut updated = fetched.item.clone();
+        updated.title = "Updated Doc".to_string();
+        store
+            .update_document(&doc_id, updated.clone())
+            .await
+            .unwrap();
+
+        let versions = store.get_document_versions(&doc_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[1].item.title, "Updated Doc");
+
+        let list = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, doc_id);
+
+        let by_path = store.get_documents_by_path("docs/").await.unwrap();
+        assert_eq!(by_path.len(), 1);
+        assert_eq!(by_path[0].0, doc_id);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn document_filters_apply_query(pool: PgStorePool) {
+        let store = PostgresStore::new(pool);
+        let task_id = TaskId::new();
+        let doc_id = store
+            .add_document(sample_document("docs/howto.md", Some(task_id.clone())))
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document("notes/todo.md", Some(TaskId::new())))
+            .await
+            .unwrap();
+
+        let query = SearchDocumentsQuery {
+            q: Some("howto".to_string()),
+            path_prefix: Some("docs/".to_string()),
+            created_by: Some(task_id),
+        };
+
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, doc_id);
     }
 
     #[sqlx::test(migrations = "./migrations")]

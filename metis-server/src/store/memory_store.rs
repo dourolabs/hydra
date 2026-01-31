@@ -7,12 +7,14 @@ use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::Actor,
+    documents::{Document, SearchDocumentsQuery},
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
 };
 use metis_common::{
-    IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
+    repositories::Repository,
 };
 
 /// An in-memory implementation of the Store trait.
@@ -26,6 +28,8 @@ pub struct MemoryStore {
     issues: DashMap<IssueId, Vec<Versioned<Issue>>>,
     /// Maps patch IDs to their Patch data
     patches: DashMap<PatchId, Vec<Versioned<Patch>>>,
+    /// Maps document IDs to their Document data
+    documents: DashMap<DocumentId, Vec<Versioned<Document>>>,
     /// Maps repository names to their configurations
     repositories: DashMap<RepoName, Vec<Versioned<Repository>>>,
     /// Maps parent issue IDs to their child issue IDs declared via child-of dependencies
@@ -36,6 +40,8 @@ pub struct MemoryStore {
     issue_tasks: DashMap<IssueId, Vec<TaskId>>,
     /// Maps patch IDs to the issues that reference them
     patch_issues: DashMap<PatchId, Vec<IssueId>>,
+    /// Maps document paths to the document IDs that live under them
+    documents_by_path: DashMap<String, HashSet<DocumentId>>,
     /// Maps usernames to their User data
     users: DashMap<Username, Vec<Versioned<User>>>,
     /// Maps actor names to their Actor data
@@ -49,11 +55,13 @@ impl MemoryStore {
             tasks: DashMap::new(),
             issues: DashMap::new(),
             patches: DashMap::new(),
+            documents: DashMap::new(),
             repositories: DashMap::new(),
             issue_children: DashMap::new(),
             issue_blocked_on: DashMap::new(),
             issue_tasks: DashMap::new(),
             patch_issues: DashMap::new(),
+            documents_by_path: DashMap::new(),
             users: DashMap::new(),
             actors: DashMap::new(),
         }
@@ -154,6 +162,61 @@ impl MemoryStore {
                 issues.push(issue_id.clone());
             }
         }
+    }
+
+    fn index_document_path(&self, document_id: &DocumentId, path: Option<&str>) {
+        if let Some(path) = path {
+            let mut entries = self.documents_by_path.entry(path.to_string()).or_default();
+            entries.insert(document_id.clone());
+        }
+    }
+
+    fn remove_document_path(&self, document_id: &DocumentId, path: Option<&str>) {
+        if let Some(path) = path {
+            if let Some(mut entries) = self.documents_by_path.get_mut(path) {
+                entries.remove(document_id);
+                if entries.is_empty() {
+                    drop(entries);
+                    self.documents_by_path.remove(path);
+                }
+            }
+        }
+    }
+
+    fn document_ids_with_path_prefix(&self, prefix: &str) -> Vec<DocumentId> {
+        if prefix.is_empty() {
+            return self
+                .documents
+                .iter()
+                .map(|entry| entry.key().clone())
+                .collect();
+        }
+
+        let mut ids = Vec::new();
+        for entry in self.documents_by_path.iter() {
+            if entry.key().starts_with(prefix) {
+                ids.extend(entry.value().iter().cloned());
+            }
+        }
+        ids
+    }
+
+    fn documents_from_ids(&self, ids: &[DocumentId]) -> Vec<(DocumentId, Versioned<Document>)> {
+        let mut seen = HashSet::new();
+        let mut documents = Vec::new();
+
+        for id in ids {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            if let Some(entry) = self.documents.get(id) {
+                if let Some(latest) = Self::latest_versioned(entry.value()) {
+                    documents.push((id.clone(), latest));
+                }
+            }
+        }
+
+        documents
     }
 
     fn index_task_for_issue(&self, issue_id: &IssueId, task_id: TaskId) {
@@ -413,6 +476,111 @@ impl Store for MemoryStore {
                 .unwrap_or_default()),
             None => Err(StoreError::PatchNotFound(patch_id.clone())),
         }
+    }
+
+    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
+        let id = DocumentId::new();
+        let path = document.path.clone();
+        self.documents
+            .insert(id.clone(), vec![Self::versioned_now(document, 1)]);
+        self.index_document_path(&id, path.as_deref());
+        Ok(id)
+    }
+
+    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
+        self.documents
+            .get(id)
+            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+    }
+
+    async fn get_document_versions(
+        &self,
+        id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError> {
+        self.documents
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+    }
+
+    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
+        let mut versions = self
+            .documents
+            .get_mut(id)
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        let previous_path = versions
+            .last()
+            .and_then(|version| version.item.path.clone());
+        let new_path = document.path.clone();
+        let next_version = Self::next_version(&versions);
+        versions.push(Self::versioned_now(document, next_version));
+
+        if previous_path != new_path {
+            self.remove_document_path(id, previous_path.as_deref());
+            self.index_document_path(id, new_path.as_deref());
+        }
+
+        Ok(())
+    }
+
+    async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        let mut documents: Vec<(DocumentId, Versioned<Document>)> =
+            if let Some(prefix) = query.path_prefix.as_deref() {
+                let ids = self.document_ids_with_path_prefix(prefix);
+                self.documents_from_ids(&ids)
+            } else {
+                self.documents
+                    .iter()
+                    .filter_map(|entry| {
+                        let latest = Self::latest_versioned(entry.value())?;
+                        Some((entry.key().clone(), latest))
+                    })
+                    .collect()
+            };
+
+        if let Some(created_by) = query.created_by.as_ref() {
+            documents
+                .retain(|(_, versioned)| versioned.item.created_by.as_ref() == Some(created_by));
+        }
+
+        if let Some(search_term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            documents.retain(|(_, versioned)| {
+                versioned.item.title.to_lowercase().contains(&search_term)
+                    || versioned
+                        .item
+                        .body_markdown
+                        .to_lowercase()
+                        .contains(&search_term)
+                    || versioned
+                        .item
+                        .path
+                        .as_deref()
+                        .map(|path| path.to_lowercase().contains(&search_term))
+                        .unwrap_or(false)
+            });
+        }
+
+        documents.sort_by(|(left, _), (right, _)| left.cmp(right));
+        Ok(documents)
+    }
+
+    async fn get_documents_by_path(
+        &self,
+        path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
+        let ids = self.document_ids_with_path_prefix(path_prefix);
+        let mut documents = self.documents_from_ids(&ids);
+        documents.sort_by(|(left, _), (right, _)| left.cmp(right));
+        Ok(documents)
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -718,6 +886,15 @@ mod tests {
             RepoName::from_str("dourolabs/sample").unwrap(),
             None,
         )
+    }
+
+    fn sample_document(path: Option<&str>, created_by: Option<TaskId>) -> Document {
+        Document {
+            title: "Doc".to_string(),
+            body_markdown: "Body".to_string(),
+            path: path.map(ToString::to_string),
+            created_by,
+        }
     }
 
     fn sample_issue(dependencies: Vec<IssueDependency>) -> Issue {
@@ -1293,6 +1470,107 @@ mod tests {
             store.get_issues_for_patch(&patch_b).await.unwrap(),
             vec![issue_id]
         );
+    }
+
+    #[tokio::test]
+    async fn documents_round_trip() {
+        let store = MemoryStore::new();
+        let doc_id = store
+            .add_document(sample_document(Some("docs/guides/intro.md"), None))
+            .await
+            .unwrap();
+
+        let fetched = store.get_document(&doc_id).await.unwrap();
+        assert_eq!(fetched.item.title, "Doc");
+        assert_eq!(fetched.version, 1);
+
+        let mut updated = fetched.item.clone();
+        updated.body_markdown = "Updated body".to_string();
+        store
+            .update_document(&doc_id, updated.clone())
+            .await
+            .unwrap();
+
+        let versions = store.get_document_versions(&doc_id).await.unwrap();
+        assert_eq!(version_numbers(&versions), vec![1, 2]);
+        assert_eq!(versions[1].item.body_markdown, "Updated body");
+
+        let documents = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].0, doc_id);
+
+        let by_path = store.get_documents_by_path("docs/").await.unwrap();
+        assert_eq!(by_path.len(), 1);
+        assert_eq!(by_path[0].0, doc_id);
+    }
+
+    #[tokio::test]
+    async fn document_filters_apply_query() {
+        let store = MemoryStore::new();
+        let task_id = TaskId::new();
+        let other_task = TaskId::new();
+
+        let first = store
+            .add_document(sample_document(
+                Some("docs/howto.md"),
+                Some(task_id.clone()),
+            ))
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(
+                Some("notes/todo.md"),
+                Some(other_task.clone()),
+            ))
+            .await
+            .unwrap();
+
+        let query = SearchDocumentsQuery {
+            q: Some("how".to_string()),
+            path_prefix: Some("docs/".to_string()),
+            created_by: Some(task_id.clone()),
+        };
+
+        let filtered = store.list_documents(&query).await.unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, first);
+
+        let created_by_filtered = store
+            .list_documents(&SearchDocumentsQuery {
+                q: None,
+                path_prefix: None,
+                created_by: Some(other_task),
+            })
+            .await
+            .unwrap();
+        assert_eq!(created_by_filtered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn document_path_index_updates_on_change() {
+        let store = MemoryStore::new();
+        let doc_id = store
+            .add_document(sample_document(Some("docs/old.md"), None))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_document(&doc_id).await.unwrap().item;
+        updated.path = Some("docs/new.md".to_string());
+        store.update_document(&doc_id, updated).await.unwrap();
+
+        assert!(
+            store
+                .get_documents_by_path("docs/old")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let matches = store.get_documents_by_path("docs/new").await.unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, doc_id);
     }
 
     #[tokio::test]

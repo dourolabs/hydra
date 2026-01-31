@@ -1,5 +1,6 @@
 use crate::domain::{
     actors::{Actor, ActorError},
+    documents::{Document, SearchDocumentsQuery},
     issues::{Issue, IssueGraphFilter},
     patches::Patch,
     task_status::Event,
@@ -7,7 +8,9 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository};
+use metis_common::{
+    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
+};
 use std::collections::HashSet;
 
 mod issue_graph;
@@ -79,6 +82,8 @@ pub enum StoreError {
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
     PatchNotFound(PatchId),
+    #[error("Document not found: {0}")]
+    DocumentNotFound(DocumentId),
     #[allow(dead_code)]
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
@@ -181,6 +186,33 @@ pub trait Store: Send + Sync {
 
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
+
+    /// Adds a new document to the store and assigns it a DocumentId.
+    async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError>;
+
+    /// Retrieves a document by its DocumentId.
+    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError>;
+
+    /// Retrieves all versions of a document in ascending order.
+    async fn get_document_versions(
+        &self,
+        id: &DocumentId,
+    ) -> Result<Vec<Versioned<Document>>, StoreError>;
+
+    /// Updates an existing document in the store.
+    async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError>;
+
+    /// Lists documents that match the provided search query.
+    async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
+
+    /// Returns documents that start with the provided path prefix.
+    async fn get_documents_by_path(
+        &self,
+        path_prefix: &str,
+    ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     #[allow(dead_code)]
