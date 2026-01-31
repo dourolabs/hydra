@@ -160,6 +160,38 @@ pub enum UpsertPatchError {
 }
 
 #[derive(Debug, Error)]
+pub enum UpsertDocumentError {
+    #[error("job '{job_id}' not found")]
+    JobNotFound {
+        #[source]
+        source: StoreError,
+        job_id: TaskId,
+    },
+    #[error("failed to validate job status for '{job_id}'")]
+    JobStatusLookup {
+        #[source]
+        source: StoreError,
+        job_id: TaskId,
+    },
+    #[error("created_by must reference a running job")]
+    JobNotRunning {
+        job_id: TaskId,
+        status: Option<Status>,
+    },
+    #[error("document '{document_id}' not found")]
+    DocumentNotFound {
+        #[source]
+        source: StoreError,
+        document_id: DocumentId,
+    },
+    #[error("document store operation failed")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+}
+
+#[derive(Debug, Error)]
 pub enum UpsertIssueError {
     #[error("job_id may only be provided when creating an issue")]
     JobIdProvidedForUpdate,
@@ -423,9 +455,83 @@ impl AppState {
         store.list_patches().await
     }
 
-    pub async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError> {
+    pub async fn upsert_document(
+        &self,
+        document_id: Option<DocumentId>,
+        document: Document,
+    ) -> Result<DocumentId, UpsertDocumentError> {
         let store = self.store.as_ref();
-        store.add_document(document).await
+        match document_id {
+            Some(id) => {
+                let existing = store
+                    .get_document(&id)
+                    .await
+                    .map_err(|source| match source {
+                        StoreError::DocumentNotFound(_) => UpsertDocumentError::DocumentNotFound {
+                            document_id: id.clone(),
+                            source,
+                        },
+                        other => UpsertDocumentError::Store { source: other },
+                    })?;
+
+                let mut document = document;
+                document.created_by = existing.item.created_by;
+
+                store
+                    .update_document(&id, document)
+                    .await
+                    .map_err(|source| match source {
+                        StoreError::DocumentNotFound(_) => UpsertDocumentError::DocumentNotFound {
+                            document_id: id.clone(),
+                            source,
+                        },
+                        other => UpsertDocumentError::Store { source: other },
+                    })?;
+
+                info!(document_id = %id, "document updated");
+                Ok(id)
+            }
+            None => {
+                let new_document = document;
+                if let Some(job_id) = new_document.created_by.clone() {
+                    let status = store
+                        .get_task(&job_id)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::TaskNotFound(_) => UpsertDocumentError::JobNotFound {
+                                job_id: job_id.clone(),
+                                source,
+                            },
+                            other => UpsertDocumentError::JobStatusLookup {
+                                job_id: job_id.clone(),
+                                source: other,
+                            },
+                        })?
+                        .item
+                        .status;
+
+                    if status != Status::Running {
+                        return Err(UpsertDocumentError::JobNotRunning {
+                            job_id: job_id.clone(),
+                            status: Some(status),
+                        });
+                    }
+                }
+
+                let created_by = new_document.created_by.clone();
+                let document_id = store
+                    .add_document(new_document)
+                    .await
+                    .map_err(|source| UpsertDocumentError::Store { source })?;
+
+                info!(
+                    document_id = %document_id,
+                    created_by = ?created_by,
+                    "document created"
+                );
+                Ok(document_id)
+            }
+        }
     }
 
     pub async fn get_document(
@@ -442,15 +548,6 @@ impl AppState {
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let store = self.store.as_ref();
         store.get_document_versions(document_id).await
-    }
-
-    pub async fn update_document(
-        &self,
-        document_id: &DocumentId,
-        document: Document,
-    ) -> Result<(), StoreError> {
-        let store = self.store.as_ref();
-        store.update_document(document_id, document).await
     }
 
     pub async fn list_documents(

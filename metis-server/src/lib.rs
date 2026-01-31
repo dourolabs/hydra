@@ -103,6 +103,22 @@ pub async fn run_with_state(
             post(routes::patches::create_patch_asset),
         )
         .route(
+            "/v1/documents",
+            get(routes::documents::list_documents).post(routes::documents::create_document),
+        )
+        .route(
+            "/v1/documents/:document_id",
+            get(routes::documents::get_document).put(routes::documents::update_document),
+        )
+        .route(
+            "/v1/documents/:document_id/versions",
+            get(routes::documents::list_document_versions),
+        )
+        .route(
+            "/v1/documents/:document_id/versions/:version_number",
+            get(routes::documents::get_document_version),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),

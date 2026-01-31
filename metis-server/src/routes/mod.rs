@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod auth;
+pub mod documents;
 pub mod github;
 pub mod issues;
 pub mod jobs;
