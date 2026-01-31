@@ -1,6 +1,6 @@
 use crate::{
     client::MetisClientInterface,
-    command::output::{render_document_records, CommandContext},
+    command::output::{render_document_records, CommandContext, ResolvedOutputFormat},
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -13,7 +13,7 @@ use metis_common::{
 };
 use std::{
     fs,
-    io::{self, IsTerminal, Read},
+    io::{self, IsTerminal, Read, Write},
     path::PathBuf,
 };
 
@@ -108,30 +108,57 @@ pub async fn run(
     command: DocumentsCommand,
     context: &CommandContext,
 ) -> Result<()> {
-    let mut stdout = io::stdout().lock();
     match command {
         DocumentsCommand::List(args) => {
             let documents = list_documents(client, args).await?;
-            render_document_records(context.output_format, &documents, &mut stdout)?;
+            write_documents_output(context.output_format, &documents)?;
         }
         DocumentsCommand::Get { id } => {
             let document = client
                 .get_document(&id)
                 .await
                 .context("failed to fetch document")?;
-            render_document_records(context.output_format, &[document], &mut stdout)?;
+            write_documents_output(context.output_format, &[document])?;
         }
         DocumentsCommand::Create(args) => {
             let document = create_document(client, args).await?;
-            render_document_records(context.output_format, &[document], &mut stdout)?;
+            write_documents_output(context.output_format, &[document])?;
         }
         DocumentsCommand::Update(args) => {
             let document = update_document(client, args).await?;
-            render_document_records(context.output_format, &[document], &mut stdout)?;
+            write_documents_output(context.output_format, &[document])?;
         }
     }
 
     Ok(())
+}
+
+fn write_documents_output(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentRecord],
+) -> Result<()> {
+    let mut stdout = io::stdout();
+    write_documents_output_with_writer(format, documents, &mut stdout)
+}
+
+fn write_documents_output_with_writer(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    let buffer = render_documents_to_buffer(format, documents)?;
+    writer.write_all(&buffer)?;
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_documents_to_buffer(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentRecord],
+) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    render_document_records(format, documents, &mut buffer)?;
+    Ok(buffer)
 }
 
 async fn list_documents(
@@ -286,7 +313,8 @@ mod tests {
         Document as DocumentPayload, ListDocumentsResponse, UpsertDocumentResponse,
     };
     use reqwest::Client as HttpClient;
-    use serde_json::json;
+    use serde_json::{json, Value};
+    use std::io::{self, Write};
     use tempfile::NamedTempFile;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -424,10 +452,7 @@ mod tests {
 
         assert!(record.document.path.is_none());
         assert_eq!(record.document.title, "Updated");
-        assert_eq!(
-            record.document.created_by,
-            existing.document.created_by
-        );
+        assert_eq!(record.document.created_by, existing.document.created_by);
         get_existing.assert();
         update_mock.assert();
     }
@@ -460,5 +485,60 @@ mod tests {
 
         assert!(error.to_string().contains("no updates specified"));
         get_mock.assert();
+    }
+
+    #[test]
+    fn write_documents_output_with_writer_buffers_pretty_output() {
+        let document_id = DocumentId::new();
+        let record = sample_document_record(&document_id);
+        let mut writer = RecordingWriter::default();
+
+        write_documents_output_with_writer(
+            ResolvedOutputFormat::Pretty,
+            &[record.clone()],
+            &mut writer,
+        )
+        .unwrap();
+
+        assert_eq!(writer.write_calls, 1);
+        assert_eq!(writer.flush_calls, 1);
+        let output = String::from_utf8(writer.buffer.clone()).unwrap();
+        assert!(output.contains("Document"));
+        assert!(output.contains(record.document.title.as_str()));
+    }
+
+    #[test]
+    fn render_documents_to_buffer_supports_jsonl_output() {
+        let document_id = DocumentId::new();
+        let record = sample_document_record(&document_id);
+
+        let buffer =
+            render_documents_to_buffer(ResolvedOutputFormat::Jsonl, &[record]).expect("buffer");
+        let output = String::from_utf8(buffer).expect("utf8");
+        let lines: Vec<&str> = output.lines().collect();
+
+        assert_eq!(lines.len(), 1);
+        let parsed: Value = serde_json::from_str(lines[0]).expect("json");
+        assert_eq!(parsed["id"], document_id.as_ref());
+    }
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        buffer: Vec<u8>,
+        write_calls: usize,
+        flush_calls: usize,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            Ok(())
+        }
     }
 }
