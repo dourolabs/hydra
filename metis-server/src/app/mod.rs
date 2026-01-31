@@ -13,7 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 
 pub use app_state::{
     AgentError, AppState, CreateJobError, LoginError, SetJobStatusError, UpdateTodoListError,
-    UpsertIssueError, UpsertPatchError,
+    UpsertDocumentError, UpsertIssueError, UpsertPatchError,
 };
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
