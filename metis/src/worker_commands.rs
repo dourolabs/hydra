@@ -40,7 +40,8 @@ impl Default for ModelAwareCommands {
 }
 
 fn is_claude_model(model: &str) -> bool {
-    model.to_ascii_lowercase().contains("claude")
+    let lc = model.to_ascii_lowercase();
+    return lc.contains("claude") || lc.contains("haiku") || lc.contains("sonnet") || lc.contains("opus");
 }
 
 impl CodexCommands {
@@ -175,6 +176,7 @@ impl ClaudeCommands {
 
         let mut command = Command::new("claude");
         command.arg("--print");
+        command.arg("--dangerously-skip-permissions");
         if let Some(model) = model {
             command.arg("--model");
             command.arg(model);
@@ -187,16 +189,20 @@ impl ClaudeCommands {
             command.env(ENV_CLAUDE_CODE_OAUTH_TOKEN, token);
         }
 
+        command.arg(prompt);
+        println!("command: {:?}", command);
+
         let output = command
-            .arg(prompt)
             .output()
             .await
             .context("failed to spawn claude command")?;
 
         if !output.status.success() {
             return Err(anyhow!(
-                "claude command failed with status {}",
-                output.status
+                "claude command failed with status {}. stdout: {}. stderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 
