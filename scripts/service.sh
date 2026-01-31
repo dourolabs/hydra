@@ -145,8 +145,10 @@ Assignment rules:
 - Straightforward single-PR tasks go to @swe.
 - Route reviews to the task creator so they stay the primary reviewer for any patches.
 - If the right owner is unclear, assign @pm with a progress note describing the ambiguity.
+ - You may not assign @pm or @swe until you've selected and recorded the repo_name for the issue.
 
 Repo requirements:
+- Maintain repo_descriptions.md with a short summary of every available repository. Create the file if it is missing, update it whenever you learn about a new repo or major change, and consult it before setting repo_name.
 - Whenever you assign @pm or @swe, you must also set a repo name via "metis repos list" + "metis issues update \$METIS_ISSUE_ID --repo-name <repo>".
 - Never assume a repo when the parent issue omitted job settings; leave repo_name unset unless you can confidently select one.
 
