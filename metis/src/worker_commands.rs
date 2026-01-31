@@ -41,7 +41,7 @@ impl Default for ModelAwareCommands {
 
 fn is_claude_model(model: &str) -> bool {
     let lc = model.to_ascii_lowercase();
-    return lc.contains("claude") || lc.contains("haiku") || lc.contains("sonnet") || lc.contains("opus");
+    lc.contains("claude") || lc.contains("haiku") || lc.contains("sonnet") || lc.contains("opus")
 }
 
 impl CodexCommands {
@@ -190,7 +190,7 @@ impl ClaudeCommands {
         }
 
         command.arg(prompt);
-        println!("command: {:?}", command);
+        println!("command: {command:?}");
 
         let output = command
             .output()
