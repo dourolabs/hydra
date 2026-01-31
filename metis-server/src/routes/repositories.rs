@@ -11,8 +11,7 @@ use metis_common::{
     api::v1::{
         ApiError,
         repositories::{
-            CreateRepositoryRequest, GetRepositoryResponse, ListRepositoriesResponse,
-            SetRepositorySummaryRequest, SetRepositorySummaryResponse, UpdateRepositoryRequest,
+            CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
             UpsertRepositoryResponse,
         },
     },
@@ -69,36 +68,6 @@ pub async fn update_repository(
     Ok(Json(UpsertRepositoryResponse::new(updated)))
 }
 
-pub async fn get_repository(
-    State(state): State<AppState>,
-    Path((organization, repo)): Path<(String, String)>,
-) -> Result<Json<GetRepositoryResponse>, ApiError> {
-    let name = parse_repo_name(organization, repo)?;
-    info!(repository = %name, "get_repository invoked");
-    let repository = state
-        .get_repository(name.clone())
-        .await
-        .map_err(map_repository_error)?;
-    info!(repository = %name, "get_repository completed");
-    Ok(Json(GetRepositoryResponse::new(repository)))
-}
-
-pub async fn set_repository_summary(
-    State(state): State<AppState>,
-    Path((organization, repo)): Path<(String, String)>,
-    Json(payload): Json<SetRepositorySummaryRequest>,
-) -> Result<Json<SetRepositorySummaryResponse>, ApiError> {
-    let name = parse_repo_name(organization, repo)?;
-    info!(repository = %name, "set_repository_summary invoked");
-    let summary = normalize_summary(payload.content_summary)?;
-    let updated = state
-        .set_repository_summary(name.clone(), summary)
-        .await
-        .map_err(map_repository_error)?;
-    info!(repository = %name, "set_repository_summary completed");
-    Ok(Json(SetRepositorySummaryResponse::new(updated)))
-}
-
 fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {
     config.remote_url = config.remote_url.trim().to_string();
     if config.remote_url.is_empty() {
@@ -111,6 +80,19 @@ fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {
     config.default_image = config
         .default_image
         .and_then(|value| non_empty(&value).map(str::to_owned));
+
+    if let Some(summary) = &config.content_summary {
+        if summary.trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "content summary must not be empty when provided",
+            ));
+        }
+        if summary.len() > MAX_REPOSITORY_SUMMARY_BYTES {
+            return Err(ApiError::bad_request(format!(
+                "content summary must be at most {MAX_REPOSITORY_SUMMARY_BYTES} bytes"
+            )));
+        }
+    }
 
     Ok(config)
 }
@@ -144,23 +126,4 @@ fn map_repository_error(err: RepositoryError) -> ApiError {
 
 fn parse_repo_name(organization: String, repo: String) -> Result<RepoName, ApiError> {
     RepoName::new(organization, repo).map_err(|err| ApiError::bad_request(err.to_string()))
-}
-
-fn normalize_summary(content_summary: Option<String>) -> Result<Option<String>, ApiError> {
-    match content_summary {
-        Some(summary) => {
-            if summary.trim().is_empty() {
-                return Err(ApiError::bad_request(
-                    "content summary must not be empty when provided",
-                ));
-            }
-            if summary.len() > MAX_REPOSITORY_SUMMARY_BYTES {
-                return Err(ApiError::bad_request(format!(
-                    "content summary must be at most {MAX_REPOSITORY_SUMMARY_BYTES} bytes"
-                )));
-            }
-            Ok(Some(summary))
-        }
-        None => Ok(None),
-    }
 }

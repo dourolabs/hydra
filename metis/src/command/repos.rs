@@ -6,10 +6,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::{
     constants::MAX_REPOSITORY_SUMMARY_BYTES,
-    repositories::{
-        CreateRepositoryRequest, Repository, RepositoryRecord, SetRepositorySummaryRequest,
-        UpdateRepositoryRequest,
-    },
+    repositories::{CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest},
     RepoName,
 };
 use serde_json::json;
@@ -27,19 +24,8 @@ pub enum ReposCommand {
     Create(CreateRepositoryArgs),
     /// Update an existing repository configuration.
     Update(UpdateRepositoryArgs),
-    /// Show or modify repository content summaries.
-    Summary {
-        #[command(subcommand)]
-        command: ReposSummaryCommand,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ReposSummaryCommand {
-    /// Print the stored content summary for a repository.
-    Show(ReposSummaryShowArgs),
-    /// Replace or clear the stored content summary.
-    Set(ReposSummarySetArgs),
+    /// Show repository details, including the stored content summary.
+    Details(ReposDetailsArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -110,28 +96,25 @@ pub struct UpdateRepositoryArgs {
     /// Clear the configured default image.
     #[arg(long = "clear-default-image")]
     pub clear_default_image: bool,
-}
 
-#[derive(Debug, Clone, Args)]
-pub struct ReposSummaryShowArgs {
-    /// Repository name in the form org/repo.
-    #[arg(value_name = "NAME")]
-    pub name: RepoName,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct ReposSummarySetArgs {
-    /// Repository name in the form org/repo.
-    #[arg(value_name = "NAME")]
-    pub name: RepoName,
-
-    /// Markdown file to read; pass '-' to read from stdin.
-    #[arg(long = "file", value_name = "FILE", conflicts_with = "clear")]
-    pub file: Option<PathBuf>,
+    /// Markdown file to use for the content summary; pass '-' to read from stdin.
+    #[arg(
+        long = "summary-file",
+        value_name = "FILE",
+        conflicts_with = "clear_summary"
+    )]
+    pub summary_file: Option<PathBuf>,
 
     /// Clear the stored summary.
-    #[arg(long = "clear")]
-    pub clear: bool,
+    #[arg(long = "clear-summary")]
+    pub clear_summary: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ReposDetailsArgs {
+    /// Repository name in the form org/repo.
+    #[arg(value_name = "NAME")]
+    pub name: RepoName,
 }
 
 pub async fn run(
@@ -153,14 +136,9 @@ pub async fn run(
             let repository = update_repository(client, args).await?;
             render_repository_records(context.output_format, &[repository], &mut stdout)?;
         }
-        ReposCommand::Summary { command } => match command {
-            ReposSummaryCommand::Show(args) => {
-                summary_show(client, args, context, &mut stdout).await?;
-            }
-            ReposSummaryCommand::Set(args) => {
-                summary_set(client, args, context, &mut stdout).await?;
-            }
-        },
+        ReposCommand::Details(args) => {
+            show_details(client, args, context, &mut stdout).await?;
+        }
     }
 
     Ok(())
@@ -172,6 +150,17 @@ async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<Rep
         .await
         .context("failed to list repositories")?;
     Ok(response.repositories)
+}
+
+async fn fetch_repository_by_name(
+    client: &dyn MetisClientInterface,
+    name: &RepoName,
+) -> Result<RepositoryRecord> {
+    let repositories = fetch_repositories(client).await?;
+    repositories
+        .into_iter()
+        .find(|repository| &repository.name == name)
+        .with_context(|| format!("repository '{name}' not found"))
 }
 
 async fn create_repository(
@@ -198,18 +187,16 @@ async fn update_repository(
     Ok(response.repository)
 }
 
-async fn summary_show(
+async fn show_details(
     client: &dyn MetisClientInterface,
-    args: ReposSummaryShowArgs,
+    args: ReposDetailsArgs,
     context: &CommandContext,
     writer: &mut dyn Write,
 ) -> Result<()> {
-    let repo_name = args.name;
-    let response = client
-        .get_repository(&repo_name)
+    let repo = fetch_repository_by_name(client, &args.name)
         .await
-        .context("failed to fetch repository summary")?;
-    let summary = response.repository.repository.content_summary.clone();
+        .context("failed to load repository details")?;
+    let summary = repo.repository.content_summary.clone();
 
     match context.output_format {
         ResolvedOutputFormat::Pretty => {
@@ -221,7 +208,8 @@ async fn summary_show(
             } else {
                 writeln!(
                     writer,
-                    "Repository '{repo_name}' does not have a content summary."
+                    "Repository '{}' does not have a content summary.",
+                    args.name
                 )?;
             }
         }
@@ -229,46 +217,8 @@ async fn summary_show(
             serde_json::to_writer(
                 &mut *writer,
                 &json!({
-                    "name": repo_name,
+                    "name": args.name,
                     "content_summary": summary,
-                }),
-            )?;
-            writer.write_all(b"\n")?;
-        }
-    }
-
-    writer.flush()?;
-    Ok(())
-}
-
-async fn summary_set(
-    client: &dyn MetisClientInterface,
-    args: ReposSummarySetArgs,
-    context: &CommandContext,
-    writer: &mut dyn Write,
-) -> Result<()> {
-    let repo_name = args.name.clone();
-    let content_summary = resolve_summary_input(&args)?;
-    let request = SetRepositorySummaryRequest::new(content_summary.clone());
-    let response = client
-        .set_repository_summary(&args.name, &request)
-        .await
-        .context("failed to update repository summary")?;
-
-    match context.output_format {
-        ResolvedOutputFormat::Pretty => {
-            if content_summary.is_some() {
-                writeln!(writer, "Updated content summary for {repo_name}.")?;
-            } else {
-                writeln!(writer, "Cleared content summary for {repo_name}.")?;
-            }
-        }
-        ResolvedOutputFormat::Jsonl => {
-            serde_json::to_writer(
-                &mut *writer,
-                &json!({
-                    "name": response.repository.name,
-                    "content_summary": response.repository.repository.content_summary,
                 }),
             )?;
             writer.write_all(b"\n")?;
@@ -296,17 +246,71 @@ async fn build_update_request(
     client: &dyn MetisClientInterface,
     args: &UpdateRepositoryArgs,
 ) -> Result<(RepoName, UpdateRepositoryRequest)> {
-    let remote_url = resolve_remote_url(client, args).await?;
+    let existing = fetch_repository_by_name(client, &args.name)
+        .await
+        .context("failed to load repository config")?;
+    let current = existing.repository;
+
+    let remote_url = resolve_remote_url_arg(&args.remote_url, &current.remote_url)?;
+    let default_branch = resolve_optional_with_current(
+        &args.default_branch,
+        args.clear_default_branch,
+        &current.default_branch,
+        "default branch",
+        "--clear-default-branch",
+    )?;
+    let default_image = resolve_optional_with_current(
+        &args.default_image,
+        args.clear_default_image,
+        &current.default_image,
+        "default image",
+        "--clear-default-image",
+    )?;
+    let content_summary = apply_summary_override(
+        resolve_summary_override(args)?,
+        current.content_summary.clone(),
+    );
+
     Ok((
         args.name.clone(),
-        UpdateRepositoryRequest::new(build_repository_config(
+        UpdateRepositoryRequest::new(Repository::new(
             remote_url,
-            &args.default_branch,
-            args.clear_default_branch,
-            &args.default_image,
-            args.clear_default_image,
-        )?),
+            default_branch,
+            default_image,
+            content_summary,
+        )),
     ))
+}
+
+fn resolve_remote_url_arg(remote_url: &Option<String>, current: &str) -> Result<String> {
+    if let Some(url) = remote_url {
+        return parse_required(url, "remote URL");
+    }
+
+    Ok(current.to_string())
+}
+
+fn resolve_optional_with_current(
+    value: &Option<String>,
+    clear_flag: bool,
+    current: &Option<String>,
+    field: &str,
+    clear_arg: &str,
+) -> Result<Option<String>> {
+    if clear_flag {
+        return Ok(None);
+    }
+
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("{field} must not be empty (use {clear_arg} to clear it)");
+            }
+            Ok(Some(trimmed.to_string()))
+        }
+        None => Ok(current.clone()),
+    }
 }
 
 fn build_repository_config(
@@ -334,18 +338,36 @@ fn build_repository_config(
     ))
 }
 
-fn resolve_summary_input(args: &ReposSummarySetArgs) -> Result<Option<String>> {
-    if args.clear {
-        return Ok(None);
+#[derive(Debug)]
+enum SummaryOverride {
+    Unchanged,
+    Clear,
+    Set(String),
+}
+
+fn resolve_summary_override(args: &UpdateRepositoryArgs) -> Result<SummaryOverride> {
+    if args.clear_summary {
+        return Ok(SummaryOverride::Clear);
     }
 
-    let path = args
-        .file
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--file is required unless --clear is set"))?;
-    let contents = read_summary_from_source(path)?;
-    validate_summary_contents(&contents)?;
-    Ok(Some(contents))
+    if let Some(path) = args.summary_file.as_deref() {
+        let contents = read_summary_from_source(path)?;
+        validate_summary_contents(&contents)?;
+        return Ok(SummaryOverride::Set(contents));
+    }
+
+    Ok(SummaryOverride::Unchanged)
+}
+
+fn apply_summary_override(
+    summary_override: SummaryOverride,
+    current: Option<String>,
+) -> Option<String> {
+    match summary_override {
+        SummaryOverride::Unchanged => current,
+        SummaryOverride::Clear => None,
+        SummaryOverride::Set(value) => Some(value),
+    }
 }
 
 fn read_summary_from_source(path: &Path) -> Result<String> {
@@ -371,27 +393,6 @@ fn validate_summary_contents(contents: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-async fn resolve_remote_url(
-    client: &dyn MetisClientInterface,
-    args: &UpdateRepositoryArgs,
-) -> Result<String> {
-    if let Some(remote_url) = &args.remote_url {
-        return parse_required(remote_url, "remote URL");
-    }
-
-    let repositories = fetch_repositories(client).await?;
-    let repository = repositories
-        .into_iter()
-        .find(|repository| repository.name == args.name)
-        .with_context(|| {
-            format!(
-                "repository '{}' not found; pass --remote-url to set one",
-                args.name
-            )
-        })?;
-    parse_required(&repository.repository.remote_url, "remote URL")
 }
 
 fn parse_required(value: &str, field: &str) -> Result<String> {
@@ -434,8 +435,7 @@ mod tests {
     };
     use httpmock::prelude::*;
     use metis_common::repositories::{
-        GetRepositoryResponse, ListRepositoriesResponse, Repository, RepositoryRecord,
-        SetRepositorySummaryResponse, UpsertRepositoryResponse,
+        ListRepositoriesResponse, Repository, RepositoryRecord, UpsertRepositoryResponse,
     };
     use reqwest::Client as HttpClient;
     use serde_json::json;
@@ -463,6 +463,8 @@ mod tests {
             clear_default_branch: false,
             default_image: Some("ghcr.io/dourolabs/metis:latest".to_string()),
             clear_default_image: false,
+            summary_file: None,
+            clear_summary: false,
         }
     }
 
@@ -589,6 +591,13 @@ mod tests {
         args.default_branch = None;
         args.default_image = Some("ghcr.io/dourolabs/metis:stable".to_string());
         let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path("/v1/repositories/dourolabs/metis")
@@ -620,6 +629,7 @@ mod tests {
         assert!(output.contains("default_branch: <none>"));
 
         update_mock.assert();
+        list_mock.assert();
     }
 
     #[tokio::test]
@@ -641,7 +651,7 @@ mod tests {
                 .path("/v1/repositories/dourolabs/metis")
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
-                    "default_branch": null,
+                    "default_branch": "main",
                     "default_image": "ghcr.io/dourolabs/metis:stable",
                     "content_summary": null
                 }));
@@ -650,7 +660,7 @@ mod tests {
                     args.name.clone(),
                     Repository::new(
                         "https://example.com/metis.git".to_string(),
-                        None,
+                        Some("main".to_string()),
                         args.default_image.clone(),
                         None,
                     ),
@@ -671,6 +681,14 @@ mod tests {
     #[tokio::test]
     async fn update_repository_reports_client_error() {
         let server = MockServer::start();
+        let args = sample_update_args();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
+        });
         let update_mock = server.mock(|when, then| {
             when.method(PUT)
                 .path("/v1/repositories/dourolabs/metis")
@@ -683,7 +701,6 @@ mod tests {
             then.status(404);
         });
         let client = mock_client(&server);
-        let args = sample_update_args();
 
         let error = update_repository(&client, args).await.unwrap_err();
         assert!(
@@ -692,12 +709,13 @@ mod tests {
         );
 
         update_mock.assert();
+        list_mock.assert();
     }
 
     #[tokio::test]
-    async fn summary_show_prints_markdown_in_pretty_mode() {
+    async fn details_prints_markdown_in_pretty_mode() {
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        let response = GetRepositoryResponse::new(RepositoryRecord::new(
+        let repositories = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
             repo_name.clone(),
             Repository::new(
                 "https://example.com/metis.git".to_string(),
@@ -705,24 +723,24 @@ mod tests {
                 None,
                 Some("## Summary\nLine".to_string()),
             ),
-        ));
+        )]);
         let server = MockServer::start();
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories/dourolabs/metis");
-            then.status(200).json_body_obj(&response);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&repositories);
         });
         let client = mock_client(&server);
-        let args = ReposSummaryShowArgs {
+        let args = ReposDetailsArgs {
             name: repo_name.clone(),
         };
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
         let mut output = Vec::new();
 
-        summary_show(&client, args, &context, &mut output)
+        show_details(&client, args, &context, &mut output)
             .await
             .unwrap();
 
-        get_mock.assert();
+        list_mock.assert();
         assert_eq!(
             String::from_utf8(output).unwrap(),
             "## Summary\nLine\n".to_string()
@@ -730,9 +748,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summary_show_reports_missing_summary() {
+    async fn details_reports_missing_summary() {
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        let response = GetRepositoryResponse::new(RepositoryRecord::new(
+        let repositories = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
             repo_name.clone(),
             Repository::new(
                 "https://example.com/metis.git".to_string(),
@@ -740,32 +758,32 @@ mod tests {
                 None,
                 None,
             ),
-        ));
+        )]);
         let server = MockServer::start();
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories/dourolabs/metis");
-            then.status(200).json_body_obj(&response);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&repositories);
         });
         let client = mock_client(&server);
-        let args = ReposSummaryShowArgs {
+        let args = ReposDetailsArgs {
             name: repo_name.clone(),
         };
         let context = CommandContext::new(ResolvedOutputFormat::Pretty);
         let mut output = Vec::new();
 
-        summary_show(&client, args, &context, &mut output)
+        show_details(&client, args, &context, &mut output)
             .await
             .unwrap();
 
-        get_mock.assert();
+        list_mock.assert();
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("does not have a content summary"));
     }
 
     #[tokio::test]
-    async fn summary_show_supports_jsonl_output() {
+    async fn details_supports_jsonl_output() {
         let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        let response = GetRepositoryResponse::new(RepositoryRecord::new(
+        let repositories = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
             repo_name.clone(),
             Repository::new(
                 "https://example.com/metis.git".to_string(),
@@ -773,22 +791,22 @@ mod tests {
                 None,
                 Some("## Summary".to_string()),
             ),
-        ));
+        )]);
         let server = MockServer::start();
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories/dourolabs/metis");
-            then.status(200).json_body_obj(&response);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200).json_body_obj(&repositories);
         });
         let client = mock_client(&server);
-        let args = ReposSummaryShowArgs { name: repo_name };
+        let args = ReposDetailsArgs { name: repo_name };
         let context = CommandContext::new(ResolvedOutputFormat::Jsonl);
         let mut output = Vec::new();
 
-        summary_show(&client, args, &context, &mut output)
+        show_details(&client, args, &context, &mut output)
             .await
             .unwrap();
 
-        get_mock.assert();
+        list_mock.assert();
         let rendered = String::from_utf8(output).unwrap();
         assert!(
             rendered.contains("\"content_summary\":\"## Summary\""),
@@ -797,65 +815,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summary_set_reads_file_and_prints_status() {
-        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
+    async fn update_repository_reads_summary_from_file() {
+        let mut args = sample_update_args();
         let server = MockServer::start();
-        let response = SetRepositorySummaryResponse::new(RepositoryRecord::new(
-            repo_name.clone(),
-            Repository::new(
-                "https://example.com/metis.git".to_string(),
-                None,
-                None,
-                Some("## CLI Summary".to_string()),
-            ),
-        ));
-        let set_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis/content-summary")
-                .json_body(json!({ "content_summary": "## CLI Summary" }));
-            then.status(200).json_body_obj(&response);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![
+                    sample_repository_info(&args.name),
+                ]));
         });
-        let client = mock_client(&server);
         let mut file = NamedTempFile::new().unwrap();
         std::io::Write::write_all(&mut file, b"## CLI Summary").unwrap();
-        let args = ReposSummarySetArgs {
-            name: repo_name,
-            file: Some(file.path().to_path_buf()),
-            clear: false,
-        };
-        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-        let mut output = Vec::new();
+        args.summary_file = Some(file.path().to_path_buf());
 
-        summary_set(&client, args, &context, &mut output)
-            .await
-            .unwrap();
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:latest",
+                    "content_summary": "## CLI Summary"
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(sample_repository_info(
+                    &args.name,
+                )));
+        });
+        let client = mock_client(&server);
 
-        set_mock.assert();
-        let rendered = String::from_utf8(output).unwrap();
-        assert!(rendered.contains("Updated content summary"));
+        update_repository(&client, args).await.unwrap();
+
+        list_mock.assert();
+        update_mock.assert();
     }
 
     #[tokio::test]
-    async fn summary_set_requires_input_when_not_clearing() {
-        let repo_name = RepoName::from_str("dourolabs/metis").unwrap();
-        let client = mock_client(&MockServer::start());
-        let args = ReposSummarySetArgs {
-            name: repo_name,
-            file: None,
-            clear: false,
-        };
-        let context = CommandContext::new(ResolvedOutputFormat::Pretty);
-        let mut output = Vec::new();
-
-        let error = summary_set(&client, args, &context, &mut output)
-            .await
-            .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("--file is required unless --clear is set"),
-            "{error:?}"
+    async fn update_repository_clears_summary_when_flag_set() {
+        let mut args = sample_update_args();
+        args.summary_file = None;
+        args.clear_summary = true;
+        let server = MockServer::start();
+        let existing = RepositoryRecord::new(
+            args.name.clone(),
+            Repository::new(
+                "https://example.com/metis.git".to_string(),
+                Some("main".to_string()),
+                Some("ghcr.io/dourolabs/metis:latest".to_string()),
+                Some("## Old summary".to_string()),
+            ),
         );
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![existing.clone()]));
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path("/v1/repositories/dourolabs/metis")
+                .json_body(json!({
+                    "remote_url": "https://example.com/metis.git",
+                    "default_branch": "main",
+                    "default_image": "ghcr.io/dourolabs/metis:latest",
+                    "content_summary": null
+                }));
+            then.status(200)
+                .json_body_obj(&UpsertRepositoryResponse::new(existing.clone()));
+        });
+        let client = mock_client(&server);
+
+        update_repository(&client, args).await.unwrap();
+
+        list_mock.assert();
+        update_mock.assert();
     }
 }

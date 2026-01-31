@@ -25,8 +25,7 @@ use metis_common::{
         UpsertPatchResponse,
     },
     repositories::{
-        CreateRepositoryRequest, GetRepositoryResponse, ListRepositoriesResponse,
-        SetRepositorySummaryRequest, SetRepositorySummaryResponse, UpdateRepositoryRequest,
+        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
     whoami::WhoAmIResponse,
@@ -170,12 +169,6 @@ pub trait MetisClientInterface: Send + Sync {
         repo_name: &RepoName,
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
-    async fn get_repository(&self, repo_name: &RepoName) -> Result<GetRepositoryResponse>;
-    async fn set_repository_summary(
-        &self,
-        repo_name: &RepoName,
-        request: &SetRepositorySummaryRequest,
-    ) -> Result<SetRepositorySummaryResponse>;
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
@@ -912,55 +905,6 @@ impl MetisClient {
             .context("failed to decode update repository response")
     }
 
-    /// Call `GET /v1/repositories/:organization/:repo` to fetch a repository config.
-    pub async fn get_repository(&self, repo_name: &RepoName) -> Result<GetRepositoryResponse> {
-        let path = format!(
-            "/v1/repositories/{}/{}",
-            repo_name.organization, repo_name.repo
-        );
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.get(url))
-            .send()
-            .await
-            .context("failed to fetch repository")?
-            .error_for_status_with_body("metis-server returned an error while fetching repository")
-            .await?;
-
-        response
-            .json::<GetRepositoryResponse>()
-            .await
-            .context("failed to decode get repository response")
-    }
-
-    /// Call `PUT /v1/repositories/:organization/:repo/content-summary` to set a repository summary.
-    pub async fn set_repository_summary(
-        &self,
-        repo_name: &RepoName,
-        request: &SetRepositorySummaryRequest,
-    ) -> Result<SetRepositorySummaryResponse> {
-        let path = format!(
-            "/v1/repositories/{}/{}/content-summary",
-            repo_name.organization, repo_name.repo
-        );
-        let url = self.endpoint(&path)?;
-        let response = self
-            .authed(self.http.put(url))
-            .json(request)
-            .send()
-            .await
-            .context("failed to submit set repository summary request")?
-            .error_for_status_with_body(
-                "metis-server returned an error while setting repository summary",
-            )
-            .await?;
-
-        response
-            .json::<SetRepositorySummaryResponse>()
-            .await
-            .context("failed to decode set repository summary response")
-    }
-
     /// Call `GET /v1/github/token` to fetch the authenticated user's GitHub token.
     pub async fn get_github_token(&self) -> Result<String> {
         let url = self.endpoint("/v1/github/token")?;
@@ -1389,18 +1333,6 @@ impl MetisClientInterface for MetisClient {
         MetisClient::update_repository(self, repo_name, request).await
     }
 
-    async fn get_repository(&self, repo_name: &RepoName) -> Result<GetRepositoryResponse> {
-        MetisClient::get_repository(self, repo_name).await
-    }
-
-    async fn set_repository_summary(
-        &self,
-        repo_name: &RepoName,
-        request: &SetRepositorySummaryRequest,
-    ) -> Result<SetRepositorySummaryResponse> {
-        MetisClient::set_repository_summary(self, repo_name, request).await
-    }
-
     async fn get_github_token(&self) -> Result<String> {
         MetisClient::get_github_token(self).await
     }
@@ -1453,8 +1385,7 @@ mod tests {
     use httpmock::prelude::*;
     use metis_common::{
         repositories::{
-            CreateRepositoryRequest, GetRepositoryResponse, Repository, RepositoryRecord,
-            SetRepositorySummaryRequest, SetRepositorySummaryResponse, UpdateRepositoryRequest,
+            CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
         },
         PatchId,
     };
@@ -1581,68 +1512,6 @@ mod tests {
             "{message}"
         );
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn get_repository_fetches_record() -> Result<()> {
-        let server = MockServer::start();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
-        let repository = RepositoryRecord::new(
-            repo_name.clone(),
-            Repository::new(
-                "https://example.com/metis.git".to_string(),
-                Some("main".to_string()),
-                None,
-                Some("# Summary".to_string()),
-            ),
-        );
-        let response_body = GetRepositoryResponse::new(repository.clone());
-        let mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories/dourolabs/metis");
-            then.status(200).json_body_obj(&response_body);
-        });
-        let client =
-            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-
-        let response = client.get_repository(&repo_name).await?;
-
-        mock.assert();
-        assert_eq!(response.repository, repository);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn set_repository_summary_sends_payload() -> Result<()> {
-        let server = MockServer::start();
-        let repo_name = RepoName::from_str("dourolabs/metis")?;
-        let summary = "## Updated summary";
-        let request = SetRepositorySummaryRequest::new(Some(summary.to_string()));
-        let repository = RepositoryRecord::new(
-            repo_name.clone(),
-            Repository::new(
-                "https://example.com/metis.git".to_string(),
-                Some("main".to_string()),
-                None,
-                Some(summary.to_string()),
-            ),
-        );
-        let response_body = SetRepositorySummaryResponse::new(repository.clone());
-
-        let mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/metis/content-summary")
-                .json_body(json!({ "content_summary": "## Updated summary" }));
-            then.status(200).json_body_obj(&response_body);
-        });
-
-        let client =
-            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
-
-        let response = client.set_repository_summary(&repo_name, &request).await?;
-
-        mock.assert();
-        assert_eq!(response.repository, repository);
         Ok(())
     }
 

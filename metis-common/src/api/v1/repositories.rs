@@ -89,18 +89,6 @@ impl UpsertRepositoryResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct GetRepositoryResponse {
-    pub repository: RepositoryRecord,
-}
-
-impl GetRepositoryResponse {
-    pub fn new(repository: RepositoryRecord) -> Self {
-        Self { repository }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct ListRepositoriesResponse {
     pub repositories: Vec<RepositoryRecord>,
 }
@@ -108,30 +96,5 @@ pub struct ListRepositoriesResponse {
 impl ListRepositoriesResponse {
     pub fn new(repositories: Vec<RepositoryRecord>) -> Self {
         Self { repositories }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct SetRepositorySummaryRequest {
-    #[serde(default)]
-    pub content_summary: Option<String>,
-}
-
-impl SetRepositorySummaryRequest {
-    pub fn new(content_summary: Option<String>) -> Self {
-        Self { content_summary }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct SetRepositorySummaryResponse {
-    pub repository: RepositoryRecord,
-}
-
-impl SetRepositorySummaryResponse {
-    pub fn new(repository: RepositoryRecord) -> Self {
-        Self { repository }
     }
 }
