@@ -2,7 +2,8 @@ use crate::{
     app::{AppState, Repository, ServiceState},
     background::AgentQueue,
     config::{
-        AppConfig, BackgroundSection, BuildCacheSection, DatabaseSection, GithubAppSection,
+        AgentQueueConfig, AppConfig, BackgroundSection, BuildCacheSection,
+        DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES, DatabaseSection, GithubAppSection,
         JobSection, KubernetesSection, MetisSection,
     },
     domain::actors::Actor,
@@ -76,7 +77,14 @@ pub fn test_app_config() -> AppConfig {
             oauth_base_url: "https://github.com".to_string(),
         },
         background: BackgroundSection {
+            agent_queues: vec![AgentQueueConfig {
+                name: "swe".to_string(),
+                prompt: "prompt".to_string(),
+                max_tries: DEFAULT_AGENT_MAX_TRIES,
+                max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            }],
             merge_request_followup_agent: "swe".to_string(),
+            assignment_agent: "swe".to_string(),
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
