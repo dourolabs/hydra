@@ -71,6 +71,20 @@ into smaller tasks for development. Try writing a more complex feature descripti
 metis issues create --assignee pm --repo-name your-org/your-repo "Feature: please build XYZ"
 ```
 
+## 6) Launch and monitor jobs with the CLI
+
+Use `metis jobs` whenever you need to spin up a background worker for a repo prompt, stream its logs, or reproduce the job locally for debugging. For a quick start:
+
+```bash
+# Start a job and stream logs until it finishes
+metis jobs create --repo your-org/your-service --wait "triage flaky tests"
+
+# Watch the same job later
+metis jobs logs t-job123 --watch
+```
+
+See [metis/docs/jobs.md](metis/docs/jobs.md) for every subcommand (`create`, `list`, `logs`, `kill`, `worker-run`), important flags, and workflow examples.
+
 ## Maintain Shared Documents
 
 Use `metis documents` to capture design docs, runbooks, and other markdown artifacts in the server store. See [metis/docs/documents.md](metis/docs/documents.md) for a complete tour of the subcommands, input flags, and examples.
