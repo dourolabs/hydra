@@ -6,6 +6,10 @@ use metis_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::error::ApiErrorBody,
     api::v1::login::{LoginRequest, LoginResponse},
+    documents::{
+        DocumentRecord, DocumentVersionRecord, ListDocumentVersionsResponse, ListDocumentsResponse,
+        SearchDocumentsQuery, UpsertDocumentRequest, UpsertDocumentResponse,
+    },
     github::{GithubAppClientIdResponse, GithubTokenResponse},
     issues::{
         AddTodoItemRequest, IssueRecord, ListIssueVersionsResponse, ListIssuesResponse,
@@ -29,7 +33,7 @@ use metis_common::{
         UpsertRepositoryResponse,
     },
     whoami::WhoAmIResponse,
-    IssueId, PatchId, RepoName, TaskId,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, Url};
 use serde::Deserialize;
@@ -158,6 +162,26 @@ pub trait MetisClientInterface: Send + Sync {
     async fn get_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
     async fn list_patches(&self, query: &SearchPatchesQuery) -> Result<ListPatchesResponse>;
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse>;
+    async fn create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse>;
+    async fn update_document(
+        &self,
+        document_id: &DocumentId,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse>;
+    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
+    async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse>;
+    async fn list_document_versions(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<ListDocumentVersionsResponse>;
+    async fn get_document_version(
+        &self,
+        document_id: &DocumentId,
+        version: &VersionNumber,
+    ) -> Result<DocumentVersionRecord>;
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String>;
     async fn list_repositories(&self) -> Result<ListRepositoriesResponse>;
     async fn create_repository(
@@ -809,6 +833,136 @@ impl MetisClient {
             .context("failed to decode list patch versions response")
     }
 
+    /// Call `POST /v1/documents` to create a document.
+    pub async fn create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        let url = self.endpoint("/v1/documents")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create document request")?
+            .error_for_status_with_body("metis-server rejected create document request")
+            .await?;
+
+        response
+            .json::<UpsertDocumentResponse>()
+            .await
+            .context("failed to decode create document response")
+    }
+
+    /// Call `PUT /v1/documents/:document_id` to update a document.
+    pub async fn update_document(
+        &self,
+        document_id: &DocumentId,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        let path = format!("/v1/documents/{document_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.put(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update document request")?
+            .error_for_status_with_body("metis-server returned an error while updating document")
+            .await?;
+
+        response
+            .json::<UpsertDocumentResponse>()
+            .await
+            .context("failed to decode update document response")
+    }
+
+    /// Call `GET /v1/documents/:document_id` to fetch a document.
+    pub async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+        let path = format!("/v1/documents/{document_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch document")?
+            .error_for_status_with_body("metis-server returned an error while fetching document")
+            .await?;
+
+        response
+            .json::<DocumentRecord>()
+            .await
+            .context("failed to decode document response")
+    }
+
+    /// Call `GET /v1/documents` to list documents.
+    pub async fn list_documents(
+        &self,
+        query: &SearchDocumentsQuery,
+    ) -> Result<ListDocumentsResponse> {
+        let url = self.endpoint("/v1/documents")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch documents list")?
+            .error_for_status_with_body("metis-server returned an error while listing documents")
+            .await?;
+
+        response
+            .json::<ListDocumentsResponse>()
+            .await
+            .context("failed to decode list documents response")
+    }
+
+    /// Call `GET /v1/documents/:document_id/versions` to list document versions.
+    pub async fn list_document_versions(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<ListDocumentVersionsResponse> {
+        let path = format!("/v1/documents/{document_id}/versions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch document versions")?
+            .error_for_status_with_body(
+                "metis-server returned an error while listing document versions",
+            )
+            .await?;
+
+        response
+            .json::<ListDocumentVersionsResponse>()
+            .await
+            .context("failed to decode list document versions response")
+    }
+
+    /// Call `GET /v1/documents/:document_id/versions/:version` to fetch a document version.
+    pub async fn get_document_version(
+        &self,
+        document_id: &DocumentId,
+        version: &VersionNumber,
+    ) -> Result<DocumentVersionRecord> {
+        let path = format!("/v1/documents/{document_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch document version")?
+            .error_for_status_with_body(
+                "metis-server returned an error while fetching document version",
+            )
+            .await?;
+
+        response
+            .json::<DocumentVersionRecord>()
+            .await
+            .context("failed to decode document version response")
+    }
+
     /// Call `POST /v1/patches/:patch_id/assets` to upload a patch asset.
     pub async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {
         let file_name = file_path
@@ -1308,6 +1462,44 @@ impl MetisClientInterface for MetisClient {
 
     async fn list_patch_versions(&self, patch_id: &PatchId) -> Result<ListPatchVersionsResponse> {
         MetisClient::list_patch_versions(self, patch_id).await
+    }
+
+    async fn create_document(
+        &self,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        MetisClient::create_document(self, request).await
+    }
+
+    async fn update_document(
+        &self,
+        document_id: &DocumentId,
+        request: &UpsertDocumentRequest,
+    ) -> Result<UpsertDocumentResponse> {
+        MetisClient::update_document(self, document_id, request).await
+    }
+
+    async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+        MetisClient::get_document(self, document_id).await
+    }
+
+    async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {
+        MetisClient::list_documents(self, query).await
+    }
+
+    async fn list_document_versions(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<ListDocumentVersionsResponse> {
+        MetisClient::list_document_versions(self, document_id).await
+    }
+
+    async fn get_document_version(
+        &self,
+        document_id: &DocumentId,
+        version: &VersionNumber,
+    ) -> Result<DocumentVersionRecord> {
+        MetisClient::get_document_version(self, document_id, version).await
     }
 
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String> {

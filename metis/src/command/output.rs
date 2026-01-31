@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::ValueEnum;
 use metis_common::{
     agents::AgentRecord,
+    documents::DocumentRecord,
     issues::{Issue, IssueRecord},
     jobs::JobRecord,
     patches::{PatchRecord, PatchStatus},
@@ -26,6 +27,8 @@ const STATUS_WIDTH: usize = 26;
 const RUNTIME_WIDTH: usize = 12;
 const MAX_NOTES_WIDTH: usize = 80;
 const MAX_NOTE_LINES: usize = 5;
+const MAX_DOCUMENT_BODY_LINES: usize = 20;
+const MAX_DOCUMENT_BODY_WIDTH: usize = 120;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -115,6 +118,17 @@ pub fn render_repository_records(
     match format {
         ResolvedOutputFormat::Jsonl => render_repository_records_jsonl(repositories, writer),
         ResolvedOutputFormat::Pretty => render_repository_records_pretty(repositories, writer),
+    }
+}
+
+pub fn render_document_records(
+    format: ResolvedOutputFormat,
+    documents: &[DocumentRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Jsonl => render_document_records_jsonl(documents, writer),
+        ResolvedOutputFormat::Pretty => render_document_records_pretty(documents, writer),
     }
 }
 
@@ -403,6 +417,69 @@ fn write_repository_details(repository: &RepositoryRecord, writer: &mut impl Wri
     Ok(())
 }
 
+fn render_document_records_jsonl(
+    documents: &[DocumentRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    for document in documents {
+        serde_json::to_writer(&mut *writer, document)?;
+        writer.write_all(b"\n")?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+fn render_document_records_pretty(
+    documents: &[DocumentRecord],
+    writer: &mut impl Write,
+) -> Result<()> {
+    if documents.is_empty() {
+        writeln!(writer, "No documents found.")?;
+        writer.flush()?;
+        return Ok(());
+    }
+
+    for (index, record) in documents.iter().enumerate() {
+        writeln!(writer, "Document {}", record.id)?;
+        writeln!(writer, "Title: {}", record.document.title)?;
+        let path = record.document.path.as_deref().unwrap_or("-");
+        writeln!(writer, "Path: {path}")?;
+        let created_by = record
+            .document
+            .created_by
+            .as_ref()
+            .map(|id| id.as_ref())
+            .unwrap_or("-");
+        writeln!(writer, "Created by: {created_by}")?;
+        writeln!(writer, "Body:")?;
+
+        let lines: Vec<String> = record
+            .document
+            .body_markdown
+            .lines()
+            .map(|line| line.to_string())
+            .collect();
+        if lines.is_empty() {
+            writeln!(writer, "  -")?;
+        } else {
+            let truncated = truncate_lines(lines, MAX_DOCUMENT_BODY_LINES, MAX_DOCUMENT_BODY_WIDTH);
+            for line in truncated {
+                if line.is_empty() {
+                    writeln!(writer, "  ")?;
+                } else {
+                    writeln!(writer, "  {line}")?;
+                }
+            }
+        }
+
+        if index + 1 < documents.len() {
+            writeln!(writer)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 struct JobRowCells {
     id: String,
     status: String,
@@ -557,7 +634,11 @@ mod tests {
     use super::*;
     use crate::client::MetisClient;
     use httpmock::prelude::*;
-    use metis_common::{whoami::WhoAmIResponse, TaskId};
+    use metis_common::{
+        documents::{Document, DocumentRecord},
+        whoami::WhoAmIResponse,
+        DocumentId, TaskId,
+    };
     use std::str::FromStr;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -666,5 +747,23 @@ mod tests {
         assert_eq!(format_status(&Status::Running), "running");
         assert_eq!(format_status(&Status::Complete), "complete");
         assert_eq!(format_status(&Status::Failed), "failed");
+    }
+
+    #[test]
+    fn render_document_records_truncates_body() {
+        let mut body_lines = Vec::new();
+        for index in 0..25 {
+            body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
+        }
+        let document = Document::new("Doc".to_string(), body_lines.join("\n"))
+            .with_path("docs/runbook.md")
+            .with_created_by(TaskId::new());
+        let record = DocumentRecord::new(DocumentId::new(), document);
+        let mut output = Vec::new();
+        render_document_records(ResolvedOutputFormat::Pretty, &[record], &mut output).unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Document"));
+        assert!(rendered.contains("line 19"));
+        assert!(rendered.contains("..."));
     }
 }

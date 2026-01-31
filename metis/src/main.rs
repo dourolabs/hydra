@@ -89,6 +89,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::patches::PatchesCommand,
     },
+    /// Manage markdown documents.
+    Documents {
+        #[command(subcommand)]
+        command: command::documents::DocumentsCommand,
+    },
     /// Manage build caches.
     Caches {
         #[command(subcommand)]
@@ -185,6 +190,9 @@ async fn dispatch(
         Commands::Jobs { command } => command::jobs::run(client, command, context).await?,
         Commands::Agents { command } => command::agents::run(client, command, context).await?,
         Commands::Patches { command } => command::patches::run(client, command, context).await?,
+        Commands::Documents { command } => {
+            command::documents::run(client, command, context).await?
+        }
         Commands::Caches { command } => command::caches::run(command, context).await?,
         Commands::Dashboard => {
             command::dashboard::run(client, server_url, cli.browser.as_deref(), context).await?
