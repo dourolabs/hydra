@@ -34,7 +34,7 @@ pub const ISSUE_SCHEMA_VERSION: i32 = 1;
 pub const PATCH_SCHEMA_VERSION: i32 = 1;
 pub const TASK_SCHEMA_VERSION: i32 = 1;
 pub const USER_SCHEMA_VERSION: i32 = 3;
-pub const REPOSITORY_SCHEMA_VERSION: i32 = 2;
+pub const REPOSITORY_SCHEMA_VERSION: i32 = 1;
 pub const ACTOR_SCHEMA_VERSION: i32 = 3;
 pub const DOCUMENT_SCHEMA_VERSION: i32 = 1;
 
@@ -1279,7 +1279,6 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
-            Some("Repository **summary** goes here.".to_string()),
         )
     }
 
