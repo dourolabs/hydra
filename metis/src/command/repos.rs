@@ -197,6 +197,7 @@ fn build_repository_config(
             "default image",
             "--clear-default-image",
         )?,
+        None,
     ))
 }
 
@@ -296,6 +297,7 @@ mod tests {
                 "https://example.com/metis.git".to_string(),
                 Some("main".to_string()),
                 Some("ghcr.io/dourolabs/metis:latest".to_string()),
+                None,
             ),
         )
     }
@@ -312,7 +314,12 @@ mod tests {
             sample_repository_info(&repo_name),
             RepositoryRecord::new(
                 RepoName::from_str("dourolabs/api").unwrap(),
-                Repository::new("git@github.com:dourolabs/api.git".to_string(), None, None),
+                Repository::new(
+                    "git@github.com:dourolabs/api.git".to_string(),
+                    None,
+                    None,
+                    None,
+                ),
             ),
         ]);
         let server = MockServer::start();
@@ -365,7 +372,8 @@ mod tests {
                 "name": "dourolabs/metis",
                 "remote_url": "https://example.com/metis.git",
                 "default_branch": "main",
-                "default_image": "ghcr.io/dourolabs/metis:latest"
+                "default_image": "ghcr.io/dourolabs/metis:latest",
+                "content_summary": null
             }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(repository.clone()));
@@ -410,7 +418,8 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": null,
-                    "default_image": "ghcr.io/dourolabs/metis:stable"
+                    "default_image": "ghcr.io/dourolabs/metis:stable",
+                    "content_summary": null
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -419,6 +428,7 @@ mod tests {
                         args.remote_url.clone().unwrap(),
                         None,
                         args.default_image.clone(),
+                        None,
                     ),
                 )));
         });
@@ -455,7 +465,8 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": null,
-                    "default_image": "ghcr.io/dourolabs/metis:stable"
+                    "default_image": "ghcr.io/dourolabs/metis:stable",
+                    "content_summary": null
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -464,6 +475,7 @@ mod tests {
                         "https://example.com/metis.git".to_string(),
                         None,
                         args.default_image.clone(),
+                        None,
                     ),
                 )));
         });
@@ -488,7 +500,8 @@ mod tests {
                 .json_body(json!({
                     "remote_url": "https://example.com/metis.git",
                     "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/metis:latest"
+                    "default_image": "ghcr.io/dourolabs/metis:latest",
+                    "content_summary": null
                 }));
             then.status(404);
         });

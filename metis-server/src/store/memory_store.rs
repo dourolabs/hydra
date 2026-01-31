@@ -685,6 +685,7 @@ mod tests {
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
             Some("image:latest".to_string()),
+            Some("Repository **summary** goes here.".to_string()),
         )
     }
 
