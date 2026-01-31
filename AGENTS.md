@@ -10,6 +10,10 @@ Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers
 - `METIS_CONFIG=metis-server/config.toml cargo run -p metis-server` launches the HTTP service with the desired config.
 - `./scripts/docker-build.sh` builds all deployment containers.
 
+### Assignment Agent Queue
+- After configuring your `background.agent_queues`, set `background.assignment_agent` to the queue dedicated to auto-assigning unowned issues.
+- The assignment queue name must also exist under `background.agent_queues`; the same requirement already applies to `background.merge_request_followup_agent`.
+
 ## Documentation Guidelines
 - Do not add CLI command details to `README.md` unless explicitly requested; the README has tight space and should stay focused on top-level orientation, so keep command-specific docs elsewhere.
 

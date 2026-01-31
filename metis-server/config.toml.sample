@@ -89,6 +89,8 @@ REPLACE_WITH_PRIVATE_KEY
 # Add additional [[background.agent_queues]] tables to run multiple queues.
 # Agent queue name to use for merge-request followups.
 merge_request_followup_agent = "agent-a"
+# Agent queue name to use for assignment decisions on unassigned issues.
+assignment_agent = "assignment"
 [[background.agent_queues]]
 name = "agent-a"
 # Prompt provided to the agent; forwarded directly to Codex.
@@ -97,6 +99,10 @@ prompt = "You are agent-a working on assigned issues."
 max_tries = 3
 # Maximum number of simultaneously running jobs for this queue (defaults to unlimited).
 max_simultaneous = 1
+
+[[background.agent_queues]]
+name = "assignment"
+prompt = "You are the assignment agent."
 
 [background.github_poller]
 # Polling interval (in seconds) used when syncing GitHub PRs for patches.

@@ -337,6 +337,8 @@ pub struct BackgroundSection {
     #[serde(default)]
     pub merge_request_followup_agent: String,
     #[serde(default)]
+    pub assignment_agent: String,
+    #[serde(default)]
     pub github_poller: GithubPollerConfig,
     #[serde(default)]
     pub scheduler: SchedulerSection,
@@ -344,14 +346,31 @@ pub struct BackgroundSection {
 
 impl BackgroundSection {
     fn validate(&self) -> Result<()> {
-        let merge_request_agent = non_empty(&self.merge_request_followup_agent).context(
+        self.ensure_queue_is_configured(
+            &self.merge_request_followup_agent,
             "background.merge_request_followup_agent must be set to a configured agent queue",
+            "background.merge_request_followup_agent must match one of background.agent_queues",
         )?;
+        self.ensure_queue_is_configured(
+            &self.assignment_agent,
+            "background.assignment_agent must be set to a configured agent queue",
+            "background.assignment_agent must match one of background.agent_queues",
+        )?;
+        Ok(())
+    }
+
+    fn ensure_queue_is_configured(
+        &self,
+        queue_name: &str,
+        missing_msg: &'static str,
+        mismatch_msg: &'static str,
+    ) -> Result<()> {
+        let queue_name = non_empty(queue_name).context(missing_msg)?;
         ensure!(
             self.agent_queues
                 .iter()
-                .any(|queue| queue.name == merge_request_agent),
-            "background.merge_request_followup_agent must match one of background.agent_queues"
+                .any(|queue| queue.name == queue_name),
+            mismatch_msg
         );
         Ok(())
     }
@@ -673,6 +692,7 @@ oauth_base_url = "https://github.com"
 private_key = "private-key"
 
 [background]
+assignment_agent = "agent-a"
 
 [[background.agent_queues]]
 name = "agent-a"
@@ -714,6 +734,7 @@ private_key = "private-key"
 
 [background]
 merge_request_followup_agent = "agent-b"
+assignment_agent = "agent-a"
 
 [[background.agent_queues]]
 name = "agent-a"
@@ -758,6 +779,7 @@ private_key = "private-key"
 
 [background]
 merge_request_followup_agent = "agent-a"
+assignment_agent = "agent-a"
 
 [[background.agent_queues]]
 name = "agent-a"
@@ -798,6 +820,7 @@ private_key = "private-key"
 
 [background]
 merge_request_followup_agent = "agent-a"
+assignment_agent = "agent-a"
 
 [[background.agent_queues]]
 name = "agent-a"
@@ -809,6 +832,87 @@ prompt = "prompt"
         assert!(error_chain_contains(
             &error,
             "metis.allowed_orgs must not contain empty values"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_requires_assignment_agent() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[job]
+default_image = "metis-worker:latest"
+cpu_limit = "500m"
+memory_limit = "1Gi"
+cpu_request = "500m"
+memory_request = "1Gi"
+
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+api_base_url = "https://api.github.com"
+oauth_base_url = "https://github.com"
+private_key = "private-key"
+
+[background]
+merge_request_followup_agent = "agent-a"
+
+[[background.agent_queues]]
+name = "agent-a"
+prompt = "prompt"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected missing assignment_agent");
+        assert!(error_chain_contains(
+            &error,
+            "background.assignment_agent must be set to a configured agent queue"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn config_rejects_unknown_assignment_agent() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[job]
+default_image = "metis-worker:latest"
+cpu_limit = "500m"
+memory_limit = "1Gi"
+cpu_request = "500m"
+memory_request = "1Gi"
+
+[github_app]
+app_id = 1
+client_id = "client-id"
+client_secret = "client-secret"
+api_base_url = "https://api.github.com"
+oauth_base_url = "https://github.com"
+private_key = "private-key"
+
+[background]
+merge_request_followup_agent = "agent-a"
+assignment_agent = "agent-b"
+
+[[background.agent_queues]]
+name = "agent-a"
+prompt = "prompt"
+"#,
+        )?;
+
+        let error = AppConfig::load(&path).expect_err("expected unknown assignment_agent");
+        assert!(error_chain_contains(
+            &error,
+            "background.assignment_agent must match one of background.agent_queues"
         ));
 
         Ok(())
