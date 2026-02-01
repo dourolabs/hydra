@@ -927,7 +927,15 @@ impl AppState {
             .or(request.image);
         let model = job_settings
             .as_ref()
-            .and_then(|settings| settings.model.clone());
+            .and_then(|settings| settings.model.clone())
+            .or_else(|| {
+                self.config
+                    .job
+                    .default_model
+                    .as_deref()
+                    .and_then(non_empty)
+                    .map(str::to_owned)
+            });
         let cpu_limit = job_settings
             .as_ref()
             .and_then(|settings| settings.cpu_limit.clone());
@@ -2162,7 +2170,7 @@ mod tests {
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
                 TodoItem, UpsertIssueRequest,
             },
-            jobs::{BundleSpec, Task},
+            jobs::{BundleSpec, CreateJobRequest, Task},
             patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
             users::{User, Username},
         },
@@ -2755,6 +2763,71 @@ mod tests {
         let resolved = state.apply_job_settings_defaults(job_settings);
 
         assert_eq!(resolved.model.as_deref(), Some("custom-model"));
+    }
+
+    #[tokio::test]
+    async fn create_job_applies_default_model_when_missing() {
+        let mut state = test_state();
+        {
+            Arc::get_mut(&mut state.config)
+                .expect("config should be unique")
+                .job
+                .default_model = Some("  gpt-4o ".to_string());
+        }
+
+        let request = CreateJobRequest {
+            prompt: "use default model".to_string(),
+            image: None,
+            context: BundleSpec::None,
+            variables: HashMap::new(),
+            issue_id: None,
+        };
+
+        let job_id = state
+            .create_job(request)
+            .await
+            .expect("job creation should succeed");
+
+        let store = state.store.as_ref();
+        let stored = store.get_task(&job_id).await.expect("task stored");
+
+        assert_eq!(stored.item.model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[tokio::test]
+    async fn create_job_prefers_issue_model_over_config_default() {
+        let mut state = test_state();
+        {
+            Arc::get_mut(&mut state.config)
+                .expect("config should be unique")
+                .job
+                .default_model = Some("gpt-4o".to_string());
+        }
+
+        let issue_id = {
+            let store = state.store.as_ref();
+            let mut issue = issue_with_status("issue with model", IssueStatus::Open, vec![]);
+            issue.job_settings.model = Some("issue-model".to_string());
+            store.add_issue(issue).await.expect("issue stored")
+        };
+
+        let request = CreateJobRequest {
+            prompt: "use issue model".to_string(),
+            image: None,
+            context: BundleSpec::None,
+            variables: HashMap::new(),
+            issue_id: Some(issue_id.clone()),
+        };
+
+        let job_id = state
+            .create_job(request)
+            .await
+            .expect("job creation should succeed");
+
+        let store = state.store.as_ref();
+        let stored = store.get_task(&job_id).await.expect("task stored");
+
+        assert_eq!(stored.item.model.as_deref(), Some("issue-model"));
     }
 
     #[tokio::test]
