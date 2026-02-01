@@ -73,3 +73,68 @@ async fn wait_for_metis_s3(client: &S3StorageClient) -> Result<(), BuildCacheErr
     Err(last_error
         .unwrap_or_else(|| BuildCacheError::storage("waiting for metis-s3", "unknown error")))
 }
+
+#[tokio::test]
+async fn s3_error_includes_http_status_for_missing_object() {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "error-test-bucket".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config).expect("client");
+    wait_for_metis_s3(&client).await.expect("server ready");
+
+    let temp_dir = tempdir().expect("work dir");
+    let download_path = temp_dir.path().join("nonexistent.txt");
+
+    let result = client.get_object("missing/key.txt", &download_path).await;
+
+    let err = result.expect_err("should fail for missing object");
+    let err_msg = err.to_string();
+
+    // Verify error message includes HTTP status code
+    assert!(
+        err_msg.contains("HTTP 404") || err_msg.contains("404"),
+        "Error should include HTTP status code 404, got: {err_msg}"
+    );
+
+    server_handle.abort();
+}
+
+#[tokio::test]
+async fn s3_error_includes_dispatch_failure_for_connection_refused() {
+    // Use a port that nothing is listening on
+    let config = S3StorageConfig {
+        endpoint_url: "http://127.0.0.1:1".to_string(), // Port 1 should be unavailable
+        bucket: "unreachable-bucket".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config).expect("client");
+
+    let result = client.list_objects("prefix/").await;
+
+    let err = result.expect_err("should fail for unreachable endpoint");
+    let err_msg = err.to_string();
+
+    // Error should indicate dispatch/connection failure
+    assert!(
+        err_msg.contains("dispatch failed")
+            || err_msg.contains("I/O error")
+            || err_msg.contains("connection"),
+        "Error should indicate connection/dispatch failure, got: {err_msg}"
+    );
+}

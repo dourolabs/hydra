@@ -17,6 +17,8 @@ aws-types = "1"
 tempfile = "3"
 async-trait = "0.1"
 git2 = { workspace = true }
+aws-smithy-runtime-api = { version = "1.11.3", features = ["http-1x"] }
+tracing = "0.1.44"
 
 [dev-dependencies]
 metis-s3 = { path = "../metis-s3" }
