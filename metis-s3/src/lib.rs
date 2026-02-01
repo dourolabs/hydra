@@ -2,7 +2,7 @@ pub mod config;
 pub mod s3;
 
 use anyhow::Result;
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, extract::DefaultBodyLimit, routing::get};
 use serde_json::json;
 use std::path::PathBuf;
 use tokio::net::TcpListener;
@@ -13,6 +13,7 @@ pub fn build_router(storage_root: PathBuf) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .merge(s3::router(storage_root))
+        .layer(DefaultBodyLimit::disable())
         .layer(TraceLayer::new_for_http())
 }
 
