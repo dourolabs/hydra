@@ -407,6 +407,13 @@ async fn create_patch(
     }
 
     let service_repo_name = resolve_service_repo_name(client, job_id.as_ref()).await?;
+    let service_repo_name = service_repo_name.ok_or_else(|| {
+        let job_ref = job_id
+            .as_ref()
+            .map(|id| id.as_ref().to_string())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        anyhow!("job '{job_ref}' does not reference a service repository")
+    })?;
     let issue_record = client
         .get_issue(&issue_id)
         .await
@@ -712,7 +719,7 @@ pub async fn create_merge_request_issue(
 pub async fn resolve_service_repo_name(
     client: &dyn MetisClientInterface,
     job_id: Option<&TaskId>,
-) -> Result<RepoName> {
+) -> Result<Option<RepoName>> {
     let job_id = job_id.ok_or_else(|| {
         anyhow!("service repo name must be resolved from a job; provide --job or set METIS_ID")
     })?;
@@ -722,10 +729,10 @@ pub async fn resolve_service_repo_name(
         .with_context(|| format!("failed to fetch job '{job_id}' to resolve service repo"))?;
 
     if let BundleSpec::ServiceRepository { name, .. } = job.task.context {
-        return Ok(name);
+        return Ok(Some(name));
     }
 
-    bail!("job '{job_id}' does not reference a service repository")
+    Ok(None)
 }
 
 pub async fn create_patch_artifact_from_repo(
@@ -1757,7 +1764,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_service_repo_name_errors_for_non_service_job() -> Result<()> {
+    async fn resolve_service_repo_name_returns_none_for_non_service_job() -> Result<()> {
         let server = MockServer::start();
         let client = metis_client(&server);
         let job_id = task_id("t-job-non-service");
@@ -1781,15 +1788,10 @@ mod tests {
         );
         let job_mock = mock_get_job(&server, job_record.clone());
 
-        let error = resolve_service_repo_name(&client, Some(&job_id))
-            .await
-            .unwrap_err();
-
+        let repo_name = resolve_service_repo_name(&client, Some(&job_id)).await?;
         assert!(
-            error
-                .to_string()
-                .contains("does not reference a service repository"),
-            "error should indicate missing service repository context"
+            repo_name.is_none(),
+            "non-service jobs should not resolve to a service repository name"
         );
         job_mock.assert();
         Ok(())
