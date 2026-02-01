@@ -301,10 +301,7 @@ impl Spawner for AgentQueue {
                 None => None,
             };
             if is_assignment_agent {
-                if issue.assignee.is_some() {
-                    continue;
-                }
-                if !matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress) {
+                if let Some(name) = &issue.assignee && name != &self.name {
                     continue;
                 }
             } else if should_skip_for_assignee_mismatch(
