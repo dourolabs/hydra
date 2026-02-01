@@ -1,3 +1,4 @@
+use owo_colors::OwoColorize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -98,7 +99,10 @@ impl StreamFormatter {
         self.pending_tools
             .insert(id, PendingToolCall::new(name.clone(), summary.clone()));
 
-        Some(format!("tool> {name} - {summary}{TEXT_BLOCK_GAP}"))
+        Some(format!(
+            "{} {name} - {summary}{TEXT_BLOCK_GAP}",
+            "tool>".yellow()
+        ))
     }
 
     fn handle_user(&mut self, value: &Value) -> Vec<String> {
@@ -144,13 +148,19 @@ fn format_block(prefix: &str, text: &str) -> String {
         return String::new();
     }
 
+    let colored_prefix = match prefix {
+        "assistant>" => prefix.cyan().to_string(),
+        "reasoning>" => prefix.dimmed().to_string(),
+        _ => prefix.to_string(),
+    };
+
     let mut rendered = String::new();
     for line in text.replace('\r', "").lines() {
         if line.trim().is_empty() {
             rendered.push('\n');
             continue;
         }
-        rendered.push_str(prefix);
+        rendered.push_str(&colored_prefix);
         rendered.push(' ');
         rendered.push_str(&truncate(line, MAX_LINE_LEN));
         rendered.push('\n');
@@ -211,9 +221,9 @@ fn format_tool_result(
 ) -> String {
     let mut rendered = String::new();
     let status = if is_error {
-        "tool error>"
+        "tool error>".red().to_string()
     } else {
-        "tool done>"
+        "tool done>".green().to_string()
     };
     rendered.push_str(&format!(
         "{status} {name} - {summary} ({:.1}s)\n",
@@ -264,8 +274,10 @@ mod tests {
     #[test]
     fn format_block_prefixes_each_line() {
         let rendered = format_block("assistant>", "hello\nworld");
-        assert!(rendered.contains("assistant> hello"));
-        assert!(rendered.contains("assistant> world"));
+        // Output contains colored prefix (cyan for assistant>) plus content
+        assert!(rendered.contains("assistant>"));
+        assert!(rendered.contains(" hello"));
+        assert!(rendered.contains(" world"));
     }
 
     #[test]
@@ -291,7 +303,9 @@ mod tests {
             "ok",
             false,
         );
-        assert!(rendered.contains("tool done> Bash - run command (1.5s)"));
+        // Output contains colored prefix (green for tool done>) plus content
+        assert!(rendered.contains("tool done>"));
+        assert!(rendered.contains("Bash - run command (1.5s)"));
         assert!(rendered.contains("ok"));
     }
 
@@ -299,5 +313,37 @@ mod tests {
     fn truncate_adds_ellipsis_when_needed() {
         let result = truncate("abcdef", 5);
         assert_eq!(result, "ab...");
+    }
+
+    #[test]
+    fn format_block_uses_cyan_for_assistant_prefix() {
+        let rendered = format_block("assistant>", "test");
+        // Cyan ANSI code is \x1b[36m
+        assert!(rendered.contains("\x1b[36m"));
+        assert!(rendered.contains("assistant>"));
+    }
+
+    #[test]
+    fn format_block_uses_dim_for_reasoning_prefix() {
+        let rendered = format_block("reasoning>", "test");
+        // Dim ANSI code is \x1b[2m
+        assert!(rendered.contains("\x1b[2m"));
+        assert!(rendered.contains("reasoning>"));
+    }
+
+    #[test]
+    fn format_tool_result_uses_green_for_success() {
+        let rendered = format_tool_result("Test", "summary", Duration::from_secs(1), "", false);
+        // Green ANSI code is \x1b[32m
+        assert!(rendered.contains("\x1b[32m"));
+        assert!(rendered.contains("tool done>"));
+    }
+
+    #[test]
+    fn format_tool_result_uses_red_for_error() {
+        let rendered = format_tool_result("Test", "summary", Duration::from_secs(1), "", true);
+        // Red ANSI code is \x1b[31m
+        assert!(rendered.contains("\x1b[31m"));
+        assert!(rendered.contains("tool error>"));
     }
 }
