@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::Path, process::Stdio};
 
+use crate::claude_formatter::StreamFormatter;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use metis_common::constants::{
@@ -7,7 +8,7 @@ use metis_common::constants::{
 };
 use tokio::{
     fs,
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::Command,
 };
 
@@ -205,7 +206,7 @@ impl ClaudeCommands {
             .spawn()
             .context("failed to spawn claude command")?;
 
-        let mut child_stdout = child
+        let child_stdout = child
             .stdout
             .take()
             .ok_or_else(|| anyhow!("failed to capture stdout for claude command"))?;
@@ -223,26 +224,31 @@ impl ClaudeCommands {
             Ok::<Vec<u8>, anyhow::Error>(stderr_buf)
         });
 
-        let mut stdout_buf = Vec::new();
+        let mut formatter = StreamFormatter::new();
+        let mut reader = BufReader::new(child_stdout);
+        let mut stdout_buf = String::new();
         let mut stdout_writer = io::stdout();
-        let mut buf = [0u8; 4096];
+        let mut line = String::new();
         loop {
-            let read = child_stdout
-                .read(&mut buf)
+            line.clear();
+            let read = reader
+                .read_line(&mut line)
                 .await
                 .context("failed to read claude stdout")?;
             if read == 0 {
                 break;
             }
-            stdout_writer
-                .write_all(&buf[..read])
-                .await
-                .context("failed to stream claude stdout")?;
-            stdout_writer
-                .flush()
-                .await
-                .context("failed to flush claude stdout")?;
-            stdout_buf.extend_from_slice(&buf[..read]);
+            for formatted in formatter.handle_line(&line) {
+                stdout_writer
+                    .write_all(formatted.as_bytes())
+                    .await
+                    .context("failed to stream claude stdout")?;
+                stdout_writer
+                    .flush()
+                    .await
+                    .context("failed to flush claude stdout")?;
+                stdout_buf.push_str(&formatted);
+            }
         }
 
         let status = child
@@ -257,17 +263,16 @@ impl ClaudeCommands {
             return Err(anyhow!(
                 "claude command failed with status {}. stdout: {}. stderr: {}",
                 status,
-                String::from_utf8_lossy(&stdout_buf),
+                stdout_buf,
                 String::from_utf8_lossy(&stderr_buf)
             ));
         }
 
-        let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
-        fs::write(output_path, &stdout)
+        fs::write(output_path, stdout_buf.as_bytes())
             .await
             .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
 
-        Ok(stdout)
+        Ok(stdout_buf)
     }
 }
 
