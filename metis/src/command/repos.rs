@@ -1,6 +1,7 @@
 use crate::{
     client::MetisClientInterface,
     command::output::{render_repository_records, CommandContext},
+    git::clone_repo,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -9,6 +10,7 @@ use metis_common::repositories::{
 };
 use metis_common::RepoName;
 use std::io;
+use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum ReposCommand {
@@ -18,6 +20,8 @@ pub enum ReposCommand {
     Create(CreateRepositoryArgs),
     /// Update an existing repository configuration.
     Update(UpdateRepositoryArgs),
+    /// Clone a repository to a local directory.
+    Clone(CloneRepositoryArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -90,6 +94,21 @@ pub struct UpdateRepositoryArgs {
     pub clear_default_image: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct CloneRepositoryArgs {
+    /// Repository name in the form org/repo.
+    #[arg(value_name = "NAME")]
+    pub name: RepoName,
+
+    /// Target directory to clone into. Defaults to the repository name.
+    #[arg(value_name = "DIRECTORY")]
+    pub directory: Option<PathBuf>,
+
+    /// Revision to checkout (branch, tag, or commit SHA). Defaults to the repository's default branch or HEAD.
+    #[arg(long = "rev", value_name = "REVISION")]
+    pub revision: Option<String>,
+}
+
 pub async fn run(
     client: &dyn MetisClientInterface,
     command: ReposCommand,
@@ -108,6 +127,9 @@ pub async fn run(
         ReposCommand::Update(args) => {
             let repository = update_repository(client, args).await?;
             render_repository_records(context.output_format, &[repository], &mut stdout)?;
+        }
+        ReposCommand::Clone(args) => {
+            clone_repository(client, args).await?;
         }
     }
 
@@ -144,6 +166,50 @@ async fn update_repository(
         .await
         .context("failed to update repository")?;
     Ok(response.repository)
+}
+
+async fn clone_repository(
+    client: &dyn MetisClientInterface,
+    args: CloneRepositoryArgs,
+) -> Result<()> {
+    let repositories = fetch_repositories(client).await?;
+    let repository = repositories
+        .into_iter()
+        .find(|r| r.name == args.name)
+        .with_context(|| format!("repository '{}' not found", args.name))?;
+
+    let remote_url = &repository.repository.remote_url;
+    let revision = args
+        .revision
+        .or(repository.repository.default_branch)
+        .unwrap_or_else(|| "HEAD".to_string());
+
+    let destination = args
+        .directory
+        .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
+
+    let github_token = client.get_github_token().await.ok();
+
+    clone_repo(
+        remote_url,
+        &revision,
+        &destination,
+        github_token.as_deref(),
+    )
+    .with_context(|| {
+        format!(
+            "failed to clone repository '{}' to '{}'",
+            args.name,
+            destination.display()
+        )
+    })?;
+
+    eprintln!(
+        "Cloned {} to {}",
+        args.name,
+        destination.display()
+    );
+    Ok(())
 }
 
 fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryRequest> {
@@ -502,5 +568,55 @@ mod tests {
         );
 
         update_mock.assert();
+    }
+
+    fn sample_clone_args() -> CloneRepositoryArgs {
+        CloneRepositoryArgs {
+            name: RepoName::from_str("dourolabs/metis").unwrap(),
+            directory: None,
+            revision: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn clone_repository_reports_not_found() {
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/repositories");
+            then.status(200)
+                .json_body_obj(&ListRepositoriesResponse::new(vec![]));
+        });
+        let client = mock_client(&server);
+
+        let error = clone_repository(&client, sample_clone_args())
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("not found"),
+            "error should indicate repo not found: {error:?}"
+        );
+
+        list_mock.assert();
+    }
+
+    #[test]
+    fn clone_args_defaults_directory_to_repo_name() {
+        let args = sample_clone_args();
+        let destination = args
+            .directory
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
+        assert_eq!(destination, PathBuf::from("dourolabs/metis"));
+    }
+
+    #[test]
+    fn clone_args_uses_provided_directory() {
+        let mut args = sample_clone_args();
+        args.directory = Some(PathBuf::from("/tmp/my-clone"));
+        let destination = args
+            .directory
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(args.name.to_string()));
+        assert_eq!(destination, PathBuf::from("/tmp/my-clone"));
     }
 }
