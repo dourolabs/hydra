@@ -290,3 +290,91 @@ async fn documents_missing_resources_return_404() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn document_can_be_fetched_by_exact_path() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let document = Document::new("Test doc".to_string(), "body content".to_string())
+        .with_path("docs/test.md");
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document.clone()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Fetch by exact path
+    let fetched: DocumentRecord = client
+        .get(format!("{base}/v1/documents/by-path/docs/test.md"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(fetched.id, created.document_id);
+    assert_eq!(fetched.document.title, "Test doc");
+    assert_eq!(fetched.document.path, Some("docs/test.md".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn document_by_path_returns_404_for_missing_path() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let response = client
+        .get(format!("{base}/v1/documents/by-path/nonexistent/path.md"))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn document_by_path_is_exact_match_not_prefix() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create a document at docs/guide.md
+    let document = Document::new("Guide".to_string(), "guide body".to_string())
+        .with_path("docs/guide.md");
+
+    client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?;
+
+    // Fetch with exact path should work
+    let response = client
+        .get(format!("{base}/v1/documents/by-path/docs/guide.md"))
+        .send()
+        .await?;
+    assert!(response.status().is_success());
+
+    // Fetch with prefix should return 404
+    let response = client
+        .get(format!("{base}/v1/documents/by-path/docs"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Fetch with longer path should return 404
+    let response = client
+        .get(format!("{base}/v1/documents/by-path/docs/guide.md/extra"))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}

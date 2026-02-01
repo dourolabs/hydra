@@ -84,6 +84,8 @@ pub enum StoreError {
     PatchNotFound(PatchId),
     #[error("Document not found: {0}")]
     DocumentNotFound(DocumentId),
+    #[error("Document not found at path: {0}")]
+    DocumentNotFoundAtPath(String),
     #[allow(dead_code)]
     #[error("Invalid dependency: {0}")]
     InvalidDependency(IssueId),
@@ -213,6 +215,14 @@ pub trait Store: Send + Sync {
         &self,
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
+
+    /// Returns a document by its exact path.
+    ///
+    /// Returns `StoreError::DocumentNotFoundAtPath` if no document has the given path.
+    async fn get_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<(DocumentId, Versioned<Document>), StoreError>;
 
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     #[allow(dead_code)]

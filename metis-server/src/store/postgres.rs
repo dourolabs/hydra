@@ -881,6 +881,56 @@ impl Store for PostgresStore {
         .await
     }
 
+    async fn get_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<(DocumentId, Versioned<Document>), StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct DocumentRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        let query = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at \
+             FROM {TABLE_DOCUMENTS} \
+             WHERE payload->>'path' = $1 \
+             ORDER BY id, version_number DESC \
+             LIMIT 1"
+        );
+
+        let row = sqlx::query_as::<_, DocumentRow>(&query)
+            .bind(path)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        match row {
+            Some(row) => {
+                ensure_schema_version("document", row.schema_version, DOCUMENT_SCHEMA_VERSION)?;
+                let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                    StoreError::Internal(format!(
+                        "invalid version number stored for document '{}'",
+                        row.id
+                    ))
+                })?;
+                let document: Document =
+                    serde_json::from_value(row.payload).map_err(map_serde_error("document"))?;
+                let document_id = row.id.parse::<DocumentId>().map_err(|err| {
+                    StoreError::Internal(format!("invalid document id stored in database: {err}"))
+                })?;
+                Ok((
+                    document_id,
+                    Versioned::new(document, version, row.created_at),
+                ))
+            }
+            None => Err(StoreError::DocumentNotFoundAtPath(path.to_string())),
+        }
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let issues = self.list_issues().await?;

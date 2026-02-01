@@ -566,6 +566,14 @@ impl AppState {
         store.get_documents_by_path(path_prefix).await
     }
 
+    pub async fn get_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<(DocumentId, Versioned<Document>), StoreError> {
+        let store = self.store.as_ref();
+        store.get_document_by_exact_path(path).await
+    }
+
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await

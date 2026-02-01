@@ -107,6 +107,10 @@ pub async fn run_with_state(
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
         .route(
+            "/v1/documents/by-path/*path",
+            get(routes::documents::get_document_by_path),
+        )
+        .route(
             "/v1/documents/:document_id",
             get(routes::documents::get_document).put(routes::documents::update_document),
         )

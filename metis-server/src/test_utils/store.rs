@@ -135,6 +135,13 @@ impl Store for FailingStore {
         fail()
     }
 
+    async fn get_document_by_exact_path(
+        &self,
+        _path: &str,
+    ) -> Result<(DocumentId, Versioned<Document>), StoreError> {
+        fail()
+    }
+
     async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }

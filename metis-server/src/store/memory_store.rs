@@ -583,6 +583,39 @@ impl Store for MemoryStore {
         Ok(documents)
     }
 
+    async fn get_document_by_exact_path(
+        &self,
+        path: &str,
+    ) -> Result<(DocumentId, Versioned<Document>), StoreError> {
+        // Look up the document ID from the path index
+        if let Some(ids) = self.documents_by_path.get(path) {
+            // The index maps exact paths to document IDs, so if we find the exact path,
+            // return the first matching document
+            for id in ids.value().iter() {
+                if let Some(entry) = self.documents.get(id) {
+                    if let Some(latest) = Self::latest_versioned(entry.value()) {
+                        // Double check that the path matches exactly
+                        if latest.item.path.as_deref() == Some(path) {
+                            return Ok((id.clone(), latest));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to scanning all documents if not found in index
+        // (in case path index is incomplete or out of sync)
+        for entry in self.documents.iter() {
+            if let Some(latest) = Self::latest_versioned(entry.value()) {
+                if latest.item.path.as_deref() == Some(path) {
+                    return Ok((entry.key().clone(), latest));
+                }
+            }
+        }
+
+        Err(StoreError::DocumentNotFoundAtPath(path.to_string()))
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         match self.issues.get(issue_id) {
             Some(_) => Ok(self
@@ -1570,6 +1603,82 @@ mod tests {
         let matches = store.get_documents_by_path("docs/new").await.unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0, doc_id);
+    }
+
+    #[tokio::test]
+    async fn get_document_by_exact_path_returns_document() {
+        let store = MemoryStore::new();
+        let doc_id = store
+            .add_document(sample_document(Some("docs/guide.md"), None))
+            .await
+            .unwrap();
+
+        let (found_id, found_doc) = store
+            .get_document_by_exact_path("docs/guide.md")
+            .await
+            .unwrap();
+
+        assert_eq!(found_id, doc_id);
+        assert_eq!(found_doc.item.path, Some("docs/guide.md".to_string()));
+    }
+
+    #[tokio::test]
+    async fn get_document_by_exact_path_returns_error_for_missing_path() {
+        let store = MemoryStore::new();
+        store
+            .add_document(sample_document(Some("docs/existing.md"), None))
+            .await
+            .unwrap();
+
+        let result = store.get_document_by_exact_path("docs/missing.md").await;
+
+        assert!(matches!(
+            result,
+            Err(StoreError::DocumentNotFoundAtPath(path)) if path == "docs/missing.md"
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_document_by_exact_path_requires_exact_match() {
+        let store = MemoryStore::new();
+        store
+            .add_document(sample_document(Some("docs/guide.md"), None))
+            .await
+            .unwrap();
+
+        // Prefix should not match
+        let result = store.get_document_by_exact_path("docs/").await;
+        assert!(matches!(result, Err(StoreError::DocumentNotFoundAtPath(_))));
+
+        // Longer path should not match
+        let result = store.get_document_by_exact_path("docs/guide.md/extra").await;
+        assert!(matches!(result, Err(StoreError::DocumentNotFoundAtPath(_))));
+
+        // Exact match should work
+        let result = store.get_document_by_exact_path("docs/guide.md").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_document_by_exact_path_returns_latest_version() {
+        let store = MemoryStore::new();
+        let doc_id = store
+            .add_document(sample_document(Some("docs/versioned.md"), None))
+            .await
+            .unwrap();
+
+        let mut updated = store.get_document(&doc_id).await.unwrap().item;
+        updated.title = "Updated Title".to_string();
+        store.update_document(&doc_id, updated).await.unwrap();
+
+        let (found_id, found_doc) = store
+            .get_document_by_exact_path("docs/versioned.md")
+            .await
+            .unwrap();
+
+        assert_eq!(found_id, doc_id);
+        assert_eq!(found_doc.item.title, "Updated Title");
+        assert_eq!(found_doc.version, 2);
     }
 
     #[tokio::test]

@@ -196,12 +196,44 @@ pub async fn get_document_version(
     Ok(Json(response))
 }
 
+pub async fn get_document_by_path(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+) -> Result<Json<v1::documents::DocumentRecord>, ApiError> {
+    info!(path = %path, "get_document_by_path invoked");
+    let (document_id, document) = state
+        .get_document_by_exact_path(&path)
+        .await
+        .map_err(|err| map_document_error_by_path(err, &path))?;
+
+    let response = v1::documents::DocumentRecord::new(document_id.clone(), document.item.into());
+    info!(document_id = %document_id, path = %path, "get_document_by_path completed");
+    Ok(Json(response))
+}
+
 fn map_document_error(err: StoreError, document_id: Option<&DocumentId>) -> ApiError {
     match err {
         StoreError::DocumentNotFound(not_found_id) => {
             let id = document_id.unwrap_or(&not_found_id);
             error!(document_id = %id, "document not found");
             ApiError::not_found(format!("document '{id}' not found"))
+        }
+        other => {
+            error!(error = %other, "document store error");
+            ApiError::internal(anyhow!("document store error: {other}"))
+        }
+    }
+}
+
+fn map_document_error_by_path(err: StoreError, path: &str) -> ApiError {
+    match err {
+        StoreError::DocumentNotFoundAtPath(not_found_path) => {
+            error!(path = %not_found_path, "document not found at path");
+            ApiError::not_found(format!("document not found at path '{not_found_path}'"))
+        }
+        StoreError::DocumentNotFound(not_found_id) => {
+            error!(document_id = %not_found_id, path = %path, "document not found");
+            ApiError::not_found(format!("document not found at path '{path}'"))
         }
         other => {
             error!(error = %other, "document store error");
