@@ -4,11 +4,64 @@ use async_trait::async_trait;
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::primitives::ByteStream;
+use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_types::region::Region;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
+use tracing::warn;
 use walkdir::WalkDir;
+
+/// Formats an AWS SDK error with detailed diagnostic information including
+/// HTTP status code, AWS error code, and error message where available.
+fn format_sdk_error<E>(err: &SdkError<E, HttpResponse>) -> String
+where
+    E: ProvideErrorMetadata + std::fmt::Debug,
+{
+    match err {
+        SdkError::ConstructionFailure(err) => {
+            format!("request construction failed: {err:?}")
+        }
+        SdkError::TimeoutError(err) => {
+            format!("request timed out: {err:?}")
+        }
+        SdkError::DispatchFailure(err) => {
+            let connector_error = err.as_connector_error();
+            let kind = if err.is_timeout() {
+                "timeout"
+            } else if err.is_io() {
+                "I/O error"
+            } else if err.is_user() {
+                "configuration error"
+            } else {
+                "unknown"
+            };
+            format!(
+                "request dispatch failed ({}): {}",
+                kind,
+                connector_error
+                    .map(|e| format!("{e:?}"))
+                    .unwrap_or_else(|| "unknown cause".to_string())
+            )
+        }
+        SdkError::ResponseError(err) => {
+            let raw = err.raw();
+            let status = raw.status().as_u16();
+            format!("unparseable response (HTTP {status}): {err:?}")
+        }
+        SdkError::ServiceError(err) => {
+            let raw = err.raw();
+            let status = raw.status().as_u16();
+            let service_err = err.err();
+            let code = service_err.code().unwrap_or("unknown");
+            let message = service_err.message().unwrap_or("no message");
+            format!("HTTP {status}: [{code}] {message}")
+        }
+        _ => format!("{err:?}"),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct StorageObject {
@@ -28,6 +81,7 @@ pub trait StorageClient: Send + Sync {
 pub struct S3StorageClient {
     client: Client,
     bucket: String,
+    endpoint_url: Arc<str>,
 }
 
 impl S3StorageClient {
@@ -69,10 +123,32 @@ impl S3StorageClient {
         Ok(Self {
             client: Client::from_conf(sdk_config),
             bucket: config.bucket.clone(),
+            endpoint_url: config.endpoint_url.clone().into(),
         })
     }
 
-    fn map_storage_error(context: &'static str, err: impl std::fmt::Display) -> BuildCacheError {
+    fn log_and_map_sdk_error<E>(
+        &self,
+        context: &'static str,
+        key: &str,
+        err: SdkError<E, HttpResponse>,
+    ) -> BuildCacheError
+    where
+        E: ProvideErrorMetadata + std::fmt::Debug,
+    {
+        let message = format_sdk_error(&err);
+        warn!(
+            endpoint = %self.endpoint_url,
+            bucket = %self.bucket,
+            key = %key,
+            context = %context,
+            error = %message,
+            "S3 operation failed"
+        );
+        BuildCacheError::storage(context, message)
+    }
+
+    fn map_io_error(context: &'static str, err: impl std::fmt::Display) -> BuildCacheError {
         BuildCacheError::storage(context, err.to_string())
     }
 
@@ -86,7 +162,7 @@ impl StorageClient for S3StorageClient {
     async fn put_object(&self, key: &str, path: &Path) -> Result<(), BuildCacheError> {
         let body = ByteStream::from_path(path)
             .await
-            .map_err(|err| Self::map_storage_error("reading upload body", err))?;
+            .map_err(|err| Self::map_io_error("reading upload body", err))?;
         self.client
             .put_object()
             .bucket(&self.bucket)
@@ -94,7 +170,7 @@ impl StorageClient for S3StorageClient {
             .body(body)
             .send()
             .await
-            .map_err(|err| Self::map_storage_error("uploading object", err))?;
+            .map_err(|err| self.log_and_map_sdk_error("uploading object", key, err))?;
         Ok(())
     }
 
@@ -106,7 +182,7 @@ impl StorageClient for S3StorageClient {
             .key(key)
             .send()
             .await
-            .map_err(|err| Self::map_storage_error("downloading object", err))?;
+            .map_err(|err| self.log_and_map_sdk_error("downloading object", key, err))?;
 
         let mut body = response.body.into_async_read();
         let mut file = tokio::fs::File::create(destination)
@@ -135,7 +211,7 @@ impl StorageClient for S3StorageClient {
             let response = request
                 .send()
                 .await
-                .map_err(|err| Self::map_storage_error("listing objects", err))?;
+                .map_err(|err| self.log_and_map_sdk_error("listing objects", prefix, err))?;
 
             for item in response.contents() {
                 if let Some(key) = item.key() {
@@ -165,7 +241,7 @@ impl StorageClient for S3StorageClient {
             .key(key)
             .send()
             .await
-            .map_err(|err| Self::map_storage_error("deleting object", err))?;
+            .map_err(|err| self.log_and_map_sdk_error("deleting object", key, err))?;
         Ok(())
     }
 }
