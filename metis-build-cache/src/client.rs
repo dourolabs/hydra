@@ -599,8 +599,11 @@ mod tests {
     fn commit_file(repo: &Repository, path: &Path) {
         let signature = git2::Signature::now("metis", "metis@example.com").expect("signature");
         let workdir = repo.workdir().expect("workdir");
-        let relative = path
-            .strip_prefix(workdir)
+        let canonical_workdir =
+            std::fs::canonicalize(workdir).expect("canonicalized repository workdir");
+        let canonical_path = std::fs::canonicalize(path).expect("canonicalized committed path");
+        let relative = canonical_path
+            .strip_prefix(&canonical_workdir)
             .expect("path relative to workdir");
         let mut index = repo.index().expect("index");
         index.add_path(relative).expect("add path");
