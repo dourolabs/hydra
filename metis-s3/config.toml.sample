@@ -3,8 +3,9 @@
 bind_host = "0.0.0.0"
 # Port for the HTTP listener.
 bind_port = 9090
-# Maximum size (bytes) for incoming request bodies.
-request_body_limit_bytes = 134217728
+# Maximum size (bytes) for incoming request bodies. Increase this if build
+# cache archives exceed the default request size limit (1 GiB).
+request_body_limit_bytes = 1073741824
 
 [storage]
 # Base filesystem path used to store S3 objects.

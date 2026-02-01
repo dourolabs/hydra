@@ -32,6 +32,7 @@ S3_CONFIG_MOUNT_PATH="${S3_CONFIG_MOUNT_PATH:-/etc/metis-s3}"
 S3_CONFIG_FILE_NAME="${S3_CONFIG_FILE_NAME:-config.toml}"
 S3_METIS_CONFIG_PATH="${S3_METIS_CONFIG_PATH:-${S3_CONFIG_MOUNT_PATH}/${S3_CONFIG_FILE_NAME}}"
 S3_STORAGE_ROOT="${S3_STORAGE_ROOT:-/var/lib/metis/s3}"
+S3_REQUEST_BODY_LIMIT_BYTES="${S3_REQUEST_BODY_LIMIT_BYTES:-1073741824}"
 
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 POSTGRES_SERVICE_NAME="${POSTGRES_SERVICE_NAME:-postgres}"
@@ -310,7 +311,7 @@ generate_s3_config() {
 [server]
 bind_host = "0.0.0.0"
 bind_port = ${S3_SERVICE_PORT}
-request_body_limit_bytes = 134217728
+request_body_limit_bytes = ${S3_REQUEST_BODY_LIMIT_BYTES}
 
 [storage]
 root_dir = "${S3_STORAGE_ROOT}"

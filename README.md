@@ -35,6 +35,10 @@ cargo build --workspace --all-targets
 cargo test --workspace
 ```
 
+When using the bundled `metis-s3` cache service, make sure its
+`request_body_limit_bytes` covers your archive size. The helper scripts now
+default to `1 GiB` (override by exporting `S3_REQUEST_BODY_LIMIT_BYTES`).
+
 **Note** Postgres-backed store tests are ignored by default to avoid introducing a required database dependency.
 To exercise them, run a Postgres instance locally (`./scripts/dev-postgres.sh`) and set `DATABASE_URL`, then include
 ignored tests:

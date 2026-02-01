@@ -52,6 +52,11 @@ idle_timeout_secs = 300
 # home_exclude = [".cache/pnpm/diagnostics/"]
 # max_entries_per_repo = 10
 
+# When using metis-s3 for build cache storage, ensure its
+# request_body_limit_bytes is large enough for the archive size.
+# The scripts/service.sh helper now defaults to 1 GiB via the
+# S3_REQUEST_BODY_LIMIT_BYTES environment variable.
+
 ## Local filesystem storage
 #[build_cache.storage]
 #type = "filesystem"

@@ -17,6 +17,9 @@ Minimal S3-compatible service (subset used by `metis-build-cache`) backed by the
    ```
 
 The service listens on `0.0.0.0:9090` by default and stores objects under `/var/lib/metis/s3`.
+Cache archives approaching or exceeding `1 GiB` should increase `request_body_limit_bytes`.
+Set `S3_REQUEST_BODY_LIMIT_BYTES` (defaults to `1 GiB` in `scripts/service.sh`) or
+update your config file accordingly.
 
 ## Docker
 

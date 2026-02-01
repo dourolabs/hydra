@@ -112,7 +112,7 @@ const fn default_bind_port() -> u16 {
 }
 
 const fn default_request_body_limit_bytes() -> usize {
-    134_217_728
+    1_073_741_824
 }
 
 #[cfg(test)]
