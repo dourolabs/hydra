@@ -77,3 +77,13 @@ As the work unfolds, use `metis issues list` to watch related tasks, `metis issu
 ## Maintain Shared Documents
 
 Use `metis documents` to capture design docs, runbooks, and other markdown artifacts in the server store. See [metis/docs/documents.md](metis/docs/documents.md) for a complete tour of the subcommands, input flags, and examples.
+
+## Submit and review patches
+
+Run `metis patches` whenever you are ready to package local commits for review or to fetch a teammate's diff. The command snapshots the diff from your service repository, attaches it to the active issue (`METIS_ISSUE_ID`), and optionally files/assigns a merge-request issue plus a GitHub branch. Before invoking it, make sure:
+
+- Your repository is registered with Metis (`metis repos create ...`) and your CLI is authenticated with both Metis and (if using `--github`) GitHub.
+- You have set `METIS_ISSUE_ID` (and typically `METIS_ID`) so the CLI can locate the job context and base branch.
+- Your working tree has the commits you intend to send; use `--allow-uncommitted` only for deliberate WIP snapshots.
+
+See [metis/docs/patches.md](metis/docs/patches.md) for the full reference covering subcommands, merge queues, and asset uploads.
