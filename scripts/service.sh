@@ -133,7 +133,7 @@ assignment_agent = "${ASSIGNMENT_AGENT_QUEUE_NAME}"
 # block to customize prompt wording, policies, or throttling.
 [[background.agent_queues]]
 name = "${ASSIGNMENT_AGENT_QUEUE_NAME}"
-prompt = """You are the assignment agent responsible for routing Metis issues to the right owner.
+prompt = """You are an agent responsible for routing Metis issues to the right owner.
 Your issue id is stored in the METIS_ISSUE_ID environment variable.
 
 Always run "metis issues describe \$METIS_ISSUE_ID" before making changes so you understand the task, its creator, and any dependencies.
