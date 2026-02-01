@@ -48,10 +48,6 @@ impl AppConfig {
             "server.bind_host must be set"
         );
         ensure!(self.server.bind_port > 0, "server.bind_port must be set");
-        ensure!(
-            self.server.request_body_limit_bytes > 0,
-            "server.request_body_limit_bytes must be set"
-        );
         Ok(())
     }
 }
@@ -62,8 +58,6 @@ pub struct ServerSection {
     pub bind_host: String,
     #[serde(default = "default_bind_port")]
     pub bind_port: u16,
-    #[serde(default = "default_request_body_limit_bytes")]
-    pub request_body_limit_bytes: usize,
 }
 
 impl Default for ServerSection {
@@ -71,7 +65,6 @@ impl Default for ServerSection {
         Self {
             bind_host: default_bind_host(),
             bind_port: default_bind_port(),
-            request_body_limit_bytes: default_request_body_limit_bytes(),
         }
     }
 }
@@ -111,10 +104,6 @@ const fn default_bind_port() -> u16 {
     9090
 }
 
-const fn default_request_body_limit_bytes() -> usize {
-    1_073_741_824
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,7 +118,6 @@ mod tests {
 [server]
 bind_host = "127.0.0.1"
 bind_port = 9091
-request_body_limit_bytes = 1024
 
 [storage]
 root_dir = "~/metis-s3"
@@ -138,7 +126,6 @@ root_dir = "~/metis-s3"
         let config = AppConfig::load(&path)?;
         assert_eq!(config.server.bind_host, "127.0.0.1");
         assert_eq!(config.server.bind_port, 9091);
-        assert_eq!(config.server.request_body_limit_bytes, 1024);
         assert!(config.storage_root().to_string_lossy().contains("metis-s3"));
         Ok(())
     }

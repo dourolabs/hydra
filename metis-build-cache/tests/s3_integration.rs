@@ -13,11 +13,7 @@ async fn s3_storage_client_round_trip_with_metis_s3() -> Result<(), BuildCacheEr
         .local_addr()
         .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
 
-    let server_handle = tokio::spawn(metis_s3::serve(
-        listener,
-        storage_root.path().to_path_buf(),
-        32 * 1024 * 1024,
-    ));
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
 
     let config = S3StorageConfig {
         endpoint_url: format!("http://{addr}"),

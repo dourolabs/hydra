@@ -22,10 +22,7 @@ async fn run() -> Result<()> {
         "metis-s3 configuration loaded"
     );
 
-    let app = build_router(
-        storage_root.clone(),
-        app_config.server.request_body_limit_bytes,
-    );
+    let app = build_router(storage_root.clone());
     let listener = TcpListener::bind(&bind_addr).await?;
     let addr = listener.local_addr()?;
 
