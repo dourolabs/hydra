@@ -15,17 +15,16 @@ async fn run() -> Result<()> {
     let app_config = AppConfig::load(&config_path)?;
     let bind_addr = app_config.bind_addr();
     let storage_root = app_config.storage_root();
+    let request_body_limit_bytes = app_config.server.request_body_limit_bytes;
 
     info!(
         bind_addr = %bind_addr,
         storage_root = %storage_root.display(),
+        request_body_limit_bytes = request_body_limit_bytes,
         "metis-s3 configuration loaded"
     );
 
-    let app = build_router(
-        storage_root.clone(),
-        app_config.server.request_body_limit_bytes,
-    );
+    let app = build_router(storage_root.clone(), request_body_limit_bytes);
     let listener = TcpListener::bind(&bind_addr).await?;
     let addr = listener.local_addr()?;
 
