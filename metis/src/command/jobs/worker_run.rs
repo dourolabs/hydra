@@ -91,7 +91,9 @@ pub async fn run(
     }
 
     if base_commit.is_some() {
-        if let Some(build_cache) = build_cache.as_ref() {
+        if let (Some(build_cache), Some(service_repo_name)) =
+            (build_cache.as_ref(), service_repo_name.as_ref())
+        {
             match build_cache_client(build_cache) {
                 Ok(client) => match client
                     .apply_nearest_cache(
@@ -155,7 +157,9 @@ pub async fn run(
     }
 
     if base_commit.is_some() {
-        if let Some(build_cache) = build_cache.as_ref() {
+        if let (Some(build_cache), Some(service_repo_name)) =
+            (build_cache.as_ref(), service_repo_name.as_ref())
+        {
             match build_cache_client(build_cache) {
                 Ok(client) => match resolve_head_oid(&dest) {
                     Ok(Some(head_oid)) => {
@@ -186,17 +190,23 @@ pub async fn run(
         }
     }
 
-    if let Err(err) = submit_patch_artifact_if_present(
-        client,
-        &job,
-        &dest,
-        &last_message,
-        &service_repo_name,
-        base_commit,
-    )
-    .await
-    {
-        errors.push(err.context("failed to submit patch artifact"));
+    if let Some(service_repo_name) = service_repo_name.as_ref() {
+        if let Err(err) = submit_patch_artifact_if_present(
+            client,
+            &job,
+            &dest,
+            &last_message,
+            service_repo_name,
+            base_commit,
+        )
+        .await
+        {
+            errors.push(err.context("failed to submit patch artifact"));
+        }
+    } else {
+        log_status(
+            "No service repository detected; skipping patch artifact submission.".to_string(),
+        );
     }
 
     let status_update = if errors.is_empty() {
