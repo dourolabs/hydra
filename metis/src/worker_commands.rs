@@ -99,6 +99,7 @@ impl CodexCommands {
                 "exec",
                 "--color",
                 "always",
+                "--skip-git-repo-check",
                 "-o",
                 output_path
                     .to_str()
@@ -177,6 +178,9 @@ impl ClaudeCommands {
         let mut command = Command::new("claude");
         command.arg("--print");
         command.arg("--dangerously-skip-permissions");
+        command.arg("--verbose");
+        command.arg("--output-format");
+        command.arg("stream-json");
         if let Some(model) = model {
             command.arg("--model");
             command.arg(model);
@@ -190,7 +194,6 @@ impl ClaudeCommands {
         }
 
         command.arg(prompt);
-        println!("command: {command:?}");
 
         let output = command
             .output()
