@@ -5,7 +5,11 @@ use async_trait::async_trait;
 use metis_common::constants::{
     ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_OPENAI_API_KEY,
 };
-use tokio::{fs, io::AsyncWriteExt, process::Command};
+use tokio::{
+    fs,
+    io::{self, AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 #[async_trait]
 pub trait WorkerCommands: Send + Sync {
@@ -195,21 +199,70 @@ impl ClaudeCommands {
 
         command.arg(prompt);
 
-        let output = command
-            .output()
-            .await
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .context("failed to spawn claude command")?;
 
-        if !output.status.success() {
+        let mut child_stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture stdout for claude command"))?;
+        let child_stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("failed to capture stderr for claude command"))?;
+
+        let stderr_handle = tokio::spawn(async move {
+            let mut stderr_buf = Vec::new();
+            tokio::io::BufReader::new(child_stderr)
+                .read_to_end(&mut stderr_buf)
+                .await
+                .context("failed to read claude stderr")?;
+            Ok::<Vec<u8>, anyhow::Error>(stderr_buf)
+        });
+
+        let mut stdout_buf = Vec::new();
+        let mut stdout_writer = io::stdout();
+        let mut buf = [0u8; 4096];
+        loop {
+            let read = child_stdout
+                .read(&mut buf)
+                .await
+                .context("failed to read claude stdout")?;
+            if read == 0 {
+                break;
+            }
+            stdout_writer
+                .write_all(&buf[..read])
+                .await
+                .context("failed to stream claude stdout")?;
+            stdout_writer
+                .flush()
+                .await
+                .context("failed to flush claude stdout")?;
+            stdout_buf.extend_from_slice(&buf[..read]);
+        }
+
+        let status = child
+            .wait()
+            .await
+            .context("failed waiting for claude command to finish")?;
+        let stderr_buf = stderr_handle
+            .await
+            .context("failed to join claude stderr task")??;
+
+        if !status.success() {
             return Err(anyhow!(
                 "claude command failed with status {}. stdout: {}. stderr: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                status,
+                String::from_utf8_lossy(&stdout_buf),
+                String::from_utf8_lossy(&stderr_buf)
             ));
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
         fs::write(output_path, &stdout)
             .await
             .with_context(|| format!("failed to write claude output to {output_path:?}"))?;
