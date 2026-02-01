@@ -74,3 +74,7 @@ metis issues create --assignee pm --repo-name your-org/your-repo "Feature: pleas
 ## Maintain Shared Documents
 
 Use `metis documents` to capture design docs, runbooks, and other markdown artifacts in the server store. See [metis/docs/documents.md](metis/docs/documents.md) for a complete tour of the subcommands, input flags, and examples.
+
+## Prime Build Caches
+
+Cold builds (fresh CI nodes or new laptops) can spend minutes re-compiling dependencies before tests even start. Use `metis caches` to pre-build archives on a known-good commit and apply them on subsequent jobs or contributors’ machines. Start by running `metis caches build` on the commit that seeds your branch, then `metis caches apply --nearest` inside feature branches to reuse the closest cache key. The command supports filesystem and S3 storage backends plus options such as `--git-sha`, `--home-dir`, and `--dry-run`; consult [metis/docs/caches.md](metis/docs/caches.md) for the full workflow, storage setup, and troubleshooting tips.
