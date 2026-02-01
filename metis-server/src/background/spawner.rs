@@ -301,7 +301,9 @@ impl Spawner for AgentQueue {
                 None => None,
             };
             if is_assignment_agent {
-                if let Some(name) = &issue.assignee && name != &self.name {
+                if let Some(name) = &issue.assignee
+                    && name != &self.name
+                {
                     continue;
                 }
             } else if should_skip_for_assignee_mismatch(
