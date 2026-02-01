@@ -61,6 +61,7 @@ This command assigns the issue to `swe`, which is a software engineering agent.
 After running this command, you should see the issue in the dashboard, and the agent picking it up and working on it.
 Once the agent is done, it will create an issue assigned to you to review the PR.
 The PR is copied to Github -- you can submit your review feedback there.
+For a deeper tour of `metis issues`, including when to reach for `list` (backlog triage), `describe` (dependency graph + activity log), `update` (status/progress changes), and `todo` (per-issue checklists), see [metis/docs/issues.md](metis/docs/issues.md).
 
 ## 5) Try a more complicated issue
 
@@ -70,6 +71,8 @@ into smaller tasks for development. Try writing a more complex feature descripti
 ```bash
 metis issues create --assignee pm --repo-name your-org/your-repo "Feature: please build XYZ"
 ```
+
+As the work unfolds, use `metis issues list` to watch related tasks, `metis issues describe` to understand blockers and linked patches, `metis issues update` to record status changes, and `metis issues todo` to keep hand-off steps visible. Each of these flows is documented with copy/paste snippets in [metis/docs/issues.md](metis/docs/issues.md).
 
 ## Maintain Shared Documents
 
