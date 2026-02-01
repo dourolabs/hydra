@@ -15,7 +15,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::io::AsyncWriteExt;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use walkdir::WalkDir;
 
 const S3_XML_NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -117,6 +117,11 @@ async fn list_objects_v2(
     );
     let list_type = query.list_type.unwrap_or(2);
     if list_type != 2 {
+        error!(
+            bucket = %bucket,
+            list_type = list_type,
+            "list_objects_v2 failed: list-type=2 is required for ListObjectsV2"
+        );
         return s3_error(
             StatusCode::BAD_REQUEST,
             "InvalidRequest",
@@ -126,7 +131,15 @@ async fn list_objects_v2(
 
     let prefix = match sanitize_prefix(query.prefix.as_deref().unwrap_or("")) {
         Ok(prefix) => prefix,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                prefix = ?query.prefix,
+                error = %err.message,
+                "list_objects_v2 failed: invalid prefix"
+            );
+            return err.into_response();
+        }
     };
 
     let max_keys = query
@@ -147,7 +160,15 @@ async fn list_objects_v2(
     .await
     {
         Ok(result) => result,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                prefix = %prefix,
+                error = %err.message,
+                "list_objects_v2 failed: {}", err.code
+            );
+            return err.into_response();
+        }
     };
 
     let xml = render_list_response(&bucket, &prefix, &query, max_keys, &list_result);
@@ -265,16 +286,36 @@ async fn put_object(
 
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "put_object failed: {}", err.code
+            );
+            return err.into_response();
+        }
     };
 
     if let Some(parent) = path.parent() {
         if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "put_object failed: creating object directory"
+            );
             return S3Error::io("creating object directory", err).into_response();
         }
     }
 
     if let Err(err) = write_file(&path, &body).await {
+        error!(
+            bucket = %bucket,
+            key = %key,
+            error = %err,
+            "put_object failed: writing object"
+        );
         return S3Error::io("writing object", err).into_response();
     }
 
@@ -295,20 +336,49 @@ async fn get_object(
     info!(bucket = %bucket, key = %key, "get_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "get_object failed: {}", err.code
+            );
+            return err.into_response();
+        }
     };
 
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                "get_object failed: NoSuchKey - Object not found"
+            );
             return s3_error(StatusCode::NOT_FOUND, "NoSuchKey", "Object not found");
         }
-        Err(err) => return S3Error::io("reading object", err).into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "get_object failed: reading object"
+            );
+            return S3Error::io("reading object", err).into_response();
+        }
     };
 
     let metadata = match tokio::fs::metadata(&path).await {
         Ok(metadata) => metadata,
-        Err(err) => return S3Error::io("reading metadata", err).into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "get_object failed: reading metadata"
+            );
+            return S3Error::io("reading metadata", err).into_response();
+        }
     };
 
     let etag = compute_etag(&bytes);
@@ -322,20 +392,49 @@ async fn head_object(
     info!(bucket = %bucket, key = %key, "head_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "head_object failed: {}", err.code
+            );
+            return err.into_response();
+        }
     };
 
     let metadata = match tokio::fs::metadata(&path).await {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                "head_object failed: NoSuchKey - Object not found"
+            );
             return s3_error(StatusCode::NOT_FOUND, "NoSuchKey", "Object not found");
         }
-        Err(err) => return S3Error::io("reading metadata", err).into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "head_object failed: reading metadata"
+            );
+            return S3Error::io("reading metadata", err).into_response();
+        }
     };
 
     let etag = match compute_etag_from_path(&path) {
         Ok(etag) => etag,
-        Err(err) => return S3Error::io("reading object", err).into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "head_object failed: reading object for etag"
+            );
+            return S3Error::io("reading object", err).into_response();
+        }
     };
     response_with_body(Vec::new(), metadata.modified().ok(), metadata.len(), etag)
 }
@@ -347,13 +446,29 @@ async fn delete_object(
     info!(bucket = %bucket, key = %key, "delete_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
-        Err(err) => return err.into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "delete_object failed: {}", err.code
+            );
+            return err.into_response();
+        }
     };
 
     match tokio::fs::remove_file(&path).await {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return S3Error::io("deleting object", err).into_response(),
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "delete_object failed: deleting object"
+            );
+            return S3Error::io("deleting object", err).into_response();
+        }
     }
 
     let mut response = Response::new(axum::body::Body::empty());
