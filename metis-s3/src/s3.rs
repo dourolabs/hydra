@@ -15,7 +15,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::io::AsyncWriteExt;
-use tracing::warn;
+use tracing::{info, warn};
 use walkdir::WalkDir;
 
 const S3_XML_NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -108,6 +108,13 @@ async fn list_objects_v2(
     Path(bucket): Path<String>,
     Query(query): Query<ListObjectsQuery>,
 ) -> Response {
+    info!(
+        bucket = %bucket,
+        prefix = ?query.prefix,
+        max_keys = ?query.max_keys,
+        continuation_token = ?query.continuation_token,
+        "list_objects_v2"
+    );
     let list_type = query.list_type.unwrap_or(2);
     if list_type != 2 {
         return s3_error(
@@ -246,6 +253,12 @@ async fn put_object(
     Path((bucket, key)): Path<(String, String)>,
     body: Bytes,
 ) -> Response {
+    info!(
+        bucket = %bucket,
+        key = %key,
+        body_size = body.len(),
+        "put_object"
+    );
     if body.is_empty() {
         warn!(bucket = %bucket, key = %key, "received empty PUT body");
     }
@@ -279,6 +292,7 @@ async fn get_object(
     State(state): State<Arc<S3State>>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
+    info!(bucket = %bucket, key = %key, "get_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
         Err(err) => return err.into_response(),
@@ -305,6 +319,7 @@ async fn head_object(
     State(state): State<Arc<S3State>>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
+    info!(bucket = %bucket, key = %key, "head_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
         Err(err) => return err.into_response(),
@@ -329,6 +344,7 @@ async fn delete_object(
     State(state): State<Arc<S3State>>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
+    info!(bucket = %bucket, key = %key, "delete_object");
     let path = match state.object_path(&bucket, &key) {
         Ok(path) => path,
         Err(err) => return err.into_response(),
