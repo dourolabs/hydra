@@ -190,25 +190,17 @@ async fn clone_repository(
 
     let github_token = client.get_github_token().await.ok();
 
-    clone_repo(
-        remote_url,
-        &revision,
-        &destination,
-        github_token.as_deref(),
-    )
-    .with_context(|| {
-        format!(
-            "failed to clone repository '{}' to '{}'",
-            args.name,
-            destination.display()
-        )
-    })?;
+    clone_repo(remote_url, &revision, &destination, github_token.as_deref()).with_context(
+        || {
+            format!(
+                "failed to clone repository '{}' to '{}'",
+                args.name,
+                destination.display()
+            )
+        },
+    )?;
 
-    eprintln!(
-        "Cloned {} to {}",
-        args.name,
-        destination.display()
-    );
+    eprintln!("Cloned {} to {}", args.name, destination.display());
     Ok(())
 }
 
