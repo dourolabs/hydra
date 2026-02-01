@@ -18,6 +18,13 @@ Minimal S3-compatible service (subset used by `metis-build-cache`) backed by the
 
 The service listens on `0.0.0.0:9090` by default and stores objects under `/var/lib/metis/s3`.
 
+### Request size limit
+
+`metis-s3` now accepts cache uploads up to **1 GiB** by default. Increase the
+limit by setting `request_body_limit_bytes` in `config.toml` or, when using
+`scripts/service.sh`, overriding the `S3_REQUEST_BODY_LIMIT_BYTES` env var.
+Uploads that exceed the limit will fail with `HTTP 413 Request Entity Too Large`.
+
 ## Docker
 
 Build and run the image locally:
