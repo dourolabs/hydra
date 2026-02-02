@@ -14,7 +14,7 @@ Workspace crates: `metis` (CLI), `metis-server` (Axum API and background workers
 - Do not add CLI command details to `README.md` unless explicitly requested; the README has tight space and should stay focused on top-level orientation, so keep command-specific docs elsewhere.
 
 ## Coding Style & Naming Conventions
-Run `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` before submitting. Modules and files use snake_case; types and traits use UpperCamelCase; constants are SCREAMING_SNAKE_CASE. Keep each CLI subcommand isolated per file under `metis/src/command` and prefer thin synchronous wrappers around async helpers. Document only non-obvious public behavior with `///` comments.
+Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` before submitting. Modules and files use snake_case; types and traits use UpperCamelCase; constants are SCREAMING_SNAKE_CASE. Keep each CLI subcommand isolated per file under `metis/src/command` and prefer thin synchronous wrappers around async helpers. Document only non-obvious public behavior with `///` comments.
 - Use the `MetisId` type alias for all Metis identifiers instead of raw `String` values.
 - CLI git operations should use libgit2; do not shell out to the git binary.
 - When a CLI command needs environment variables, declare them on the arg struct (e.g., `#[arg(env = ...)]`) and read them from the parsed args rather than calling `env::var` inside the implementation.
@@ -24,7 +24,7 @@ Run `cargo test --workspace` before opening a pull request. Keep tests near thei
 
 ## Final Task Checklist
 Before finishing any task, you **must** run and fix all issues from these commands:
-- `cargo fmt --all`
+- `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 
