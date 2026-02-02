@@ -21,8 +21,7 @@ use serde::Serialize;
 
 use crate::git;
 use crate::git::{
-    apply_patch, branch_exists, checkout_new_branch, current_branch,
-    diff_commit_range as git_diff_commit_range,
+    apply_patch, current_branch, diff_commit_range as git_diff_commit_range,
     has_uncommitted_changes as git_has_uncommitted_changes, push_branch,
 };
 use crate::{
@@ -775,7 +774,13 @@ pub async fn create_patch_artifact_from_repo(
     if create_github_pr {
         let github_token = github_token
             .ok_or_else(|| anyhow!("Creator GitHub token is required to push a GitHub branch"))?;
-        let branch_name = ensure_feature_branch(repo_root, job_id.as_ref().map(|id| id.as_ref()))?;
+        let branch_name = current_branch(repo_root)?;
+        if !branch_name.starts_with("metis/") {
+            bail!(
+                "Cannot push to GitHub: current branch '{branch_name}' does not have the required 'metis/' prefix. \
+                Please checkout a branch named 'metis/<issue-id>/...' before creating a patch with --github."
+            );
+        }
         push_branch(repo_root, &branch_name, Some(github_token))?;
         upsert_request = upsert_request.with_sync_github_branch(&branch_name);
     }
@@ -848,51 +853,6 @@ async fn review_patch(
 
     println!("{}", response.patch_id);
     Ok(())
-}
-
-fn ensure_feature_branch(repo_root: &Path, job_id: Option<&str>) -> Result<String> {
-    let current_branch = current_branch(repo_root)?;
-    if !should_create_new_branch(&current_branch) {
-        return Ok(current_branch);
-    }
-
-    let sanitized_job = sanitize_branch_segment(job_id.unwrap_or("patch"));
-    let mut candidate = if sanitized_job.is_empty() {
-        "metis-patch".to_string()
-    } else {
-        format!("metis-{sanitized_job}")
-    };
-    let mut suffix = 0;
-    while branch_exists(repo_root, &candidate)? {
-        suffix += 1;
-        candidate = format!("{candidate}-{suffix}");
-    }
-
-    checkout_new_branch(repo_root, &candidate)?;
-    Ok(candidate)
-}
-
-fn should_create_new_branch(branch: &str) -> bool {
-    matches!(branch, "HEAD" | "main" | "master")
-}
-
-fn sanitize_branch_segment(input: &str) -> String {
-    let mut normalized = input
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-
-    while normalized.contains("--") {
-        normalized = normalized.replace("--", "-");
-    }
-
-    normalized.trim_matches('-').to_string()
 }
 
 #[cfg(test)]
@@ -2000,13 +1960,37 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn ensure_feature_branch_uses_job_id_when_on_main() -> Result<()> {
-        let (_tempdir, repo_path, _, _) = initialize_repo_with_changes()?;
-        let branch = ensure_feature_branch(&repo_path, Some("Job 123"))?;
+    #[tokio::test]
+    async fn create_patch_with_github_rejects_non_metis_branch() -> Result<()> {
+        let (_tempdir, repo_path, base_commit, head_commit) = initialize_repo_with_changes()?;
+        let diff = git_diff_commit_range(&repo_path, &format!("{base_commit}..{head_commit}"))?;
+        let job_id = task_id("t-job-branch-check");
+        let server = MockServer::start();
+        let client = metis_client(&server);
 
-        assert_eq!(branch, "metis-job-123");
-        assert_eq!(current_branch(&repo_path)?, branch);
+        let result = create_patch_artifact_from_repo(
+            &client,
+            &repo_path,
+            diff,
+            "test patch".to_string(),
+            "test description".to_string(),
+            Some(job_id),
+            true,
+            Some("test-token"),
+            false,
+            sample_repo_name(),
+        )
+        .await;
+
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("does not have the required 'metis/' prefix"),
+            "error should mention metis/ prefix requirement: {error}"
+        );
+        assert!(
+            error.contains("main") || error.contains("master"),
+            "error should reference the current branch name: {error}"
+        );
 
         Ok(())
     }
