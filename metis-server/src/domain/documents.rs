@@ -130,10 +130,12 @@ impl From<api::documents::SearchDocumentsQuery> for SearchDocumentsQuery {
 
 impl From<SearchDocumentsQuery> for api::documents::SearchDocumentsQuery {
     fn from(value: SearchDocumentsQuery) -> Self {
-        let mut query =
-            api::documents::SearchDocumentsQuery::new(value.q, value.path_prefix, value.created_by);
-        query.path_is_exact = value.path_is_exact;
-        query
+        api::documents::SearchDocumentsQuery::new(
+            value.q,
+            value.path_prefix,
+            value.path_is_exact,
+            value.created_by,
+        )
     }
 }
 

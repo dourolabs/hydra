@@ -225,7 +225,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
         assert!(response.status().is_success());
     }
 
-    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None);
+    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None, None);
     let matching = client
         .get(format!("{base}/v1/documents"))
         .query(&query)
@@ -242,6 +242,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             None,
             Some("docs/".to_string()),
             None,
+            None,
         ))
         .send()
         .await?
@@ -252,6 +253,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
     let by_creator = client
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(
+            None,
             None,
             None,
             Some(running_task.clone()),
@@ -322,6 +324,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             None,
             Some("docs/guide.md".to_string()),
             None,
+            None,
         ))
         .send()
         .await?
@@ -332,10 +335,12 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
     // With path_is_exact=true, only exact match is returned
     let by_exact = client
         .get(format!("{base}/v1/documents"))
-        .query(
-            &SearchDocumentsQuery::new(None, Some("docs/guide.md".to_string()), None)
-                .with_path_is_exact(true),
-        )
+        .query(&SearchDocumentsQuery::new(
+            None,
+            Some("docs/guide.md".to_string()),
+            Some(true),
+            None,
+        ))
         .send()
         .await?
         .json::<ListDocumentsResponse>()
@@ -346,10 +351,12 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
     // With path_is_exact=false, prefix matching is used (default behavior)
     let by_prefix_explicit = client
         .get(format!("{base}/v1/documents"))
-        .query(
-            &SearchDocumentsQuery::new(None, Some("docs/guide.md".to_string()), None)
-                .with_path_is_exact(false),
-        )
+        .query(&SearchDocumentsQuery::new(
+            None,
+            Some("docs/guide.md".to_string()),
+            Some(false),
+            None,
+        ))
         .send()
         .await?
         .json::<ListDocumentsResponse>()
