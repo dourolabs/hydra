@@ -35,6 +35,8 @@ pub struct SearchDocumentsQuery {
     #[serde(default)]
     pub path_prefix: Option<String>,
     #[serde(default)]
+    pub path_is_exact: Option<bool>,
+    #[serde(default)]
     pub created_by: Option<TaskId>,
 }
 
@@ -120,6 +122,7 @@ impl From<api::documents::SearchDocumentsQuery> for SearchDocumentsQuery {
         SearchDocumentsQuery {
             q: value.q,
             path_prefix: value.path_prefix,
+            path_is_exact: value.path_is_exact,
             created_by: value.created_by,
         }
     }
@@ -127,7 +130,10 @@ impl From<api::documents::SearchDocumentsQuery> for SearchDocumentsQuery {
 
 impl From<SearchDocumentsQuery> for api::documents::SearchDocumentsQuery {
     fn from(value: SearchDocumentsQuery) -> Self {
-        api::documents::SearchDocumentsQuery::new(value.q, value.path_prefix, value.created_by)
+        let mut query =
+            api::documents::SearchDocumentsQuery::new(value.q, value.path_prefix, value.created_by);
+        query.path_is_exact = value.path_is_exact;
+        query
     }
 }
 

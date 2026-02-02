@@ -396,12 +396,20 @@ impl PostgresStore {
         let mut predicates = Vec::new();
         let mut bindings = Vec::new();
 
-        if let Some(path_prefix) = query.path_prefix.as_ref() {
-            predicates.push(format!(
-                "COALESCE(payload->>'path','') LIKE ${}",
-                bindings.len() + 1
-            ));
-            bindings.push(format!("{path_prefix}%"));
+        if let Some(path) = query.path_prefix.as_ref() {
+            if query.path_is_exact.unwrap_or(false) {
+                predicates.push(format!(
+                    "COALESCE(payload->>'path','') = ${}",
+                    bindings.len() + 1
+                ));
+                bindings.push(path.clone());
+            } else {
+                predicates.push(format!(
+                    "COALESCE(payload->>'path','') LIKE ${}",
+                    bindings.len() + 1
+                ));
+                bindings.push(format!("{path}%"));
+            }
         }
 
         if let Some(created_by) = query.created_by.as_ref() {
@@ -876,6 +884,7 @@ impl Store for PostgresStore {
         self.list_documents(&SearchDocumentsQuery {
             q: None,
             path_prefix: Some(path_prefix.to_string()),
+            path_is_exact: None,
             created_by: None,
         })
         .await
@@ -1698,6 +1707,7 @@ mod tests {
         let query = SearchDocumentsQuery {
             q: Some("howto".to_string()),
             path_prefix: Some("docs/".to_string()),
+            path_is_exact: None,
             created_by: Some(task_id),
         };
 

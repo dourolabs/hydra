@@ -117,7 +117,7 @@ pub async fn list_documents(
     State(state): State<AppState>,
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
-    info!(query = ?query.q, path_prefix = ?query.path_prefix, created_by = ?query.created_by, "list_documents invoked");
+    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, "list_documents invoked");
     let query: SearchDocumentsQuery = query.into();
     let documents = state
         .list_documents(&query)

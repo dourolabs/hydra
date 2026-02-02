@@ -201,6 +201,13 @@ impl MemoryStore {
         ids
     }
 
+    fn document_ids_with_exact_path(&self, path: &str) -> Vec<DocumentId> {
+        self.documents_by_path
+            .get(path)
+            .map(|entry| entry.value().iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     fn documents_from_ids(&self, ids: &[DocumentId]) -> Vec<(DocumentId, Versioned<Document>)> {
         let mut seen = HashSet::new();
         let mut documents = Vec::new();
@@ -529,8 +536,12 @@ impl Store for MemoryStore {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let mut documents: Vec<(DocumentId, Versioned<Document>)> =
-            if let Some(prefix) = query.path_prefix.as_deref() {
-                let ids = self.document_ids_with_path_prefix(prefix);
+            if let Some(path) = query.path_prefix.as_deref() {
+                let ids = if query.path_is_exact.unwrap_or(false) {
+                    self.document_ids_with_exact_path(path)
+                } else {
+                    self.document_ids_with_path_prefix(path)
+                };
                 self.documents_from_ids(&ids)
             } else {
                 self.documents
@@ -1530,6 +1541,7 @@ mod tests {
         let query = SearchDocumentsQuery {
             q: Some("how".to_string()),
             path_prefix: Some("docs/".to_string()),
+            path_is_exact: None,
             created_by: Some(task_id.clone()),
         };
 
@@ -1541,6 +1553,7 @@ mod tests {
             .list_documents(&SearchDocumentsQuery {
                 q: None,
                 path_prefix: None,
+                path_is_exact: None,
                 created_by: Some(other_task),
             })
             .await
@@ -2059,5 +2072,60 @@ mod tests {
             err,
             StoreError::InvalidActorName(name) if name == "u-"
         ));
+    }
+
+    #[tokio::test]
+    async fn document_path_is_exact_filters_correctly() {
+        let store = MemoryStore::new();
+
+        let exact_doc = store
+            .add_document(sample_document(Some("docs/guide.md"), None))
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/guide.md.bak"), None))
+            .await
+            .unwrap();
+        store
+            .add_document(sample_document(Some("docs/guide.md/extra"), None))
+            .await
+            .unwrap();
+
+        // Prefix matching returns all 3
+        let by_prefix = store
+            .list_documents(&SearchDocumentsQuery {
+                q: None,
+                path_prefix: Some("docs/guide.md".to_string()),
+                path_is_exact: None,
+                created_by: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_prefix.len(), 3);
+
+        // Exact matching returns only the exact path
+        let by_exact = store
+            .list_documents(&SearchDocumentsQuery {
+                q: None,
+                path_prefix: Some("docs/guide.md".to_string()),
+                path_is_exact: Some(true),
+                created_by: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_exact.len(), 1);
+        assert_eq!(by_exact[0].0, exact_doc);
+
+        // path_is_exact=false uses prefix matching
+        let by_prefix_explicit = store
+            .list_documents(&SearchDocumentsQuery {
+                q: None,
+                path_prefix: Some("docs/guide.md".to_string()),
+                path_is_exact: Some(false),
+                created_by: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_prefix_explicit.len(), 3);
     }
 }

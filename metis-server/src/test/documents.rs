@@ -290,3 +290,71 @@ async fn documents_missing_resources_return_404() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let docs = [
+        Document::new("Exact Doc".to_string(), "exact match".to_string())
+            .with_path("docs/guide.md"),
+        Document::new("Prefix Doc".to_string(), "prefix match".to_string())
+            .with_path("docs/guide.md.bak"),
+        Document::new("Nested Doc".to_string(), "nested match".to_string())
+            .with_path("docs/guide.md/extra"),
+    ];
+
+    for doc in docs.iter() {
+        let response = client
+            .post(format!("{base}/v1/documents"))
+            .json(&UpsertDocumentRequest::new(doc.clone()))
+            .send()
+            .await?;
+        assert!(response.status().is_success());
+    }
+
+    // Without path_is_exact, prefix matching returns all 3 docs
+    let by_prefix = client
+        .get(format!("{base}/v1/documents"))
+        .query(&SearchDocumentsQuery::new(
+            None,
+            Some("docs/guide.md".to_string()),
+            None,
+        ))
+        .send()
+        .await?
+        .json::<ListDocumentsResponse>()
+        .await?;
+    assert_eq!(by_prefix.documents.len(), 3);
+
+    // With path_is_exact=true, only exact match is returned
+    let by_exact = client
+        .get(format!("{base}/v1/documents"))
+        .query(
+            &SearchDocumentsQuery::new(None, Some("docs/guide.md".to_string()), None)
+                .with_path_is_exact(true),
+        )
+        .send()
+        .await?
+        .json::<ListDocumentsResponse>()
+        .await?;
+    assert_eq!(by_exact.documents.len(), 1);
+    assert_eq!(by_exact.documents[0].document.title, "Exact Doc");
+
+    // With path_is_exact=false, prefix matching is used (default behavior)
+    let by_prefix_explicit = client
+        .get(format!("{base}/v1/documents"))
+        .query(
+            &SearchDocumentsQuery::new(None, Some("docs/guide.md".to_string()), None)
+                .with_path_is_exact(false),
+        )
+        .send()
+        .await?
+        .json::<ListDocumentsResponse>()
+        .await?;
+    assert_eq!(by_prefix_explicit.documents.len(), 3);
+
+    Ok(())
+}
