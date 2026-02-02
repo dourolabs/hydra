@@ -138,3 +138,56 @@ async fn s3_error_includes_dispatch_failure_for_connection_refused() {
         "Error should indicate connection/dispatch failure, got: {err_msg}"
     );
 }
+
+#[tokio::test]
+async fn s3_accepts_large_uploads() -> Result<(), BuildCacheError> {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "large-upload-tests".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config)?;
+
+    wait_for_metis_s3(&client).await?;
+
+    // Create a 5MB file (exceeds axum's default 2MB limit)
+    let temp_dir = tempdir().expect("work dir");
+    let upload_path = temp_dir.path().join("large-payload.bin");
+    let large_content = vec![0xABu8; 5 * 1024 * 1024];
+    tokio::fs::write(&upload_path, &large_content)
+        .await
+        .map_err(|err| BuildCacheError::io("writing large upload file", err))?;
+
+    // Upload should succeed without hitting body size limit
+    client
+        .put_object("repo/large-cache.bin", &upload_path)
+        .await?;
+
+    // Verify we can download it back
+    let download_path = temp_dir.path().join("downloaded.bin");
+    client
+        .get_object("repo/large-cache.bin", &download_path)
+        .await?;
+
+    let downloaded = tokio::fs::read(&download_path)
+        .await
+        .map_err(|err| BuildCacheError::io("reading download file", err))?;
+    assert_eq!(downloaded.len(), large_content.len());
+    assert_eq!(downloaded, large_content);
+
+    server_handle.abort();
+    Ok(())
+}
