@@ -226,6 +226,17 @@ fn extract_tool_result_text(value: Option<&Value>) -> String {
     }
 }
 
+fn format_duration(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+    if total_secs >= 60 {
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{mins}m {secs}s")
+    } else {
+        format!("{:.1}s", duration.as_secs_f32())
+    }
+}
+
 fn format_tool_result(
     name: &str,
     summary: &str,
@@ -240,8 +251,8 @@ fn format_tool_result(
         "tool done>".green().to_string()
     };
     rendered.push_str(&format!(
-        "{status} {name} - {summary} ({:.1}s)\n",
-        duration.as_secs_f32()
+        "{status} {name} - {summary} ({})\n",
+        format_duration(duration)
     ));
     if !content.trim().is_empty() {
         for line in content.lines() {
@@ -416,5 +427,40 @@ mod tests {
         // Check that non-Bash tools don't have the "$ " command line
         assert!(!rendered.contains("  $ "));
         assert!(rendered.contains("Read - "));
+    }
+
+    #[test]
+    fn format_duration_short_commands_use_decimal_seconds() {
+        // Less than 60 seconds should show decimal format
+        assert_eq!(format_duration(Duration::from_millis(500)), "0.5s");
+        assert_eq!(format_duration(Duration::from_millis(1500)), "1.5s");
+        assert_eq!(format_duration(Duration::from_secs(30)), "30.0s");
+        assert_eq!(format_duration(Duration::from_secs(59)), "59.0s");
+    }
+
+    #[test]
+    fn format_duration_long_commands_use_minutes_and_seconds() {
+        // 60 seconds or more should show Xm Ys format
+        assert_eq!(format_duration(Duration::from_secs(60)), "1m 0s");
+        assert_eq!(format_duration(Duration::from_secs(90)), "1m 30s");
+        assert_eq!(format_duration(Duration::from_secs(150)), "2m 30s");
+        assert_eq!(format_duration(Duration::from_secs(3661)), "61m 1s");
+    }
+
+    #[test]
+    fn format_tool_result_uses_enhanced_duration_format() {
+        // Short duration should use decimal seconds
+        let short = format_tool_result(
+            "Bash",
+            "echo hello",
+            Duration::from_millis(50),
+            "hello",
+            false,
+        );
+        assert!(short.contains("(0.1s)") || short.contains("(0.0s)"));
+
+        // Long duration should use minutes and seconds
+        let long = format_tool_result("Bash", "sleep 90", Duration::from_secs(90), "", false);
+        assert!(long.contains("(1m 30s)"));
     }
 }
