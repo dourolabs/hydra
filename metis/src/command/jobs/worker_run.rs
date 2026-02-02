@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -164,20 +165,45 @@ pub async fn run(
                 Ok(client) => match resolve_head_oid(&dest) {
                     Ok(Some(head_oid)) => {
                         let git_sha = head_oid.to_string();
-                        match client
-                            .build_and_upload_cache(
-                                &dest,
-                                worker_home_dir.as_deref(),
-                                service_repo_name.clone(),
-                                &git_sha,
-                            )
-                            .await
-                        {
-                            Ok(key) => log_status(format!(
-                                "Uploaded build cache entry '{}'.",
-                                key.object_key()
-                            )),
-                            Err(err) => log_status(format!("Skipping build cache upload: {err}")),
+                        const MAX_ATTEMPTS: u32 = 3;
+                        let mut last_error = None;
+                        for attempt in 1..=MAX_ATTEMPTS {
+                            log_status(format!(
+                                "Uploading build cache (attempt {attempt}/{MAX_ATTEMPTS})..."
+                            ));
+                            match client
+                                .build_and_upload_cache(
+                                    &dest,
+                                    worker_home_dir.as_deref(),
+                                    service_repo_name.clone(),
+                                    &git_sha,
+                                )
+                                .await
+                            {
+                                Ok(key) => {
+                                    log_status(format!(
+                                        "Uploaded build cache entry '{}'.",
+                                        key.object_key()
+                                    ));
+                                    last_error = None;
+                                    break;
+                                }
+                                Err(err) => {
+                                    last_error = Some(err);
+                                    if attempt < MAX_ATTEMPTS {
+                                        let delay_secs = 2u64.pow(attempt);
+                                        log_status(format!(
+                                            "Build cache upload attempt {attempt} failed, retrying in {delay_secs}s..."
+                                        ));
+                                        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(err) = last_error {
+                            log_status(format!(
+                                "Skipping build cache upload after {MAX_ATTEMPTS} attempts: {err}"
+                            ));
                         }
                     }
                     Ok(None) => log_status("Skipping build cache upload; HEAD is unavailable."),
