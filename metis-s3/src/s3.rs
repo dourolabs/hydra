@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, head, put},
+    routing::{delete, get, head, post, put},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Deserialize;
@@ -16,6 +16,7 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 const S3_XML_NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -42,6 +43,23 @@ impl S3State {
         let key = sanitize_key(key)?;
         Ok(self.root_dir.join(bucket).join(key))
     }
+
+    fn multipart_dir(&self) -> PathBuf {
+        self.root_dir.join(".multipart")
+    }
+
+    fn upload_dir(&self, upload_id: &str) -> PathBuf {
+        self.multipart_dir().join(upload_id)
+    }
+
+    fn part_path(&self, upload_id: &str, part_number: u32) -> PathBuf {
+        self.upload_dir(upload_id)
+            .join(format!("part-{part_number:05}"))
+    }
+
+    fn upload_metadata_path(&self, upload_id: &str) -> PathBuf {
+        self.upload_dir(upload_id).join("metadata.json")
+    }
 }
 
 pub fn router(root_dir: PathBuf) -> RouterWithState {
@@ -60,10 +78,11 @@ impl RouterWithState {
         let router = axum::Router::new()
             .route("/:bucket", get(list_objects_v2))
             .route("/:bucket/", get(list_objects_v2))
-            .route("/:bucket/*key", put(put_object))
+            .route("/:bucket/*key", put(put_object_handler))
             .route("/:bucket/*key", get(get_object))
             .route("/:bucket/*key", head(head_object))
-            .route("/:bucket/*key", delete(delete_object))
+            .route("/:bucket/*key", delete(delete_object_handler))
+            .route("/:bucket/*key", post(post_object_handler))
             .with_state(state);
         Self { router }
     }
@@ -90,6 +109,32 @@ struct ListResult {
     next_token: Option<String>,
 }
 
+/// Metadata stored for each multipart upload
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct MultipartUploadMetadata {
+    bucket: String,
+    key: String,
+    upload_id: String,
+    created_at: String,
+}
+
+/// Query parameters for multipart upload operations
+#[derive(Debug, Deserialize)]
+struct MultipartQuery {
+    uploads: Option<String>,
+    #[serde(rename = "uploadId")]
+    upload_id: Option<String>,
+    #[serde(rename = "partNumber")]
+    part_number: Option<u32>,
+}
+
+/// Part information in CompleteMultipartUpload request body
+#[derive(Debug)]
+struct PartInfo {
+    part_number: u32,
+    etag: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ListObjectsQuery {
     #[serde(rename = "list-type")]
@@ -101,6 +146,53 @@ struct ListObjectsQuery {
     max_keys: Option<usize>,
     #[serde(rename = "start-after")]
     start_after: Option<String>,
+}
+
+/// Handler for PUT requests - dispatches to put_object or upload_part based on query params
+async fn put_object_handler(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+    body: Bytes,
+) -> Response {
+    if query.upload_id.is_some() && query.part_number.is_some() {
+        upload_part(State(state), Path((bucket, key)), Query(query), body).await
+    } else {
+        put_object(State(state), Path((bucket, key)), body).await
+    }
+}
+
+/// Handler for DELETE requests - dispatches to delete_object or abort_multipart_upload based on query params
+async fn delete_object_handler(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+) -> Response {
+    if query.upload_id.is_some() {
+        abort_multipart_upload(State(state), Path((bucket, key)), Query(query)).await
+    } else {
+        delete_object(State(state), Path((bucket, key))).await
+    }
+}
+
+/// Handler for POST requests - dispatches to create_multipart_upload or complete_multipart_upload based on query params
+async fn post_object_handler(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+    body: Bytes,
+) -> Response {
+    if query.uploads.is_some() {
+        create_multipart_upload(State(state), Path((bucket, key))).await
+    } else if query.upload_id.is_some() {
+        complete_multipart_upload(State(state), Path((bucket, key)), Query(query), body).await
+    } else {
+        s3_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidRequest",
+            "Invalid POST request - missing uploads or uploadId query parameter",
+        )
+    }
 }
 
 async fn list_objects_v2(
@@ -437,6 +529,500 @@ async fn head_object(
         }
     };
     response_with_body(Vec::new(), metadata.modified().ok(), metadata.len(), etag)
+}
+
+/// POST /:bucket/*key?uploads - CreateMultipartUpload
+async fn create_multipart_upload(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> Response {
+    info!(bucket = %bucket, key = %key, "create_multipart_upload");
+
+    // Validate bucket and key
+    if let Err(err) = validate_bucket(&bucket) {
+        error!(bucket = %bucket, error = %err.message, "create_multipart_upload failed: {}", err.code);
+        return err.into_response();
+    }
+    if let Err(err) = sanitize_key(&key) {
+        error!(key = %key, error = %err.message, "create_multipart_upload failed: {}", err.code);
+        return err.into_response();
+    }
+
+    // Generate upload ID
+    let upload_id = Uuid::new_v4().to_string();
+    let upload_dir = state.upload_dir(&upload_id);
+
+    // Create upload staging directory
+    if let Err(err) = tokio::fs::create_dir_all(&upload_dir).await {
+        error!(upload_id = %upload_id, error = %err, "create_multipart_upload failed: creating upload directory");
+        return S3Error::io("creating upload directory", err).into_response();
+    }
+
+    // Store upload metadata
+    let metadata = MultipartUploadMetadata {
+        bucket: bucket.clone(),
+        key: key.clone(),
+        upload_id: upload_id.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let metadata_path = state.upload_metadata_path(&upload_id);
+    let metadata_json = match serde_json::to_string(&metadata) {
+        Ok(json) => json,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "create_multipart_upload failed: serializing metadata");
+            return S3Error::io("serializing metadata", err).into_response();
+        }
+    };
+
+    if let Err(err) = tokio::fs::write(&metadata_path, metadata_json).await {
+        error!(upload_id = %upload_id, error = %err, "create_multipart_upload failed: writing metadata");
+        return S3Error::io("writing metadata", err).into_response();
+    }
+
+    // Return XML response per AWS S3 API spec
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<InitiateMultipartUploadResult xmlns=\"{S3_XML_NAMESPACE}\">\n  <Bucket>{}</Bucket>\n  <Key>{}</Key>\n  <UploadId>{}</UploadId>\n</InitiateMultipartUploadResult>\n",
+        xml_escape(&bucket),
+        xml_escape(&key),
+        xml_escape(&upload_id)
+    );
+
+    let mut response = Response::new(axum::body::Body::from(xml));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/xml"),
+    );
+    response
+}
+
+/// PUT /:bucket/*key?partNumber=N&uploadId=X - UploadPart
+async fn upload_part(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+    body: Bytes,
+) -> Response {
+    let upload_id = match &query.upload_id {
+        Some(id) => id,
+        None => {
+            error!(bucket = %bucket, key = %key, "upload_part failed: missing uploadId");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "uploadId is required",
+            );
+        }
+    };
+
+    let part_number = match query.part_number {
+        Some(n) if (1..=10000).contains(&n) => n,
+        Some(n) => {
+            error!(bucket = %bucket, key = %key, part_number = n, "upload_part failed: invalid part number");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidPartNumber",
+                "Part number must be between 1 and 10000",
+            );
+        }
+        None => {
+            error!(bucket = %bucket, key = %key, "upload_part failed: missing partNumber");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "partNumber is required",
+            );
+        }
+    };
+
+    info!(
+        bucket = %bucket,
+        key = %key,
+        upload_id = %upload_id,
+        part_number = part_number,
+        body_size = body.len(),
+        "upload_part"
+    );
+
+    // Verify upload exists
+    let metadata_path = state.upload_metadata_path(upload_id);
+    if !metadata_path.exists() {
+        error!(upload_id = %upload_id, "upload_part failed: upload not found");
+        return s3_error(StatusCode::NOT_FOUND, "NoSuchUpload", "Upload not found");
+    }
+
+    // Verify bucket/key match
+    let metadata_bytes = match tokio::fs::read(&metadata_path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "upload_part failed: reading metadata");
+            return S3Error::io("reading metadata", err).into_response();
+        }
+    };
+
+    let metadata: MultipartUploadMetadata = match serde_json::from_slice(&metadata_bytes) {
+        Ok(m) => m,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "upload_part failed: parsing metadata");
+            return S3Error::io("parsing metadata", err).into_response();
+        }
+    };
+
+    if metadata.bucket != bucket || metadata.key != key {
+        error!(
+            upload_id = %upload_id,
+            expected_bucket = %metadata.bucket,
+            expected_key = %metadata.key,
+            actual_bucket = %bucket,
+            actual_key = %key,
+            "upload_part failed: bucket/key mismatch"
+        );
+        return s3_error(
+            StatusCode::NOT_FOUND,
+            "NoSuchUpload",
+            "Upload not found for this bucket/key",
+        );
+    }
+
+    // Write part to staging
+    let part_path = state.part_path(upload_id, part_number);
+    if let Err(err) = tokio::fs::write(&part_path, &body).await {
+        error!(upload_id = %upload_id, part_number = part_number, error = %err, "upload_part failed: writing part");
+        return S3Error::io("writing part", err).into_response();
+    }
+
+    // Compute ETag for this part
+    let etag = compute_etag(&body);
+
+    // Store ETag in a separate file for later use
+    let etag_path = state
+        .upload_dir(upload_id)
+        .join(format!("etag-{part_number:05}"));
+    if let Err(err) = tokio::fs::write(&etag_path, &etag).await {
+        error!(upload_id = %upload_id, part_number = part_number, error = %err, "upload_part failed: writing etag");
+        return S3Error::io("writing etag", err).into_response();
+    }
+
+    let mut response = Response::new(axum::body::Body::empty());
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
+    );
+    response
+}
+
+/// POST /:bucket/*key?uploadId=X - CompleteMultipartUpload
+async fn complete_multipart_upload(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+    body: Bytes,
+) -> Response {
+    let upload_id = match &query.upload_id {
+        Some(id) => id,
+        None => {
+            error!(bucket = %bucket, key = %key, "complete_multipart_upload failed: missing uploadId");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "uploadId is required",
+            );
+        }
+    };
+
+    info!(bucket = %bucket, key = %key, upload_id = %upload_id, "complete_multipart_upload");
+
+    // Verify upload exists
+    let metadata_path = state.upload_metadata_path(upload_id);
+    if !metadata_path.exists() {
+        error!(upload_id = %upload_id, "complete_multipart_upload failed: upload not found");
+        return s3_error(StatusCode::NOT_FOUND, "NoSuchUpload", "Upload not found");
+    }
+
+    // Verify bucket/key match
+    let metadata_bytes = match tokio::fs::read(&metadata_path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "complete_multipart_upload failed: reading metadata");
+            return S3Error::io("reading metadata", err).into_response();
+        }
+    };
+
+    let metadata: MultipartUploadMetadata = match serde_json::from_slice(&metadata_bytes) {
+        Ok(m) => m,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "complete_multipart_upload failed: parsing metadata");
+            return S3Error::io("parsing metadata", err).into_response();
+        }
+    };
+
+    if metadata.bucket != bucket || metadata.key != key {
+        error!(upload_id = %upload_id, "complete_multipart_upload failed: bucket/key mismatch");
+        return s3_error(
+            StatusCode::NOT_FOUND,
+            "NoSuchUpload",
+            "Upload not found for this bucket/key",
+        );
+    }
+
+    // Parse request body to get part list
+    let parts = match parse_complete_multipart_request(&body) {
+        Ok(parts) => parts,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err.message, "complete_multipart_upload failed: {}", err.code);
+            return err.into_response();
+        }
+    };
+
+    if parts.is_empty() {
+        error!(upload_id = %upload_id, "complete_multipart_upload failed: no parts specified");
+        return s3_error(
+            StatusCode::BAD_REQUEST,
+            "MalformedXML",
+            "At least one part must be specified",
+        );
+    }
+
+    // Verify parts are in order and exist with matching ETags
+    let mut last_part_number = 0u32;
+    for part in &parts {
+        if part.part_number <= last_part_number {
+            error!(upload_id = %upload_id, part_number = part.part_number, "complete_multipart_upload failed: parts not in order");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidPartOrder",
+                "Part numbers must be in ascending order",
+            );
+        }
+        last_part_number = part.part_number;
+
+        let part_path = state.part_path(upload_id, part.part_number);
+        if !part_path.exists() {
+            error!(upload_id = %upload_id, part_number = part.part_number, "complete_multipart_upload failed: part not found");
+            return s3_error(
+                StatusCode::NOT_FOUND,
+                "InvalidPart",
+                &format!("Part {} not found", part.part_number),
+            );
+        }
+
+        // Verify ETag matches (optional but recommended for data integrity)
+        let etag_path = state
+            .upload_dir(upload_id)
+            .join(format!("etag-{:05}", part.part_number));
+        if let Ok(stored_etag) = tokio::fs::read_to_string(&etag_path).await {
+            if stored_etag != part.etag {
+                error!(
+                    upload_id = %upload_id,
+                    part_number = part.part_number,
+                    expected = %stored_etag,
+                    actual = %part.etag,
+                    "complete_multipart_upload failed: ETag mismatch"
+                );
+                return s3_error(
+                    StatusCode::BAD_REQUEST,
+                    "InvalidPart",
+                    &format!(
+                        "Part {} ETag mismatch: expected {}, got {}",
+                        part.part_number, stored_etag, part.etag
+                    ),
+                );
+            }
+        }
+    }
+
+    // Create target object path
+    let object_path = match state.object_path(&bucket, &key) {
+        Ok(path) => path,
+        Err(err) => {
+            error!(bucket = %bucket, key = %key, error = %err.message, "complete_multipart_upload failed: {}", err.code);
+            return err.into_response();
+        }
+    };
+
+    if let Some(parent) = object_path.parent() {
+        if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            error!(error = %err, "complete_multipart_upload failed: creating object directory");
+            return S3Error::io("creating object directory", err).into_response();
+        }
+    }
+
+    // Concatenate parts into final object
+    let mut final_file = match tokio::fs::File::create(&object_path).await {
+        Ok(f) => f,
+        Err(err) => {
+            error!(error = %err, "complete_multipart_upload failed: creating final object");
+            return S3Error::io("creating final object", err).into_response();
+        }
+    };
+
+    let mut etag_hashes = Vec::new();
+    for part in &parts {
+        let part_path = state.part_path(upload_id, part.part_number);
+        let part_data = match tokio::fs::read(&part_path).await {
+            Ok(data) => data,
+            Err(err) => {
+                error!(part_number = part.part_number, error = %err, "complete_multipart_upload failed: reading part");
+                return S3Error::io("reading part", err).into_response();
+            }
+        };
+
+        // Collect MD5 hash bytes (without quotes) for final ETag calculation
+        let part_md5 = md5::compute(&part_data);
+        etag_hashes.extend_from_slice(&part_md5.0);
+
+        if let Err(err) = final_file.write_all(&part_data).await {
+            error!(part_number = part.part_number, error = %err, "complete_multipart_upload failed: writing part to final object");
+            return S3Error::io("writing part to final object", err).into_response();
+        }
+    }
+
+    if let Err(err) = final_file.flush().await {
+        error!(error = %err, "complete_multipart_upload failed: flushing final object");
+        return S3Error::io("flushing final object", err).into_response();
+    }
+    drop(final_file);
+
+    // Calculate final ETag: MD5 of concatenated part MD5s + "-" + part count
+    let final_md5 = md5::compute(&etag_hashes);
+    let final_etag = format!("\"{:x}-{}\"", final_md5, parts.len());
+
+    // Clean up staging directory
+    let upload_dir = state.upload_dir(upload_id);
+    if let Err(err) = tokio::fs::remove_dir_all(&upload_dir).await {
+        warn!(upload_id = %upload_id, error = %err, "complete_multipart_upload: failed to cleanup staging directory");
+    }
+
+    // Return XML response
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CompleteMultipartUploadResult xmlns=\"{S3_XML_NAMESPACE}\">\n  <Location>/{}/{}</Location>\n  <Bucket>{}</Bucket>\n  <Key>{}</Key>\n  <ETag>{}</ETag>\n</CompleteMultipartUploadResult>\n",
+        xml_escape(&bucket),
+        xml_escape(&key),
+        xml_escape(&bucket),
+        xml_escape(&key),
+        xml_escape(&final_etag)
+    );
+
+    let mut response = Response::new(axum::body::Body::from(xml));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/xml"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        HeaderValue::from_str(&final_etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
+    );
+    response
+}
+
+/// DELETE /:bucket/*key?uploadId=X - AbortMultipartUpload
+async fn abort_multipart_upload(
+    State(state): State<Arc<S3State>>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<MultipartQuery>,
+) -> Response {
+    let upload_id = match &query.upload_id {
+        Some(id) => id,
+        None => {
+            error!(bucket = %bucket, key = %key, "abort_multipart_upload failed: missing uploadId");
+            return s3_error(
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "uploadId is required",
+            );
+        }
+    };
+
+    info!(bucket = %bucket, key = %key, upload_id = %upload_id, "abort_multipart_upload");
+
+    // Verify upload exists
+    let metadata_path = state.upload_metadata_path(upload_id);
+    if !metadata_path.exists() {
+        error!(upload_id = %upload_id, "abort_multipart_upload failed: upload not found");
+        return s3_error(StatusCode::NOT_FOUND, "NoSuchUpload", "Upload not found");
+    }
+
+    // Verify bucket/key match
+    let metadata_bytes = match tokio::fs::read(&metadata_path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "abort_multipart_upload failed: reading metadata");
+            return S3Error::io("reading metadata", err).into_response();
+        }
+    };
+
+    let metadata: MultipartUploadMetadata = match serde_json::from_slice(&metadata_bytes) {
+        Ok(m) => m,
+        Err(err) => {
+            error!(upload_id = %upload_id, error = %err, "abort_multipart_upload failed: parsing metadata");
+            return S3Error::io("parsing metadata", err).into_response();
+        }
+    };
+
+    if metadata.bucket != bucket || metadata.key != key {
+        error!(upload_id = %upload_id, "abort_multipart_upload failed: bucket/key mismatch");
+        return s3_error(
+            StatusCode::NOT_FOUND,
+            "NoSuchUpload",
+            "Upload not found for this bucket/key",
+        );
+    }
+
+    // Remove staging directory
+    let upload_dir = state.upload_dir(upload_id);
+    if let Err(err) = tokio::fs::remove_dir_all(&upload_dir).await {
+        error!(upload_id = %upload_id, error = %err, "abort_multipart_upload failed: removing staging directory");
+        return S3Error::io("removing staging directory", err).into_response();
+    }
+
+    let mut response = Response::new(axum::body::Body::empty());
+    *response.status_mut() = StatusCode::NO_CONTENT;
+    response
+}
+
+/// Parse CompleteMultipartUpload XML request body
+fn parse_complete_multipart_request(body: &[u8]) -> Result<Vec<PartInfo>, S3Error> {
+    let body_str = std::str::from_utf8(body)
+        .map_err(|_| S3Error::bad_request("MalformedXML", "Request body is not valid UTF-8"))?;
+
+    let mut parts = Vec::new();
+
+    // Simple XML parsing for <Part><PartNumber>N</PartNumber><ETag>X</ETag></Part>
+    for part_match in body_str.split("<Part>").skip(1) {
+        let part_end = part_match.find("</Part>").unwrap_or(part_match.len());
+        let part_content = &part_match[..part_end];
+
+        let part_number = extract_xml_value(part_content, "PartNumber")
+            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing PartNumber"))?
+            .parse::<u32>()
+            .map_err(|_| S3Error::bad_request("MalformedXML", "Invalid PartNumber"))?;
+
+        let etag = extract_xml_value(part_content, "ETag")
+            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing ETag"))?
+            .to_string();
+
+        parts.push(PartInfo { part_number, etag });
+    }
+
+    Ok(parts)
+}
+
+/// Extract value from simple XML tag
+fn extract_xml_value<'a>(content: &'a str, tag: &str) -> Option<&'a str> {
+    let start_tag = format!("<{tag}>");
+    let end_tag = format!("</{tag}>");
+
+    let start = content.find(&start_tag)? + start_tag.len();
+    let end = content.find(&end_tag)?;
+
+    if start <= end {
+        Some(&content[start..end])
+    } else {
+        None
+    }
 }
 
 async fn delete_object(
@@ -889,5 +1475,350 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_lifecycle() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        // Step 1: Create multipart upload
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test-bucket/large-file.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("create multipart response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body_str = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(body_str.contains("<InitiateMultipartUploadResult"));
+        assert!(body_str.contains("<UploadId>"));
+        assert!(body_str.contains("<Bucket>test-bucket</Bucket>"));
+        assert!(body_str.contains("<Key>large-file.bin</Key>"));
+
+        // Extract uploadId from response
+        let upload_id = extract_xml_value(&body_str, "UploadId").expect("upload_id");
+
+        // Step 2: Upload parts (out of order to test ordering)
+        let part2_data = b"part2-data-content";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/large-file.bin?uploadId={upload_id}&partNumber=2"
+                    ))
+                    .body(Body::from(&part2_data[..]))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part 2 response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag2 = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        let part1_data = b"part1-data-content";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/large-file.bin?uploadId={upload_id}&partNumber=1"
+                    ))
+                    .body(Body::from(&part1_data[..]))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part 1 response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag1 = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        // Step 3: Complete multipart upload
+        let complete_body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUpload>
+    <Part>
+        <PartNumber>1</PartNumber>
+        <ETag>{etag1}</ETag>
+    </Part>
+    <Part>
+        <PartNumber>2</PartNumber>
+        <ETag>{etag2}</ETag>
+    </Part>
+</CompleteMultipartUpload>"#
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/test-bucket/large-file.bin?uploadId={upload_id}"))
+                    .body(Body::from(complete_body))
+                    .unwrap(),
+            )
+            .await
+            .expect("complete multipart response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body_str = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(body_str.contains("<CompleteMultipartUploadResult"));
+        assert!(body_str.contains("<ETag>"));
+
+        // Step 4: Verify the final object exists and has correct content
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/large-file.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get object response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let expected_content: Vec<u8> = [&part1_data[..], &part2_data[..]].concat();
+        assert_eq!(body.to_vec(), expected_content);
+
+        // Verify ETag contains the multipart marker (dash followed by part count)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/test-bucket/large-file.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("head object response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify staging directory was cleaned up
+        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        assert!(
+            !multipart_dir.exists(),
+            "staging directory should be cleaned up"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_abort() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        // Create multipart upload
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test-bucket/abort-test.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("create multipart response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body_str = String::from_utf8(body.to_vec()).expect("utf8");
+        let upload_id = extract_xml_value(&body_str, "UploadId").expect("upload_id");
+
+        // Upload a part
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/abort-test.bin?uploadId={upload_id}&partNumber=1"
+                    ))
+                    .body(Body::from("part-data"))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify staging directory exists
+        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        assert!(
+            multipart_dir.exists(),
+            "staging directory should exist before abort"
+        );
+
+        // Abort the upload
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/test-bucket/abort-test.bin?uploadId={upload_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("abort multipart response");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify staging directory was cleaned up
+        assert!(
+            !multipart_dir.exists(),
+            "staging directory should be cleaned up after abort"
+        );
+
+        // Verify the object was not created
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/abort-test.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get object response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_errors() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        // Test: Upload part with non-existent uploadId
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test.bin?uploadId=non-existent&partNumber=1")
+                    .body(Body::from("data"))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Test: Upload part with invalid part number (0)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test.bin?uploadId=fake&partNumber=0")
+                    .body(Body::from("data"))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Test: Upload part with invalid part number (> 10000)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test.bin?uploadId=fake&partNumber=10001")
+                    .body(Body::from("data"))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Test: Complete multipart with non-existent uploadId
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test-bucket/test.bin?uploadId=non-existent")
+                    .body(Body::from("<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"abc\"</ETag></Part></CompleteMultipartUpload>"))
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Test: Abort multipart with non-existent uploadId
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/test-bucket/test.bin?uploadId=non-existent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_parse_complete_multipart_request() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUpload>
+    <Part>
+        <PartNumber>1</PartNumber>
+        <ETag>"abc123"</ETag>
+    </Part>
+    <Part>
+        <PartNumber>2</PartNumber>
+        <ETag>"def456"</ETag>
+    </Part>
+</CompleteMultipartUpload>"#;
+
+        let parts = parse_complete_multipart_request(xml.as_bytes()).expect("parse");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].part_number, 1);
+        assert_eq!(parts[0].etag, "\"abc123\"");
+        assert_eq!(parts[1].part_number, 2);
+        assert_eq!(parts[1].etag, "\"def456\"");
     }
 }
