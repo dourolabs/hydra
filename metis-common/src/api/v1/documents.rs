@@ -87,11 +87,16 @@ pub struct SearchDocumentsQuery {
 }
 
 impl SearchDocumentsQuery {
-    pub fn new(q: Option<String>, path_prefix: Option<String>, created_by: Option<TaskId>) -> Self {
+    pub fn new(
+        q: Option<String>,
+        path_prefix: Option<String>,
+        path_is_exact: Option<bool>,
+        created_by: Option<TaskId>,
+    ) -> Self {
         Self {
             q,
             path_prefix,
-            path_is_exact: None,
+            path_is_exact,
             created_by,
         }
     }
@@ -191,8 +196,8 @@ mod tests {
 
     #[test]
     fn search_documents_query_serializes_path_is_exact() {
-        let query = SearchDocumentsQuery::new(None, Some("docs/file.md".to_string()), None)
-            .with_path_is_exact(true);
+        let query =
+            SearchDocumentsQuery::new(None, Some("docs/file.md".to_string()), Some(true), None);
 
         let params = serialize_query_params(&query)
             .into_iter()

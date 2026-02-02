@@ -158,27 +158,19 @@ fn render_documents_to_buffer(
     Ok(buffer)
 }
 
-/// Returns true if the input looks like a document ID (d-[a-z]{4,12}).
-fn is_document_id(input: &str) -> bool {
-    DocumentId::try_from(input.to_string()).is_ok()
-}
-
 async fn get_document_by_id_or_path(
     client: &dyn MetisClientInterface,
     id_or_path: &str,
 ) -> Result<DocumentRecord> {
-    if is_document_id(id_or_path) {
-        let id =
-            DocumentId::try_from(id_or_path.to_string()).expect("already validated as document id");
-        client
+    match DocumentId::try_from(id_or_path.to_string()) {
+        Ok(id) => client
             .get_document(&id)
             .await
-            .context("failed to fetch document")
-    } else {
-        client
+            .context("failed to fetch document"),
+        Err(_) => client
             .get_document_by_path(id_or_path)
             .await
-            .with_context(|| format!("failed to fetch document with path '{id_or_path}'"))
+            .with_context(|| format!("failed to fetch document with path '{id_or_path}'")),
     }
 }
 
@@ -186,7 +178,7 @@ async fn list_documents(
     client: &dyn MetisClientInterface,
     args: DocumentsListArgs,
 ) -> Result<Vec<DocumentRecord>> {
-    let query = SearchDocumentsQuery::new(args.query, args.path_prefix, args.created_by);
+    let query = SearchDocumentsQuery::new(args.query, args.path_prefix, None, args.created_by);
     let response = client
         .list_documents(&query)
         .await
@@ -563,36 +555,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn is_document_id_recognizes_valid_ids() {
-        assert!(is_document_id("d-abcd"));
-        assert!(is_document_id("d-abcdef"));
-        assert!(is_document_id("d-abcdefghij"));
-        assert!(is_document_id("d-abcdefghijkl"));
-    }
-
-    #[test]
-    fn is_document_id_rejects_paths() {
-        assert!(!is_document_id("docs/runbook.md"));
-        assert!(!is_document_id("/plan.md"));
-        assert!(!is_document_id("plan.md"));
-        assert!(!is_document_id("docs/designs/agent.md"));
-    }
-
-    #[test]
-    fn is_document_id_rejects_invalid_ids() {
-        // Too short
-        assert!(!is_document_id("d-abc"));
-        // Too long
-        assert!(!is_document_id("d-abcdefghijklm"));
-        // Contains digits
-        assert!(!is_document_id("d-abc123"));
-        // Wrong prefix
-        assert!(!is_document_id("x-abcdef"));
-        // No prefix
-        assert!(!is_document_id("abcdef"));
-    }
-
     #[tokio::test]
     async fn get_document_by_id_or_path_uses_id_endpoint_for_valid_id() {
         let document_id = DocumentId::new();
@@ -624,7 +586,8 @@ mod tests {
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/documents")
-                .query_param("path_prefix", path);
+                .query_param("path_prefix", path)
+                .query_param("path_is_exact", "true");
             then.status(200).json_body_obj(&response);
         });
         let client = mock_client(&server);
@@ -643,7 +606,8 @@ mod tests {
         let list_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/documents")
-                .query_param("path_prefix", path);
+                .query_param("path_prefix", path)
+                .query_param("path_is_exact", "true");
             then.status(200).json_body_obj(&response);
         });
         let client = mock_client(&server);
