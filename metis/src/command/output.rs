@@ -124,11 +124,14 @@ pub fn render_repository_records(
 pub fn render_document_records(
     format: ResolvedOutputFormat,
     documents: &[DocumentRecord],
+    full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
     match format {
         ResolvedOutputFormat::Jsonl => render_document_records_jsonl(documents, writer),
-        ResolvedOutputFormat::Pretty => render_document_records_pretty(documents, writer),
+        ResolvedOutputFormat::Pretty => {
+            render_document_records_pretty(documents, full_output, writer)
+        }
     }
 }
 
@@ -431,6 +434,7 @@ fn render_document_records_jsonl(
 
 fn render_document_records_pretty(
     documents: &[DocumentRecord],
+    full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
     if documents.is_empty() {
@@ -462,8 +466,12 @@ fn render_document_records_pretty(
         if lines.is_empty() {
             writeln!(writer, "  -")?;
         } else {
-            let truncated = truncate_lines(lines, MAX_DOCUMENT_BODY_LINES, MAX_DOCUMENT_BODY_WIDTH);
-            for line in truncated {
+            let output_lines = if full_output {
+                lines
+            } else {
+                truncate_lines(lines, MAX_DOCUMENT_BODY_LINES, MAX_DOCUMENT_BODY_WIDTH)
+            };
+            for line in output_lines {
                 if line.is_empty() {
                     writeln!(writer, "  ")?;
                 } else {
@@ -750,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn render_document_records_truncates_body() {
+    fn render_document_records_truncates_body_by_default() {
         let mut body_lines = Vec::new();
         for index in 0..25 {
             body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
@@ -760,10 +768,32 @@ mod tests {
             .with_created_by(TaskId::new());
         let record = DocumentRecord::new(DocumentId::new(), document);
         let mut output = Vec::new();
-        render_document_records(ResolvedOutputFormat::Pretty, &[record], &mut output).unwrap();
+        render_document_records(ResolvedOutputFormat::Pretty, &[record], false, &mut output)
+            .unwrap();
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("Document"));
         assert!(rendered.contains("line 19"));
         assert!(rendered.contains("..."));
+        assert!(!rendered.contains("line 24"));
+    }
+
+    #[test]
+    fn render_document_records_shows_full_body_when_requested() {
+        let mut body_lines = Vec::new();
+        for index in 0..25 {
+            body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
+        }
+        let document = Document::new("Doc".to_string(), body_lines.join("\n"))
+            .with_path("docs/runbook.md")
+            .with_created_by(TaskId::new());
+        let record = DocumentRecord::new(DocumentId::new(), document);
+        let mut output = Vec::new();
+        render_document_records(ResolvedOutputFormat::Pretty, &[record], true, &mut output)
+            .unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Document"));
+        assert!(rendered.contains("line 00"));
+        assert!(rendered.contains("line 24"));
+        assert!(!rendered.contains("..."));
     }
 }

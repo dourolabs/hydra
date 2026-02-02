@@ -46,6 +46,10 @@ pub struct DocumentsListArgs {
     /// Filter by job id that created the document.
     #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_METIS_ID)]
     pub created_by: Option<TaskId>,
+
+    /// Show complete document body instead of truncated preview.
+    #[arg(long = "full")]
+    pub full: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -110,20 +114,21 @@ pub async fn run(
 ) -> Result<()> {
     match command {
         DocumentsCommand::List(args) => {
+            let full_output = args.full;
             let documents = list_documents(client, args).await?;
-            write_documents_output(context.output_format, &documents)?;
+            write_documents_output(context.output_format, &documents, full_output)?;
         }
         DocumentsCommand::Get { id_or_path } => {
             let document = get_document_by_id_or_path(client, &id_or_path).await?;
-            write_documents_output(context.output_format, &[document])?;
+            write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Create(args) => {
             let document = create_document(client, args).await?;
-            write_documents_output(context.output_format, &[document])?;
+            write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Update(args) => {
             let document = update_document(client, args).await?;
-            write_documents_output(context.output_format, &[document])?;
+            write_documents_output(context.output_format, &[document], true)?;
         }
     }
 
@@ -133,17 +138,19 @@ pub async fn run(
 fn write_documents_output(
     format: ResolvedOutputFormat,
     documents: &[DocumentRecord],
+    full_output: bool,
 ) -> Result<()> {
     let mut stdout = io::stdout();
-    write_documents_output_with_writer(format, documents, &mut stdout)
+    write_documents_output_with_writer(format, documents, full_output, &mut stdout)
 }
 
 fn write_documents_output_with_writer(
     format: ResolvedOutputFormat,
     documents: &[DocumentRecord],
+    full_output: bool,
     writer: &mut impl Write,
 ) -> Result<()> {
-    let buffer = render_documents_to_buffer(format, documents)?;
+    let buffer = render_documents_to_buffer(format, documents, full_output)?;
     writer.write_all(&buffer)?;
     writer.flush()?;
     Ok(())
@@ -152,9 +159,10 @@ fn write_documents_output_with_writer(
 fn render_documents_to_buffer(
     format: ResolvedOutputFormat,
     documents: &[DocumentRecord],
+    full_output: bool,
 ) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
-    render_document_records(format, documents, &mut buffer)?;
+    render_document_records(format, documents, full_output, &mut buffer)?;
     Ok(buffer)
 }
 
@@ -366,6 +374,7 @@ mod tests {
                 query: Some("runbook".to_string()),
                 path_prefix: Some("docs/".to_string()),
                 created_by: Some(created_by),
+                full: false,
             },
         )
         .await
@@ -509,6 +518,7 @@ mod tests {
         write_documents_output_with_writer(
             ResolvedOutputFormat::Pretty,
             &[record.clone()],
+            false,
             &mut writer,
         )
         .unwrap();
@@ -525,8 +535,8 @@ mod tests {
         let document_id = DocumentId::new();
         let record = sample_document_record(&document_id);
 
-        let buffer =
-            render_documents_to_buffer(ResolvedOutputFormat::Jsonl, &[record]).expect("buffer");
+        let buffer = render_documents_to_buffer(ResolvedOutputFormat::Jsonl, &[record], false)
+            .expect("buffer");
         let output = String::from_utf8(buffer).expect("utf8");
         let lines: Vec<&str> = output.lines().collect();
 
