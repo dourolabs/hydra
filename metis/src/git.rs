@@ -282,7 +282,12 @@ pub fn commit_changes(repo_root: &Path, message: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn push_branch(repo_root: &Path, branch: &str, github_token: Option<&str>) -> Result<()> {
+pub fn push_branch(
+    repo_root: &Path,
+    branch: &str,
+    github_token: Option<&str>,
+    force: bool,
+) -> Result<()> {
     let repo = repo_for_path(repo_root)?;
     let mut remote = repo
         .find_remote("origin")
@@ -291,7 +296,11 @@ pub fn push_branch(repo_root: &Path, branch: &str, github_token: Option<&str>) -
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
 
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    let refspec = if force {
+        format!("+refs/heads/{branch}:refs/heads/{branch}")
+    } else {
+        format!("refs/heads/{branch}:refs/heads/{branch}")
+    };
     remote
         .push(&[refspec.as_str()], Some(&mut push_options))
         .with_context(|| format!("failed to push branch '{branch}' to origin"))?;
