@@ -95,14 +95,28 @@ impl StreamFormatter {
             .and_then(Value::as_str)
             .unwrap_or("tool")
             .to_owned();
-        let summary = summarize_input(chunk.get("input"));
+        let input = chunk.get("input");
+        let summary = summarize_input(input);
         self.pending_tools
             .insert(id, PendingToolCall::new(name.clone(), summary.clone()));
 
-        Some(format!(
-            "{} {name} - {summary}{TEXT_BLOCK_GAP}",
-            "tool>".yellow()
-        ))
+        // For Bash tool, show full command on a separate line
+        if name == "Bash" {
+            let command = input
+                .and_then(Value::as_object)
+                .and_then(|obj| obj.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            Some(format!(
+                "{} {name} - {summary}\n  $ {command}{TEXT_BLOCK_GAP}",
+                "tool>".yellow()
+            ))
+        } else {
+            Some(format!(
+                "{} {name} - {summary}{TEXT_BLOCK_GAP}",
+                "tool>".yellow()
+            ))
+        }
     }
 
     fn handle_user(&mut self, value: &Value) -> Vec<String> {
@@ -345,5 +359,62 @@ mod tests {
         // Red ANSI code is \x1b[31m
         assert!(rendered.contains("\x1b[31m"));
         assert!(rendered.contains("tool error>"));
+    }
+
+    #[test]
+    fn handle_tool_use_shows_full_bash_command_on_separate_line() {
+        let mut formatter = StreamFormatter::new();
+        let chunk = serde_json::json!({
+            "type": "tool_use",
+            "id": "tool_1",
+            "name": "Bash",
+            "input": {
+                "description": "List directory contents",
+                "command": "ls -la /tmp"
+            }
+        });
+        let rendered = formatter.handle_tool_use(&chunk).unwrap();
+        // Check that tool> prefix is yellow (ANSI code \x1b[33m)
+        assert!(rendered.contains("\x1b[33m"));
+        assert!(rendered.contains("tool>"));
+        // Check that description appears on first line
+        assert!(rendered.contains("Bash - List directory contents"));
+        // Check that full command appears on separate indented line with $ prefix
+        assert!(rendered.contains("\n  $ ls -la /tmp"));
+    }
+
+    #[test]
+    fn handle_tool_use_bash_does_not_truncate_long_commands() {
+        let mut formatter = StreamFormatter::new();
+        let long_command = "find /very/long/path/to/some/directory -name '*.rs' -exec grep -l 'pattern' {} \\; | xargs sed -i 's/old/new/g'";
+        let chunk = serde_json::json!({
+            "type": "tool_use",
+            "id": "tool_2",
+            "name": "Bash",
+            "input": {
+                "description": "Find and replace in files",
+                "command": long_command
+            }
+        });
+        let rendered = formatter.handle_tool_use(&chunk).unwrap();
+        // Full command should appear without truncation
+        assert!(rendered.contains(&format!("$ {long_command}")));
+    }
+
+    #[test]
+    fn handle_tool_use_non_bash_tools_unchanged() {
+        let mut formatter = StreamFormatter::new();
+        let chunk = serde_json::json!({
+            "type": "tool_use",
+            "id": "tool_3",
+            "name": "Read",
+            "input": {
+                "file_path": "/path/to/file.rs"
+            }
+        });
+        let rendered = formatter.handle_tool_use(&chunk).unwrap();
+        // Check that non-Bash tools don't have the "$ " command line
+        assert!(!rendered.contains("  $ "));
+        assert!(rendered.contains("Read - "));
     }
 }
