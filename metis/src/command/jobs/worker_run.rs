@@ -454,20 +454,24 @@ fn initialize_tracking_branches(
                 set_branch_to_commit(&repo, &issue_base_branch, head_commit.id()).with_context(
                     || format!("failed to create issue base branch '{issue_base_branch}'"),
                 )?;
-                push_branch(repo_root, &issue_base_branch, github_token, false).with_context(|| {
-                    format!(
+                push_branch(repo_root, &issue_base_branch, github_token, false).with_context(
+                    || {
+                        format!(
                         "failed to push issue base branch '{issue_base_branch}' to remote origin"
                     )
-                })?;
+                    },
+                )?;
 
                 set_branch_to_commit(&repo, &issue_head_branch, head_commit.id()).with_context(
                     || format!("failed to create issue head branch '{issue_head_branch}'"),
                 )?;
-                push_branch(repo_root, &issue_head_branch, github_token, false).with_context(|| {
-                    format!(
+                push_branch(repo_root, &issue_head_branch, github_token, false).with_context(
+                    || {
+                        format!(
                         "failed to push issue head branch '{issue_head_branch}' to remote origin"
                     )
-                })?;
+                    },
+                )?;
             }
         }
     }
