@@ -6,13 +6,27 @@ use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_types::region::Region;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
-use tracing::warn;
+use std::time::{Duration, SystemTime};
+use tokio::io::AsyncReadExt;
+use tracing::{info, warn};
 use walkdir::WalkDir;
+
+/// Files larger than this threshold (50MB) use multipart upload
+pub const MULTIPART_THRESHOLD: u64 = 50 * 1024 * 1024;
+
+/// Size of each part for multipart upload (10MB)
+pub const PART_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Maximum number of retries per part
+const MAX_PART_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff (1 second)
+const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
 /// Formats an AWS SDK error with detailed diagnostic information including
 /// HTTP status code, AWS error code, and error message where available.
@@ -155,11 +169,227 @@ impl S3StorageClient {
     fn to_system_time(value: &aws_sdk_s3::primitives::DateTime) -> Option<SystemTime> {
         SystemTime::try_from(*value).ok()
     }
+
+    /// Calculates the delay for exponential backoff.
+    fn backoff_delay(attempt: u32) -> Duration {
+        RETRY_BASE_DELAY * 2u32.pow(attempt)
+    }
+
+    /// Uploads a single part with retry logic.
+    /// Returns the ETag on success.
+    async fn upload_part_with_retry(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: i32,
+        body: Vec<u8>,
+    ) -> Result<String, BuildCacheError> {
+        let mut last_error = None;
+
+        for attempt in 0..MAX_PART_RETRIES {
+            if attempt > 0 {
+                let delay = Self::backoff_delay(attempt - 1);
+                info!(
+                    key = %key,
+                    part_number = part_number,
+                    attempt = attempt + 1,
+                    delay_ms = delay.as_millis() as u64,
+                    "Retrying part upload after backoff"
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            let result = self
+                .client
+                .upload_part()
+                .bucket(&self.bucket)
+                .key(key)
+                .upload_id(upload_id)
+                .part_number(part_number)
+                .body(ByteStream::from(body.clone()))
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let etag = response
+                        .e_tag()
+                        .ok_or_else(|| {
+                            BuildCacheError::storage(
+                                "uploading part",
+                                format!("part {part_number} response missing ETag"),
+                            )
+                        })?
+                        .to_string();
+                    return Ok(etag);
+                }
+                Err(err) => {
+                    let message = format_sdk_error(&err);
+                    warn!(
+                        endpoint = %self.endpoint_url,
+                        bucket = %self.bucket,
+                        key = %key,
+                        part_number = part_number,
+                        attempt = attempt + 1,
+                        error = %message,
+                        "Part upload failed"
+                    );
+                    last_error = Some(err);
+                }
+            }
+        }
+
+        Err(self.log_and_map_sdk_error(
+            "uploading part (all retries exhausted)",
+            key,
+            last_error.expect("last_error must be set after retries"),
+        ))
+    }
+
+    /// Performs multipart upload for large files.
+    /// Splits the file into parts and uploads each with retry logic.
+    async fn put_object_multipart(&self, key: &str, path: &Path) -> Result<(), BuildCacheError> {
+        let file_size = tokio::fs::metadata(path)
+            .await
+            .map_err(|err| BuildCacheError::io("reading file metadata", err))?
+            .len();
+
+        info!(
+            key = %key,
+            file_size = file_size,
+            part_size = PART_SIZE,
+            "Starting multipart upload"
+        );
+
+        // Create multipart upload
+        let create_response = self
+            .client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|err| self.log_and_map_sdk_error("creating multipart upload", key, err))?;
+
+        let upload_id = create_response.upload_id().ok_or_else(|| {
+            BuildCacheError::storage("creating multipart upload", "response missing uploadId")
+        })?;
+
+        // Upload parts with retry logic
+        let result = self.upload_parts(key, path, upload_id, file_size).await;
+
+        match result {
+            Ok(completed_parts) => {
+                // Complete the multipart upload
+                let completed_upload = CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build();
+
+                self.client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed_upload)
+                    .send()
+                    .await
+                    .map_err(|err| {
+                        self.log_and_map_sdk_error("completing multipart upload", key, err)
+                    })?;
+
+                info!(key = %key, "Multipart upload completed successfully");
+                Ok(())
+            }
+            Err(err) => {
+                // Abort the multipart upload on failure
+                warn!(
+                    key = %key,
+                    upload_id = %upload_id,
+                    error = %err,
+                    "Part upload failed, aborting multipart upload"
+                );
+
+                if let Err(abort_err) = self
+                    .client
+                    .abort_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .send()
+                    .await
+                {
+                    warn!(
+                        key = %key,
+                        upload_id = %upload_id,
+                        error = %format_sdk_error(&abort_err),
+                        "Failed to abort multipart upload"
+                    );
+                }
+
+                Err(err)
+            }
+        }
+    }
+
+    /// Uploads all parts of a file and returns the completed parts.
+    async fn upload_parts(
+        &self,
+        key: &str,
+        path: &Path,
+        upload_id: &str,
+        file_size: u64,
+    ) -> Result<Vec<CompletedPart>, BuildCacheError> {
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|err| BuildCacheError::io("opening file for multipart upload", err))?;
+
+        let mut completed_parts = Vec::new();
+        let mut part_number: i32 = 1;
+        let mut bytes_read: u64 = 0;
+
+        while bytes_read < file_size {
+            let remaining = file_size - bytes_read;
+            let chunk_size = std::cmp::min(remaining, PART_SIZE) as usize;
+            let mut buffer = vec![0u8; chunk_size];
+
+            file.read_exact(&mut buffer)
+                .await
+                .map_err(|err| BuildCacheError::io("reading file part", err))?;
+
+            let etag = self
+                .upload_part_with_retry(key, upload_id, part_number, buffer)
+                .await?;
+
+            completed_parts.push(
+                CompletedPart::builder()
+                    .e_tag(etag)
+                    .part_number(part_number)
+                    .build(),
+            );
+
+            bytes_read += chunk_size as u64;
+            part_number += 1;
+        }
+
+        Ok(completed_parts)
+    }
 }
 
 #[async_trait]
 impl StorageClient for S3StorageClient {
     async fn put_object(&self, key: &str, path: &Path) -> Result<(), BuildCacheError> {
+        // Check file size to determine upload strategy
+        let file_size = tokio::fs::metadata(path)
+            .await
+            .map_err(|err| BuildCacheError::io("reading file metadata", err))?
+            .len();
+
+        if file_size > MULTIPART_THRESHOLD {
+            // Use multipart upload for large files
+            return self.put_object_multipart(key, path).await;
+        }
+
+        // Use simple PUT for small files
         let body = ByteStream::from_path(path)
             .await
             .map_err(|err| Self::map_io_error("reading upload body", err))?;

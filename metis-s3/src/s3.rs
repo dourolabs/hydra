@@ -1000,9 +1000,9 @@ fn parse_complete_multipart_request(body: &[u8]) -> Result<Vec<PartInfo>, S3Erro
             .parse::<u32>()
             .map_err(|_| S3Error::bad_request("MalformedXML", "Invalid PartNumber"))?;
 
-        let etag = extract_xml_value(part_content, "ETag")
-            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing ETag"))?
-            .to_string();
+        let etag_raw = extract_xml_value(part_content, "ETag")
+            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing ETag"))?;
+        let etag = xml_unescape(etag_raw);
 
         parts.push(PartInfo { part_number, etag });
     }
@@ -1023,6 +1023,15 @@ fn extract_xml_value<'a>(content: &'a str, tag: &str) -> Option<&'a str> {
     } else {
         None
     }
+}
+
+/// Unescape common XML entities
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
 }
 
 async fn delete_object(
