@@ -21,11 +21,11 @@ use std::{
 pub enum DocumentsCommand {
     /// List stored documents.
     List(DocumentsListArgs),
-    /// Fetch a document by id.
+    /// Fetch a document by ID or path.
     Get {
-        /// Document id to fetch.
-        #[arg(value_name = "DOCUMENT_ID")]
-        id: DocumentId,
+        /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
+        #[arg(value_name = "ID_OR_PATH")]
+        id_or_path: String,
     },
     /// Create a new document.
     Create(CreateDocumentArgs),
@@ -113,11 +113,8 @@ pub async fn run(
             let documents = list_documents(client, args).await?;
             write_documents_output(context.output_format, &documents)?;
         }
-        DocumentsCommand::Get { id } => {
-            let document = client
-                .get_document(&id)
-                .await
-                .context("failed to fetch document")?;
+        DocumentsCommand::Get { id_or_path } => {
+            let document = get_document_by_id_or_path(client, &id_or_path).await?;
             write_documents_output(context.output_format, &[document])?;
         }
         DocumentsCommand::Create(args) => {
@@ -159,6 +156,30 @@ fn render_documents_to_buffer(
     let mut buffer = Vec::new();
     render_document_records(format, documents, &mut buffer)?;
     Ok(buffer)
+}
+
+/// Returns true if the input looks like a document ID (d-[a-z]{4,12}).
+fn is_document_id(input: &str) -> bool {
+    DocumentId::try_from(input.to_string()).is_ok()
+}
+
+async fn get_document_by_id_or_path(
+    client: &dyn MetisClientInterface,
+    id_or_path: &str,
+) -> Result<DocumentRecord> {
+    if is_document_id(id_or_path) {
+        let id =
+            DocumentId::try_from(id_or_path.to_string()).expect("already validated as document id");
+        client
+            .get_document(&id)
+            .await
+            .context("failed to fetch document")
+    } else {
+        client
+            .get_document_by_path(id_or_path)
+            .await
+            .with_context(|| format!("failed to fetch document with path '{id_or_path}'"))
+    }
 }
 
 async fn list_documents(
@@ -540,5 +561,96 @@ mod tests {
             self.flush_calls += 1;
             Ok(())
         }
+    }
+
+    #[test]
+    fn is_document_id_recognizes_valid_ids() {
+        assert!(is_document_id("d-abcd"));
+        assert!(is_document_id("d-abcdef"));
+        assert!(is_document_id("d-abcdefghij"));
+        assert!(is_document_id("d-abcdefghijkl"));
+    }
+
+    #[test]
+    fn is_document_id_rejects_paths() {
+        assert!(!is_document_id("docs/runbook.md"));
+        assert!(!is_document_id("/plan.md"));
+        assert!(!is_document_id("plan.md"));
+        assert!(!is_document_id("docs/designs/agent.md"));
+    }
+
+    #[test]
+    fn is_document_id_rejects_invalid_ids() {
+        // Too short
+        assert!(!is_document_id("d-abc"));
+        // Too long
+        assert!(!is_document_id("d-abcdefghijklm"));
+        // Contains digits
+        assert!(!is_document_id("d-abc123"));
+        // Wrong prefix
+        assert!(!is_document_id("x-abcdef"));
+        // No prefix
+        assert!(!is_document_id("abcdef"));
+    }
+
+    #[tokio::test]
+    async fn get_document_by_id_or_path_uses_id_endpoint_for_valid_id() {
+        let document_id = DocumentId::new();
+        let document_id_str = document_id.as_ref().to_string();
+        let record = sample_document_record(&document_id);
+        let server = MockServer::start();
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/documents/{document_id}").as_str());
+            then.status(200).json_body_obj(&record);
+        });
+        let client = mock_client(&server);
+
+        let result = get_document_by_id_or_path(&client, &document_id_str)
+            .await
+            .unwrap();
+
+        assert_eq!(result.id, document_id);
+        get_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_document_by_id_or_path_uses_list_endpoint_for_path() {
+        let document_id = DocumentId::new();
+        let path = "docs/runbook.md";
+        let record = sample_document_record(&document_id);
+        let response = ListDocumentsResponse::new(vec![record.clone()]);
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/documents")
+                .query_param("path_prefix", path);
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        let result = get_document_by_id_or_path(&client, path).await.unwrap();
+
+        assert_eq!(result.id, document_id);
+        list_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_document_by_id_or_path_returns_error_for_missing_path() {
+        let path = "docs/nonexistent.md";
+        let response = ListDocumentsResponse::new(vec![]);
+        let server = MockServer::start();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/documents")
+                .query_param("path_prefix", path);
+            then.status(200).json_body_obj(&response);
+        });
+        let client = mock_client(&server);
+
+        let error = get_document_by_id_or_path(&client, path).await.unwrap_err();
+
+        assert!(error.to_string().contains("docs/nonexistent.md"));
+        list_mock.assert();
     }
 }

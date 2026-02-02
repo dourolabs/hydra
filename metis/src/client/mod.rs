@@ -172,6 +172,7 @@ pub trait MetisClientInterface: Send + Sync {
         request: &UpsertDocumentRequest,
     ) -> Result<UpsertDocumentResponse>;
     async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
+    async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord>;
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse>;
     async fn list_document_versions(
         &self,
@@ -895,6 +896,21 @@ impl MetisClient {
             .context("failed to decode document response")
     }
 
+    /// Fetch a document by its exact path.
+    ///
+    /// Uses the list documents endpoint with a path prefix filter and returns
+    /// the document with an exact path match.
+    pub async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord> {
+        let query = SearchDocumentsQuery::new(None, Some(path.to_string()), None);
+        let response = self.list_documents(&query).await?;
+
+        response
+            .documents
+            .into_iter()
+            .find(|record| record.document.path.as_deref() == Some(path))
+            .ok_or_else(|| anyhow!("document with path '{path}' not found"))
+    }
+
     /// Call `GET /v1/documents` to list documents.
     pub async fn list_documents(
         &self,
@@ -1481,6 +1497,10 @@ impl MetisClientInterface for MetisClient {
 
     async fn get_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
         MetisClient::get_document(self, document_id).await
+    }
+
+    async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord> {
+        MetisClient::get_document_by_path(self, path).await
     }
 
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {
