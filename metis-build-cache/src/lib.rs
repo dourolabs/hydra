@@ -13,4 +13,7 @@ pub use config::{BuildCacheConfig, BuildCacheMatcher, FileSystemStorageConfig, S
 pub use error::BuildCacheError;
 pub use git::{NearestCacheEntry, find_nearest_cache_entry};
 pub use key::BuildCacheKey;
-pub use storage::{FileSystemStorageClient, S3StorageClient, StorageClient, StorageObject};
+pub use storage::{
+    FileSystemStorageClient, MULTIPART_THRESHOLD, PART_SIZE, S3StorageClient, StorageClient,
+    StorageObject,
+};

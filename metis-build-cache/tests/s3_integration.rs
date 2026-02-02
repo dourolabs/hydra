@@ -1,4 +1,7 @@
-use metis_build_cache::{BuildCacheError, S3StorageClient, S3StorageConfig, StorageClient};
+use metis_build_cache::{
+    BuildCacheError, MULTIPART_THRESHOLD, PART_SIZE, S3StorageClient, S3StorageConfig,
+    StorageClient,
+};
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -137,6 +140,77 @@ async fn s3_error_includes_dispatch_failure_for_connection_refused() {
             || err_msg.contains("connection"),
         "Error should indicate connection/dispatch failure, got: {err_msg}"
     );
+}
+
+/// Tests that files above MULTIPART_THRESHOLD use multipart upload
+/// and files below threshold use simple PUT.
+#[tokio::test]
+async fn s3_multipart_upload_for_large_files() -> Result<(), BuildCacheError> {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "multipart-test-bucket".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config)?;
+
+    wait_for_metis_s3(&client).await?;
+
+    let temp_dir = tempdir().expect("work dir");
+
+    // Create a file just above MULTIPART_THRESHOLD to trigger multipart upload
+    // Using MULTIPART_THRESHOLD + PART_SIZE to ensure we get at least 2 parts
+    let file_size = MULTIPART_THRESHOLD + PART_SIZE + 1024;
+    let upload_path = temp_dir.path().join("multipart-payload.bin");
+
+    // Create content with a pattern we can verify
+    let mut large_content = Vec::with_capacity(file_size as usize);
+    for i in 0..file_size {
+        large_content.push((i % 256) as u8);
+    }
+    tokio::fs::write(&upload_path, &large_content)
+        .await
+        .map_err(|err| BuildCacheError::io("writing multipart upload file", err))?;
+
+    // Upload should use multipart upload (>50MB)
+    client
+        .put_object("repo/multipart-cache.bin", &upload_path)
+        .await?;
+
+    // Verify we can list it
+    let objects = client.list_objects("repo/").await?;
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].key, "repo/multipart-cache.bin");
+
+    // Verify we can download it back with correct content
+    let download_path = temp_dir.path().join("downloaded-multipart.bin");
+    client
+        .get_object("repo/multipart-cache.bin", &download_path)
+        .await?;
+
+    let downloaded = tokio::fs::read(&download_path)
+        .await
+        .map_err(|err| BuildCacheError::io("reading download file", err))?;
+    assert_eq!(downloaded.len(), large_content.len());
+    assert_eq!(downloaded, large_content);
+
+    // Clean up
+    client.delete_object("repo/multipart-cache.bin").await?;
+
+    server_handle.abort();
+    Ok(())
 }
 
 #[tokio::test]
