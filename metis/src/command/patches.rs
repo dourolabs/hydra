@@ -80,6 +80,10 @@ pub enum PatchesCommand {
         /// Allow creating a patch even when the working directory has uncommitted changes.
         #[arg(long = "allow-uncommitted")]
         allow_uncommitted: bool,
+
+        /// Force push the branch to GitHub when using --github.
+        #[arg(long = "force")]
+        force: bool,
     },
 
     /// Apply a patch to the current git repository.
@@ -183,6 +187,7 @@ pub async fn run(
             issue_id,
             commit_range,
             allow_uncommitted,
+            force,
         } => {
             let created = create_patch(
                 client,
@@ -194,6 +199,7 @@ pub async fn run(
                 issue_id,
                 commit_range,
                 allow_uncommitted,
+                force,
                 None,
             )
             .await?;
@@ -388,6 +394,7 @@ async fn create_patch(
     issue_id: IssueId,
     commit_range: Option<String>,
     allow_uncommitted: bool,
+    force: bool,
     repo_root: Option<&Path>,
 ) -> Result<CreatedPatch> {
     let repo_root = match repo_root {
@@ -473,6 +480,7 @@ async fn create_patch(
         create_github_pr,
         github_token.as_deref(),
         is_automatic_backup,
+        force,
         service_repo_name,
     )
     .await?;
@@ -744,6 +752,7 @@ pub async fn create_patch_artifact_from_repo(
     create_github_pr: bool,
     github_token: Option<&str>,
     is_automatic_backup: bool,
+    force: bool,
     service_repo_name: RepoName,
 ) -> Result<UpsertPatchResponse> {
     let title = title.trim().to_string();
@@ -781,7 +790,7 @@ pub async fn create_patch_artifact_from_repo(
                 Please checkout a branch named 'metis/<issue-id>/...' before creating a patch with --github."
             );
         }
-        push_branch(repo_root, &branch_name, Some(github_token))?;
+        push_branch(repo_root, &branch_name, Some(github_token), force)?;
         upsert_request = upsert_request.with_sync_github_branch(&branch_name);
     }
 
@@ -1152,6 +1161,7 @@ mod tests {
             issue_id.clone(),
             None,
             false,
+            false,
             Some(&repo_path),
         )
         .await?;
@@ -1240,6 +1250,7 @@ mod tests {
             issue_id.clone(),
             commit_range,
             false,
+            false,
             Some(&repo_path),
         )
         .await?;
@@ -1268,6 +1279,7 @@ mod tests {
             None,
             issue_id,
             commit_range,
+            false,
             false,
             Some(&repo_path),
         )
@@ -1349,6 +1361,7 @@ mod tests {
             None,
             issue_id,
             commit_range,
+            false,
             false,
             Some(&repo_path),
         )
@@ -1471,6 +1484,7 @@ mod tests {
             parent_issue.clone(),
             None,
             false,
+            false,
             Some(&repo_path),
         )
         .await?;
@@ -1574,6 +1588,7 @@ mod tests {
             issue_id,
             commit_range,
             false,
+            false,
             Some(repo_path.as_path()),
         )
         .await?;
@@ -1616,6 +1631,7 @@ mod tests {
             false,
             None,
             true,
+            false,
             sample_repo_name(),
         )
         .await?;
@@ -1695,6 +1711,7 @@ mod tests {
             None,
             issue_id.clone(),
             commit_range,
+            false,
             false,
             Some(repo_path.as_path()),
         )
@@ -1977,6 +1994,7 @@ mod tests {
             Some(job_id),
             true,
             Some("test-token"),
+            false,
             false,
             sample_repo_name(),
         )

@@ -313,6 +313,7 @@ async fn submit_patch_artifact_if_present(
         create_github_pr,
         None,
         is_automatic_backup,
+        false,
         service_repo_name.clone(),
     )
     .await?;
@@ -392,14 +393,14 @@ fn initialize_tracking_branches(
             set_branch_to_commit(&repo, &issue_base_branch, override_commit.id()).with_context(
                 || format!("failed to align issue base branch '{issue_base_branch}' with override"),
             )?;
-            push_branch(repo_root, &issue_base_branch, github_token).with_context(|| {
+            push_branch(repo_root, &issue_base_branch, github_token, false).with_context(|| {
                 format!("failed to push issue base branch '{issue_base_branch}' to remote origin")
             })?;
 
             set_branch_to_commit(&repo, &issue_head_branch, override_commit.id()).with_context(
                 || format!("failed to align issue head branch '{issue_head_branch}' with override"),
             )?;
-            push_branch(repo_root, &issue_head_branch, github_token).with_context(|| {
+            push_branch(repo_root, &issue_head_branch, github_token, false).with_context(|| {
                 format!("failed to push issue head branch '{issue_head_branch}' to remote origin")
             })?;
         } else {
@@ -453,7 +454,7 @@ fn initialize_tracking_branches(
                 set_branch_to_commit(&repo, &issue_base_branch, head_commit.id()).with_context(
                     || format!("failed to create issue base branch '{issue_base_branch}'"),
                 )?;
-                push_branch(repo_root, &issue_base_branch, github_token).with_context(|| {
+                push_branch(repo_root, &issue_base_branch, github_token, false).with_context(|| {
                     format!(
                         "failed to push issue base branch '{issue_base_branch}' to remote origin"
                     )
@@ -462,7 +463,7 @@ fn initialize_tracking_branches(
                 set_branch_to_commit(&repo, &issue_head_branch, head_commit.id()).with_context(
                     || format!("failed to create issue head branch '{issue_head_branch}'"),
                 )?;
-                push_branch(repo_root, &issue_head_branch, github_token).with_context(|| {
+                push_branch(repo_root, &issue_head_branch, github_token, false).with_context(|| {
                     format!(
                         "failed to push issue head branch '{issue_head_branch}' to remote origin"
                     )
@@ -474,14 +475,14 @@ fn initialize_tracking_branches(
     let task_base_branch = format!("metis/{task_id}/base");
     set_branch_to_commit(&repo, &task_base_branch, task_branch_target)
         .with_context(|| format!("failed to update task base branch '{task_base_branch}'"))?;
-    push_branch(repo_root, &task_base_branch, github_token).with_context(|| {
+    push_branch(repo_root, &task_base_branch, github_token, false).with_context(|| {
         format!("failed to push task base branch '{task_base_branch}' to remote origin")
     })?;
 
     if task_head_branch_override.is_none() {
         set_branch_to_commit(&repo, &task_head_branch, task_branch_target)
             .with_context(|| format!("failed to update task head branch '{task_head_branch}'"))?;
-        push_branch(repo_root, &task_head_branch, github_token).with_context(|| {
+        push_branch(repo_root, &task_head_branch, github_token, false).with_context(|| {
             format!("failed to push task head branch '{task_head_branch}' to remote origin")
         })?;
     }
@@ -526,7 +527,7 @@ fn finalize_task_run(
     update_branch_to_head(&repo, &task_head_branch).with_context(|| {
         format!("failed to update task head branch '{task_head_branch}' to latest commit")
     })?;
-    push_branch(repo_root, &task_head_branch, github_token).with_context(|| {
+    push_branch(repo_root, &task_head_branch, github_token, false).with_context(|| {
         format!("failed to push task head branch '{task_head_branch}' to remote origin")
     })?;
 
@@ -535,7 +536,7 @@ fn finalize_task_run(
         update_branch_to_head(&repo, &issue_head_branch).with_context(|| {
             format!("failed to update issue head branch '{issue_head_branch}' to latest commit")
         })?;
-        push_branch(repo_root, &issue_head_branch, github_token).with_context(|| {
+        push_branch(repo_root, &issue_head_branch, github_token, false).with_context(|| {
             format!("failed to push issue head branch '{issue_head_branch}' to remote origin")
         })?;
     }
@@ -1139,7 +1140,7 @@ mod tests {
             repo.remote("origin", &remote_path)
                 .context("failed to add origin remote to upstream repository")?;
             promote_branch_to_main(&repo)?;
-            git_push_branch(upstream_dir.path(), "main", None)
+            git_push_branch(upstream_dir.path(), "main", None, false)
                 .context("failed to push main branch to remote fixture")?;
             let remote_repo = Repository::open_bare(remote_dir.path())
                 .context("failed to reopen remote repository for head update")?;
@@ -1164,7 +1165,7 @@ mod tests {
                 .context("failed to peel upstream HEAD commit")?;
             repo.branch(branch, &commit, true)
                 .with_context(|| format!("failed to create branch '{branch}' in upstream repo"))?;
-            git_push_branch(self.upstream_dir.path(), branch, None)
+            git_push_branch(self.upstream_dir.path(), branch, None, false)
                 .with_context(|| format!("failed to push branch '{branch}' to remote fixture"))?;
             Ok(commit.id())
         }
@@ -1182,7 +1183,7 @@ mod tests {
                 .with_context(|| format!("failed to update {filename} in upstream repo"))?;
             git_stage_all_changes(self.upstream_dir.path())?;
             git_commit_changes(self.upstream_dir.path(), "upstream change")?;
-            git_push_branch(self.upstream_dir.path(), "main", None)
+            git_push_branch(self.upstream_dir.path(), "main", None, false)
                 .context("failed to push updated main branch")?;
             Ok(())
         }
