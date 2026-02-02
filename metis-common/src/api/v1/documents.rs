@@ -81,6 +81,8 @@ pub struct SearchDocumentsQuery {
     #[serde(default)]
     pub path_prefix: Option<String>,
     #[serde(default)]
+    pub path_is_exact: Option<bool>,
+    #[serde(default)]
     pub created_by: Option<TaskId>,
 }
 
@@ -89,8 +91,14 @@ impl SearchDocumentsQuery {
         Self {
             q,
             path_prefix,
+            path_is_exact: None,
             created_by,
         }
+    }
+
+    pub fn with_path_is_exact(mut self, path_is_exact: bool) -> Self {
+        self.path_is_exact = Some(path_is_exact);
+        self
     }
 }
 
@@ -163,6 +171,7 @@ mod tests {
         let query = SearchDocumentsQuery {
             q: Some("api".to_string()),
             path_prefix: Some("docs/".to_string()),
+            path_is_exact: None,
             created_by: Some(TaskId::new()),
         };
 
@@ -178,5 +187,39 @@ mod tests {
     fn search_documents_query_omits_empty_fields() {
         let params = serialize_query_params(&SearchDocumentsQuery::default());
         assert!(params.is_empty());
+    }
+
+    #[test]
+    fn search_documents_query_serializes_path_is_exact() {
+        let query = SearchDocumentsQuery::new(None, Some("docs/file.md".to_string()), None)
+            .with_path_is_exact(true);
+
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("path_prefix").map(String::as_str),
+            Some("docs/file.md")
+        );
+        assert_eq!(
+            params.get("path_is_exact").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn search_documents_query_deserializes_path_is_exact() {
+        let json = r#"{"path_prefix": "docs/file.md", "path_is_exact": true}"#;
+        let query: SearchDocumentsQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.path_prefix.as_deref(), Some("docs/file.md"));
+        assert_eq!(query.path_is_exact, Some(true));
+    }
+
+    #[test]
+    fn search_documents_query_defaults_path_is_exact_to_none() {
+        let json = r#"{"path_prefix": "docs/"}"#;
+        let query: SearchDocumentsQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.path_prefix.as_deref(), Some("docs/"));
+        assert_eq!(query.path_is_exact, None);
     }
 }
