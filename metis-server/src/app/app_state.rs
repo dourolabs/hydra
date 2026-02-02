@@ -736,47 +736,7 @@ impl AppState {
                 })?;
         }
 
-        self.enqueue_repository_indexing_issue(&name)
-            .await
-            .map_err(|source| RepositoryError::IssueCreation {
-                repo_name: name.clone(),
-                source,
-            })?;
-
         Ok(RepositoryRecord::from((name, config)))
-    }
-
-    async fn enqueue_repository_indexing_issue(
-        &self,
-        repo_name: &RepoName,
-    ) -> Result<(), UpsertIssueError> {
-        let assignment_agent = self.config.background.assignment_agent.trim();
-        if assignment_agent.is_empty() {
-            warn!(repository = %repo_name, "assignment_agent not configured; skipping indexing issue creation");
-            return Ok(());
-        }
-
-        let description = format!("Index newly created repository {}", repo_name.as_str());
-
-        let issue = Issue::new(
-            IssueType::Task,
-            description,
-            Username::from("system"),
-            String::new(),
-            IssueStatus::Open,
-            Some(assignment_agent.to_string()),
-            Some(JobSettings {
-                repo_name: Some(repo_name.clone()),
-                ..JobSettings::default()
-            }),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
-
-        self.upsert_issue(None, UpsertIssueRequest::new(issue, None))
-            .await?;
-        Ok(())
     }
 
     pub async fn update_repository(

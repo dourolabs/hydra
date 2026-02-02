@@ -108,13 +108,5 @@ fn map_repository_error(err: RepositoryError) -> ApiError {
                 "failed to refresh repository '{repo_name}': {source}"
             ))
         }
-        RepositoryError::IssueCreation { repo_name, source } => {
-            error!(
-                repository = %repo_name,
-                error = %source,
-                "failed to create indexing issue"
-            );
-            ApiError::internal("failed to create indexing issue")
-        }
     }
 }
