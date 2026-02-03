@@ -338,6 +338,83 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let base_patch = Patch::new(
+        "link patch to issue".to_string(),
+        "issue-linked patch".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created_patch: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let merge_request_issue = Issue::new(
+        IssueType::MergeRequest,
+        "linked merge request".to_string(),
+        Username::from("creator"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        vec![],
+        vec![created_patch.patch_id.clone()],
+    );
+
+    let created_issue: UpsertIssueResponse = client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: merge_request_issue,
+            job_id: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let mut changes_requested_patch = base_patch.clone();
+    changes_requested_patch.status = PatchStatus::ChangesRequested;
+    client
+        .put(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created_patch.patch_id
+        ))
+        .json(&UpsertPatchRequest::new(changes_requested_patch))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let fetched_issue: IssueRecord = client
+        .get(format!(
+            "{}/v1/issues/{}",
+            server.base_url(),
+            created_issue.issue_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(fetched_issue.issue.status, IssueStatus::Closed);
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_patches_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
