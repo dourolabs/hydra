@@ -150,6 +150,12 @@ pub enum UpsertPatchError {
         source: StoreError,
         patch_id: PatchId,
     },
+    #[error("failed to create merge-request issue for patch '{patch_id}'")]
+    MergeRequestCreate {
+        #[source]
+        source: UpsertIssueError,
+        patch_id: PatchId,
+    },
     #[error("failed to update merge-request issue '{issue_id}' for patch '{patch_id}'")]
     MergeRequestUpdate {
         #[source]
@@ -1302,6 +1308,7 @@ impl AppState {
         } = request;
 
         let mut should_close_merge_requests = false;
+        let mut should_create_merge_request = false;
         let store = self.store.as_ref();
         let patch_id = match patch_id {
             Some(id) => {
@@ -1322,6 +1329,9 @@ impl AppState {
                         PatchStatus::Open | PatchStatus::ChangesRequested
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
                 should_close_merge_requests |= status_changed_to_changes_requested;
+                should_create_merge_request = existing_patch.item.status
+                    == PatchStatus::ChangesRequested
+                    && new_status == PatchStatus::Open;
 
                 patch.created_by = existing_patch.item.created_by;
                 if let Some(sync_github_branch) = sync_github_branch {
@@ -1445,9 +1455,120 @@ impl AppState {
             }
         }
 
+        if should_create_merge_request {
+            self.create_merge_request_issue_for_patch(&patch_id).await?;
+        }
+
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
         Ok(patch_id)
+    }
+
+    pub async fn create_merge_request_issue_for_patch(
+        &self,
+        patch_id: &PatchId,
+    ) -> Result<Option<IssueId>, UpsertPatchError> {
+        let store = self.store.as_ref();
+        let patch = store
+            .get_patch(patch_id)
+            .await
+            .map_err(|source| match source {
+                StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                    patch_id: patch_id.clone(),
+                    source,
+                },
+                other => UpsertPatchError::Store { source: other },
+            })?;
+
+        self.create_merge_request_issue(patch_id, &patch.item).await
+    }
+
+    async fn create_merge_request_issue(
+        &self,
+        patch_id: &PatchId,
+        patch: &Patch,
+    ) -> Result<Option<IssueId>, UpsertPatchError> {
+        let store = self.store.as_ref();
+        let issue_ids = store
+            .get_issues_for_patch(patch_id)
+            .await
+            .map_err(|source| UpsertPatchError::MergeRequestLookup {
+                patch_id: patch_id.clone(),
+                source,
+            })?;
+
+        let mut merge_request_issues = Vec::new();
+        for issue_id in issue_ids {
+            let issue = store.get_issue(&issue_id).await.map_err(|source| {
+                UpsertPatchError::MergeRequestLookup {
+                    patch_id: patch_id.clone(),
+                    source,
+                }
+            })?;
+            let issue_timestamp = issue.timestamp;
+            let issue = issue.item;
+
+            if issue.issue_type != IssueType::MergeRequest {
+                continue;
+            }
+
+            merge_request_issues.push((issue_timestamp, issue));
+        }
+
+        if merge_request_issues.is_empty() {
+            warn!(
+                patch_id = %patch_id,
+                "no merge-request issues found for patch update; skipping merge-request issue creation"
+            );
+            return Ok(None);
+        }
+
+        if merge_request_issues
+            .iter()
+            .any(|(_, issue)| matches!(issue.status, IssueStatus::Open | IssueStatus::InProgress))
+        {
+            info!(
+                patch_id = %patch_id,
+                "merge-request issue already open for patch; skipping merge-request issue creation"
+            );
+            return Ok(None);
+        }
+
+        merge_request_issues.sort_by_key(|(timestamp, _)| *timestamp);
+        let (_, template_issue) = merge_request_issues
+            .pop()
+            .expect("merge_request_issues is non-empty");
+
+        let title = merge_request_issue_title(patch);
+        let description = format!("Review patch {}: {title}", patch_id.as_ref());
+        let issue = Issue::new(
+            IssueType::MergeRequest,
+            description,
+            template_issue.creator,
+            String::new(),
+            IssueStatus::Open,
+            template_issue.assignee,
+            Some(template_issue.job_settings),
+            Vec::new(),
+            template_issue.dependencies,
+            vec![patch_id.clone()],
+        );
+
+        let issue_id = self
+            .upsert_issue(None, UpsertIssueRequest::new(issue, None))
+            .await
+            .map_err(|source| UpsertPatchError::MergeRequestCreate {
+                patch_id: patch_id.clone(),
+                source,
+            })?;
+
+        info!(
+            patch_id = %patch_id,
+            issue_id = %issue_id,
+            "created merge-request issue for patch update"
+        );
+
+        Ok(Some(issue_id))
     }
 
     pub async fn upsert_issue(
@@ -2113,6 +2234,22 @@ async fn active_tasks_for_issue(
     }
 
     Ok(active_task_ids)
+}
+
+fn merge_request_issue_title(patch: &Patch) -> String {
+    let summary = patch.title.trim();
+    if !summary.is_empty() {
+        return summary.to_string();
+    }
+
+    patch
+        .description
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("Patch review")
+        .to_string()
 }
 
 #[cfg(test)]

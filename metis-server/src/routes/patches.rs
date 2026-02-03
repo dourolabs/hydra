@@ -491,6 +491,16 @@ fn map_upsert_patch_error(err: UpsertPatchError) -> ApiError {
                 "failed to load merge-request issues for '{patch_id}': {source}"
             ))
         }
+        UpsertPatchError::MergeRequestCreate { patch_id, source } => {
+            error!(
+                patch_id = %patch_id,
+                error = %source,
+                "failed to create merge-request issue for patch"
+            );
+            ApiError::internal(anyhow!(
+                "failed to create merge-request issue for '{patch_id}': {source}"
+            ))
+        }
         UpsertPatchError::MergeRequestUpdate {
             patch_id,
             issue_id,
