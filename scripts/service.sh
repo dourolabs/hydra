@@ -122,7 +122,6 @@ client_secret = "${SERVER_GITHUB_APP_CLIENT_SECRET}"
 private_key = """${SERVER_GITHUB_APP_PRIVATE_KEY}"""
 
 [background]
-merge_request_followup_agent = "swe"
 assignment_agent = "pm"
 
 [[background.agent_queues]]
