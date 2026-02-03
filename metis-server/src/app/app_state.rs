@@ -1313,11 +1313,15 @@ impl AppState {
                     other => UpsertPatchError::Store { source: other },
                 })?;
                 let new_status = patch.status;
+                let status_changed_to_changes_requested = new_status
+                    == PatchStatus::ChangesRequested
+                    && existing_patch.item.status != PatchStatus::ChangesRequested;
                 should_close_merge_requests =
                     matches!(
                         existing_patch.item.status,
                         PatchStatus::Open | PatchStatus::ChangesRequested
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
+                should_close_merge_requests |= status_changed_to_changes_requested;
 
                 patch.created_by = existing_patch.item.created_by;
                 if let Some(sync_github_branch) = sync_github_branch {
