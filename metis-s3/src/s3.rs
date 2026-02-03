@@ -102,6 +102,26 @@ struct ObjectEntry {
     etag: Option<String>,
 }
 
+impl PartialEq for ObjectEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for ObjectEntry {}
+
+impl PartialOrd for ObjectEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ObjectEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
 #[derive(Debug)]
 struct ListResult {
     entries: Vec<ObjectEntry>,
@@ -285,15 +305,22 @@ async fn list_objects(
     let root_dir = state.root_dir.clone();
     let bucket_name = bucket.to_string();
     let prefix = prefix.to_string();
-    let continuation = continuation_token.clone();
-    let start_after = start_after.clone();
+    let marker = continuation_token.or(start_after);
 
     let entries = tokio::task::spawn_blocking(move || {
         if !bucket_dir.exists() {
             return Ok(Vec::new());
         }
 
-        let mut entries = Vec::new();
+        // Use a max-heap bounded to max_keys + 1 entries.
+        // We store entries with Reverse ordering so the heap keeps the smallest keys
+        // (lexicographically first) and we can efficiently remove the largest.
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let limit = max_keys + 1;
+        let mut heap: BinaryHeap<Reverse<ObjectEntry>> = BinaryHeap::with_capacity(limit + 1);
+
         for entry in WalkDir::new(&bucket_dir).follow_links(false) {
             let entry = entry.map_err(|err| S3Error::io("walking storage", err))?;
             if !entry.file_type().is_file() {
@@ -311,8 +338,16 @@ async fn list_objects(
                 .unwrap_or(&key)
                 .to_string();
 
+            // Skip entries that don't match the prefix
             if !prefix.is_empty() && !key.starts_with(&prefix) {
                 continue;
+            }
+
+            // Skip entries at or before the marker
+            if let Some(ref m) = marker {
+                if key.as_str() <= m.as_str() {
+                    continue;
+                }
             }
 
             let metadata = entry
@@ -322,13 +357,24 @@ async fn list_objects(
             let size = metadata.len();
             let etag = compute_etag_from_path(entry.path()).ok();
 
-            entries.push(ObjectEntry {
+            let obj = ObjectEntry {
                 key,
                 last_modified,
                 size,
                 etag,
-            });
+            };
+
+            heap.push(Reverse(obj));
+
+            // If heap exceeds our limit, remove the largest entry (last in sorted order)
+            if heap.len() > limit {
+                heap.pop();
+            }
         }
+
+        // Convert heap to sorted vector
+        let mut entries: Vec<ObjectEntry> = heap.into_iter().map(|Reverse(e)| e).collect();
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
 
         Ok(entries)
     })
@@ -336,22 +382,14 @@ async fn list_objects(
     .map_err(|err| S3Error::io("listing objects", err))??;
 
     let mut entries = entries;
-    entries.sort_by(|a, b| a.key.cmp(&b.key));
-
-    let marker = continuation.or(start_after);
-    if let Some(marker) = marker.as_ref() {
-        entries.retain(|entry| entry.key.as_str() > marker.as_str());
-    }
-
     let mut is_truncated = false;
     let mut next_token = None;
     if entries.len() > max_keys {
         is_truncated = true;
-        let remainder = entries.split_off(max_keys);
+        entries.truncate(max_keys);
         if let Some(last) = entries.last() {
             next_token = Some(last.key.clone());
         }
-        drop(remainder);
     }
 
     Ok(ListResult {
