@@ -377,7 +377,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         )
         .await?;
 
-    let merge_request_issue_id = create_merge_request_issue(
+    let initial_merge_request_issue_id = create_merge_request_issue(
         &env.client,
         patch_id.clone(),
         "requester".to_string(),
@@ -425,6 +425,24 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
             .and_then(|github| github.head_ref.as_deref()),
         Some(head_ref)
     );
+
+    let initial_merge_request_issue = env
+        .client
+        .get_issue(&initial_merge_request_issue_id)
+        .await?
+        .issue;
+    assert_eq!(initial_merge_request_issue.status, IssueStatus::Closed);
+
+    let merge_request_issue_id = create_merge_request_issue(
+        &env.client,
+        patch_id.clone(),
+        "requester".to_string(),
+        parent_issue_id.clone(),
+        "Code change summary".to_string(),
+        "Code change description".to_string(),
+    )
+    .await?
+    .id;
 
     spawner.run_iteration().await;
 

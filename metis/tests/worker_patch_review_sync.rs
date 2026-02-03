@@ -8,12 +8,6 @@ use metis_common::{
     jobs::SearchJobsQuery,
     patches::{GithubPr, PatchStatus},
 };
-use metis_server::background::run_spawners::RunSpawnersWorker;
-use metis_server::background::scheduler::ScheduledWorker;
-use metis_server::background::spawner::{AgentQueue, AGENT_NAME_ENV_VAR, ISSUE_ID_ENV_VAR};
-use metis_server::config::{
-    AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES,
-};
 use metis_server::test_utils::github_user_response;
 use octocrab::models::AppId;
 use octocrab::Octocrab;
@@ -21,7 +15,6 @@ use openssl::rsa::Rsa;
 use serde_json::json;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 mod common;
@@ -67,7 +60,7 @@ fn create_branch_with_commit(remote_url: &str, branch: &str, line: &str) -> Resu
 }
 
 #[tokio::test]
-async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()> {
+async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> Result<()> {
     let github_server = MockServer::start();
     let github_base_url = github_server.base_url();
 
@@ -262,23 +255,6 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
     .await?
     .id;
 
-    let followup_agent = env
-        .state
-        .config
-        .background
-        .merge_request_followup_agent
-        .clone();
-    let queue_config = AgentQueueConfig {
-        name: followup_agent.clone(),
-        prompt: "Review patch".to_string(),
-        max_tries: DEFAULT_AGENT_MAX_TRIES,
-        max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
-    };
-    {
-        let mut agents = env.agents.write().await;
-        *agents = vec![Arc::new(AgentQueue::from_config(&queue_config))];
-    }
-
     env.run_github_sync(60)
         .await
         .context("sync_open_patches failed")?;
@@ -299,8 +275,8 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         .iter()
         .any(|review| review.author == "reviewer" && review.contents == "please update"));
 
-    let spawner = RunSpawnersWorker::new(env.state.clone());
-    spawner.run_iteration().await;
+    let merge_request_issue = env.client.get_issue(&merge_request_issue_id).await?.issue;
+    assert_eq!(merge_request_issue.status, IssueStatus::Closed);
 
     let jobs = env
         .client
@@ -310,35 +286,9 @@ async fn sync_open_patches_spawns_review_task_for_followup_agent() -> Result<()>
         ))
         .await?
         .jobs;
-    let job = jobs
-        .first()
-        .context("expected review task to be spawned for merge request")?;
-
-    env.state
-        .transition_task_to_running(&job.id)
-        .await
-        .context("failed to mark review job as running")?;
-
-    let outputs = env
-        .run_as_worker(vec!["git rev-parse HEAD".to_string()], job.id.clone())
-        .await
-        .context("failed to run worker job for review branch")?;
-    let head_output = outputs
-        .last()
-        .context("expected worker output for HEAD rev-parse")?;
-    assert_eq!(head_output.stdout.trim(), head_sha);
-
-    assert_eq!(job.task.spawned_from, Some(merge_request_issue_id.clone()));
-    assert_eq!(
-        job.task
-            .env_vars
-            .get(AGENT_NAME_ENV_VAR)
-            .map(String::as_str),
-        Some(followup_agent.as_str())
-    );
-    assert_eq!(
-        job.task.env_vars.get(ISSUE_ID_ENV_VAR).map(String::as_str),
-        Some(merge_request_issue_id.as_ref())
+    assert!(
+        jobs.is_empty(),
+        "expected no followup job when merge request issue is closed"
     );
 
     Ok(())
