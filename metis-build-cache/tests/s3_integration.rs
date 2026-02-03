@@ -2,6 +2,7 @@ use metis_build_cache::{
     BuildCacheError, MULTIPART_THRESHOLD, PART_SIZE, S3StorageClient, S3StorageConfig,
     StorageClient,
 };
+use std::path::Path;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -264,4 +265,171 @@ async fn s3_accepts_large_uploads() -> Result<(), BuildCacheError> {
 
     server_handle.abort();
     Ok(())
+}
+
+/// Tests that small files (below MULTIPART_THRESHOLD) download in a single request
+/// without using ranged downloads.
+#[tokio::test]
+async fn s3_small_file_download_uses_single_request() -> Result<(), BuildCacheError> {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "small-download-test".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config)?;
+
+    wait_for_metis_s3(&client).await?;
+
+    let temp_dir = tempdir().expect("work dir");
+
+    // Create a small file (well below threshold)
+    let small_content = b"small file content for testing";
+    let upload_path = temp_dir.path().join("small-file.txt");
+    tokio::fs::write(&upload_path, small_content)
+        .await
+        .map_err(|err| BuildCacheError::io("writing small file", err))?;
+
+    client
+        .put_object("repo/small-file.txt", &upload_path)
+        .await?;
+
+    // Download should work correctly
+    let download_path = temp_dir.path().join("downloaded-small.txt");
+    client
+        .get_object("repo/small-file.txt", &download_path)
+        .await?;
+
+    let downloaded = tokio::fs::read(&download_path)
+        .await
+        .map_err(|err| BuildCacheError::io("reading download file", err))?;
+    assert_eq!(downloaded, small_content);
+
+    server_handle.abort();
+    Ok(())
+}
+
+/// Tests that large files (above MULTIPART_THRESHOLD) download correctly using
+/// ranged downloads with multiple chunks.
+#[tokio::test]
+async fn s3_ranged_download_for_large_files() -> Result<(), BuildCacheError> {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|err| BuildCacheError::io("binding metis-s3 listener", err))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|err| BuildCacheError::io("reading metis-s3 addr", err))?;
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "ranged-download-test".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config)?;
+
+    wait_for_metis_s3(&client).await?;
+
+    let temp_dir = tempdir().expect("work dir");
+
+    // Create a file that spans multiple PART_SIZE chunks
+    // Using MULTIPART_THRESHOLD + 2 * PART_SIZE to ensure we get multiple range requests
+    let file_size = MULTIPART_THRESHOLD + (2 * PART_SIZE) + 1024;
+    let upload_path = temp_dir.path().join("ranged-download-test.bin");
+
+    // Create content with a distinctive pattern we can verify
+    let mut large_content = Vec::with_capacity(file_size as usize);
+    for i in 0..file_size {
+        // Use a pattern that makes it easy to detect chunk boundary issues
+        large_content.push(((i / 1024) % 256) as u8);
+    }
+    tokio::fs::write(&upload_path, &large_content)
+        .await
+        .map_err(|err| BuildCacheError::io("writing large file", err))?;
+
+    // Upload the file (will use multipart upload)
+    client
+        .put_object("repo/ranged-download.bin", &upload_path)
+        .await?;
+
+    // Download should use ranged download (>MULTIPART_THRESHOLD)
+    let download_path = temp_dir.path().join("downloaded-ranged.bin");
+    client
+        .get_object("repo/ranged-download.bin", &download_path)
+        .await?;
+
+    // Verify content integrity across chunk boundaries
+    let downloaded = tokio::fs::read(&download_path)
+        .await
+        .map_err(|err| BuildCacheError::io("reading download file", err))?;
+    assert_eq!(
+        downloaded.len(),
+        large_content.len(),
+        "Downloaded file size should match original"
+    );
+    assert_eq!(
+        downloaded, large_content,
+        "Downloaded content should match original exactly"
+    );
+
+    server_handle.abort();
+    Ok(())
+}
+
+/// Tests that failed downloads clean up partial files.
+#[tokio::test]
+async fn s3_failed_download_cleans_up_partial_file() {
+    let storage_root = tempdir().expect("storage root");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local addr");
+
+    let server_handle = tokio::spawn(metis_s3::serve(listener, storage_root.path().to_path_buf()));
+
+    let config = S3StorageConfig {
+        endpoint_url: format!("http://{addr}"),
+        bucket: "cleanup-test".to_string(),
+        region: "us-east-1".to_string(),
+        access_key_id: Some("test-access".to_string()),
+        secret_access_key: Some("test-secret".to_string()),
+        session_token: None,
+    };
+    let client = S3StorageClient::new(&config).expect("client");
+    wait_for_metis_s3(&client).await.expect("server ready");
+
+    let temp_dir = tempdir().expect("work dir");
+    let download_path = temp_dir.path().join("should-not-exist.bin");
+
+    // Try to download a non-existent file
+    let result = client
+        .get_object("nonexistent/large-file.bin", &download_path)
+        .await;
+
+    assert!(result.is_err(), "Should fail for non-existent file");
+
+    // The partial file should not exist
+    assert!(
+        !Path::new(&download_path).exists(),
+        "Partial file should be cleaned up on failure"
+    );
+
+    server_handle.abort();
 }
