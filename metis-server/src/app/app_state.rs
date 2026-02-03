@@ -1452,12 +1452,31 @@ impl AppState {
         }
 
         if should_create_merge_request {
-            self.create_merge_request_issue(&patch_id, &patch).await?;
+            self.create_merge_request_issue_for_patch(&patch_id).await?;
         }
 
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
         Ok(patch_id)
+    }
+
+    pub async fn create_merge_request_issue_for_patch(
+        &self,
+        patch_id: &PatchId,
+    ) -> Result<Option<IssueId>, UpsertPatchError> {
+        let store = self.store.as_ref();
+        let patch = store
+            .get_patch(patch_id)
+            .await
+            .map_err(|source| match source {
+                StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                    patch_id: patch_id.clone(),
+                    source,
+                },
+                other => UpsertPatchError::Store { source: other },
+            })?;
+
+        self.create_merge_request_issue(patch_id, &patch.item).await
     }
 
     async fn create_merge_request_issue(

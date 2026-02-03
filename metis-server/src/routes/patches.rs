@@ -96,6 +96,10 @@ pub async fn update_patch(
         .upsert_patch(Some(&actor), Some(patch_id), request)
         .await
         .map_err(map_upsert_patch_error)?;
+    state
+        .create_merge_request_issue_for_patch(&patch_id)
+        .await
+        .map_err(map_upsert_patch_error)?;
 
     info!(patch_id = %patch_id, "update_patch completed");
     Ok(Json(v1::patches::UpsertPatchResponse::new(patch_id)))
