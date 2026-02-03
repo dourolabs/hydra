@@ -96,20 +96,49 @@ pub async fn run(
             (build_cache.as_ref(), service_repo_name.as_ref())
         {
             match build_cache_client(build_cache) {
-                Ok(client) => match client
-                    .apply_nearest_cache(
-                        &dest,
-                        worker_home_dir.as_deref(),
-                        service_repo_name.clone(),
-                    )
-                    .await
-                {
-                    Ok(Some(key)) => {
-                        log_status(format!("Applied build cache entry '{}'.", key.object_key()))
+                Ok(client) => {
+                    const MAX_ATTEMPTS: u32 = 3;
+                    let mut last_error = None;
+                    for attempt in 1..=MAX_ATTEMPTS {
+                        match client
+                            .apply_nearest_cache(
+                                &dest,
+                                worker_home_dir.as_deref(),
+                                service_repo_name.clone(),
+                            )
+                            .await
+                        {
+                            Ok(Some(key)) => {
+                                log_status(format!(
+                                    "Applied build cache entry '{}'.",
+                                    key.object_key()
+                                ));
+                                last_error = None;
+                                break;
+                            }
+                            Ok(None) => {
+                                log_status("No build cache entry found to apply.".to_string());
+                                last_error = None;
+                                break;
+                            }
+                            Err(err) => {
+                                last_error = Some(err);
+                                if attempt < MAX_ATTEMPTS {
+                                    let delay_secs = 2u64.pow(attempt);
+                                    log_status(format!(
+                                        "Build cache apply attempt {attempt} failed, retrying in {delay_secs}s..."
+                                    ));
+                                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                                }
+                            }
+                        }
                     }
-                    Ok(None) => log_status("No build cache entry found to apply.".to_string()),
-                    Err(err) => log_status(format!("Skipping build cache apply: {err}")),
-                },
+                    if let Some(err) = last_error {
+                        log_status(format!(
+                            "Skipping build cache apply after {MAX_ATTEMPTS} attempts: {err}"
+                        ));
+                    }
+                }
                 Err(err) => log_status(format!("Skipping build cache apply: {err}")),
             }
         }
