@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header::RANGE},
     response::{IntoResponse, Response},
     routing::{delete, get, head, post, put},
 };
@@ -21,6 +21,84 @@ use walkdir::WalkDir;
 
 const S3_XML_NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
 const DEFAULT_MAX_KEYS: usize = 1000;
+
+/// Represents a parsed byte range from an HTTP Range header.
+/// Supports three forms: bytes=start-end, bytes=start-, bytes=-suffix
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ByteRange {
+    start: u64,
+    end: u64, // inclusive
+}
+
+impl ByteRange {
+    /// Resolves the range against the total content length.
+    /// Returns None if the range is invalid or unsatisfiable.
+    fn resolve(range_spec: &str, total_len: u64) -> Option<Self> {
+        if total_len == 0 {
+            return None;
+        }
+
+        let range_spec = range_spec.trim();
+        if !range_spec.starts_with("bytes=") {
+            return None;
+        }
+
+        let range_part = &range_spec[6..];
+
+        // S3 doesn't support multiple ranges
+        if range_part.contains(',') {
+            return None;
+        }
+
+        let parts: Vec<&str> = range_part.split('-').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let start_str = parts[0].trim();
+        let end_str = parts[1].trim();
+
+        if start_str.is_empty() && end_str.is_empty() {
+            return None;
+        }
+
+        if start_str.is_empty() {
+            // Suffix range: bytes=-500 means last 500 bytes
+            let suffix_len: u64 = end_str.parse().ok()?;
+            if suffix_len == 0 {
+                return None;
+            }
+            let start = total_len.saturating_sub(suffix_len);
+            Some(ByteRange {
+                start,
+                end: total_len - 1,
+            })
+        } else if end_str.is_empty() {
+            // Open-ended range: bytes=500-
+            let start: u64 = start_str.parse().ok()?;
+            if start >= total_len {
+                return None;
+            }
+            Some(ByteRange {
+                start,
+                end: total_len - 1,
+            })
+        } else {
+            // Explicit range: bytes=0-999
+            let start: u64 = start_str.parse().ok()?;
+            let end: u64 = end_str.parse().ok()?;
+            if start > end {
+                return None;
+            }
+            if start >= total_len {
+                return None;
+            }
+            // Clamp end to content length - 1
+            let end = end.min(total_len - 1);
+            Some(ByteRange { start, end })
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct S3State {
@@ -461,6 +539,7 @@ async fn put_object(
 
 async fn get_object(
     State(state): State<Arc<S3State>>,
+    headers: HeaderMap,
     Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
     info!(bucket = %bucket, key = %key, "get_object");
@@ -511,8 +590,33 @@ async fn get_object(
         }
     };
 
+    let total_len = metadata.len();
     let etag = compute_etag(&bytes);
-    response_with_body(bytes, metadata.modified().ok(), metadata.len(), etag)
+    let last_modified = metadata.modified().ok();
+
+    // Check for Range header
+    let range_header = headers
+        .get(RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(range_str) = range_header {
+        match ByteRange::resolve(&range_str, total_len) {
+            Some(range) => {
+                let start = range.start as usize;
+                let end = (range.end + 1) as usize;
+                let partial_bytes = bytes[start..end].to_vec();
+                response_with_partial_body(partial_bytes, last_modified, total_len, etag, range)
+            }
+            None => {
+                // Range not satisfiable
+                range_not_satisfiable_response(total_len)
+            }
+        }
+    } else {
+        // No Range header - return full content
+        response_with_body(bytes, last_modified, total_len, etag)
+    }
 }
 
 async fn head_object(
@@ -1130,6 +1234,10 @@ fn response_with_body(
         axum::http::header::ETAG,
         HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
     );
+    response.headers_mut().insert(
+        axum::http::header::ACCEPT_RANGES,
+        HeaderValue::from_static("bytes"),
+    );
     if let Some(modified) = last_modified {
         let header_value = httpdate::fmt_http_date(modified);
         if let Ok(value) = HeaderValue::from_str(&header_value) {
@@ -1137,6 +1245,64 @@ fn response_with_body(
                 .headers_mut()
                 .insert(axum::http::header::LAST_MODIFIED, value);
         }
+    }
+    response
+}
+
+fn response_with_partial_body(
+    body: Vec<u8>,
+    last_modified: Option<SystemTime>,
+    total_len: u64,
+    etag: String,
+    range: ByteRange,
+) -> Response {
+    let content_len = body.len() as u64;
+    let mut response = Response::new(axum::body::Body::from(body));
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from_str(&content_len.to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("0")),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ACCEPT_RANGES,
+        HeaderValue::from_static("bytes"),
+    );
+    // Content-Range: bytes start-end/total
+    let content_range = format!("bytes {}-{}/{}", range.start, range.end, total_len);
+    if let Ok(value) = HeaderValue::from_str(&content_range) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_RANGE, value);
+    }
+    if let Some(modified) = last_modified {
+        let header_value = httpdate::fmt_http_date(modified);
+        if let Ok(value) = HeaderValue::from_str(&header_value) {
+            response
+                .headers_mut()
+                .insert(axum::http::header::LAST_MODIFIED, value);
+        }
+    }
+    response
+}
+
+fn range_not_satisfiable_response(total_len: u64) -> Response {
+    let mut response = Response::new(axum::body::Body::empty());
+    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+    // Content-Range: bytes */total
+    let content_range = format!("bytes */{total_len}");
+    if let Ok(value) = HeaderValue::from_str(&content_range) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_RANGE, value);
     }
     response
 }
@@ -1882,5 +2048,383 @@ mod tests {
         assert_eq!(parts[0].etag, "\"abc123\"");
         assert_eq!(parts[1].part_number, 2);
         assert_eq!(parts[1].etag, "\"def456\"");
+    }
+
+    #[test]
+    fn byte_range_explicit_range() {
+        // bytes=0-999 on a 2000 byte file
+        let range = ByteRange::resolve("bytes=0-999", 2000).expect("range");
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 999);
+    }
+
+    #[test]
+    fn byte_range_open_ended() {
+        // bytes=500- on a 2000 byte file
+        let range = ByteRange::resolve("bytes=500-", 2000).expect("range");
+        assert_eq!(range.start, 500);
+        assert_eq!(range.end, 1999);
+    }
+
+    #[test]
+    fn byte_range_suffix() {
+        // bytes=-500 on a 2000 byte file (last 500 bytes)
+        let range = ByteRange::resolve("bytes=-500", 2000).expect("range");
+        assert_eq!(range.start, 1500);
+        assert_eq!(range.end, 1999);
+    }
+
+    #[test]
+    fn byte_range_clamped_to_content_length() {
+        // bytes=0-5000 on a 2000 byte file should clamp to 1999
+        let range = ByteRange::resolve("bytes=0-5000", 2000).expect("range");
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 1999);
+    }
+
+    #[test]
+    fn byte_range_suffix_larger_than_file() {
+        // bytes=-5000 on a 2000 byte file should return the whole file
+        let range = ByteRange::resolve("bytes=-5000", 2000).expect("range");
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 1999);
+    }
+
+    #[test]
+    fn byte_range_invalid_start_beyond_content() {
+        // bytes=5000- on a 2000 byte file should fail
+        let range = ByteRange::resolve("bytes=5000-", 2000);
+        assert!(range.is_none());
+    }
+
+    #[test]
+    fn byte_range_invalid_start_greater_than_end() {
+        // bytes=1000-500 is invalid
+        let range = ByteRange::resolve("bytes=1000-500", 2000);
+        assert!(range.is_none());
+    }
+
+    #[test]
+    fn byte_range_invalid_format() {
+        // Not starting with bytes=
+        assert!(ByteRange::resolve("range=0-100", 2000).is_none());
+        // Empty range
+        assert!(ByteRange::resolve("bytes=-", 2000).is_none());
+        // Multiple ranges not supported
+        assert!(ByteRange::resolve("bytes=0-100, 200-300", 2000).is_none());
+        // Non-numeric values
+        assert!(ByteRange::resolve("bytes=abc-def", 2000).is_none());
+    }
+
+    #[test]
+    fn byte_range_zero_length_file() {
+        // Any range on a zero-length file should fail
+        assert!(ByteRange::resolve("bytes=0-100", 0).is_none());
+        assert!(ByteRange::resolve("bytes=0-", 0).is_none());
+        assert!(ByteRange::resolve("bytes=-100", 0).is_none());
+    }
+
+    #[test]
+    fn byte_range_suffix_zero() {
+        // bytes=-0 is invalid (requesting last 0 bytes)
+        assert!(ByteRange::resolve("bytes=-0", 2000).is_none());
+    }
+
+    #[tokio::test]
+    async fn get_object_without_range_header() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        // First put an object
+        let payload = "Hello, World! This is test content.";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test-file.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET without Range header should return full content (HTTP 200)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/test-file.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("accept-ranges")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(body.as_ref(), payload.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn get_object_with_explicit_range() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        // Put an object with known content
+        let payload = "0123456789ABCDEFGHIJ"; // 20 bytes
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/range-test.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET bytes=0-9 (first 10 bytes)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/range-test.txt")
+                    .header("Range", "bytes=0-9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes 0-9/20")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("accept-ranges")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(body.as_ref(), b"0123456789");
+    }
+
+    #[tokio::test]
+    async fn get_object_with_open_ended_range() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = "0123456789ABCDEFGHIJ"; // 20 bytes
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/range-test2.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET bytes=10- (from byte 10 to end)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/range-test2.txt")
+                    .header("Range", "bytes=10-")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes 10-19/20")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(body.as_ref(), b"ABCDEFGHIJ");
+    }
+
+    #[tokio::test]
+    async fn get_object_with_suffix_range() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = "0123456789ABCDEFGHIJ"; // 20 bytes
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/range-test3.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET bytes=-5 (last 5 bytes)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/range-test3.txt")
+                    .header("Range", "bytes=-5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes 15-19/20")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(body.as_ref(), b"FGHIJ");
+    }
+
+    #[tokio::test]
+    async fn get_object_with_invalid_range() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = "0123456789"; // 10 bytes
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/range-test4.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET bytes=100- (start beyond file size)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/range-test4.txt")
+                    .header("Range", "bytes=100-")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes */10")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_object_range_clamped_to_file_size() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = "0123456789"; // 10 bytes
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/range-test5.txt")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET bytes=0-100 (range exceeds file size, should be clamped)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/test-bucket/range-test5.txt")
+                    .header("Range", "bytes=0-100")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get response");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-range")
+                .map(|v| v.to_str().unwrap()),
+            Some("bytes 0-9/10")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(body.as_ref(), payload.as_bytes());
     }
 }
