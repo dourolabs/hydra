@@ -425,7 +425,7 @@ async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyho
 }
 
 #[tokio::test]
-async fn updating_open_patch_creates_merge_request_issue() -> anyhow::Result<()> {
+async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Result<()> {
     let handles = test_state_handles();
     let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
     let client = test_client();
@@ -499,13 +499,18 @@ async fn updating_open_patch_creates_merge_request_issue() -> anyhow::Result<()>
         }
     }
 
-    assert_eq!(merge_request_issues.len(), 2);
-    let open_issue = merge_request_issues
+    assert_eq!(merge_request_issues.len(), 1);
+    let existing_issue = merge_request_issues
         .iter()
-        .find(|issue| issue.item.status == IssueStatus::Open)
-        .expect("expected an open merge-request issue");
-    assert!(open_issue.item.description.contains("Updated patch"));
-    assert_eq!(open_issue.item.assignee.as_deref(), Some("agent-a"));
+        .find(|issue| issue.item.status == IssueStatus::Closed)
+        .expect("expected a closed merge-request issue");
+    assert!(
+        existing_issue
+            .item
+            .description
+            .contains("previous merge request")
+    );
+    assert_eq!(existing_issue.item.assignee.as_deref(), Some("agent-a"));
 
     Ok(())
 }
