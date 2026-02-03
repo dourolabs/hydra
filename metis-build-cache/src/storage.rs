@@ -16,8 +16,8 @@ use tokio::io::AsyncReadExt;
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-/// Files larger than this threshold (50MB) use multipart upload
-pub const MULTIPART_THRESHOLD: u64 = 50 * 1024 * 1024;
+/// Files larger than this threshold (5MB) use multipart upload
+pub const MULTIPART_THRESHOLD: u64 = 5 * 1024 * 1024;
 
 /// Size of each part for multipart upload (10MB)
 pub const PART_SIZE: u64 = 10 * 1024 * 1024;
