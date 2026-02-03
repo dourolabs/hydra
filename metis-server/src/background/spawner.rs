@@ -8,7 +8,6 @@ use crate::{
     domain::{
         issues::{Issue, IssueDependencyType, IssueStatus},
         jobs::BundleSpec,
-        patches::{PatchStatus, Review},
     },
     store::{Status, StoreError, Task},
 };
@@ -109,10 +108,7 @@ impl AgentQueue {
             _ => return Ok(None),
         };
 
-        let prompt = self
-            .build_prompt_for_issue(state, issue)
-            .await
-            .context("failed to build task prompt")?;
+        let prompt = self.prompt.trim_end().to_string();
 
         let image = job_settings
             .image
@@ -164,39 +160,6 @@ impl AgentQueue {
             .map(str::to_string))
     }
 
-    async fn build_prompt_for_issue(
-        &self,
-        state: &AppState,
-        issue: &Issue,
-    ) -> anyhow::Result<String> {
-        let mut prompt = self.prompt.trim_end().to_string();
-
-        if issue.issue_type == crate::domain::issues::IssueType::MergeRequest {
-            if let Some(patch_id) = issue.patches.last() {
-                if let Ok(patch) = state.get_patch(patch_id).await {
-                    let patch = patch.item;
-                    if patch.status == PatchStatus::ChangesRequested {
-                        if let Some(review_summary) = build_review_summary(&patch.reviews) {
-                            if !prompt.is_empty() {
-                                prompt.push_str("\n\n");
-                            }
-                            prompt.push_str(&format!(
-                                "Merge request follow-up:\n\
-                                Patch {patch_id} has changes requested. \
-                                Address the review feedback below and update the existing patch/branch (do not open a new patch).\n\
-                                Once you are done, please mark the issue as open by running \
-                                `metis issues update $$METIS_ISSUE_ID --progress <progress> --status open`.\n\
-                                {review_summary}"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(prompt)
-    }
-
     async fn register_spawn_attempt(
         &self,
         issue_id: &IssueId,
@@ -229,33 +192,6 @@ impl AgentQueue {
     }
 }
 
-fn build_review_summary(reviews: &[Review]) -> Option<String> {
-    let mut lines = Vec::new();
-    for review in reviews.iter().filter(|review| !review.is_approved) {
-        let contents = review.contents.trim();
-        if contents.is_empty() {
-            continue;
-        }
-        let when = review
-            .submitted_at
-            .map(|timestamp| format!(" @ {}", timestamp.to_rfc3339()))
-            .unwrap_or_default();
-        lines.push(format!("{}{}: {}", review.author, when, contents));
-    }
-
-    if lines.is_empty() {
-        return None;
-    }
-
-    let mut summary = String::from("Review feedback:\n");
-    for line in lines {
-        summary.push_str("- ");
-        summary.push_str(&line);
-        summary.push('\n');
-    }
-    Some(summary.trim_end().to_string())
-}
-
 #[async_trait]
 impl Spawner for AgentQueue {
     fn name(&self) -> &str {
@@ -279,12 +215,6 @@ impl Spawner for AgentQueue {
 
         let mut remaining_capacity = max_simultaneous - active_tasks;
 
-        let followup_agent = state
-            .config
-            .background
-            .merge_request_followup_agent
-            .trim()
-            .to_string();
         let assignment_agent = state.config.background.assignment_agent.trim().to_string();
         let is_assignment_agent = !assignment_agent.is_empty() && self.name == assignment_agent;
 
@@ -296,22 +226,13 @@ impl Spawner for AgentQueue {
         let mut tasks = Vec::new();
         for (issue_id, issue) in issues {
             let issue = issue.item;
-            let last_patch_status = match issue.patches.last() {
-                Some(patch_id) => state.get_patch(patch_id).await.ok().map(|p| p.item.status),
-                None => None,
-            };
             if is_assignment_agent {
                 if let Some(name) = &issue.assignee
                     && name != &self.name
                 {
                     continue;
                 }
-            } else if should_skip_for_assignee_mismatch(
-                &self.name,
-                followup_agent.as_str(),
-                &issue,
-                last_patch_status,
-            ) {
+            } else if issue.assignee.as_deref() != Some(self.name.as_str()) {
                 continue;
             }
 
@@ -429,20 +350,6 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     Ok(false)
 }
 
-fn should_skip_for_assignee_mismatch(
-    agent_name: &str,
-    followup_agent: &str,
-    issue: &Issue,
-    last_patch_status: Option<PatchStatus>,
-) -> bool {
-    let assignee_mismatch = issue.assignee.as_deref() != Some(agent_name);
-    assignee_mismatch
-        && !(agent_name == followup_agent
-            && !followup_agent.is_empty()
-            && issue.issue_type == crate::domain::issues::IssueType::MergeRequest
-            && last_patch_status == Some(PatchStatus::ChangesRequested))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,15 +375,6 @@ mod tests {
             max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
             spawn_attempts: RwLock::new(HashMap::new()),
         }
-    }
-
-    fn followup_agent_name(handles: &TestStateHandles) -> &str {
-        handles
-            .state
-            .config
-            .background
-            .merge_request_followup_agent
-            .as_str()
     }
 
     fn repository() -> (RepoName, Repository) {
@@ -707,55 +605,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_request_changes_requested_includes_review_summary_in_prompt()
-    -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        let review_time = Utc::now();
-        let patch = Patch::new(
-            "Review patch".to_string(),
-            "Review patch description".to_string(),
-            "diff --git a/file b/file\n".to_string(),
-            PatchStatus::ChangesRequested,
-            false,
-            None,
-            vec![Review::new(
-                "Please handle the edge case.".to_string(),
-                false,
-                "alex".to_string(),
-                Some(review_time),
-            )],
-            repo_name.clone(),
-            None,
-        );
-        let patch_id = handles.store.add_patch(patch).await?;
-        handles
-            .store
-            .add_issue(Issue {
-                issue_type: IssueType::MergeRequest,
-                description: "Review patch".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("agent-a".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: vec![patch_id.clone()],
-            })
-            .await?;
-
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        let prompt = &tasks[0].prompt;
-        assert!(prompt.contains("Merge request follow-up:"));
-        assert!(prompt.contains(&patch_id.to_string()));
-        assert!(prompt.contains("Please handle the edge case."));
-        assert!(prompt.contains("Review feedback:"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn merge_request_requeues_after_changes_requested_patch_update() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         let patch = Patch::new(
@@ -804,58 +653,6 @@ mod tests {
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-        let prompt = &tasks[0].prompt;
-        assert!(prompt.contains("Merge request follow-up:"));
-        assert!(prompt.contains(&patch_id.to_string()));
-        assert!(prompt.contains("needs adjustments"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn merge_request_changes_requested_spawns_for_followup_agent_with_assignee_mismatch()
-    -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        let followup_agent = followup_agent_name(&handles);
-        let patch = Patch::new(
-            "Review patch".to_string(),
-            "Review patch description".to_string(),
-            "diff --git a/file b/file\n".to_string(),
-            PatchStatus::ChangesRequested,
-            false,
-            None,
-            vec![Review::new(
-                "fix the issues".to_string(),
-                false,
-                "alex".to_string(),
-                None,
-            )],
-            repo_name.clone(),
-            None,
-        );
-        let patch_id = handles.store.add_patch(patch).await?;
-        handles
-            .store
-            .add_issue(Issue {
-                issue_type: IssueType::MergeRequest,
-                description: "Review patch".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("pm".to_string()),
-                job_settings: job_settings(&repo_name),
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: vec![patch_id.clone()],
-            })
-            .await?;
-
-        let tasks = queue(followup_agent).spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-        let prompt = &tasks[0].prompt;
-        assert!(prompt.contains("Merge request follow-up:"));
-        assert!(prompt.contains(&patch_id.to_string()));
-        assert!(prompt.contains("fix the issues"));
 
         Ok(())
     }
@@ -864,7 +661,6 @@ mod tests {
     async fn merge_request_changes_requested_overrides_branch_from_github_head()
     -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
-        let followup_agent = followup_agent_name(&handles);
         let patch = Patch::new(
             "Review patch".to_string(),
             "Review patch description".to_string(),
@@ -908,7 +704,7 @@ mod tests {
             })
             .await?;
 
-        let tasks = queue(followup_agent).spawn(&handles.state).await?;
+        let tasks = queue("pm").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
 
         match &tasks[0].context {
@@ -923,29 +719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_merge_request_assignee_mismatch_still_skips_for_followup_agent()
-    -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        let followup_agent = followup_agent_name(&handles);
-        handles
-            .store
-            .add_issue(issue(
-                "Non-MR task",
-                IssueStatus::Open,
-                Some("pm"),
-                vec![],
-                &repo_name,
-            ))
-            .await?;
-
-        let tasks = queue(followup_agent).spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn merge_request_assignee_mismatch_skips_for_non_followup_agent() -> anyhow::Result<()> {
+    async fn merge_request_assignee_mismatch_skips_for_non_assignee() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store

@@ -87,8 +87,6 @@ REPLACE_WITH_PRIVATE_KEY
 [background]
 # Agent queues automatically enqueue work for assigned issues.
 # Add additional [[background.agent_queues]] tables to run multiple queues.
-# Agent queue name to use for merge-request followups.
-merge_request_followup_agent = "agent-a"
 # Agent queue name to use for assignment decisions on unassigned issues.
 assignment_agent = "assignment"
 [[background.agent_queues]]

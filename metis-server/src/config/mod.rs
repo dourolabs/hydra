@@ -335,8 +335,6 @@ pub struct BackgroundSection {
     #[serde(default)]
     pub agent_queues: Vec<AgentQueueConfig>,
     #[serde(default)]
-    pub merge_request_followup_agent: String,
-    #[serde(default)]
     pub assignment_agent: String,
     #[serde(default)]
     pub github_poller: GithubPollerConfig,
@@ -346,11 +344,6 @@ pub struct BackgroundSection {
 
 impl BackgroundSection {
     fn validate(&self) -> Result<()> {
-        self.ensure_queue_is_configured(
-            &self.merge_request_followup_agent,
-            "background.merge_request_followup_agent must be set to a configured agent queue",
-            "background.merge_request_followup_agent must match one of background.agent_queues",
-        )?;
         self.ensure_queue_is_configured(
             &self.assignment_agent,
             "background.assignment_agent must be set to a configured agent queue",
@@ -670,89 +663,6 @@ client_secret = "client-secret"
     }
 
     #[test]
-    fn config_requires_merge_request_followup_agent() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
-        fs::write(
-            &path,
-            r#"
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
-
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
-
-[background]
-assignment_agent = "agent-a"
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
-"#,
-        )?;
-
-        let error =
-            AppConfig::load(&path).expect_err("expected missing merge_request_followup_agent");
-        assert!(error_chain_contains(
-            &error,
-            "background.merge_request_followup_agent must be set"
-        ));
-
-        Ok(())
-    }
-
-    #[test]
-    fn config_rejects_unknown_merge_request_followup_agent() -> anyhow::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
-        fs::write(
-            &path,
-            r#"
-[job]
-default_image = "metis-worker:latest"
-cpu_limit = "500m"
-memory_limit = "1Gi"
-cpu_request = "500m"
-memory_request = "1Gi"
-
-[github_app]
-app_id = 1
-client_id = "client-id"
-client_secret = "client-secret"
-api_base_url = "https://api.github.com"
-oauth_base_url = "https://github.com"
-private_key = "private-key"
-
-[background]
-merge_request_followup_agent = "agent-b"
-assignment_agent = "agent-a"
-
-[[background.agent_queues]]
-name = "agent-a"
-prompt = "prompt"
-"#,
-        )?;
-
-        let error =
-            AppConfig::load(&path).expect_err("expected unknown merge_request_followup_agent");
-        assert!(error_chain_contains(
-            &error,
-            "background.merge_request_followup_agent must match one of background.agent_queues"
-        ));
-
-        Ok(())
-    }
-
-    #[test]
     fn config_allows_empty_allowed_orgs() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let path = temp_dir.path().join("config.toml");
@@ -778,7 +688,6 @@ oauth_base_url = "https://github.com"
 private_key = "private-key"
 
 [background]
-merge_request_followup_agent = "agent-a"
 assignment_agent = "agent-a"
 
 [[background.agent_queues]]
@@ -819,7 +728,6 @@ oauth_base_url = "https://github.com"
 private_key = "private-key"
 
 [background]
-merge_request_followup_agent = "agent-a"
 assignment_agent = "agent-a"
 
 [[background.agent_queues]]
@@ -860,7 +768,6 @@ oauth_base_url = "https://github.com"
 private_key = "private-key"
 
 [background]
-merge_request_followup_agent = "agent-a"
 
 [[background.agent_queues]]
 name = "agent-a"
@@ -900,7 +807,6 @@ oauth_base_url = "https://github.com"
 private_key = "private-key"
 
 [background]
-merge_request_followup_agent = "agent-a"
 assignment_agent = "agent-b"
 
 [[background.agent_queues]]
