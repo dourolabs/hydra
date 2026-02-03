@@ -415,6 +415,179 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
+    let client = test_client();
+
+    let base_patch = Patch::new(
+        "Needs changes".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::ChangesRequested,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created_patch: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let merge_request_issue = Issue::new(
+        IssueType::MergeRequest,
+        "previous merge request".to_string(),
+        Username::from("creator"),
+        String::new(),
+        IssueStatus::Closed,
+        Some("agent-a".to_string()),
+        None,
+        Vec::new(),
+        vec![],
+        vec![created_patch.patch_id.clone()],
+    );
+
+    client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: merge_request_issue,
+            job_id: None,
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let mut updated_patch = base_patch.clone();
+    updated_patch.title = "Updated patch".to_string();
+    updated_patch.status = PatchStatus::Open;
+
+    client
+        .put(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created_patch.patch_id
+        ))
+        .json(&UpsertPatchRequest::new(updated_patch))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
+        .await?;
+    let mut merge_request_issues = Vec::new();
+    for issue_id in issue_ids {
+        let issue = handles.store.get_issue(&issue_id).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            merge_request_issues.push(issue);
+        }
+    }
+
+    assert_eq!(merge_request_issues.len(), 2);
+    let open_issue = merge_request_issues
+        .iter()
+        .find(|issue| issue.item.status == IssueStatus::Open)
+        .expect("expected an open merge-request issue");
+    assert!(open_issue.item.description.contains("Updated patch"));
+    assert_eq!(open_issue.item.assignee.as_deref(), Some("agent-a"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn updating_open_patch_creates_merge_request_issue() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let server = spawn_test_server_with_state(handles.state.clone(), handles.store.clone()).await?;
+    let client = test_client();
+
+    let base_patch = Patch::new(
+        "Open patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created_patch: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let merge_request_issue = Issue::new(
+        IssueType::MergeRequest,
+        "previous merge request".to_string(),
+        Username::from("creator"),
+        String::new(),
+        IssueStatus::Closed,
+        Some("agent-a".to_string()),
+        None,
+        Vec::new(),
+        vec![],
+        vec![created_patch.patch_id.clone()],
+    );
+
+    client
+        .post(format!("{}/v1/issues", server.base_url()))
+        .json(&UpsertIssueRequest {
+            issue: merge_request_issue,
+            job_id: None,
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let mut updated_patch = base_patch.clone();
+    updated_patch.title = "Updated patch".to_string();
+
+    client
+        .put(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created_patch.patch_id
+        ))
+        .json(&UpsertPatchRequest::new(updated_patch))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let issue_ids = handles
+        .store
+        .get_issues_for_patch(&created_patch.patch_id)
+        .await?;
+    let mut merge_request_issues = Vec::new();
+    for issue_id in issue_ids {
+        let issue = handles.store.get_issue(&issue_id).await?;
+        if issue.item.issue_type == IssueType::MergeRequest {
+            merge_request_issues.push(issue);
+        }
+    }
+
+    assert_eq!(merge_request_issues.len(), 2);
+    let open_issue = merge_request_issues
+        .iter()
+        .find(|issue| issue.item.status == IssueStatus::Open)
+        .expect("expected an open merge-request issue");
+    assert!(open_issue.item.description.contains("Updated patch"));
+    assert_eq!(open_issue.item.assignee.as_deref(), Some("agent-a"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_patches_supports_filters() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
