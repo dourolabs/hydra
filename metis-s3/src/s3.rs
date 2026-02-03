@@ -14,7 +14,8 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio_util::io::ReaderStream;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -556,8 +557,9 @@ async fn get_object(
         }
     };
 
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
+    // Get metadata first to check existence and get file size
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             error!(
                 bucket = %bucket,
@@ -571,19 +573,6 @@ async fn get_object(
                 bucket = %bucket,
                 key = %key,
                 error = %err,
-                "get_object failed: reading object"
-            );
-            return S3Error::io("reading object", err).into_response();
-        }
-    };
-
-    let metadata = match tokio::fs::metadata(&path).await {
-        Ok(metadata) => metadata,
-        Err(err) => {
-            error!(
-                bucket = %bucket,
-                key = %key,
-                error = %err,
                 "get_object failed: reading metadata"
             );
             return S3Error::io("reading metadata", err).into_response();
@@ -591,8 +580,21 @@ async fn get_object(
     };
 
     let total_len = metadata.len();
-    let etag = compute_etag(&bytes);
     let last_modified = metadata.modified().ok();
+
+    // Compute ETag incrementally without loading entire file into memory
+    let etag = match compute_etag_from_path(&path) {
+        Ok(etag) => etag,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "get_object failed: computing etag"
+            );
+            return S3Error::io("computing etag", err).into_response();
+        }
+    };
 
     // Check for Range header
     let range_header = headers
@@ -603,10 +605,35 @@ async fn get_object(
     if let Some(range_str) = range_header {
         match ByteRange::resolve(&range_str, total_len) {
             Some(range) => {
-                let start = range.start as usize;
-                let end = (range.end + 1) as usize;
-                let partial_bytes = bytes[start..end].to_vec();
-                response_with_partial_body(partial_bytes, last_modified, total_len, etag, range)
+                // Open file and seek to the start position
+                let mut file = match tokio::fs::File::open(&path).await {
+                    Ok(f) => f,
+                    Err(err) => {
+                        error!(
+                            bucket = %bucket,
+                            key = %key,
+                            error = %err,
+                            "get_object failed: opening file for range request"
+                        );
+                        return S3Error::io("opening file", err).into_response();
+                    }
+                };
+
+                if let Err(err) = file.seek(std::io::SeekFrom::Start(range.start)).await {
+                    error!(
+                        bucket = %bucket,
+                        key = %key,
+                        error = %err,
+                        "get_object failed: seeking to range start"
+                    );
+                    return S3Error::io("seeking file", err).into_response();
+                }
+
+                let content_len = range.end - range.start + 1;
+                let limited_reader = file.take(content_len);
+                let stream = ReaderStream::new(limited_reader);
+                let body = axum::body::Body::from_stream(stream);
+                streaming_partial_response(body, last_modified, total_len, etag, range)
             }
             None => {
                 // Range not satisfiable
@@ -614,8 +641,23 @@ async fn get_object(
             }
         }
     } else {
-        // No Range header - return full content
-        response_with_body(bytes, last_modified, total_len, etag)
+        // No Range header - stream full content
+        let file = match tokio::fs::File::open(&path).await {
+            Ok(f) => f,
+            Err(err) => {
+                error!(
+                    bucket = %bucket,
+                    key = %key,
+                    error = %err,
+                    "get_object failed: opening file"
+                );
+                return S3Error::io("opening file", err).into_response();
+            }
+        };
+
+        let stream = ReaderStream::new(file);
+        let body = axum::body::Body::from_stream(stream);
+        streaming_response(body, last_modified, total_len, etag)
     }
 }
 
@@ -1249,15 +1291,51 @@ fn response_with_body(
     response
 }
 
-fn response_with_partial_body(
-    body: Vec<u8>,
+fn streaming_response(
+    body: axum::body::Body,
+    last_modified: Option<SystemTime>,
+    content_len: u64,
+    etag: String,
+) -> Response {
+    let mut response = Response::new(body);
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from_str(&content_len.to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("0")),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ACCEPT_RANGES,
+        HeaderValue::from_static("bytes"),
+    );
+    if let Some(modified) = last_modified {
+        let header_value = httpdate::fmt_http_date(modified);
+        if let Ok(value) = HeaderValue::from_str(&header_value) {
+            response
+                .headers_mut()
+                .insert(axum::http::header::LAST_MODIFIED, value);
+        }
+    }
+    response
+}
+
+fn streaming_partial_response(
+    body: axum::body::Body,
     last_modified: Option<SystemTime>,
     total_len: u64,
     etag: String,
     range: ByteRange,
 ) -> Response {
-    let content_len = body.len() as u64;
-    let mut response = Response::new(axum::body::Body::from(body));
+    let content_len = range.end - range.start + 1;
+    let mut response = Response::new(body);
     *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     response.headers_mut().insert(
         axum::http::header::CONTENT_LENGTH,
