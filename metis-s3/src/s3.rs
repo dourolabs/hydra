@@ -477,8 +477,8 @@ async fn get_object(
         }
     };
 
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             error!(
                 bucket = %bucket,
@@ -492,27 +492,68 @@ async fn get_object(
                 bucket = %bucket,
                 key = %key,
                 error = %err,
-                "get_object failed: reading object"
-            );
-            return S3Error::io("reading object", err).into_response();
-        }
-    };
-
-    let metadata = match tokio::fs::metadata(&path).await {
-        Ok(metadata) => metadata,
-        Err(err) => {
-            error!(
-                bucket = %bucket,
-                key = %key,
-                error = %err,
                 "get_object failed: reading metadata"
             );
             return S3Error::io("reading metadata", err).into_response();
         }
     };
 
-    let etag = compute_etag(&bytes);
-    response_with_body(bytes, metadata.modified().ok(), metadata.len(), etag)
+    // Compute ETag incrementally from file path (streaming, not loading entire file)
+    let etag = match compute_etag_from_path(&path) {
+        Ok(etag) => etag,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "get_object failed: computing etag"
+            );
+            return S3Error::io("computing etag", err).into_response();
+        }
+    };
+
+    // Open file for streaming
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err,
+                "get_object failed: opening file"
+            );
+            return S3Error::io("opening file", err).into_response();
+        }
+    };
+
+    // Stream file bytes directly into response
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
+
+    let mut response = Response::new(body);
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_LENGTH,
+        HeaderValue::from_str(&metadata.len().to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("0")),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
+    );
+    if let Ok(modified) = metadata.modified() {
+        let header_value = httpdate::fmt_http_date(modified);
+        if let Ok(value) = HeaderValue::from_str(&header_value) {
+            response
+                .headers_mut()
+                .insert(axum::http::header::LAST_MODIFIED, value);
+        }
+    }
+    response
 }
 
 async fn head_object(
