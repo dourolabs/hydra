@@ -380,7 +380,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
     let initial_merge_request_issue_id = create_merge_request_issue(
         &env.client,
         patch_id.clone(),
-        "requester".to_string(),
+        "reviewer".to_string(),
         parent_issue_id.clone(),
         "Code change summary".to_string(),
         "Code change description".to_string(),
@@ -389,7 +389,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
     .id;
 
     let queue_config = AgentQueueConfig {
-        name: "swe".to_string(),
+        name: "reviewer".to_string(),
         prompt: "Review patch".to_string(),
         max_tries: DEFAULT_AGENT_MAX_TRIES,
         max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -436,7 +436,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
     let merge_request_issue_id = create_merge_request_issue(
         &env.client,
         patch_id.clone(),
-        "requester".to_string(),
+        "reviewer".to_string(),
         parent_issue_id.clone(),
         "Code change summary".to_string(),
         "Code change description".to_string(),

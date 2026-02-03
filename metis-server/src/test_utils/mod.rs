@@ -91,7 +91,6 @@ pub fn test_app_config() -> AppConfig {
                     max_simultaneous: DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 },
             ],
-            merge_request_followup_agent: "swe".to_string(),
             assignment_agent: "assignment".to_string(),
             ..BackgroundSection::default()
         },
