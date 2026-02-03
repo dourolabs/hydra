@@ -1300,8 +1300,23 @@ fn compute_etag(bytes: &[u8]) -> String {
 }
 
 fn compute_etag_from_path(path: &StdPath) -> Result<String, std::io::Error> {
-    let bytes = std::fs::read(path)?;
-    Ok(compute_etag(&bytes))
+    use std::io::Read;
+
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut context = md5::Context::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        context.consume(&buffer[..bytes_read]);
+    }
+
+    let digest = context.compute();
+    Ok(format!("\"{digest:x}\""))
 }
 
 #[derive(Debug)]
