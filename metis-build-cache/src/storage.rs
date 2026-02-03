@@ -16,10 +16,10 @@ use tokio::io::AsyncReadExt;
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-/// Files larger than this threshold (5MB) use multipart upload
+/// Files larger than this threshold (5MB) use multipart upload/download
 pub const MULTIPART_THRESHOLD: u64 = 5 * 1024 * 1024;
 
-/// Size of each part for multipart upload (10MB)
+/// Size of each part for multipart upload/download (10MB)
 pub const PART_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Maximum number of retries per part
@@ -373,6 +373,148 @@ impl S3StorageClient {
 
         Ok(completed_parts)
     }
+
+    /// Downloads a single part with retry logic.
+    /// Uses Range header to request a specific byte range.
+    async fn download_part_with_retry(
+        &self,
+        key: &str,
+        start: u64,
+        end: u64,
+        part_number: u32,
+    ) -> Result<Vec<u8>, BuildCacheError> {
+        let mut last_error = None;
+        let range = format!("bytes={start}-{end}");
+
+        for attempt in 0..MAX_PART_RETRIES {
+            if attempt > 0 {
+                let delay = Self::backoff_delay(attempt - 1);
+                info!(
+                    key = %key,
+                    part_number = part_number,
+                    attempt = attempt + 1,
+                    delay_ms = delay.as_millis() as u64,
+                    "Retrying part download after backoff"
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            let result = self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .range(&range)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let body = response
+                        .body
+                        .collect()
+                        .await
+                        .map_err(|err| {
+                            BuildCacheError::storage(
+                                "downloading part",
+                                format!("part {part_number} body read failed: {err}"),
+                            )
+                        })?
+                        .into_bytes()
+                        .to_vec();
+                    return Ok(body);
+                }
+                Err(err) => {
+                    let message = format_sdk_error(&err);
+                    warn!(
+                        endpoint = %self.endpoint_url,
+                        bucket = %self.bucket,
+                        key = %key,
+                        part_number = part_number,
+                        range = %range,
+                        attempt = attempt + 1,
+                        error = %message,
+                        "Part download failed"
+                    );
+                    last_error = Some(err);
+                }
+            }
+        }
+
+        Err(self.log_and_map_sdk_error(
+            "downloading part (all retries exhausted)",
+            key,
+            last_error.expect("last_error must be set after retries"),
+        ))
+    }
+
+    /// Performs ranged download for large files.
+    /// Downloads the file in parts using Range headers with retry logic.
+    async fn get_object_ranged(
+        &self,
+        key: &str,
+        destination: &Path,
+        file_size: u64,
+    ) -> Result<(), BuildCacheError> {
+        info!(
+            key = %key,
+            file_size = file_size,
+            part_size = PART_SIZE,
+            "Starting ranged download"
+        );
+
+        // Create the destination file
+        let mut file = tokio::fs::File::create(destination)
+            .await
+            .map_err(|err| BuildCacheError::io("creating download file", err))?;
+
+        let mut bytes_written: u64 = 0;
+        let mut part_number: u32 = 1;
+
+        let result = async {
+            while bytes_written < file_size {
+                let remaining = file_size - bytes_written;
+                let chunk_size = std::cmp::min(remaining, PART_SIZE);
+                let start = bytes_written;
+                let end = start + chunk_size - 1; // Range header is inclusive
+
+                let data = self
+                    .download_part_with_retry(key, start, end, part_number)
+                    .await?;
+
+                tokio::io::AsyncWriteExt::write_all(&mut file, &data)
+                    .await
+                    .map_err(|err| BuildCacheError::io("writing download part", err))?;
+
+                bytes_written += data.len() as u64;
+                part_number += 1;
+            }
+
+            // Ensure all data is flushed to disk
+            tokio::io::AsyncWriteExt::flush(&mut file)
+                .await
+                .map_err(|err| BuildCacheError::io("flushing download file", err))?;
+
+            info!(key = %key, "Ranged download completed successfully");
+            Ok(())
+        }
+        .await;
+
+        // Clean up partial file on failure
+        if result.is_err() {
+            drop(file); // Close the file handle before removing
+            if let Err(remove_err) = tokio::fs::remove_file(destination).await {
+                warn!(
+                    key = %key,
+                    destination = %destination.display(),
+                    error = %remove_err,
+                    "Failed to clean up partial download file"
+                );
+            }
+        }
+
+        result
+    }
 }
 
 #[async_trait]
@@ -405,6 +547,24 @@ impl StorageClient for S3StorageClient {
     }
 
     async fn get_object(&self, key: &str, destination: &Path) -> Result<(), BuildCacheError> {
+        // Use HeadObject to get file size and decide download strategy
+        let head_response = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|err| self.log_and_map_sdk_error("getting object metadata", key, err))?;
+
+        let file_size = head_response.content_length().unwrap_or(0) as u64;
+
+        if file_size > MULTIPART_THRESHOLD {
+            // Use ranged download for large files
+            return self.get_object_ranged(key, destination, file_size).await;
+        }
+
+        // Use simple GET for small files
         let response = self
             .client
             .get_object()
