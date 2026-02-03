@@ -108,10 +108,7 @@ impl AgentQueue {
             _ => return Ok(None),
         };
 
-        let prompt = self
-            .build_prompt_for_issue(state, issue)
-            .await
-            .context("failed to build task prompt")?;
+        let prompt = self.prompt.trim_end().to_string();
 
         let image = job_settings
             .image
@@ -161,14 +158,6 @@ impl AgentQueue {
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
             .map(str::to_string))
-    }
-
-    async fn build_prompt_for_issue(
-        &self,
-        _state: &AppState,
-        _issue: &Issue,
-    ) -> anyhow::Result<String> {
-        Ok(self.prompt.trim_end().to_string())
     }
 
     async fn register_spawn_attempt(
@@ -243,7 +232,7 @@ impl Spawner for AgentQueue {
                 {
                     continue;
                 }
-            } else if should_skip_for_assignee_mismatch(&self.name, &issue) {
+            } else if issue.assignee.as_deref() != Some(self.name.as_str()) {
                 continue;
             }
 
@@ -359,10 +348,6 @@ async fn parent_has_running_task(state: &AppState, issue: &Issue) -> Result<bool
     }
 
     Ok(false)
-}
-
-fn should_skip_for_assignee_mismatch(agent_name: &str, issue: &Issue) -> bool {
-    issue.assignee.as_deref() != Some(agent_name)
 }
 
 #[cfg(test)]
