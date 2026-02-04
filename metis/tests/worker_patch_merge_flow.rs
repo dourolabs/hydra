@@ -131,7 +131,8 @@ fn set_remote_head(remote_url: &str, branch: &str) -> Result<()> {
 }
 
 #[tokio::test]
-async fn tracking_branch_override_allows_changes_requested_non_merge_request_issue() -> Result<()> {
+async fn tracking_branch_override_allows_changes_requested_child_merge_request_issue() -> Result<()>
+{
     let env = init_test_server_with_remote("octo/repo").await?;
     let head_ref = "repo/t-abc123/head";
 
@@ -164,13 +165,23 @@ async fn tracking_branch_override_allows_changes_requested_non_merge_request_iss
         None,
         Vec::new(),
         Vec::new(),
-        vec![patch_id.clone()],
+        Vec::new(),
     );
     let issue_id = env
         .client
         .create_issue(&UpsertIssueRequest::new(issue, None))
         .await?
         .issue_id;
+
+    create_merge_request_issue(
+        &env.client,
+        patch_id.clone(),
+        "reviewer".to_string(),
+        issue_id.clone(),
+        "Code change summary".to_string(),
+        "Code change description".to_string(),
+    )
+    .await?;
 
     let override_branch = resolve_tracking_branch_override(&env.client, &issue_id).await?;
     assert_eq!(override_branch.as_deref(), Some(head_ref));
