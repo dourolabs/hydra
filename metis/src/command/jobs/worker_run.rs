@@ -9,6 +9,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
     constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
+    issues::{
+        IssueDependencyType, IssueGraphFilter, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
+        IssueType, SearchIssuesQuery,
+    },
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::{GitOid, PatchStatus},
@@ -573,7 +577,10 @@ fn finalize_task_run(
     Ok(())
 }
 
-/// Determine the branch override for issues with changes requested patches.
+/// Determine the branch override for changes-requested review patches.
+///
+/// Workers are launched from parent task issues, but review patches are tracked on child
+/// merge-request issues. To find a changes-requested branch, we must scan those child issues.
 pub async fn resolve_tracking_branch_override(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
@@ -582,6 +589,45 @@ pub async fn resolve_tracking_branch_override(
         .get_issue(issue_id)
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}' for tracking branch"))?;
+    if issue.issue.issue_type == IssueType::MergeRequest {
+        return resolve_tracking_branch_override_for_issue(client, &issue).await;
+    }
+
+    let filter = IssueGraphFilter::new(
+        IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate),
+        IssueDependencyType::ChildOf,
+        IssueGraphSelector::Issue(issue_id.clone()),
+    )
+    .map_err(|err| anyhow!(err))?;
+
+    let response = client
+        .list_issues(&SearchIssuesQuery::new(
+            Some(IssueType::MergeRequest),
+            None,
+            None,
+            None,
+            vec![filter],
+        ))
+        .await
+        .with_context(|| {
+            format!("failed to fetch merge request children for issue '{issue_id}'")
+        })?;
+
+    for child_issue in response.issues {
+        if let Some(branch) =
+            resolve_tracking_branch_override_for_issue(client, &child_issue).await?
+        {
+            return Ok(Some(branch));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn resolve_tracking_branch_override_for_issue(
+    client: &dyn MetisClientInterface,
+    issue: &IssueRecord,
+) -> Result<Option<String>> {
     let Some(patch_id) = issue.issue.patches.last() else {
         return Ok(None);
     };
