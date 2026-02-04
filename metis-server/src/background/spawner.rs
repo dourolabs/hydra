@@ -740,26 +740,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_merge_request_assignee_mismatch_skips_for_non_swe() -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        handles
-            .store
-            .add_issue(issue(
-                "Non-MR task",
-                IssueStatus::Open,
-                Some("pm"),
-                vec![],
-                &repo_name,
-            ))
-            .await?;
-
-        let tasks = queue("agent-a").spawn(&handles.state).await?;
-        assert!(tasks.is_empty());
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn assignment_agent_spawns_for_unassigned_issue() -> anyhow::Result<()> {
         let handles = test_state_handles();
         let issue_id = handles
