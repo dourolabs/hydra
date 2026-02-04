@@ -552,6 +552,17 @@ async fn put_object(
     }
 
     let etag = compute_etag(&body);
+
+    // Write ETag to metadata cache (non-fatal on failure)
+    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &etag).await {
+        warn!(
+            bucket = %bucket,
+            key = %key,
+            error = %err.message,
+            "failed to write ETag to metadata cache"
+        );
+    }
+
     let mut response = Response::new(axum::body::Body::empty());
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
@@ -1428,6 +1439,21 @@ async fn write_file(path: &StdPath, body: &Bytes) -> Result<(), std::io::Error> 
     let mut file = tokio::fs::File::create(path).await?;
     file.write_all(body).await?;
     file.flush().await?;
+    Ok(())
+}
+
+/// Writes an ETag to the metadata cache for an object.
+async fn write_etag_metadata(
+    state: &S3State,
+    bucket: &str,
+    key: &str,
+    etag: &str,
+) -> Result<(), S3Error> {
+    state.ensure_metadata_dir(bucket, key).await?;
+    let metadata_path = state.metadata_path(bucket, key)?;
+    tokio::fs::write(&metadata_path, etag)
+        .await
+        .map_err(|e| S3Error::io("write ETag metadata", e))?;
     Ok(())
 }
 
@@ -2765,5 +2791,77 @@ mod tests {
 
         let expected_dir = dir.path().join("metadata/test-bucket/some/nested");
         assert!(expected_dir.exists(), "parent directories should exist");
+    }
+
+    #[tokio::test]
+    async fn put_object_creates_etag_metadata_file() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = b"test content";
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test-key.txt")
+                    .body(Body::from(payload.as_slice()))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify ETag metadata file was created
+        let etag_path = dir.path().join("metadata/test-bucket/test-key.txt.etag");
+        assert!(etag_path.exists(), "ETag metadata file should exist");
+
+        // Verify the ETag file contains the correct quoted MD5 hash
+        let etag_content = std::fs::read_to_string(&etag_path).expect("read etag file");
+        let expected_etag = compute_etag(&Bytes::from(payload.as_slice()));
+        assert_eq!(etag_content, expected_etag);
+
+        // Verify it matches the ETag header in the response
+        let response_etag = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag string");
+        assert_eq!(etag_content, response_etag);
+    }
+
+    #[tokio::test]
+    async fn put_object_creates_etag_for_nested_keys() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = b"nested content";
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/my-bucket/path/to/nested/file.bin")
+                    .body(Body::from(payload.as_slice()))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify ETag metadata file was created at the correct nested path
+        let etag_path = dir
+            .path()
+            .join("metadata/my-bucket/path/to/nested/file.bin.etag");
+        assert!(etag_path.exists(), "ETag metadata file should exist");
+
+        let etag_content = std::fs::read_to_string(&etag_path).expect("read etag file");
+        let expected_etag = compute_etag(&Bytes::from(payload.as_slice()));
+        assert_eq!(etag_content, expected_etag);
     }
 }

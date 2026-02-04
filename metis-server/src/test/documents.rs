@@ -225,7 +225,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
         assert!(response.status().is_success());
     }
 
-    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None, None);
+    let query = SearchDocumentsQuery::new(Some("runbook".to_string()), None, None, None, None);
     let matching = client
         .get(format!("{base}/v1/documents"))
         .query(&query)
@@ -243,6 +243,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             Some("docs/".to_string()),
             None,
             None,
+            None,
         ))
         .send()
         .await?
@@ -257,6 +258,7 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
             None,
             None,
             Some(running_task.clone()),
+            None,
         ))
         .send()
         .await?
@@ -325,6 +327,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             Some("docs/guide.md".to_string()),
             None,
             None,
+            None,
         ))
         .send()
         .await?
@@ -339,6 +342,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             None,
             Some("docs/guide.md".to_string()),
             Some(true),
+            None,
             None,
         ))
         .send()
@@ -355,6 +359,7 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
             None,
             Some("docs/guide.md".to_string()),
             Some(false),
+            None,
             None,
         ))
         .send()

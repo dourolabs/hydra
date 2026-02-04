@@ -607,6 +607,7 @@ pub async fn resolve_tracking_branch_override(
             None,
             None,
             vec![filter],
+            None,
         ))
         .await
         .with_context(|| {

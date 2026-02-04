@@ -283,6 +283,7 @@ async fn sync_open_patches_closes_merge_request_issue_on_changes_requested() -> 
         .list_jobs(&SearchJobsQuery::new(
             None,
             Some(merge_request_issue_id.clone()),
+            None,
         ))
         .await?
         .jobs;

@@ -520,6 +520,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
         .list_jobs(&SearchJobsQuery::new(
             None,
             Some(merge_request_issue_id.clone()),
+            None,
         ))
         .await?
         .jobs;

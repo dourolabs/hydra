@@ -41,7 +41,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
 
     let patches = env
         .client
-        .list_patches(&SearchPatchesQuery::new(None))
+        .list_patches(&SearchPatchesQuery::new(None, None))
         .await?
         .patches;
     let non_backup_patch = patches
