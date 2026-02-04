@@ -29,7 +29,7 @@ impl PatchStatus {
         }
     }
 
-    pub fn is_changes_requested(&self) -> bool {
+    pub fn are_changes_requested(&self) -> bool {
         matches!(self, PatchStatus::ChangesRequested)
     }
 }
@@ -599,9 +599,9 @@ mod tests {
     }
 
     #[test]
-    fn patch_status_is_changes_requested() {
-        assert!(PatchStatus::ChangesRequested.is_changes_requested());
-        assert!(!PatchStatus::Merged.is_changes_requested());
+    fn patch_status_are_changes_requested() {
+        assert!(PatchStatus::ChangesRequested.are_changes_requested());
+        assert!(!PatchStatus::Merged.are_changes_requested());
     }
 
     #[test]
