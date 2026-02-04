@@ -235,7 +235,7 @@ If the issue is new / no patches have been created yet:
 If one or more patches have been created:
 - If the Patch is Merged, then this task may be complete. However, please look at the review feedback and see if there are any follow-up tasks
    that should be created. You can add these to the issue tracker using "metis issues create". 
-- If the patch_status is ChangesRequested (typically from a review left without closing the PR), keep working on the same patch: push additional commits
+- If the patch_status is ChangesRequested (typically from a review left without closing the PR), keep working on the same patch.
   to the existing branch and do not create a new patch. After addressing all comments, run
   "metis patches update --patch-id <PATCH_ID> --status Open" to reopen the patch for review. This keeps the same patch id and
   reopens the existing patch for review (the previous merge-request issue is closed when ChangesRequested is set and a new merge-request
