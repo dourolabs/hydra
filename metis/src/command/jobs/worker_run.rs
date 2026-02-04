@@ -9,7 +9,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
     constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
-    issues::IssueType,
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
     patches::{GitOid, PatchStatus},
@@ -574,7 +573,7 @@ fn finalize_task_run(
     Ok(())
 }
 
-/// Determine the branch override for merge-request issues with changes requested.
+/// Determine the branch override for issues with changes requested patches.
 pub async fn resolve_tracking_branch_override(
     client: &dyn MetisClientInterface,
     issue_id: &IssueId,
@@ -583,9 +582,6 @@ pub async fn resolve_tracking_branch_override(
         .get_issue(issue_id)
         .await
         .with_context(|| format!("failed to fetch issue '{issue_id}' for tracking branch"))?;
-    if issue.issue.issue_type != IssueType::MergeRequest {
-        return Ok(None);
-    }
     let Some(patch_id) = issue.issue.patches.last() else {
         return Ok(None);
     };
