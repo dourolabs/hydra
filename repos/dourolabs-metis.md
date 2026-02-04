@@ -34,3 +34,5 @@
 - `metis-server/AGENTS.md`: route/background layout, logging, domain/API mapping guidance.
 - `metis-common/AGENTS.md`: API v1 compatibility constraints.
 - `metis-build-cache/AGENTS.md`: build-cache config rules.
+
+Hello world
