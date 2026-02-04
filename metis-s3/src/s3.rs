@@ -1108,19 +1108,14 @@ async fn complete_multipart_upload(
     let final_etag = format!("\"{:x}-{}\"", final_md5, parts.len());
 
     // Write ETag to metadata cache
-    if let Err(err) = state.ensure_metadata_dir(&bucket, &key).await {
-        warn!(bucket = %bucket, key = %key, error = %err.message, "complete_multipart_upload: failed to create metadata directory");
-    } else {
-        match state.metadata_path(&bucket, &key) {
-            Ok(etag_cache_path) => {
-                if let Err(err) = tokio::fs::write(&etag_cache_path, &final_etag).await {
-                    warn!(bucket = %bucket, key = %key, error = %err, "complete_multipart_upload: failed to write ETag to metadata cache");
-                }
-            }
-            Err(err) => {
-                warn!(bucket = %bucket, key = %key, error = %err.message, "complete_multipart_upload: failed to compute metadata path");
-            }
-        }
+    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &final_etag).await {
+        error!(
+            bucket = %bucket,
+            key = %key,
+            error = %err.message,
+            "complete_multipart_upload: failed to write ETag to metadata cache"
+        );
+        return err.into_response();
     }
 
     // Clean up staging directory
