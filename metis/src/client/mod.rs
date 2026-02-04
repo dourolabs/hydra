@@ -901,7 +901,7 @@ impl MetisClient {
     /// Uses the list documents endpoint with a path prefix filter and
     /// path_is_exact=true to find a document with an exact path match.
     pub async fn get_document_by_path(&self, path: &str) -> Result<DocumentRecord> {
-        let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None);
+        let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None, None);
         let response = self.list_documents(&query).await?;
 
         response

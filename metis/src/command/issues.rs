@@ -846,6 +846,7 @@ async fn fetch_child_issues(
             None,
             None,
             vec![filter],
+            None,
         ))
         .await
         .with_context(|| format!("failed to fetch children for issue '{issue_id}'"))?;
@@ -1002,7 +1003,7 @@ async fn fetch_jobs_for_issue(
     issue_id: &IssueId,
 ) -> Result<Vec<JobRecord>> {
     let response = client
-        .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone())))
+        .list_jobs(&SearchJobsQuery::new(None, Some(issue_id.clone()), None))
         .await
         .with_context(|| format!("failed to fetch jobs for issue '{issue_id}'"))?;
     Ok(response.jobs)
@@ -1107,6 +1108,7 @@ async fn fetch_issues(
             trimmed_assignee.clone(),
             trimmed_query,
             graph_filters,
+            None,
         ))
         .await
         .context("failed to list issues")?

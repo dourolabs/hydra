@@ -494,7 +494,7 @@ impl From<api::patches::SearchPatchesQuery> for SearchPatchesQuery {
 
 impl From<SearchPatchesQuery> for api::patches::SearchPatchesQuery {
     fn from(value: SearchPatchesQuery) -> Self {
-        api::patches::SearchPatchesQuery::new(value.q)
+        api::patches::SearchPatchesQuery::new(value.q, None)
     }
 }
 

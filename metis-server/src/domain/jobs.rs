@@ -351,7 +351,7 @@ impl From<api::jobs::SearchJobsQuery> for SearchJobsQuery {
 
 impl From<SearchJobsQuery> for api::jobs::SearchJobsQuery {
     fn from(value: SearchJobsQuery) -> Self {
-        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from)
+        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from, None)
     }
 }
 
