@@ -886,6 +886,7 @@ impl Store for PostgresStore {
             path_prefix: Some(path_prefix.to_string()),
             path_is_exact: None,
             created_by: None,
+            include_deleted: None,
         })
         .await
     }
@@ -1265,6 +1266,7 @@ mod tests {
             body_markdown: "Body".to_string(),
             path: Some(path.to_string()),
             created_by,
+            deleted: false,
         }
     }
 
@@ -1709,6 +1711,7 @@ mod tests {
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
             created_by: Some(task_id),
+            include_deleted: None,
         };
 
         let filtered = store.list_documents(&query).await.unwrap();

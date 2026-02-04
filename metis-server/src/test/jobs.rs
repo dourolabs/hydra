@@ -228,6 +228,7 @@ async fn job_settings_override_request_with_remote_url_priority() -> anyhow::Res
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            deleted: false,
         })
         .await?;
 
@@ -310,6 +311,7 @@ async fn job_settings_use_repo_name_and_branch_overrides() -> anyhow::Result<()>
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            deleted: false,
         })
         .await?;
 
@@ -607,6 +609,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             now - Duration::seconds(30),
         )
@@ -627,6 +630,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             now - Duration::seconds(20),
         )
@@ -647,6 +651,7 @@ async fn list_jobs_sorts_summaries_by_most_recent_time() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             now - Duration::seconds(10),
         )
@@ -694,6 +699,7 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             now - Duration::seconds(20),
         )
@@ -758,6 +764,7 @@ async fn get_job_rejects_job_id_with_whitespace_padding() -> anyhow::Result<()> 
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             now - Duration::seconds(30),
         )
@@ -1011,6 +1018,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1029,6 +1037,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
             reviews: Vec::new(),
             service_repo_name: service_repo_name(),
             github: None,
+            deleted: false,
         })
         .await?;
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
@@ -1079,6 +1088,7 @@ async fn set_job_status_records_last_message() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1135,6 +1145,7 @@ async fn set_job_status_can_mark_failed() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1188,6 +1199,7 @@ async fn get_job_status_returns_status_log() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1240,6 +1252,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1258,6 +1271,7 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
             reviews: Vec::new(),
             service_repo_name: service_repo_name(),
             github: None,
+            deleted: false,
         })
         .await?;
     state
@@ -1359,6 +1373,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1377,6 +1392,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
             reviews: Vec::new(),
             service_repo_name: service_repo_name(),
             github: None,
+            deleted: false,
         })
         .await?;
     state
@@ -1398,6 +1414,7 @@ async fn get_job_context_returns_context_for_spawn_tasks() -> anyhow::Result<()>
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1448,6 +1465,7 @@ async fn get_job_context_includes_model_from_task() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -1488,6 +1506,7 @@ async fn get_job_context_includes_task_variables() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )

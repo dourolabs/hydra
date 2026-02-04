@@ -191,6 +191,8 @@ pub struct Patch {
     pub service_repo_name: RepoName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl Patch {
@@ -216,6 +218,7 @@ impl Patch {
             reviews,
             service_repo_name,
             github,
+            deleted: false,
         }
     }
 }
@@ -263,11 +266,13 @@ impl UpsertPatchResponse {
 pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 impl SearchPatchesQuery {
-    pub fn new(q: Option<String>) -> Self {
-        Self { q }
+    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
+        Self { q, include_deleted }
     }
 }
 
@@ -418,13 +423,14 @@ impl From<api::patches::Patch> for Patch {
             reviews: value.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
+            deleted: value.deleted,
         }
     }
 }
 
 impl From<Patch> for api::patches::Patch {
     fn from(value: Patch) -> Self {
-        api::patches::Patch::new(
+        let mut patch = api::patches::Patch::new(
             value.title,
             value.description,
             value.diff,
@@ -434,7 +440,9 @@ impl From<Patch> for api::patches::Patch {
             value.reviews.into_iter().map(Into::into).collect(),
             value.service_repo_name,
             value.github.map(Into::into),
-        )
+        );
+        patch.deleted = value.deleted;
+        patch
     }
 }
 
@@ -488,13 +496,16 @@ impl From<UpsertPatchResponse> for api::patches::UpsertPatchResponse {
 
 impl From<api::patches::SearchPatchesQuery> for SearchPatchesQuery {
     fn from(value: api::patches::SearchPatchesQuery) -> Self {
-        SearchPatchesQuery { q: value.q }
+        SearchPatchesQuery {
+            q: value.q,
+            include_deleted: value.include_deleted,
+        }
     }
 }
 
 impl From<SearchPatchesQuery> for api::patches::SearchPatchesQuery {
     fn from(value: SearchPatchesQuery) -> Self {
-        api::patches::SearchPatchesQuery::new(value.q, None)
+        api::patches::SearchPatchesQuery::new(value.q, value.include_deleted)
     }
 }
 
@@ -615,6 +626,7 @@ mod tests {
     fn patch_query_serializes_with_reqwest() {
         let query = SearchPatchesQuery {
             q: Some("my search".to_string()),
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query);

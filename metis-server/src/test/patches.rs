@@ -227,6 +227,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -757,7 +758,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
 
     let patch_results: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
-        .query(&SearchPatchesQuery::new(Some("login".to_string())))
+        .query(&SearchPatchesQuery::new(Some("login".to_string()), None))
         .send()
         .await?
         .json()

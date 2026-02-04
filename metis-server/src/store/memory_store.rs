@@ -904,6 +904,7 @@ mod tests {
             body_markdown: "Body".to_string(),
             path: path.map(ToString::to_string),
             created_by,
+            deleted: false,
         }
     }
 
@@ -1543,6 +1544,7 @@ mod tests {
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
             created_by: Some(task_id.clone()),
+            include_deleted: None,
         };
 
         let filtered = store.list_documents(&query).await.unwrap();
@@ -1555,6 +1557,7 @@ mod tests {
                 path_prefix: None,
                 path_is_exact: None,
                 created_by: Some(other_task),
+                include_deleted: None,
             })
             .await
             .unwrap();
@@ -2098,6 +2101,7 @@ mod tests {
                 path_prefix: Some("docs/guide.md".to_string()),
                 path_is_exact: None,
                 created_by: None,
+                include_deleted: None,
             })
             .await
             .unwrap();
@@ -2110,6 +2114,7 @@ mod tests {
                 path_prefix: Some("docs/guide.md".to_string()),
                 path_is_exact: Some(true),
                 created_by: None,
+                include_deleted: None,
             })
             .await
             .unwrap();
@@ -2123,6 +2128,7 @@ mod tests {
                 path_prefix: Some("docs/guide.md".to_string()),
                 path_is_exact: Some(false),
                 created_by: None,
+                include_deleted: None,
             })
             .await
             .unwrap();

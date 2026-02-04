@@ -434,6 +434,7 @@ mod tests {
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            deleted: false,
         }
     }
 
@@ -602,6 +603,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: vec![patch_id.clone()],
+                deleted: false,
             })
             .await?;
 
@@ -806,6 +808,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
 
@@ -831,6 +834,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
 
@@ -874,6 +878,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
 
@@ -906,6 +911,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
 
@@ -927,6 +933,7 @@ mod tests {
                     status: Status::Created,
                     last_message: None,
                     error: None,
+                    deleted: false,
                 },
                 Utc::now(),
             )
@@ -958,6 +965,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
         let second_issue_id = handles
@@ -973,6 +981,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
 
@@ -994,6 +1003,7 @@ mod tests {
                     status: Status::Created,
                     last_message: None,
                     error: None,
+                    deleted: false,
                 },
                 Utc::now(),
             )
@@ -1120,6 +1130,7 @@ mod tests {
                 todo_list: Vec::new(),
                 dependencies: vec![],
                 patches: Vec::new(),
+                deleted: false,
             })
             .await?;
         let queue = queue("agent-a");

@@ -815,6 +815,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 status: Status::Created,
                 last_message: None,
                 error: None,
+                deleted: false,
             },
             Utc::now(),
         )
@@ -907,6 +908,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             assignee: None,
             q: None,
             graph_filters: Vec::new(),
+            include_deleted: None,
         })
         .send()
         .await?
@@ -924,6 +926,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             assignee: Some("OWNER-1".to_string()),
             q: None,
             graph_filters: Vec::new(),
+            include_deleted: None,
         })
         .send()
         .await?
@@ -941,6 +944,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             assignee: None,
             q: None,
             graph_filters: Vec::new(),
+            include_deleted: None,
         })
         .send()
         .await?

@@ -2814,6 +2814,7 @@ mod tests {
                     todo_list: Vec::new(),
                     dependencies: Vec::new(),
                     patches: Vec::new(),
+                    deleted: false,
                 })
                 .await
                 .unwrap()
