@@ -44,7 +44,7 @@ pub struct DocumentsListArgs {
     pub path_prefix: Option<String>,
 
     /// Filter by job id that created the document.
-    #[arg(long = "created-by", value_name = "TASK_ID", env = ENV_METIS_ID)]
+    #[arg(long = "created-by", value_name = "TASK_ID")]
     pub created_by: Option<TaskId>,
 
     /// Show complete document body instead of truncated preview.
