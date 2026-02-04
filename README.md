@@ -185,4 +185,4 @@ For local development with a kind (Kubernetes in Docker) cluster:
   ```bash
   kind delete cluster --name local-dev
   ```
-1
+1 2
