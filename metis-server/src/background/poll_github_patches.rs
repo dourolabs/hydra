@@ -412,7 +412,7 @@ fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) 
     let existing_keys: HashSet<_> = existing.iter().map(review_key).collect();
     github_reviews
         .iter()
-        .any(|review| !review.is_approved && !existing_keys.contains(&review_key(review)))
+        .any(|review| !review_is_approved(review) && !existing_keys.contains(&review_key(review)))
 }
 
 fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
@@ -429,11 +429,22 @@ fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
     unique
 }
 
-fn review_key(review: &Review) -> (String, bool, String, Option<DateTime<Utc>>) {
+fn review_is_approved(review: &Review) -> bool {
+    matches!(review.review_state.as_deref(), Some("approved"))
+}
+
+fn review_key(
+    review: &Review,
+) -> (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<DateTime<Utc>>,
+) {
     (
         review.author.clone(),
-        review.is_approved,
-        review.contents.clone(),
+        review.review_state.clone(),
+        review.review_message.clone(),
         review.submitted_at,
     )
 }

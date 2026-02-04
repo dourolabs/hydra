@@ -1,4 +1,4 @@
-use crate::{PatchId, RepoName, TaskId, VersionNumber};
+use crate::{MetisId, PatchId, RepoName, TaskId, VersionNumber};
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -59,12 +59,22 @@ impl FromStr for PatchStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Review {
-    pub contents: String,
-    pub is_approved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_id: Option<MetisId>,
     pub author: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_message: Option<String>,
     /// Timestamp for when the review was recorded.
     #[serde(default)]
     pub submitted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub comments: Vec<ReviewComment>,
+    #[serde(default)]
+    pub contents: String,
+    #[serde(default)]
+    pub is_approved: bool,
 }
 
 impl Review {
@@ -74,11 +84,61 @@ impl Review {
         author: String,
         submitted_at: Option<DateTime<Utc>>,
     ) -> Self {
+        let review_state = Some(if is_approved {
+            "approved".to_string()
+        } else {
+            "commented".to_string()
+        });
         Self {
+            review_id: None,
+            author,
+            review_state,
+            review_message: Some(contents.clone()),
+            submitted_at,
+            comments: Vec::new(),
             contents,
             is_approved,
-            author,
-            submitted_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ReviewComment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_id: Option<MetisId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_id: Option<MetisId>,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filepath: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<MetisId>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl ReviewComment {
+    pub fn new(body: String) -> Self {
+        Self {
+            comment_id: None,
+            review_id: None,
+            body,
+            url: None,
+            filepath: None,
+            start_line: None,
+            end_line: None,
+            in_reply_to: None,
+            created_at: None,
+            updated_at: None,
         }
     }
 }
