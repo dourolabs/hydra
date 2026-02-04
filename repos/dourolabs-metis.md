@@ -1,4 +1,5 @@
 # dourolabs/metis
+hello world
 
 ## Overview
 Metis is an experimental AI orchestration system: a Rust CLI (`metis`) drives an Axum-based control plane (`metis-server`) that schedules autonomous jobs onto Kubernetes worker pods. The CLI is the human interface (issues, patches, jobs, logs, chat), while the server stores job state, runs background agents, and launches workers.
