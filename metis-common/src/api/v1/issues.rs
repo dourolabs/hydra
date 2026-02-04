@@ -417,6 +417,8 @@ pub struct Issue {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 impl Issue {
@@ -444,6 +446,7 @@ impl Issue {
             todo_list,
             dependencies,
             patches,
+            deleted: false,
         }
     }
 }
@@ -617,6 +620,8 @@ pub struct SearchIssuesQuery {
         deserialize_with = "deserialize_graph_filters"
     )]
     pub graph_filters: Vec<IssueGraphFilter>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 impl SearchIssuesQuery {
@@ -626,6 +631,7 @@ impl SearchIssuesQuery {
         assignee: Option<String>,
         q: Option<String>,
         graph_filters: Vec<IssueGraphFilter>,
+        include_deleted: Option<bool>,
     ) -> Self {
         Self {
             issue_type,
@@ -633,6 +639,7 @@ impl SearchIssuesQuery {
             assignee,
             q,
             graph_filters,
+            include_deleted,
         }
     }
 }
@@ -719,6 +726,7 @@ mod tests {
             assignee: Some("alice".to_string()),
             q: Some("test query".to_string()),
             graph_filters: vec![],
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)
@@ -740,6 +748,7 @@ mod tests {
             assignee: None,
             q: None,
             graph_filters: vec![filter1, filter2],
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)
@@ -810,6 +819,7 @@ mod tests {
             todo_list: todos.clone(),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            deleted: false,
         };
 
         let value = serde_json::to_value(&issue).expect("issue should serialize");

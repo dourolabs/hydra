@@ -372,7 +372,7 @@ async fn fetch_patches(
     query: Option<String>,
 ) -> Result<Vec<PatchRecord>> {
     let response = client
-        .list_patches(&SearchPatchesQuery::new(query))
+        .list_patches(&SearchPatchesQuery::new(query, None))
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)

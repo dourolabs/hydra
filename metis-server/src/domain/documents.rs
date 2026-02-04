@@ -135,6 +135,7 @@ impl From<SearchDocumentsQuery> for api::documents::SearchDocumentsQuery {
             value.path_prefix,
             value.path_is_exact,
             value.created_by,
+            None,
         )
     }
 }

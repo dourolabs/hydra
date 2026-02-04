@@ -186,7 +186,8 @@ async fn list_documents(
     client: &dyn MetisClientInterface,
     args: DocumentsListArgs,
 ) -> Result<Vec<DocumentRecord>> {
-    let query = SearchDocumentsQuery::new(args.query, args.path_prefix, None, args.created_by);
+    let query =
+        SearchDocumentsQuery::new(args.query, args.path_prefix, None, args.created_by, None);
     let response = client
         .list_documents(&query)
         .await

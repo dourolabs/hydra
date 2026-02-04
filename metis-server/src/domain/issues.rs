@@ -942,6 +942,7 @@ impl TryFrom<SearchIssuesQuery> for api::issues::SearchIssuesQuery {
             value.assignee,
             value.q,
             graph_filters,
+            None,
         ))
     }
 }

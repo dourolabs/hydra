@@ -12,6 +12,8 @@ pub struct Document {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 impl Document {
@@ -21,6 +23,7 @@ impl Document {
             body_markdown,
             path: None,
             created_by: None,
+            deleted: false,
         }
     }
 
@@ -84,6 +87,8 @@ pub struct SearchDocumentsQuery {
     pub path_is_exact: Option<bool>,
     #[serde(default)]
     pub created_by: Option<TaskId>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 impl SearchDocumentsQuery {
@@ -92,12 +97,14 @@ impl SearchDocumentsQuery {
         path_prefix: Option<String>,
         path_is_exact: Option<bool>,
         created_by: Option<TaskId>,
+        include_deleted: Option<bool>,
     ) -> Self {
         Self {
             q,
             path_prefix,
             path_is_exact,
             created_by,
+            include_deleted,
         }
     }
 
@@ -178,6 +185,7 @@ mod tests {
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
             created_by: Some(TaskId::new()),
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)
@@ -196,8 +204,13 @@ mod tests {
 
     #[test]
     fn search_documents_query_serializes_path_is_exact() {
-        let query =
-            SearchDocumentsQuery::new(None, Some("docs/file.md".to_string()), Some(true), None);
+        let query = SearchDocumentsQuery::new(
+            None,
+            Some("docs/file.md".to_string()),
+            Some(true),
+            None,
+            None,
+        );
 
         let params = serialize_query_params(&query)
             .into_iter()
