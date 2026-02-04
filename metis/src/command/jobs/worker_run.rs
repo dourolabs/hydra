@@ -15,7 +15,7 @@ use metis_common::{
     },
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
-    patches::{GitOid, PatchStatus},
+    patches::GitOid,
     IssueId, RepoName, TaskId,
 };
 use tempfile::Builder;
@@ -635,7 +635,7 @@ async fn resolve_tracking_branch_override_for_issue(
         .get_patch(patch_id)
         .await
         .with_context(|| format!("failed to fetch patch '{patch_id}' for tracking branch"))?;
-    if patch.patch.status != PatchStatus::ChangesRequested {
+    if !patch.patch.status.is_changes_requested() {
         return Ok(None);
     }
     if let Some(head_ref) = patch

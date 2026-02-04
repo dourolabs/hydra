@@ -1320,17 +1320,15 @@ impl AppState {
                     other => UpsertPatchError::Store { source: other },
                 })?;
                 let new_status = patch.status;
-                let status_changed_to_changes_requested = new_status
-                    == PatchStatus::ChangesRequested
-                    && existing_patch.item.status != PatchStatus::ChangesRequested;
+                let status_changed_to_changes_requested = new_status.is_changes_requested()
+                    && !existing_patch.item.status.is_changes_requested();
                 should_close_merge_requests =
                     matches!(
                         existing_patch.item.status,
                         PatchStatus::Open | PatchStatus::ChangesRequested
                     ) && matches!(new_status, PatchStatus::Closed | PatchStatus::Merged);
                 should_close_merge_requests |= status_changed_to_changes_requested;
-                should_create_merge_request = existing_patch.item.status
-                    == PatchStatus::ChangesRequested
+                should_create_merge_request = existing_patch.item.status.is_changes_requested()
                     && new_status == PatchStatus::Open;
 
                 patch.created_by = existing_patch.item.created_by;

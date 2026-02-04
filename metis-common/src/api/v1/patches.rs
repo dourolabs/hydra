@@ -31,6 +31,10 @@ impl PatchStatus {
             PatchStatus::Unknown => "unknown",
         }
     }
+
+    pub fn is_changes_requested(&self) -> bool {
+        matches!(self, PatchStatus::ChangesRequested)
+    }
 }
 
 impl fmt::Display for PatchStatus {
@@ -450,5 +454,11 @@ mod tests {
             PatchStatus::ChangesRequested
         );
         assert!(PatchStatus::from_str("pending").is_err());
+    }
+
+    #[test]
+    fn patch_status_checks_changes_requested() {
+        assert!(PatchStatus::ChangesRequested.is_changes_requested());
+        assert!(!PatchStatus::Open.is_changes_requested());
     }
 }
