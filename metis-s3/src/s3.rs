@@ -139,6 +139,31 @@ impl S3State {
     fn upload_metadata_path(&self, upload_id: &str) -> PathBuf {
         self.upload_dir(upload_id).join("metadata.json")
     }
+
+    /// Returns the path for storing an object's ETag metadata.
+    /// Path format: `{root_dir}/metadata/{bucket}/{key}.etag`
+    #[allow(dead_code)] // Used by subsequent ETag caching tasks
+    fn metadata_path(&self, bucket: &str, key: &str) -> Result<PathBuf, S3Error> {
+        validate_bucket(bucket)?;
+        let key = sanitize_key(key)?;
+        Ok(self
+            .root_dir
+            .join("metadata")
+            .join(bucket)
+            .join(format!("{key}.etag")))
+    }
+
+    /// Creates parent directories for the metadata file as needed.
+    #[allow(dead_code)] // Used by subsequent ETag caching tasks
+    async fn ensure_metadata_dir(&self, bucket: &str, key: &str) -> Result<(), S3Error> {
+        let path = self.metadata_path(bucket, key)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| S3Error::io("create metadata directory", e))?;
+        }
+        Ok(())
+    }
 }
 
 pub fn router(root_dir: PathBuf) -> RouterWithState {
@@ -2504,5 +2529,65 @@ mod tests {
             .await
             .expect("body");
         assert_eq!(body.as_ref(), payload.as_bytes());
+    }
+
+    #[test]
+    fn metadata_path_returns_correct_path() {
+        let dir = tempdir().expect("temp dir");
+        let state = S3State::new(dir.path().to_path_buf()).expect("state");
+
+        let path = state.metadata_path("my-bucket", "some/key.txt").unwrap();
+        assert_eq!(
+            path,
+            dir.path().join("metadata/my-bucket/some/key.txt.etag")
+        );
+    }
+
+    #[test]
+    fn metadata_path_handles_nested_keys() {
+        let dir = tempdir().expect("temp dir");
+        let state = S3State::new(dir.path().to_path_buf()).expect("state");
+
+        let path = state
+            .metadata_path("bucket", "deeply/nested/path/file.bin")
+            .unwrap();
+        assert_eq!(
+            path,
+            dir.path()
+                .join("metadata/bucket/deeply/nested/path/file.bin.etag")
+        );
+    }
+
+    #[test]
+    fn metadata_path_rejects_invalid_bucket() {
+        let dir = tempdir().expect("temp dir");
+        let state = S3State::new(dir.path().to_path_buf()).expect("state");
+
+        assert!(state.metadata_path("", "key.txt").is_err());
+        assert!(state.metadata_path("../evil", "key.txt").is_err());
+    }
+
+    #[test]
+    fn metadata_path_rejects_invalid_key() {
+        let dir = tempdir().expect("temp dir");
+        let state = S3State::new(dir.path().to_path_buf()).expect("state");
+
+        assert!(state.metadata_path("bucket", "../secret").is_err());
+        assert!(state.metadata_path("bucket", "/absolute").is_err());
+        assert!(state.metadata_path("bucket", "").is_err());
+    }
+
+    #[tokio::test]
+    async fn ensure_metadata_dir_creates_directories() {
+        let dir = tempdir().expect("temp dir");
+        let state = S3State::new(dir.path().to_path_buf()).expect("state");
+
+        state
+            .ensure_metadata_dir("test-bucket", "some/nested/key.txt")
+            .await
+            .expect("should create directories");
+
+        let expected_dir = dir.path().join("metadata/test-bucket/some/nested");
+        assert!(expected_dir.exists(), "parent directories should exist");
     }
 }
