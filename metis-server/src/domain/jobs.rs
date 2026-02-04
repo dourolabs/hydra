@@ -30,6 +30,8 @@ pub struct Task {
     pub last_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<TaskError>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl Task {
@@ -55,6 +57,7 @@ impl Task {
             status: Status::Created,
             last_message: None,
             error: None,
+            deleted: false,
         }
     }
 }
@@ -216,6 +219,8 @@ pub struct SearchJobsQuery {
     pub q: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -244,13 +249,14 @@ impl From<api::jobs::Task> for Task {
             status: value.status.into(),
             last_message: value.last_message,
             error: value.error.map(Into::into),
+            deleted: value.deleted,
         }
     }
 }
 
 impl From<Task> for api::jobs::Task {
     fn from(value: Task) -> Self {
-        api::jobs::Task::new_with_status(
+        let mut task = api::jobs::Task::new_with_status(
             value.prompt,
             value.context.into(),
             value.spawned_from,
@@ -262,7 +268,9 @@ impl From<Task> for api::jobs::Task {
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
-        )
+        );
+        task.deleted = value.deleted;
+        task
     }
 }
 
@@ -345,13 +353,14 @@ impl From<api::jobs::SearchJobsQuery> for SearchJobsQuery {
         SearchJobsQuery {
             q: value.q,
             spawned_from: value.spawned_from,
+            include_deleted: value.include_deleted,
         }
     }
 }
 
 impl From<SearchJobsQuery> for api::jobs::SearchJobsQuery {
     fn from(value: SearchJobsQuery) -> Self {
-        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from, None)
+        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from, value.include_deleted)
     }
 }
 
@@ -390,6 +399,7 @@ mod tests {
         let query = SearchJobsQuery {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)

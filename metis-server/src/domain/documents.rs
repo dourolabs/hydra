@@ -12,6 +12,8 @@ pub struct Document {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<TaskId>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +40,8 @@ pub struct SearchDocumentsQuery {
     pub path_is_exact: Option<bool>,
     #[serde(default)]
     pub created_by: Option<TaskId>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +71,7 @@ impl From<api::documents::Document> for Document {
             body_markdown: value.body_markdown,
             path: value.path,
             created_by: value.created_by,
+            deleted: value.deleted,
         }
     }
 }
@@ -76,6 +81,7 @@ impl From<Document> for api::documents::Document {
         let mut document = api::documents::Document::new(value.title, value.body_markdown);
         document.path = value.path;
         document.created_by = value.created_by;
+        document.deleted = value.deleted;
         document
     }
 }
@@ -124,6 +130,7 @@ impl From<api::documents::SearchDocumentsQuery> for SearchDocumentsQuery {
             path_prefix: value.path_prefix,
             path_is_exact: value.path_is_exact,
             created_by: value.created_by,
+            include_deleted: value.include_deleted,
         }
     }
 }
@@ -135,7 +142,7 @@ impl From<SearchDocumentsQuery> for api::documents::SearchDocumentsQuery {
             value.path_prefix,
             value.path_is_exact,
             value.created_by,
-            None,
+            value.include_deleted,
         )
     }
 }
