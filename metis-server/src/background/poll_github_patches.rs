@@ -460,13 +460,14 @@ fn apply_github_sync(
     let has_new_changes_requested = review_updates.has_new_changes_requested;
     let new_status = match pr_status {
         PatchStatus::Closed | PatchStatus::Merged => pr_status,
-        PatchStatus::Open | PatchStatus::ChangesRequested => {
+        PatchStatus::Open => {
             if has_new_changes_requested {
                 PatchStatus::ChangesRequested
             } else {
-                PatchStatus::Open
+                latest_patch.status
             }
         }
+        PatchStatus::ChangesRequested => latest_patch.status,
     };
 
     latest_patch.reviews = merged_reviews;
@@ -845,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_github_sync_resets_changes_requested_without_new_review() {
+    fn apply_github_sync_preserves_changes_requested_without_new_review() {
         let github = GithubPr::new(
             "octo".to_string(),
             "repo".to_string(),
@@ -894,7 +895,7 @@ mod tests {
             ci_status.clone(),
         );
 
-        assert_eq!(updated.status, PatchStatus::Open);
+        assert_eq!(updated.status, PatchStatus::ChangesRequested);
         assert_eq!(updated.reviews, existing_reviews);
         let updated_github = updated.github.expect("github metadata should be set");
         assert_eq!(updated_github.head_ref, Some("feature".to_string()));
