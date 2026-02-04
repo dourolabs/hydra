@@ -71,19 +71,15 @@ impl AgentQueue {
         issue: &Issue,
         is_assignment_agent: bool,
     ) -> anyhow::Result<Option<Task>> {
-        let branch_override = self
-            .branch_override_for_issue(state, issue)
-            .await
-            .context("failed to determine branch override for issue")?;
         let job_settings = state.apply_job_settings_defaults(issue.job_settings.clone());
         let bundle = match (
             job_settings.remote_url.as_ref(),
             job_settings.repo_name.as_ref(),
         ) {
             (Some(remote_url), _) if !remote_url.trim().is_empty() => {
-                let rev = branch_override
+                let rev = job_settings
+                    .branch
                     .clone()
-                    .or_else(|| job_settings.branch.clone())
                     .unwrap_or_else(|| "main".to_string());
                 BundleSpec::GitRepository {
                     url: remote_url.trim().to_string(),
@@ -95,8 +91,9 @@ impl AgentQueue {
                     .repository_from_store(repo_name)
                     .await
                     .context("failed to load repository for issue task")?;
-                let rev = branch_override
-                    .or_else(|| job_settings.branch.clone())
+                let rev = job_settings
+                    .branch
+                    .clone()
                     .or_else(|| repository.default_branch.clone());
 
                 BundleSpec::ServiceRepository {
@@ -131,33 +128,6 @@ impl AgentQueue {
             job_settings.cpu_limit.clone(),
             job_settings.memory_limit.clone(),
         )))
-    }
-
-    async fn branch_override_for_issue(
-        &self,
-        state: &AppState,
-        issue: &Issue,
-    ) -> anyhow::Result<Option<String>> {
-        if issue.issue_type != crate::domain::issues::IssueType::MergeRequest {
-            return Ok(None);
-        }
-
-        let Some(patch_id) = issue.patches.last() else {
-            return Ok(None);
-        };
-
-        let Ok(patch) = state.get_patch(patch_id).await else {
-            return Ok(None);
-        };
-
-        Ok(patch
-            .item
-            .github
-            .as_ref()
-            .and_then(|github| github.head_ref.as_ref())
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(str::to_string))
     }
 
     async fn register_spawn_attempt(
@@ -355,7 +325,7 @@ mod tests {
     use super::*;
     use crate::domain::issues::JobSettings;
     use crate::domain::jobs::{Bundle, BundleSpec};
-    use crate::domain::patches::{GithubPr, Patch, PatchStatus, Review};
+    use crate::domain::patches::{Patch, PatchStatus, Review};
     use crate::{
         app::Repository,
         config::{AgentQueueConfig, DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES},
@@ -653,67 +623,6 @@ mod tests {
 
         let tasks = queue("agent-a").spawn(&handles.state).await?;
         assert_eq!(tasks.len(), 1);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn merge_request_changes_requested_overrides_branch_from_github_head()
-    -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        let patch = Patch::new(
-            "Review patch".to_string(),
-            "Review patch description".to_string(),
-            "diff --git a/file b/file\n".to_string(),
-            PatchStatus::ChangesRequested,
-            false,
-            None,
-            vec![Review::new(
-                "fix the issues".to_string(),
-                false,
-                "alex".to_string(),
-                None,
-            )],
-            repo_name.clone(),
-            Some(GithubPr::new(
-                "dourolabs".to_string(),
-                "metis".to_string(),
-                123,
-                Some("feature-branch".to_string()),
-                Some("main".to_string()),
-                None,
-                None,
-            )),
-        );
-        let patch_id = handles.store.add_patch(patch).await?;
-        let mut settings = job_settings(&repo_name);
-        settings.branch = Some("main".to_string());
-        handles
-            .store
-            .add_issue(Issue {
-                issue_type: IssueType::MergeRequest,
-                description: "Review patch".to_string(),
-                creator: default_user(),
-                progress: String::new(),
-                status: IssueStatus::Open,
-                assignee: Some("pm".to_string()),
-                job_settings: settings,
-                todo_list: Vec::new(),
-                dependencies: vec![],
-                patches: vec![patch_id.clone()],
-            })
-            .await?;
-
-        let tasks = queue("pm").spawn(&handles.state).await?;
-        assert_eq!(tasks.len(), 1);
-
-        match &tasks[0].context {
-            BundleSpec::ServiceRepository { name, rev } => {
-                assert_eq!(name, &repo_name);
-                assert_eq!(rev.as_deref(), Some("feature-branch"));
-            }
-            _ => panic!("expected service repository bundle"),
-        }
 
         Ok(())
     }
