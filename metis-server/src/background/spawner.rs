@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_request_requeues_after_changes_requested_patch_update() -> anyhow::Result<()> {
+    async fn task_requeues_after_changes_requested_patch_update() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         let patch = Patch::new(
             "Review patch".to_string(),
@@ -592,7 +592,7 @@ mod tests {
         handles
             .store
             .add_issue(Issue {
-                issue_type: IssueType::MergeRequest,
+                issue_type: IssueType::Task,
                 description: "Review patch".to_string(),
                 creator: default_user(),
                 progress: String::new(),
@@ -628,13 +628,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_request_assignee_mismatch_skips_for_non_assignee() -> anyhow::Result<()> {
+    async fn task_assignee_mismatch_skips_for_non_assignee() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         handles
             .store
             .add_issue(issue_with_type(
-                IssueType::MergeRequest,
-                "MR task",
+                IssueType::Task,
+                "Task",
                 IssueStatus::Open,
                 Some("pm"),
                 vec![],
