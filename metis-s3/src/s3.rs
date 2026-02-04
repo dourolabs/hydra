@@ -114,17 +114,17 @@ impl S3State {
 
     fn bucket_dir(&self, bucket: &str) -> Result<PathBuf, S3Error> {
         validate_bucket(bucket)?;
-        Ok(self.root_dir.join(bucket))
+        Ok(self.root_dir.join("buckets").join(bucket))
     }
 
     fn object_path(&self, bucket: &str, key: &str) -> Result<PathBuf, S3Error> {
         validate_bucket(bucket)?;
         let key = sanitize_key(key)?;
-        Ok(self.root_dir.join(bucket).join(key))
+        Ok(self.root_dir.join("buckets").join(bucket).join(key))
     }
 
     fn multipart_dir(&self) -> PathBuf {
-        self.root_dir.join(".multipart")
+        self.root_dir.join("multipart")
     }
 
     fn upload_dir(&self, upload_id: &str) -> PathBuf {
@@ -406,8 +406,6 @@ async fn list_objects(
     max_keys: usize,
 ) -> Result<ListResult, S3Error> {
     let bucket_dir = state.bucket_dir(bucket)?;
-    let root_dir = state.root_dir.clone();
-    let bucket_name = bucket.to_string();
     let prefix = prefix.to_string();
     let marker = continuation_token.or(start_after);
 
@@ -431,16 +429,12 @@ async fn list_objects(
                 continue;
             }
 
-            let relative = entry
+            let key = entry
                 .path()
-                .strip_prefix(&root_dir)
-                .map_err(|err| S3Error::io("computing object key", err))?;
-            let key = relative.to_string_lossy().replace('\\', "/");
-            let key = key
-                .strip_prefix(&bucket_name)
-                .and_then(|value| value.strip_prefix('/'))
-                .unwrap_or(&key)
-                .to_string();
+                .strip_prefix(&bucket_dir)
+                .map_err(|err| S3Error::io("computing object key", err))?
+                .to_string_lossy()
+                .replace('\\', "/");
 
             // Skip entries that don't match the prefix
             if !prefix.is_empty() && !key.starts_with(&prefix) {
@@ -1959,7 +1953,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify staging directory was cleaned up
-        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        let multipart_dir = dir.path().join("multipart").join(upload_id);
         assert!(
             !multipart_dir.exists(),
             "staging directory should be cleaned up"
@@ -2011,7 +2005,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify staging directory exists
-        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        let multipart_dir = dir.path().join("multipart").join(upload_id);
         assert!(
             multipart_dir.exists(),
             "staging directory should exist before abort"
