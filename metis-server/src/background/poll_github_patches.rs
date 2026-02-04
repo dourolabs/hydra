@@ -459,7 +459,7 @@ fn apply_github_sync(
     let merged_reviews = review_updates.merged_reviews;
     let has_new_changes_requested = review_updates.has_new_changes_requested;
     let new_status = match pr_status {
-        PatchStatus::Closed | PatchStatus::Merged | PatchStatus::ChangesRequested => pr_status,
+        PatchStatus::Closed | PatchStatus::Merged => pr_status,
         PatchStatus::Open => {
             if has_new_changes_requested {
                 PatchStatus::ChangesRequested
@@ -467,6 +467,7 @@ fn apply_github_sync(
                 latest_patch.status
             }
         }
+        PatchStatus::ChangesRequested => latest_patch.status,
     };
 
     latest_patch.reviews = merged_reviews;
