@@ -36,3 +36,5 @@
 - `metis-build-cache/AGENTS.md`: build-cache config rules.
 
 Hello world
+Hola mundo
+你好，世界
