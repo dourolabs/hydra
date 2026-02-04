@@ -6,9 +6,10 @@ use metis::command::jobs::worker_run::resolve_tracking_branch_override;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{IssueStatus, IssueType, JobSettings},
+    issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
     jobs::SearchJobsQuery,
-    patches::{GithubPr, PatchStatus},
+    patches::{GithubPr, PatchStatus, UpsertPatchRequest},
+    users::Username,
 };
 use metis_server::background::run_spawners::RunSpawnersWorker;
 use metis_server::background::scheduler::ScheduledWorker;
@@ -30,7 +31,7 @@ use tempfile::TempDir;
 mod common;
 
 use common::bash_commands::BashCommands;
-use common::test_helpers::init_test_server_with_remote_and_github;
+use common::test_helpers::{init_test_server_with_remote, init_test_server_with_remote_and_github};
 
 struct GithubMocks<'a> {
     installation: Mock<'a>,
@@ -126,6 +127,63 @@ fn set_remote_head(remote_url: &str, branch: &str) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn tracking_branch_override_allows_changes_requested_non_merge_request_issue() -> Result<()> {
+    let env = init_test_server_with_remote("octo/repo").await?;
+    let head_ref = "repo/t-abc123/head";
+
+    let patch_id = env
+        .create_patch(
+            "Code change summary",
+            "Code change description",
+            "diff",
+            PatchStatus::ChangesRequested,
+            Some(GithubPr::new(
+                "octo".to_string(),
+                "repo".to_string(),
+                101,
+                Some(head_ref.to_string()),
+                None,
+                None,
+                None,
+            )),
+            None,
+        )
+        .await?;
+
+    let issue = Issue::new(
+        IssueType::Task,
+        "review task".to_string(),
+        Username::from("creator"),
+        String::new(),
+        IssueStatus::Open,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        vec![patch_id.clone()],
+    );
+    let issue_id = env
+        .client
+        .create_issue(&UpsertIssueRequest::new(issue, None))
+        .await?
+        .issue_id;
+
+    let override_branch = resolve_tracking_branch_override(&env.client, &issue_id).await?;
+    assert_eq!(override_branch.as_deref(), Some(head_ref));
+
+    let mut patch_record = env.client.get_patch(&patch_id).await?;
+    patch_record.patch.status = PatchStatus::Open;
+    env.client
+        .update_patch(&patch_id, &UpsertPatchRequest::new(patch_record.patch))
+        .await?;
+
+    let override_branch = resolve_tracking_branch_override(&env.client, &issue_id).await?;
+    assert!(override_branch.is_none());
+
     Ok(())
 }
 
