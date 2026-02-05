@@ -2638,9 +2638,18 @@ mod tests {
                 .json_body_obj(&ListIssuesResponse::new(vec![]));
         });
 
-        let _ = fetch_issues(&client, None, None, None, None, None, filters.clone(), false)
-            .await
-            .unwrap();
+        let _ = fetch_issues(
+            &client,
+            None,
+            None,
+            None,
+            None,
+            None,
+            filters.clone(),
+            false,
+        )
+        .await
+        .unwrap();
 
         list_mock.assert();
         assert_eq!(list_mock.hits(), 1);

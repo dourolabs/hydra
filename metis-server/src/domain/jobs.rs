@@ -1,6 +1,6 @@
-use super::task_status::{Status, TaskError, TaskStatusLog};
+use super::task_status::{Status, TaskError};
 use metis_common::api::v1 as api;
-use metis_common::{IssueId, RepoName, TaskId};
+use metis_common::{IssueId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -60,19 +60,6 @@ impl Task {
             deleted: false,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateJobRequest {
-    pub prompt: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    #[serde(default)]
-    pub context: BundleSpec,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub variables: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issue_id: Option<IssueId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,70 +158,6 @@ impl From<Bundle> for api::jobs::Bundle {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateJobResponse {
-    pub job_id: TaskId,
-}
-
-impl CreateJobResponse {
-    pub fn new(job_id: TaskId) -> Self {
-        Self { job_id }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListJobsResponse {
-    pub jobs: Vec<JobRecord>,
-}
-
-impl ListJobsResponse {
-    pub fn new(jobs: Vec<JobRecord>) -> Self {
-        Self { jobs }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobRecord {
-    pub id: TaskId,
-    pub task: Task,
-    #[serde(default)]
-    pub notes: Option<String>,
-    pub status_log: TaskStatusLog,
-}
-
-impl JobRecord {
-    pub fn new(id: TaskId, task: Task, notes: Option<String>, status_log: TaskStatusLog) -> Self {
-        Self {
-            id,
-            task,
-            notes,
-            status_log,
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchJobsQuery {
-    #[serde(default)]
-    pub q: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spawned_from: Option<IssueId>,
-    #[serde(default)]
-    pub include_deleted: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KillJobResponse {
-    pub job_id: TaskId,
-    pub status: String,
-}
-
-impl KillJobResponse {
-    pub fn new(job_id: TaskId, status: String) -> Self {
-        Self { job_id, status }
-    }
-}
-
 impl From<api::jobs::Task> for Task {
     fn from(value: api::jobs::Task) -> Self {
         Task {
@@ -273,154 +196,12 @@ impl From<Task> for api::jobs::Task {
     }
 }
 
-impl From<api::jobs::CreateJobRequest> for CreateJobRequest {
-    fn from(value: api::jobs::CreateJobRequest) -> Self {
-        CreateJobRequest {
-            prompt: value.prompt,
-            image: value.image,
-            context: value.context.into(),
-            variables: value.variables,
-            issue_id: value.issue_id,
-        }
-    }
-}
-
-impl From<CreateJobRequest> for api::jobs::CreateJobRequest {
-    fn from(value: CreateJobRequest) -> Self {
-        api::jobs::CreateJobRequest::new(
-            value.prompt,
-            value.image,
-            value.context.into(),
-            value.variables,
-        )
-        .with_issue_id(value.issue_id)
-    }
-}
-
-impl From<api::jobs::CreateJobResponse> for CreateJobResponse {
-    fn from(value: api::jobs::CreateJobResponse) -> Self {
-        CreateJobResponse {
-            job_id: value.job_id,
-        }
-    }
-}
-
-impl From<CreateJobResponse> for api::jobs::CreateJobResponse {
-    fn from(value: CreateJobResponse) -> Self {
-        api::jobs::CreateJobResponse::new(value.job_id)
-    }
-}
-
-impl From<api::jobs::JobRecord> for JobRecord {
-    fn from(value: api::jobs::JobRecord) -> Self {
-        JobRecord {
-            id: value.id,
-            task: value.task.into(),
-            notes: value.notes,
-            status_log: value.status_log.into(),
-        }
-    }
-}
-
-impl From<JobRecord> for api::jobs::JobRecord {
-    fn from(value: JobRecord) -> Self {
-        api::jobs::JobRecord::new(
-            value.id,
-            value.task.into(),
-            value.notes,
-            value.status_log.into(),
-        )
-    }
-}
-
-impl From<api::jobs::ListJobsResponse> for ListJobsResponse {
-    fn from(value: api::jobs::ListJobsResponse) -> Self {
-        ListJobsResponse {
-            jobs: value.jobs.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<ListJobsResponse> for api::jobs::ListJobsResponse {
-    fn from(value: ListJobsResponse) -> Self {
-        api::jobs::ListJobsResponse::new(value.jobs.into_iter().map(Into::into).collect())
-    }
-}
-
-impl From<api::jobs::SearchJobsQuery> for SearchJobsQuery {
-    fn from(value: api::jobs::SearchJobsQuery) -> Self {
-        SearchJobsQuery {
-            q: value.q,
-            spawned_from: value.spawned_from,
-            include_deleted: value.include_deleted,
-        }
-    }
-}
-
-impl From<SearchJobsQuery> for api::jobs::SearchJobsQuery {
-    fn from(value: SearchJobsQuery) -> Self {
-        api::jobs::SearchJobsQuery::new(value.q, value.spawned_from, value.include_deleted)
-    }
-}
-
-impl From<api::jobs::KillJobResponse> for KillJobResponse {
-    fn from(value: api::jobs::KillJobResponse) -> Self {
-        KillJobResponse {
-            job_id: value.job_id,
-            status: value.status,
-        }
-    }
-}
-
-impl From<KillJobResponse> for api::jobs::KillJobResponse {
-    fn from(value: KillJobResponse) -> Self {
-        api::jobs::KillJobResponse::new(value.job_id, value.status)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{BundleSpec, SearchJobsQuery};
+    use super::BundleSpec;
+    use metis_common::RepoName;
     use metis_common::api::v1 as api;
-    use metis_common::{IssueId, RepoName};
-    use serde::Serialize;
-    use std::collections::HashMap;
     use std::str::FromStr;
-
-    fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
-        let encoded = serde_urlencoded::to_string(value).unwrap();
-        serde_urlencoded::from_str(&encoded).unwrap()
-    }
-
-    #[test]
-    fn search_jobs_query_serializes_with_reqwest() {
-        let issue_id = IssueId::new();
-        let query = SearchJobsQuery {
-            q: Some("test query".to_string()),
-            spawned_from: Some(issue_id.clone()),
-            include_deleted: None,
-        };
-
-        let params = serialize_query_params(&query)
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        assert_eq!(params.get("q").map(String::as_str), Some("test query"));
-        assert_eq!(
-            params.get("spawned_from").map(String::as_str),
-            Some(issue_id.as_ref())
-        );
-    }
-
-    #[test]
-    fn search_jobs_query_serializes_empty_query() {
-        let query = SearchJobsQuery::default();
-
-        let params = serialize_query_params(&query);
-        assert!(
-            params.is_empty(),
-            "expected no query params for empty SearchJobsQuery"
-        );
-    }
 
     #[test]
     fn bundle_spec_converts_between_domain_and_api() {

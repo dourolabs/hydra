@@ -1,4 +1,3 @@
-use crate::domain::jobs::{CreateJobRequest, JobRecord, ListJobsResponse, SearchJobsQuery};
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
     store::{StoreError, Task, TaskError, TaskStatusLog},
@@ -24,8 +23,7 @@ pub async fn create_job(
     Json(payload): Json<v1::jobs::CreateJobRequest>,
 ) -> Result<Json<v1::jobs::CreateJobResponse>, ApiError> {
     info!("create_job invoked");
-    let request: CreateJobRequest = payload.into();
-    let job_id = state.create_job(request).await.map_err(|err| match err {
+    let job_id = state.create_job(payload).await.map_err(|err| match err {
         CreateJobError::TaskResolution(err) => ApiError::from(err),
         CreateJobError::IssueLookup { source, issue_id } => match source {
             StoreError::IssueNotFound(_) => {
@@ -58,7 +56,6 @@ pub async fn list_jobs(
     State(state): State<AppState>,
     Query(query): Query<v1::jobs::SearchJobsQuery>,
 ) -> Result<Json<v1::jobs::ListJobsResponse>, ApiError> {
-    let query: SearchJobsQuery = query.into();
     info!(
         query = ?query.q,
         spawned_from = ?query.spawned_from,
@@ -85,7 +82,7 @@ pub async fn list_jobs(
         })?;
 
     // Collect all summaries with their reference times for sorting
-    let mut summaries_with_times: Vec<(JobRecord, Option<DateTime<Utc>>)> = Vec::new();
+    let mut summaries_with_times: Vec<(v1::jobs::JobRecord, Option<DateTime<Utc>>)> = Vec::new();
     for task_id in task_ids {
         match job_record_with_time_from_state(&state, &task_id).await {
             Ok(summary) => {
@@ -113,7 +110,7 @@ pub async fn list_jobs(
         time_b.cmp(&time_a)
     });
 
-    let summaries: Vec<JobRecord> = summaries_with_times
+    let summaries: Vec<v1::jobs::JobRecord> = summaries_with_times
         .into_iter()
         .map(|(record, _)| record)
         .collect();
@@ -124,7 +121,7 @@ pub async fn list_jobs(
         "list_jobs completed successfully"
     );
 
-    let response: v1::jobs::ListJobsResponse = ListJobsResponse::new(summaries).into();
+    let response = v1::jobs::ListJobsResponse::new(summaries);
     Ok(Json(response))
 }
 
@@ -147,7 +144,6 @@ pub async fn get_job(
             }
         })?;
 
-    let summary: v1::jobs::JobRecord = summary.into();
     info!(job_id = %summary.id, "get_job completed successfully");
     Ok(Json(summary))
 }
@@ -295,7 +291,7 @@ where
 async fn job_record_with_time_from_state(
     state: &AppState,
     job_id: &TaskId,
-) -> Result<(JobRecord, Option<DateTime<Utc>>), StoreError> {
+) -> Result<(v1::jobs::JobRecord, Option<DateTime<Utc>>), StoreError> {
     let status_log = state.get_status_log(job_id).await?;
     let task = state.get_task(job_id).await?;
     Ok(job_record_with_time(job_id, task, status_log))
@@ -305,24 +301,24 @@ fn job_record_with_time(
     job_id: &TaskId,
     task: Task,
     status_log: TaskStatusLog,
-) -> (JobRecord, Option<DateTime<Utc>>) {
+) -> (v1::jobs::JobRecord, Option<DateTime<Utc>>) {
     let notes = job_notes_from_status_log(&status_log);
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
     (
-        JobRecord::new(job_id.clone(), task, notes, status_log),
+        v1::jobs::JobRecord::new(job_id.clone(), task.into(), notes, status_log.into()),
         reference_time,
     )
 }
 
-fn spawned_from_matches(expected: Option<&IssueId>, job: &JobRecord) -> bool {
+fn spawned_from_matches(expected: Option<&IssueId>, job: &v1::jobs::JobRecord) -> bool {
     match expected {
         Some(issue_id) => job.task.spawned_from.as_ref() == Some(issue_id),
         None => true,
     }
 }
 
-fn job_matches(search_term: Option<&str>, job: &JobRecord) -> bool {
+fn job_matches(search_term: Option<&str>, job: &v1::jobs::JobRecord) -> bool {
     if let Some(term) = search_term {
         let lower_term = term.to_lowercase();
         let contains = |value: &str| value.to_lowercase().contains(&lower_term);
