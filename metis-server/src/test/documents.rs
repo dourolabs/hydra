@@ -373,3 +373,275 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ===== Deletion Tests =====
+
+#[tokio::test]
+async fn delete_document_basic_operation() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create a document
+    let document = Document::new(
+        "Doc to delete".to_string(),
+        "document body".to_string(),
+        false,
+    );
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Delete the document
+    let deleted: DocumentRecord = client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Verify the response has deleted=true
+    assert!(deleted.document.deleted);
+
+    // Verify listing excludes the deleted document
+    let list: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(!list.documents.iter().any(|d| d.id == created.document_id));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create and delete a document
+    let document = Document::new(
+        "Deleted doc".to_string(),
+        "document body".to_string(),
+        false,
+    );
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // List without include_deleted - verify not present
+    let list_without: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(
+        !list_without
+            .documents
+            .iter()
+            .any(|d| d.id == created.document_id)
+    );
+
+    // List with include_deleted=true - verify present with deleted=true
+    let list_with: ListDocumentsResponse = client
+        .get(format!("{base}/v1/documents"))
+        .query(&SearchDocumentsQuery::new(
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let deleted_doc = list_with
+        .documents
+        .iter()
+        .find(|d| d.id == created.document_id);
+
+    assert!(deleted_doc.is_some());
+    assert!(deleted_doc.unwrap().document.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create and delete a document
+    let document = Document::new(
+        "Get deleted doc".to_string(),
+        "document body".to_string(),
+        false,
+    );
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // GET by ID should still return it
+    let fetched: DocumentRecord = client
+        .get(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Verify deleted=true in response
+    assert!(fetched.document.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_document_version_history() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create document (v1)
+    let document = Document::new(
+        "Version history doc".to_string(),
+        "initial body".to_string(),
+        false,
+    );
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Update document (v2)
+    let updated_document =
+        Document::new("Updated doc".to_string(), "updated body".to_string(), false);
+
+    client
+        .put(format!("{base}/v1/documents/{}", created.document_id))
+        .json(&UpsertDocumentRequest::new(updated_document))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Delete document (v3)
+    client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Get versions - verify deletion creates new version with deleted=true
+    let versions: ListDocumentVersionsResponse = client
+        .get(format!(
+            "{base}/v1/documents/{}/versions",
+            created.document_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(versions.versions.len(), 3);
+    assert!(!versions.versions[0].document.deleted);
+    assert!(!versions.versions[1].document.deleted);
+    assert!(versions.versions[2].document.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_document_idempotency() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // Create and delete a document
+    let document = Document::new(
+        "Idempotency doc".to_string(),
+        "document body".to_string(),
+        false,
+    );
+
+    let created: UpsertDocumentResponse = client
+        .post(format!("{base}/v1/documents"))
+        .json(&UpsertDocumentRequest::new(document))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // First delete
+    let first_delete = client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?;
+
+    assert!(first_delete.status().is_success());
+
+    // Second delete - should return 200 (idempotent)
+    let second_delete = client
+        .delete(format!("{base}/v1/documents/{}", created.document_id))
+        .send()
+        .await?;
+
+    assert!(second_delete.status().is_success());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_document_non_existent() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Attempt to delete non-existent ID
+    let missing = DocumentId::new();
+    let response = client
+        .delete(format!("{}/v1/documents/{}", server.base_url(), missing))
+        .send()
+        .await?;
+
+    // Verify 404 response
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}

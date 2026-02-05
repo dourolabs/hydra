@@ -1175,3 +1175,333 @@ fn client_with_token(auth_token: String) -> Client {
         .build()
         .expect("failed to build client")
 }
+
+// ===== Deletion Tests =====
+
+#[tokio::test]
+async fn delete_patch_basic_operation() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create a patch
+    let patch = Patch::new(
+        "patch to delete".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Delete the patch
+    let deleted: PatchRecord = client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Verify the response has deleted=true
+    assert!(deleted.patch.deleted);
+
+    // Verify listing excludes the deleted patch
+    let list: ListPatchesResponse = client
+        .get(format!("{}/v1/patches", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(!list.patches.iter().any(|p| p.id == created.patch_id));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete a patch
+    let patch = Patch::new(
+        "deleted patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // List without include_deleted - verify not present
+    let list_without: ListPatchesResponse = client
+        .get(format!("{}/v1/patches", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert!(
+        !list_without
+            .patches
+            .iter()
+            .any(|p| p.id == created.patch_id)
+    );
+
+    // List with include_deleted=true - verify present with deleted=true
+    let list_with: ListPatchesResponse = client
+        .get(format!("{}/v1/patches", server.base_url()))
+        .query(&SearchPatchesQuery::new(None, Some(true)))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let deleted_patch = list_with.patches.iter().find(|p| p.id == created.patch_id);
+
+    assert!(deleted_patch.is_some());
+    assert!(deleted_patch.unwrap().patch.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete a patch
+    let patch = Patch::new(
+        "get deleted patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // GET by ID should still return it
+    let fetched: PatchRecord = client
+        .get(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Verify deleted=true in response
+    assert!(fetched.patch.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_patch_version_history() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create patch (v1)
+    let patch = Patch::new(
+        "version history patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Update patch (v2)
+    let updated_patch = Patch::new(
+        "updated patch".to_string(),
+        "updated description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    client
+        .put(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .json(&UpsertPatchRequest::new(updated_patch.into()))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Delete patch (v3)
+    client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    // Get versions - verify deletion creates new version with deleted=true
+    let versions: ListPatchVersionsResponse = client
+        .get(format!(
+            "{}/v1/patches/{}/versions",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(versions.versions.len(), 3);
+    assert!(!versions.versions[0].patch.deleted);
+    assert!(!versions.versions[1].patch.deleted);
+    assert!(versions.versions[2].patch.deleted);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_patch_idempotency() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create and delete a patch
+    let patch = Patch::new(
+        "idempotency patch".to_string(),
+        "patch description".to_string(),
+        patch_diff(),
+        PatchStatus::Open,
+        false,
+        None,
+        Vec::new(),
+        service_repo_name(),
+        None,
+    );
+
+    let created: UpsertPatchResponse = client
+        .post(format!("{}/v1/patches", server.base_url()))
+        .json(&UpsertPatchRequest::new(patch.into()))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // First delete
+    let first_delete = client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?;
+
+    assert!(first_delete.status().is_success());
+
+    // Second delete - should return 200 (idempotent)
+    let second_delete = client
+        .delete(format!(
+            "{}/v1/patches/{}",
+            server.base_url(),
+            created.patch_id
+        ))
+        .send()
+        .await?;
+
+    assert!(second_delete.status().is_success());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_patch_non_existent() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Attempt to delete non-existent ID
+    let missing: PatchId = "p-nonexistent".parse().expect("valid patch id");
+    let response = client
+        .delete(format!("{}/v1/patches/{}", server.base_url(), missing))
+        .send()
+        .await?;
+
+    // Verify 404 response
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
