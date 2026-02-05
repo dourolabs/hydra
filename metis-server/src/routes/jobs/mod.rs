@@ -64,31 +64,18 @@ pub async fn list_jobs(
     );
     let namespace = state.config.metis.namespace.clone();
 
-    // Prepare search term for text filtering
-    let search_term = query
-        .q
-        .as_ref()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty());
-
-    // Get tasks filtered by the store (spawned_from, include_deleted)
-    // Text search (q) is done in the route layer because it includes notes,
-    // which are derived from status_log and not stored in the Task
+    // Get tasks filtered by the store (q, spawned_from, include_deleted)
     let tasks = state.list_tasks_with_query(&query).await.map_err(|err| {
         error!(error = %err, "failed to list tasks");
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
     // Collect all summaries with their reference times for sorting
-    // Apply text search filtering (q) since it includes notes
     let mut summaries_with_times: Vec<(v1::jobs::JobRecord, Option<DateTime<Utc>>)> = Vec::new();
     for (task_id, _task) in tasks {
         match job_record_with_time_from_state(&state, &task_id).await {
             Ok(summary) => {
-                // Apply text search filtering (id, prompt, notes, status)
-                if job_matches(search_term.as_deref(), &summary.0) {
-                    summaries_with_times.push(summary);
-                }
+                summaries_with_times.push(summary);
             }
             Err(err) => {
                 error!(
@@ -307,28 +294,6 @@ fn job_record_with_time(
         v1::jobs::JobRecord::new(job_id.clone(), task.into(), notes, status_log.into()),
         reference_time,
     )
-}
-
-/// Checks if the job matches the search term by looking at id, prompt, notes, and status.
-fn job_matches(search_term: Option<&str>, job: &v1::jobs::JobRecord) -> bool {
-    if let Some(term) = search_term {
-        let lower_term = term.to_lowercase();
-        let contains = |value: &str| value.to_lowercase().contains(&lower_term);
-
-        if contains(job.id.as_ref()) || contains(&job.task.prompt) {
-            return true;
-        }
-
-        if let Some(note) = &job.notes {
-            if contains(note) {
-                return true;
-            }
-        }
-
-        return contains(&format!("{:?}", job.status_log.current_status()));
-    }
-
-    true
 }
 
 fn job_notes_from_status_log(status_log: &TaskStatusLog) -> Option<String> {

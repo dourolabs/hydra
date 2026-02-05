@@ -9,6 +9,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
@@ -159,13 +160,16 @@ pub trait Store: Send + Sync {
     /// reference missing issues.
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
 
-    /// Lists all issues in the store with their corresponding IDs.
+    /// Lists issues in the store that match the provided search query.
     ///
-    /// By default, deleted issues are filtered out. Pass `include_deleted: true`
-    /// to include deleted issues in the result.
+    /// By default, deleted issues are filtered out unless `include_deleted: true`
+    /// is set in the query.
+    ///
+    /// Note: Graph filters (search_issue_graph) are handled separately as they
+    /// require graph traversal that doesn't fit in the store layer.
     async fn list_issues(
         &self,
-        include_deleted: bool,
+        query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
 
     /// Soft-deletes an issue by setting its `deleted` flag to true.
@@ -330,13 +334,12 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `query` - Search query containing optional filters:
+    ///   - `q`: Text search term matching task id, prompt, or status (case-insensitive)
     ///   - `spawned_from`: Filter tasks spawned from a specific issue
     ///   - `include_deleted`: Whether to include deleted tasks (default: false)
     ///
-    /// Note: The `q` field in the query is not used by the Store implementation.
-    /// Text search filtering (by id, prompt, notes, status) should be done by the
-    /// caller after fetching tasks, since notes are derived from the status log
-    /// and not stored in the Task itself.
+    /// Note: The search does not include notes, as they are derived from the status
+    /// log and not stored directly in the Task struct.
     ///
     /// # Returns
     /// A vector of all matching tasks in the store
