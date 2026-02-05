@@ -3,7 +3,7 @@ use crate::{
     config::{AgentQueueConfig, AppConfig, non_empty},
     domain::{
         actors::Actor,
-        documents::{Document, SearchDocumentsQuery},
+        documents::Document,
         issues::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
             TodoItem,
@@ -16,6 +16,7 @@ use crate::{
     store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
+use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::{
     DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
