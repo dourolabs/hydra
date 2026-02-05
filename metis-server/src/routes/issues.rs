@@ -1,4 +1,4 @@
-use crate::domain::issues::{Issue, IssueStatus, IssueType, TodoItem};
+use crate::domain::issues::{Issue, TodoItem};
 use crate::{
     app::{AppState, UpdateTodoListError, UpsertIssueError},
     store::StoreError,
@@ -189,8 +189,6 @@ pub async fn list_issues(
     State(state): State<AppState>,
     Query(query): Query<api_issues::SearchIssuesQuery>,
 ) -> Result<Json<api_issues::ListIssuesResponse>, ApiError> {
-    let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
-    let status_filter: Option<IssueStatus> = query.status.map(Into::into);
     let graph_filters: Vec<_> = query
         .graph_filters
         .iter()
@@ -199,8 +197,8 @@ pub async fn list_issues(
         .collect();
 
     info!(
-        issue_type = ?issue_type_filter,
-        status = ?status_filter,
+        issue_type = ?query.issue_type,
+        status = ?query.status,
         assignee = ?query.assignee,
         query = ?query.q,
         graph_filters = ?graph_filters,
@@ -208,20 +206,9 @@ pub async fn list_issues(
         "list_issues invoked"
     );
 
-    let search_term = query
-        .q
-        .as_ref()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty());
-    let assignee_filter = query
-        .assignee
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty());
-    let include_deleted = query.include_deleted.unwrap_or(false);
-
+    // Pass the query to the store for filtering (except graph filters)
     let issues = state
-        .list_issues_with_deleted(include_deleted)
+        .list_issues_with_query(&query)
         .await
         .map_err(|err| map_issue_error(err, None))?;
 
@@ -230,6 +217,7 @@ pub async fn list_issues(
         .map(|(id, issue)| (id, issue.item))
         .collect();
 
+    // Graph filtering stays in routes layer as it requires graph traversal
     let graph_matches = if graph_filters.is_empty() {
         None
     } else {
@@ -243,15 +231,8 @@ pub async fn list_issues(
 
     let filtered: Vec<api_issues::IssueRecord> = issue_records
         .into_iter()
-        .filter(|(id, issue)| {
-            issue_matches(
-                issue_type_filter,
-                status_filter,
-                search_term.as_deref(),
-                assignee_filter,
-                id,
-                issue,
-            ) && graph_matches
+        .filter(|(id, _)| {
+            graph_matches
                 .as_ref()
                 .is_none_or(|allowed| allowed.contains(id))
         })
@@ -260,8 +241,8 @@ pub async fn list_issues(
 
     let response = api_issues::ListIssuesResponse::new(filtered);
     info!(
-        issue_type = ?issue_type_filter,
-        status = ?status_filter,
+        issue_type = ?query.issue_type,
+        status = ?query.status,
         assignee = ?query.assignee,
         returned = response.issues.len(),
         "list_issues completed"
@@ -399,54 +380,6 @@ fn map_upsert_issue_error(err: UpsertIssueError) -> ApiError {
             "failed to kill task '{job_id}' for dropped issue '{issue_id}': {source}"
         )),
     }
-}
-
-fn issue_matches(
-    issue_type_filter: Option<IssueType>,
-    status_filter: Option<IssueStatus>,
-    search_term: Option<&str>,
-    assignee_filter: Option<&str>,
-    issue_id: &IssueId,
-    issue: &Issue,
-) -> bool {
-    if let Some(issue_type) = issue_type_filter {
-        if issue.issue_type != issue_type {
-            return false;
-        }
-    }
-
-    if let Some(status) = status_filter {
-        if issue.status != status {
-            return false;
-        }
-    }
-
-    if let Some(expected_assignee) = assignee_filter {
-        match issue.assignee.as_ref() {
-            Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
-            _ => return false,
-        }
-    }
-
-    if let Some(term) = search_term {
-        let lower_id = issue_id.to_string().to_lowercase();
-        if lower_id.contains(term) {
-            return true;
-        }
-
-        return issue.description.to_lowercase().contains(term)
-            || issue.progress.to_lowercase().contains(term)
-            || issue.issue_type.as_str() == term
-            || issue.status.as_str() == term
-            || issue.creator.as_ref().to_lowercase().contains(term)
-            || issue
-                .assignee
-                .as_deref()
-                .map(|value| value.to_lowercase().contains(term))
-                .unwrap_or(false);
-    }
-
-    true
 }
 
 fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
