@@ -192,7 +192,7 @@ async fn poll_for_token(
 
     loop {
         if Instant::now() >= expires_at {
-            bail!("GitHub device flow code expired. Run `metis login` again.");
+            bail!("GitHub device flow code expired. Run `metis users login` again.");
         }
 
         let response = http
@@ -241,7 +241,9 @@ fn interpret_token_response(payload: TokenPollResponse) -> Result<TokenPollState
     match payload.error.as_deref() {
         Some("authorization_pending") => Ok(TokenPollState::Pending),
         Some("slow_down") => Ok(TokenPollState::SlowDown),
-        Some("expired_token") => bail!("GitHub device flow expired. Run `metis login` again."),
+        Some("expired_token") => {
+            bail!("GitHub device flow expired. Run `metis users login` again.")
+        }
         Some("access_denied") => bail!("GitHub device flow denied authorization."),
         Some(other) => {
             let description = payload

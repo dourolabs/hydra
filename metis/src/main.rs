@@ -111,8 +111,11 @@ enum Commands {
         #[command(subcommand)]
         command: command::repos::ReposCommand,
     },
-    /// Log in with GitHub device flow.
-    Login,
+    /// Manage users.
+    Users {
+        #[command(subcommand)]
+        command: command::users::UsersCommand,
+    },
     /// Chat with a Codex agent that can call the metis CLI.
     Chat {
         /// Run a single-turn conversation by forwarding this prompt to Codex non-interactively.
@@ -199,7 +202,7 @@ async fn dispatch(
         }
         Commands::Issues { command } => command::issues::run(client, command, context).await?,
         Commands::Repos { command } => command::repos::run(client, command, context).await?,
-        Commands::Login => (),
+        Commands::Users { command } => command::users::run(client, command).await?,
         Commands::Chat {
             prompt,
             model,
