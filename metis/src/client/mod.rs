@@ -32,6 +32,7 @@ use metis_common::{
         CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
+    users::UserSummary,
     whoami::WhoAmIResponse,
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber,
 };
@@ -196,6 +197,7 @@ pub trait MetisClientInterface: Send + Sync {
     ) -> Result<UpsertRepositoryResponse>;
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
+    async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue>;
     async fn enqueue_merge_patch(
         &self,
@@ -1113,6 +1115,24 @@ impl MetisClient {
             .context("failed to decode whoami response")
     }
 
+    /// Call `GET /v1/users/:username` to fetch public user info.
+    pub async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
+        let path = format!("/v1/users/{username}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch user info")?
+            .error_for_status_with_body("metis-server returned an error while fetching user info")
+            .await?;
+
+        response
+            .json::<UserSummary>()
+            .await
+            .context("failed to decode user info response")
+    }
+
     /// Call `GET /v1/merge-queues/:organization/:repo/:branch/patches` to fetch the merge queue.
     pub async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         let path = format!(
@@ -1553,6 +1573,10 @@ impl MetisClientInterface for MetisClient {
         MetisClient::whoami(self).await
     }
 
+    async fn get_user_info(&self, username: &str) -> Result<UserSummary> {
+        MetisClient::get_user_info(self, username).await
+    }
+
     async fn get_merge_queue(&self, repo_name: &RepoName, branch: &str) -> Result<MergeQueue> {
         MetisClient::get_merge_queue(self, repo_name, branch).await
     }
@@ -1599,6 +1623,7 @@ mod tests {
         repositories::{
             CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
         },
+        users::Username,
         PatchId,
     };
     use serde_json::json;
@@ -1782,5 +1807,62 @@ mod tests {
         assert_eq!(second, "second");
 
         assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_user_info_returns_user_summary() -> Result<()> {
+        let server = MockServer::start();
+        let username = "testuser";
+        let expected_auth_header = format!("Bearer {TEST_METIS_TOKEN}");
+        let user_summary = UserSummary::new(Username::from(username), 12345);
+        let user_summary_clone = user_summary.clone();
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/users/testuser")
+                .header("authorization", expected_auth_header.as_str());
+            then.status(200).json_body_obj(&user_summary_clone);
+        });
+
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let response = client.get_user_info(username).await?;
+
+        mock.assert();
+        assert_eq!(response, user_summary);
+        assert_eq!(response.username.as_str(), username);
+        assert_eq!(response.github_user_id, 12345);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_user_info_returns_error_for_not_found() -> Result<()> {
+        let server = MockServer::start();
+        let expected_auth_header = format!("Bearer {TEST_METIS_TOKEN}");
+
+        let mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/v1/users/nonexistent")
+                .header("authorization", expected_auth_header.as_str());
+            then.status(404)
+                .json_body(json!({ "error": "user not found" }));
+        });
+
+        let client =
+            MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
+
+        let error = client.get_user_info("nonexistent").await.unwrap_err();
+
+        mock.assert();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("metis-server returned an error while fetching user info"),
+            "{message}"
+        );
+        assert!(message.contains("404"), "{message}");
+
+        Ok(())
     }
 }
