@@ -11,6 +11,7 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -201,7 +202,7 @@ impl Store for FailingStore {
 
     async fn list_tasks(
         &self,
-        _include_deleted: bool,
+        _query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         fail()
     }

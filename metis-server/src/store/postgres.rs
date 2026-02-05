@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -376,6 +377,76 @@ impl PostgresStore {
         }
 
         Ok(results)
+    }
+
+    async fn fetch_latest_tasks(
+        &self,
+        query: &SearchJobsQuery,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct TaskRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        let mut sql = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {TABLE_TASKS}"
+        );
+        let mut predicates = Vec::new();
+        let mut bindings = Vec::new();
+
+        // Filter by spawned_from
+        if let Some(spawned_from) = query.spawned_from.as_ref() {
+            predicates.push(format!(
+                "payload->>'spawned_from' = ${}",
+                bindings.len() + 1
+            ));
+            bindings.push(spawned_from.as_ref().to_string());
+        }
+
+        // Filter deleted tasks by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY id, version_number DESC");
+
+        let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut tasks = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version("task", row.schema_version, TASK_SCHEMA_VERSION)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for task '{}'",
+                    row.id
+                ))
+            })?;
+            let task: Task =
+                serde_json::from_value(row.payload).map_err(map_serde_error("task"))?;
+            let task_id = row.id.parse::<TaskId>().map_err(|err| {
+                StoreError::Internal(format!("invalid task id stored in database: {err}"))
+            })?;
+            tasks.push((task_id, Versioned::new(task, version, row.created_at)));
+        }
+
+        Ok(tasks)
     }
 
     async fn fetch_latest_documents(
@@ -966,15 +1037,10 @@ impl Store for PostgresStore {
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let tasks = self.list_tasks(false).await?;
-        let mut results = Vec::new();
-
-        for (task_id, task) in tasks {
-            if task.item.spawned_from.as_ref() == Some(issue_id) {
-                results.push(task_id);
-            }
-        }
-        Ok(results)
+        // Filter by spawned_from at the database level
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let tasks = self.list_tasks(&query).await?;
+        Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
     async fn add_task(
@@ -1071,21 +1137,9 @@ impl Store for PostgresStore {
 
     async fn list_tasks(
         &self,
-        include_deleted: bool,
+        query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        let rows = self
-            .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
-            .await?;
-
-        rows.into_iter()
-            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
-            .map(|(id, task)| {
-                let task_id = id.parse::<TaskId>().map_err(|err| {
-                    StoreError::Internal(format!("invalid task id stored in database: {err}"))
-                })?;
-                Ok((task_id, task))
-            })
-            .collect()
+        self.fetch_latest_tasks(query).await
     }
 
     async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
@@ -1694,7 +1748,7 @@ mod tests {
             .await
             .unwrap();
         let all_tasks: HashSet<_> = store
-            .list_tasks(false)
+            .list_tasks(&SearchJobsQuery::default())
             .await
             .unwrap()
             .into_iter()

@@ -9,6 +9,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -325,16 +326,23 @@ pub trait Store: Send + Sync {
     /// Retrieves all versions of a task in ascending version order.
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError>;
 
-    /// Lists all task IDs in the store.
+    /// Lists all tasks in the store that match the provided search query.
     ///
-    /// By default, deleted tasks are filtered out. Pass `include_deleted: true`
-    /// to include deleted tasks in the result.
+    /// # Arguments
+    /// * `query` - Search query containing optional filters:
+    ///   - `spawned_from`: Filter tasks spawned from a specific issue
+    ///   - `include_deleted`: Whether to include deleted tasks (default: false)
+    ///
+    /// Note: The `q` field in the query is not used by the Store implementation.
+    /// Text search filtering (by id, prompt, notes, status) should be done by the
+    /// caller after fetching tasks, since notes are derived from the status log
+    /// and not stored in the Task itself.
     ///
     /// # Returns
-    /// A vector of all tasks in the store
+    /// A vector of all matching tasks in the store
     async fn list_tasks(
         &self,
-        include_deleted: bool,
+        query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
 
     /// Soft-deletes a task by setting its `deleted` flag to true.

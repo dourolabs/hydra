@@ -13,6 +13,7 @@ use crate::domain::{
     users::{User, Username},
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -774,17 +775,30 @@ impl Store for MemoryStore {
 
     async fn list_tasks(
         &self,
-        include_deleted: bool,
+        query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+
         Ok(self
             .tasks
             .iter()
             .filter_map(|entry| {
+                let task_id = entry.key();
                 let latest = Self::latest_versioned(entry.value())?;
+
+                // Filter by deleted status
                 if !include_deleted && latest.item.deleted {
                     return None;
                 }
-                Some((entry.key().clone(), latest))
+
+                // Filter by spawned_from
+                if let Some(expected_issue) = query.spawned_from.as_ref() {
+                    if latest.item.spawned_from.as_ref() != Some(expected_issue) {
+                        return None;
+                    }
+                }
+
+                Some((task_id.clone(), latest))
             })
             .collect())
     }
@@ -909,7 +923,9 @@ mod tests {
         test_utils::test_state_with_store,
     };
     use chrono::{Duration, Utc};
-    use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
+    use metis_common::{
+        IssueId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
+    };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn sample_repository_config() -> Repository {
@@ -1656,7 +1672,7 @@ mod tests {
         );
 
         let tasks: HashSet<_> = store
-            .list_tasks(false)
+            .list_tasks(&SearchJobsQuery::default())
             .await
             .unwrap()
             .into_iter()
@@ -2294,7 +2310,7 @@ mod tests {
         let task_id = store.add_task(task, Utc::now()).await.unwrap();
 
         // Task should be visible in list initially
-        let tasks = store.list_tasks(false).await.unwrap();
+        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(!tasks[0].1.item.deleted);
 
@@ -2302,11 +2318,14 @@ mod tests {
         store.delete_task(&task_id).await.unwrap();
 
         // Deleted task should not appear in default list
-        let tasks = store.list_tasks(false).await.unwrap();
+        let tasks = store.list_tasks(&SearchJobsQuery::default()).await.unwrap();
         assert!(tasks.is_empty());
 
         // Deleted task should appear with include_deleted=true
-        let tasks = store.list_tasks(true).await.unwrap();
+        let tasks = store
+            .list_tasks(&SearchJobsQuery::new(None, None, Some(true)))
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
 
@@ -2365,5 +2384,68 @@ mod tests {
         let version_after = store.get_issue(&issue_id).await.unwrap().version;
 
         assert_eq!(version_after, version_before + 1);
+    }
+
+    #[tokio::test]
+    async fn list_tasks_filters_by_spawned_from() {
+        let store = MemoryStore::new();
+
+        // Create two issues to spawn tasks from
+        let issue_a = store.add_issue(sample_issue(vec![])).await.unwrap();
+        let issue_b = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Create tasks spawned from different issues
+        let mut task_a1 = spawn_task();
+        task_a1.spawned_from = Some(issue_a.clone());
+        let task_a1_id = store.add_task(task_a1, Utc::now()).await.unwrap();
+
+        let mut task_a2 = spawn_task();
+        task_a2.spawned_from = Some(issue_a.clone());
+        let task_a2_id = store.add_task(task_a2, Utc::now()).await.unwrap();
+
+        let mut task_b1 = spawn_task();
+        task_b1.spawned_from = Some(issue_b.clone());
+        let task_b1_id = store.add_task(task_b1, Utc::now()).await.unwrap();
+
+        let task_orphan = spawn_task(); // no spawned_from
+        let task_orphan_id = store.add_task(task_orphan, Utc::now()).await.unwrap();
+
+        // Filter by issue_a should return only tasks spawned from issue_a
+        let query = SearchJobsQuery::new(None, Some(issue_a.clone()), None);
+        let tasks: HashSet<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            tasks,
+            HashSet::from([task_a1_id.clone(), task_a2_id.clone()])
+        );
+
+        // Filter by issue_b should return only tasks spawned from issue_b
+        let query = SearchJobsQuery::new(None, Some(issue_b.clone()), None);
+        let tasks: HashSet<_> = store
+            .list_tasks(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(tasks, HashSet::from([task_b1_id.clone()]));
+
+        // No filter should return all tasks
+        let tasks: HashSet<_> = store
+            .list_tasks(&SearchJobsQuery::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            tasks,
+            HashSet::from([task_a1_id, task_a2_id, task_b1_id, task_orphan_id])
+        );
     }
 }

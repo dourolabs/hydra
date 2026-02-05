@@ -8,7 +8,7 @@ use axum::{
     http::request::Parts,
 };
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, TaskId, VersionNumber, api::v1};
+use metis_common::{TaskId, VersionNumber, api::v1};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -64,31 +64,29 @@ pub async fn list_jobs(
     );
     let namespace = state.config.metis.namespace.clone();
 
+    // Prepare search term for text filtering
     let search_term = query
         .q
         .as_ref()
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
-    let spawned_from_filter = query.spawned_from.as_ref();
-    let include_deleted = query.include_deleted.unwrap_or(false);
 
-    // Get all tasks with all statuses
-    let task_ids = state
-        .list_tasks_with_deleted(include_deleted)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to list tasks");
-            ApiError::internal(format!("Failed to list tasks: {err}"))
-        })?;
+    // Get tasks filtered by the store (spawned_from, include_deleted)
+    // Text search (q) is done in the route layer because it includes notes,
+    // which are derived from status_log and not stored in the Task
+    let tasks = state.list_tasks_with_query(&query).await.map_err(|err| {
+        error!(error = %err, "failed to list tasks");
+        ApiError::internal(format!("Failed to list tasks: {err}"))
+    })?;
 
     // Collect all summaries with their reference times for sorting
+    // Apply text search filtering (q) since it includes notes
     let mut summaries_with_times: Vec<(v1::jobs::JobRecord, Option<DateTime<Utc>>)> = Vec::new();
-    for task_id in task_ids {
+    for (task_id, _task) in tasks {
         match job_record_with_time_from_state(&state, &task_id).await {
             Ok(summary) => {
-                if spawned_from_matches(spawned_from_filter, &summary.0)
-                    && job_matches(search_term.as_deref(), &summary.0)
-                {
+                // Apply text search filtering (id, prompt, notes, status)
+                if job_matches(search_term.as_deref(), &summary.0) {
                     summaries_with_times.push(summary);
                 }
             }
@@ -311,13 +309,7 @@ fn job_record_with_time(
     )
 }
 
-fn spawned_from_matches(expected: Option<&IssueId>, job: &v1::jobs::JobRecord) -> bool {
-    match expected {
-        Some(issue_id) => job.task.spawned_from.as_ref() == Some(issue_id),
-        None => true,
-    }
-}
-
+/// Checks if the job matches the search term by looking at id, prompt, notes, and status.
 fn job_matches(search_term: Option<&str>, job: &v1::jobs::JobRecord) -> bool {
     if let Some(term) = search_term {
         let lower_term = term.to_lowercase();
