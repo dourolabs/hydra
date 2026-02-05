@@ -16,7 +16,7 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -1286,6 +1286,46 @@ async fn delete_object(
                 "delete_object failed: deleting object"
             );
             return S3Error::io("deleting object", err).into_response();
+        }
+    }
+
+    // Delete the ETag metadata file if it exists
+    match state.metadata_path(&bucket, &key) {
+        Ok(metadata_path) => {
+            match tokio::fs::remove_file(&metadata_path).await {
+                Ok(()) => {
+                    debug!(
+                        bucket = %bucket,
+                        key = %key,
+                        "delete_object: deleted ETag metadata file"
+                    );
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    debug!(
+                        bucket = %bucket,
+                        key = %key,
+                        "delete_object: ETag metadata file not found (already deleted or never existed)"
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        bucket = %bucket,
+                        key = %key,
+                        error = %err,
+                        "delete_object: failed to delete ETag metadata file"
+                    );
+                    // Don't fail the DELETE request - just warn about the orphaned metadata
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "delete_object: failed to compute metadata path"
+            );
+            // Don't fail the DELETE request
         }
     }
 
@@ -2852,5 +2892,112 @@ mod tests {
         let etag_content = std::fs::read_to_string(&etag_path).expect("read etag file");
         let expected_etag = compute_etag(&Bytes::from(payload.as_slice()));
         assert_eq!(etag_content, expected_etag);
+    }
+
+    #[tokio::test]
+    async fn delete_object_removes_etag_metadata_file() {
+        let dir = tempdir().expect("temp dir");
+        let state = Arc::new(S3State::new(dir.path().to_path_buf()).expect("state"));
+        let router: axum::Router = RouterWithState::new(state.clone()).into();
+
+        // PUT an object
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/some/key.txt")
+                    .body(Body::from("test content"))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Create a mock ETag metadata file
+        let metadata_path = state.metadata_path("test-bucket", "some/key.txt").unwrap();
+        tokio::fs::create_dir_all(metadata_path.parent().unwrap())
+            .await
+            .expect("create metadata dir");
+        tokio::fs::write(&metadata_path, "\"abc123\"")
+            .await
+            .expect("write metadata");
+        assert!(
+            metadata_path.exists(),
+            "metadata file should exist before delete"
+        );
+
+        // DELETE the object
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/test-bucket/some/key.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("delete response");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify the metadata file was deleted
+        assert!(
+            !metadata_path.exists(),
+            "metadata file should be deleted after object delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_object_succeeds_when_metadata_file_missing() {
+        let dir = tempdir().expect("temp dir");
+        let state = Arc::new(S3State::new(dir.path().to_path_buf()).expect("state"));
+        let router: axum::Router = RouterWithState::new(state.clone()).into();
+
+        // PUT an object (this will create a metadata file)
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/noetag/key.txt")
+                    .body(Body::from("test content"))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Manually remove the metadata file to simulate a missing metadata scenario
+        let metadata_path = state
+            .metadata_path("test-bucket", "noetag/key.txt")
+            .unwrap();
+        if metadata_path.exists() {
+            tokio::fs::remove_file(&metadata_path)
+                .await
+                .expect("remove metadata file");
+        }
+        assert!(
+            !metadata_path.exists(),
+            "metadata file should not exist for this test"
+        );
+
+        // DELETE the object - should succeed even without metadata file
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/test-bucket/noetag/key.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("delete response");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Verify the object file was deleted
+        let object_path = state.object_path("test-bucket", "noetag/key.txt").unwrap();
+        assert!(!object_path.exists(), "object file should be deleted");
     }
 }
