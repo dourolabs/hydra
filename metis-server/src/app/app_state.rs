@@ -17,6 +17,7 @@ use crate::{
 };
 use chrono::{DateTime, Duration, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
@@ -459,15 +460,15 @@ impl AppState {
 
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_patches(false).await
+        store.list_patches(&SearchPatchesQuery::default()).await
     }
 
-    pub async fn list_patches_with_deleted(
+    pub async fn list_patches_with_query(
         &self,
-        include_deleted: bool,
+        query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_patches(include_deleted).await
+        store.list_patches(query).await
     }
 
     pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<(), StoreError> {

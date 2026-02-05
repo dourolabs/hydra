@@ -9,6 +9,7 @@ use crate::domain::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -195,13 +196,10 @@ pub trait Store: Send + Sync {
     /// Updates an existing patch in the store.
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
 
-    /// Lists all patches in the store with their corresponding IDs.
-    ///
-    /// By default, deleted patches are filtered out. Pass `include_deleted: true`
-    /// to include deleted patches in the result.
+    /// Lists patches that match the provided search query.
     async fn list_patches(
         &self,
-        include_deleted: bool,
+        query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
 
     /// Soft-deletes a patch by setting its `deleted` flag to true.

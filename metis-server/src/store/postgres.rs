@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -483,6 +484,105 @@ impl PostgresStore {
         Ok(documents)
     }
 
+    async fn fetch_latest_patches(
+        &self,
+        query: &SearchPatchesQuery,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct PatchRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        let mut sql = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {TABLE_PATCHES}"
+        );
+        let mut predicates = Vec::new();
+        let mut bindings = Vec::new();
+
+        // Filter deleted patches by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            // Search across multiple fields: id, title, description, status, service_repo_name, diff, github fields
+            let idx_start = bindings.len() + 1;
+            predicates.push(format!(
+                "(LOWER(id) LIKE ${idx_id} \
+                 OR LOWER(payload->>'title') LIKE ${idx_title} \
+                 OR LOWER(payload->>'description') LIKE ${idx_desc} \
+                 OR LOWER(payload->>'status') LIKE ${idx_status} \
+                 OR LOWER(payload->>'service_repo_name') LIKE ${idx_repo} \
+                 OR LOWER(payload->>'diff') LIKE ${idx_diff} \
+                 OR LOWER(payload->'github'->>'owner') LIKE ${idx_gh_owner} \
+                 OR LOWER(payload->'github'->>'repo') LIKE ${idx_gh_repo} \
+                 OR (payload->'github'->>'number') LIKE ${idx_gh_number} \
+                 OR LOWER(COALESCE(payload->'github'->>'head_ref','')) LIKE ${idx_gh_head} \
+                 OR LOWER(COALESCE(payload->'github'->>'base_ref','')) LIKE ${idx_gh_base})",
+                idx_id = idx_start,
+                idx_title = idx_start + 1,
+                idx_desc = idx_start + 2,
+                idx_status = idx_start + 3,
+                idx_repo = idx_start + 4,
+                idx_diff = idx_start + 5,
+                idx_gh_owner = idx_start + 6,
+                idx_gh_repo = idx_start + 7,
+                idx_gh_number = idx_start + 8,
+                idx_gh_head = idx_start + 9,
+                idx_gh_base = idx_start + 10,
+            ));
+            let pattern = format!("%{term}%");
+            for _ in 0..11 {
+                bindings.push(pattern.clone());
+            }
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY id, version_number DESC");
+
+        let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut patches = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version("patch", row.schema_version, PATCH_SCHEMA_VERSION)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for patch '{}'",
+                    row.id
+                ))
+            })?;
+            let patch: Patch =
+                serde_json::from_value(row.payload).map_err(map_serde_error("patch"))?;
+            let patch_id = row.id.parse::<PatchId>().map_err(|err| {
+                StoreError::Internal(format!("invalid patch id stored in database: {err}"))
+            })?;
+            patches.push((patch_id, Versioned::new(patch, version, row.created_at)));
+        }
+
+        Ok(patches)
+    }
+
     async fn insert_payload<T: Serialize>(
         &self,
         table: &str,
@@ -803,26 +903,9 @@ impl Store for PostgresStore {
 
     async fn list_patches(
         &self,
-        include_deleted: bool,
+        query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        let rows = self
-            .fetch_versioned_payloads_with_ids::<Patch>(
-                TABLE_PATCHES,
-                "patch",
-                PATCH_SCHEMA_VERSION,
-            )
-            .await?;
-
-        rows.into_iter()
-            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
-            .map(|(id, patch)| {
-                id.parse::<PatchId>()
-                    .map(|patch_id| (patch_id, patch))
-                    .map_err(|err| {
-                        StoreError::Internal(format!("invalid patch id stored in database: {err}"))
-                    })
-            })
-            .collect()
+        self.fetch_latest_patches(query).await
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
