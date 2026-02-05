@@ -63,7 +63,14 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+    async fn list_issues(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_issue(&self, _id: &IssueId) -> Result<(), StoreError> {
         fail()
     }
 
@@ -90,7 +97,14 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+    async fn list_patches(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_patch(&self, _id: &PatchId) -> Result<(), StoreError> {
         fail()
     }
 
@@ -118,6 +132,10 @@ impl Store for FailingStore {
         _id: &DocumentId,
         _document: Document,
     ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn delete_document(&self, _id: &DocumentId) -> Result<(), StoreError> {
         fail()
     }
 
@@ -180,7 +198,14 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+    async fn list_tasks(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_task(&self, _id: &TaskId) -> Result<(), StoreError> {
         fail()
     }
 

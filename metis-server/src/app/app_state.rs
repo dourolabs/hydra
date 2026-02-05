@@ -458,7 +458,7 @@ impl AppState {
 
     pub async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_patches().await
+        store.list_patches(false).await
     }
 
     pub async fn upsert_document(
@@ -1136,7 +1136,7 @@ impl AppState {
 
         let store_task_ids: Vec<TaskId> = {
             let store = self.store.as_ref();
-            match store.list_tasks().await {
+            match store.list_tasks(false).await {
                 Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
@@ -1924,13 +1924,13 @@ impl AppState {
 
     pub async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_issues().await
+        store.list_issues(false).await
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store
-            .list_tasks()
+            .list_tasks(false)
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }

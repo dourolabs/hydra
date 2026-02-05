@@ -370,15 +370,28 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+    async fn list_issues(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         Ok(self
             .issues
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
                 Some((entry.key().clone(), latest))
             })
             .collect())
+    }
+
+    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
+        let current = self.get_issue(id).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue).await
     }
 
     async fn search_issue_graph(
@@ -463,15 +476,28 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+    async fn list_patches(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         Ok(self
             .patches
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
                 Some((entry.key().clone(), latest))
             })
             .collect())
+    }
+
+    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
+        let current = self.get_patch(id).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch).await
     }
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
@@ -531,6 +557,13 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
+        let current = self.get_document(id).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document).await
+    }
+
     async fn list_documents(
         &self,
         query: &SearchDocumentsQuery,
@@ -552,6 +585,11 @@ impl Store for MemoryStore {
                     })
                     .collect()
             };
+
+        // Filter deleted documents unless include_deleted is true
+        if !query.include_deleted.unwrap_or(false) {
+            documents.retain(|(_, versioned)| !versioned.item.deleted);
+        }
 
         if let Some(created_by) = query.created_by.as_ref() {
             documents
@@ -733,15 +771,29 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
-    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+    async fn list_tasks(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         Ok(self
             .tasks
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
                 Some((entry.key().clone(), latest))
             })
             .collect())
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
+        let current = self.get_task(id).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        self.update_task(id, task).await?;
+        Ok(())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
@@ -1603,7 +1655,7 @@ mod tests {
         );
 
         let tasks: HashSet<_> = store
-            .list_tasks()
+            .list_tasks(false)
             .await
             .unwrap()
             .into_iter()
@@ -2133,5 +2185,181 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(by_prefix_explicit.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn delete_issue_sets_deleted_flag_and_filters_from_list() {
+        let store = MemoryStore::new();
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Issue should be visible in list initially
+        let issues = store.list_issues(false).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert!(!issues[0].1.item.deleted);
+
+        // Delete the issue
+        store.delete_issue(&issue_id).await.unwrap();
+
+        // Deleted issue should not appear in default list
+        let issues = store.list_issues(false).await.unwrap();
+        assert!(issues.is_empty());
+
+        // Deleted issue should appear with include_deleted=true
+        let issues = store.list_issues(true).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].1.item.deleted);
+
+        // get_issue should still return the deleted issue
+        let issue = store.get_issue(&issue_id).await.unwrap();
+        assert!(issue.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_patch_sets_deleted_flag_and_filters_from_list() {
+        let store = MemoryStore::new();
+        let patch_id = store.add_patch(sample_patch()).await.unwrap();
+
+        // Patch should be visible in list initially
+        let patches = store.list_patches(false).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert!(!patches[0].1.item.deleted);
+
+        // Delete the patch
+        store.delete_patch(&patch_id).await.unwrap();
+
+        // Deleted patch should not appear in default list
+        let patches = store.list_patches(false).await.unwrap();
+        assert!(patches.is_empty());
+
+        // Deleted patch should appear with include_deleted=true
+        let patches = store.list_patches(true).await.unwrap();
+        assert_eq!(patches.len(), 1);
+        assert!(patches[0].1.item.deleted);
+
+        // get_patch should still return the deleted patch
+        let patch = store.get_patch(&patch_id).await.unwrap();
+        assert!(patch.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_document_sets_deleted_flag_and_filters_from_list() {
+        let store = MemoryStore::new();
+        let doc_id = store
+            .add_document(sample_document(Some("test.md"), None))
+            .await
+            .unwrap();
+
+        // Document should be visible in list initially
+        let docs = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(!docs[0].1.item.deleted);
+
+        // Delete the document
+        store.delete_document(&doc_id).await.unwrap();
+
+        // Deleted document should not appear in default list
+        let docs = store
+            .list_documents(&SearchDocumentsQuery::default())
+            .await
+            .unwrap();
+        assert!(docs.is_empty());
+
+        // Deleted document should appear with include_deleted=true
+        let docs = store
+            .list_documents(&SearchDocumentsQuery {
+                include_deleted: Some(true),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].1.item.deleted);
+
+        // get_document should still return the deleted document
+        let doc = store.get_document(&doc_id).await.unwrap();
+        assert!(doc.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_task_sets_deleted_flag_and_filters_from_list() {
+        let store = MemoryStore::new();
+        let task = spawn_task();
+        let task_id = store.add_task(task, Utc::now()).await.unwrap();
+
+        // Task should be visible in list initially
+        let tasks = store.list_tasks(false).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(!tasks[0].1.item.deleted);
+
+        // Delete the task
+        store.delete_task(&task_id).await.unwrap();
+
+        // Deleted task should not appear in default list
+        let tasks = store.list_tasks(false).await.unwrap();
+        assert!(tasks.is_empty());
+
+        // Deleted task should appear with include_deleted=true
+        let tasks = store.list_tasks(true).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].1.item.deleted);
+
+        // get_task should still return the deleted task
+        let task = store.get_task(&task_id).await.unwrap();
+        assert!(task.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_issue_returns_error() {
+        let store = MemoryStore::new();
+        let missing_id = IssueId::new();
+
+        let err = store.delete_issue(&missing_id).await.unwrap_err();
+
+        assert!(matches!(err, StoreError::IssueNotFound(id) if id == missing_id));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_patch_returns_error() {
+        let store = MemoryStore::new();
+        let missing_id = PatchId::new();
+
+        let err = store.delete_patch(&missing_id).await.unwrap_err();
+
+        assert!(matches!(err, StoreError::PatchNotFound(id) if id == missing_id));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_document_returns_error() {
+        let store = MemoryStore::new();
+        let missing_id = DocumentId::new();
+
+        let err = store.delete_document(&missing_id).await.unwrap_err();
+
+        assert!(matches!(err, StoreError::DocumentNotFound(id) if id == missing_id));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_task_returns_error() {
+        let store = MemoryStore::new();
+        let missing_id = TaskId::new();
+
+        let err = store.delete_task(&missing_id).await.unwrap_err();
+
+        assert!(matches!(err, StoreError::TaskNotFound(id) if id == missing_id));
+    }
+
+    #[tokio::test]
+    async fn delete_increments_version() {
+        let store = MemoryStore::new();
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        let version_before = store.get_issue(&issue_id).await.unwrap().version;
+        store.delete_issue(&issue_id).await.unwrap();
+        let version_after = store.get_issue(&issue_id).await.unwrap().version;
+
+        assert_eq!(version_after, version_before + 1);
     }
 }

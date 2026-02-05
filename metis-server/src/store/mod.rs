@@ -158,7 +158,20 @@ pub trait Store: Send + Sync {
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError>;
 
     /// Lists all issues in the store with their corresponding IDs.
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
+    ///
+    /// By default, deleted issues are filtered out. Pass `include_deleted: true`
+    /// to include deleted issues in the result.
+    async fn list_issues(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError>;
+
+    /// Soft-deletes an issue by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the issue with `deleted: true`.
+    /// The issue can still be retrieved via `get_issue` but will be filtered
+    /// from `list_issues` by default.
+    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError>;
 
     /// Applies dependency graph filters and returns the matching issue IDs.
     ///
@@ -182,7 +195,20 @@ pub trait Store: Send + Sync {
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError>;
 
     /// Lists all patches in the store with their corresponding IDs.
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
+    ///
+    /// By default, deleted patches are filtered out. Pass `include_deleted: true`
+    /// to include deleted patches in the result.
+    async fn list_patches(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError>;
+
+    /// Soft-deletes a patch by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the patch with `deleted: true`.
+    /// The patch can still be retrieved via `get_patch` but will be filtered
+    /// from `list_patches` by default.
+    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError>;
 
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
@@ -201,6 +227,13 @@ pub trait Store: Send + Sync {
 
     /// Updates an existing document in the store.
     async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError>;
+
+    /// Soft-deletes a document by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the document with `deleted: true`.
+    /// The document can still be retrieved via `get_document` but will be filtered
+    /// from `list_documents` by default (unless `include_deleted: true` is in the query).
+    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError>;
 
     /// Lists documents that match the provided search query.
     async fn list_documents(
@@ -293,9 +326,22 @@ pub trait Store: Send + Sync {
 
     /// Lists all task IDs in the store.
     ///
+    /// By default, deleted tasks are filtered out. Pass `include_deleted: true`
+    /// to include deleted tasks in the result.
+    ///
     /// # Returns
     /// A vector of all tasks in the store
-    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+    async fn list_tasks(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError>;
+
+    /// Soft-deletes a task by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the task with `deleted: true`.
+    /// The task can still be retrieved via `get_task` but will be filtered
+    /// from `list_tasks` by default.
+    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError>;
 
     /// Lists all task IDs with the specified status in the store.
     ///
