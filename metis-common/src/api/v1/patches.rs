@@ -56,6 +56,86 @@ impl FromStr for PatchStatus {
     }
 }
 
+/// Review state from GitHub/Octocrab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
+pub enum ReviewState {
+    #[default]
+    Open,
+    Approved,
+    Pending,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Inline review comment associated with a PR review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Comment {
+    /// Identifier for the comment (from GitHub).
+    #[serde(default)]
+    pub comment_id: Option<String>,
+    /// Identifier of the parent review (from GitHub).
+    #[serde(default)]
+    pub review_id: Option<String>,
+    /// Comment body text.
+    #[serde(default)]
+    pub body: String,
+    /// API URL or HTML URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// File path that the comment applies to.
+    #[serde(default)]
+    pub filepath: Option<String>,
+    /// Starting line number for the commented range.
+    #[serde(default)]
+    pub start_line: Option<u32>,
+    /// Ending line number for the commented range.
+    #[serde(default)]
+    pub end_line: Option<u32>,
+    /// Identifier for the parent comment (for threaded replies).
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    /// Timestamp for comment creation.
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    /// Timestamp for comment update.
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl Comment {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        comment_id: Option<String>,
+        review_id: Option<String>,
+        body: String,
+        url: Option<String>,
+        filepath: Option<String>,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        in_reply_to: Option<String>,
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            comment_id,
+            review_id,
+            body,
+            url,
+            filepath,
+            start_line,
+            end_line,
+            in_reply_to,
+            created_at,
+            updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Review {
@@ -65,6 +145,18 @@ pub struct Review {
     /// Timestamp for when the review was recorded.
     #[serde(default)]
     pub submitted_at: Option<DateTime<Utc>>,
+    /// Identifier for the review (from GitHub).
+    #[serde(default)]
+    pub review_id: Option<String>,
+    /// Review state (Open, Approved, Pending, ChangesRequested, Commented, Dismissed).
+    #[serde(default)]
+    pub review_state: Option<ReviewState>,
+    /// Top-level review body/message.
+    #[serde(default)]
+    pub review_message: Option<String>,
+    /// Inline review comments associated with this review.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
 }
 
 impl Review {
@@ -79,6 +171,34 @@ impl Review {
             is_approved,
             author,
             submitted_at,
+            review_id: None,
+            review_state: None,
+            review_message: None,
+            comments: Vec::new(),
+        }
+    }
+
+    /// Creates a Review with all component fields, computing is_approved and contents from them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_from_components(
+        review_id: Option<String>,
+        author: String,
+        review_state: Option<ReviewState>,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<String>,
+        comments: Vec<Comment>,
+    ) -> Self {
+        let is_approved = review_state == Some(ReviewState::Approved);
+        let contents = review_message.clone().unwrap_or_default();
+        Self {
+            contents,
+            is_approved,
+            author,
+            submitted_at,
+            review_id,
+            review_state,
+            review_message,
+            comments,
         }
     }
 }

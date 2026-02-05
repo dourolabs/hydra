@@ -53,6 +53,82 @@ impl FromStr for PatchStatus {
     }
 }
 
+/// Review state from GitHub/Octocrab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ReviewState {
+    #[default]
+    Open,
+    Approved,
+    Pending,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+}
+
+/// Inline review comment associated with a PR review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comment {
+    /// Identifier for the comment (from GitHub).
+    #[serde(default)]
+    pub comment_id: Option<String>,
+    /// Identifier of the parent review (from GitHub).
+    #[serde(default)]
+    pub review_id: Option<String>,
+    /// Comment body text.
+    #[serde(default)]
+    pub body: String,
+    /// API URL or HTML URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// File path that the comment applies to.
+    #[serde(default)]
+    pub filepath: Option<String>,
+    /// Starting line number for the commented range.
+    #[serde(default)]
+    pub start_line: Option<u32>,
+    /// Ending line number for the commented range.
+    #[serde(default)]
+    pub end_line: Option<u32>,
+    /// Identifier for the parent comment (for threaded replies).
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    /// Timestamp for comment creation.
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    /// Timestamp for comment update.
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl Comment {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        comment_id: Option<String>,
+        review_id: Option<String>,
+        body: String,
+        url: Option<String>,
+        filepath: Option<String>,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        in_reply_to: Option<String>,
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            comment_id,
+            review_id,
+            body,
+            url,
+            filepath,
+            start_line,
+            end_line,
+            in_reply_to,
+            created_at,
+            updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
     pub contents: String,
@@ -61,6 +137,18 @@ pub struct Review {
     /// Timestamp for when the review was recorded.
     #[serde(default)]
     pub submitted_at: Option<DateTime<Utc>>,
+    /// Identifier for the review (from GitHub).
+    #[serde(default)]
+    pub review_id: Option<String>,
+    /// Review state (Open, Approved, Pending, ChangesRequested, Commented, Dismissed).
+    #[serde(default)]
+    pub review_state: Option<ReviewState>,
+    /// Top-level review body/message.
+    #[serde(default)]
+    pub review_message: Option<String>,
+    /// Inline review comments associated with this review.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
 }
 
 impl Review {
@@ -75,6 +163,34 @@ impl Review {
             is_approved,
             author,
             submitted_at,
+            review_id: None,
+            review_state: None,
+            review_message: None,
+            comments: Vec::new(),
+        }
+    }
+
+    /// Creates a Review with all component fields, computing is_approved and contents from them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_from_components(
+        review_id: Option<String>,
+        author: String,
+        review_state: Option<ReviewState>,
+        submitted_at: Option<DateTime<Utc>>,
+        review_message: Option<String>,
+        comments: Vec<Comment>,
+    ) -> Self {
+        let is_approved = review_state == Some(ReviewState::Approved);
+        let contents = review_message.clone().unwrap_or_default();
+        Self {
+            contents,
+            is_approved,
+            author,
+            submitted_at,
+            review_id,
+            review_state,
+            review_message,
+            comments,
         }
     }
 }
@@ -285,6 +401,67 @@ impl From<PatchStatus> for api::patches::PatchStatus {
     }
 }
 
+impl From<api::patches::ReviewState> for ReviewState {
+    fn from(value: api::patches::ReviewState) -> Self {
+        match value {
+            api::patches::ReviewState::Open => ReviewState::Open,
+            api::patches::ReviewState::Approved => ReviewState::Approved,
+            api::patches::ReviewState::Pending => ReviewState::Pending,
+            api::patches::ReviewState::ChangesRequested => ReviewState::ChangesRequested,
+            api::patches::ReviewState::Commented => ReviewState::Commented,
+            api::patches::ReviewState::Dismissed => ReviewState::Dismissed,
+            _ => ReviewState::Open,
+        }
+    }
+}
+
+impl From<ReviewState> for api::patches::ReviewState {
+    fn from(value: ReviewState) -> Self {
+        match value {
+            ReviewState::Open => api::patches::ReviewState::Open,
+            ReviewState::Approved => api::patches::ReviewState::Approved,
+            ReviewState::Pending => api::patches::ReviewState::Pending,
+            ReviewState::ChangesRequested => api::patches::ReviewState::ChangesRequested,
+            ReviewState::Commented => api::patches::ReviewState::Commented,
+            ReviewState::Dismissed => api::patches::ReviewState::Dismissed,
+        }
+    }
+}
+
+impl From<api::patches::Comment> for Comment {
+    fn from(value: api::patches::Comment) -> Self {
+        Comment {
+            comment_id: value.comment_id,
+            review_id: value.review_id,
+            body: value.body,
+            url: value.url,
+            filepath: value.filepath,
+            start_line: value.start_line,
+            end_line: value.end_line,
+            in_reply_to: value.in_reply_to,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<Comment> for api::patches::Comment {
+    fn from(value: Comment) -> Self {
+        api::patches::Comment::new(
+            value.comment_id,
+            value.review_id,
+            value.body,
+            value.url,
+            value.filepath,
+            value.start_line,
+            value.end_line,
+            value.in_reply_to,
+            value.created_at,
+            value.updated_at,
+        )
+    }
+}
+
 impl From<api::patches::Review> for Review {
     fn from(value: api::patches::Review) -> Self {
         Review {
@@ -292,18 +469,27 @@ impl From<api::patches::Review> for Review {
             is_approved: value.is_approved,
             author: value.author,
             submitted_at: value.submitted_at,
+            review_id: value.review_id,
+            review_state: value.review_state.map(Into::into),
+            review_message: value.review_message,
+            comments: value.comments.into_iter().map(Into::into).collect(),
         }
     }
 }
 
 impl From<Review> for api::patches::Review {
     fn from(value: Review) -> Self {
-        api::patches::Review::new(
+        let mut api_review = api::patches::Review::new(
             value.contents,
             value.is_approved,
             value.author,
             value.submitted_at,
-        )
+        );
+        api_review.review_id = value.review_id;
+        api_review.review_state = value.review_state.map(Into::into);
+        api_review.review_message = value.review_message;
+        api_review.comments = value.comments.into_iter().map(Into::into).collect();
+        api_review
     }
 }
 

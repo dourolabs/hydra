@@ -3,6 +3,7 @@ use crate::{
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
+        ReviewState,
     },
 };
 use anyhow::Context;
@@ -303,6 +304,18 @@ async fn select_github_installation_client(
     Ok(Some(installation_client))
 }
 
+fn octocrab_review_state_to_domain(state: &octocrab::models::pulls::ReviewState) -> ReviewState {
+    match state {
+        octocrab::models::pulls::ReviewState::Open => ReviewState::Open,
+        octocrab::models::pulls::ReviewState::Approved => ReviewState::Approved,
+        octocrab::models::pulls::ReviewState::Pending => ReviewState::Pending,
+        octocrab::models::pulls::ReviewState::ChangesRequested => ReviewState::ChangesRequested,
+        octocrab::models::pulls::ReviewState::Commented => ReviewState::Commented,
+        octocrab::models::pulls::ReviewState::Dismissed => ReviewState::Dismissed,
+        _ => ReviewState::Open,
+    }
+}
+
 fn build_review_entries(
     reviews: Vec<PullRequestReview>,
     review_comments: Vec<PullRequestComment>,
@@ -311,26 +324,26 @@ fn build_review_entries(
     let mut entries = Vec::new();
 
     for review in reviews {
-        let Some(body) = review.body.as_ref().map(|value| value.trim().to_string()) else {
-            continue;
-        };
-        if body.is_empty() {
-            continue;
-        }
+        let body = review
+            .body
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|b| !b.is_empty());
 
         let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
 
-        entries.push(Review::new(
-            body,
-            review
-                .state
-                .as_ref()
-                .map(|state| state == &octocrab::models::pulls::ReviewState::Approved)
-                .unwrap_or(false),
+        let review_state = review.state.as_ref().map(octocrab_review_state_to_domain);
+        let review_id = review.id.0.to_string();
+
+        entries.push(Review::new_from_components(
+            Some(review_id),
             author,
+            review_state,
             review.submitted_at,
+            body.clone(),
+            Vec::new(), // Comments will be handled separately in future task
         ));
     }
 
@@ -344,11 +357,13 @@ fn build_review_entries(
             continue;
         };
 
-        entries.push(Review::new(
-            body.to_string(),
-            false,
+        entries.push(Review::new_from_components(
+            None,
             author,
+            Some(ReviewState::Commented),
             Some(comment.created_at),
+            Some(body.to_string()),
+            Vec::new(),
         ));
     }
 
@@ -360,11 +375,13 @@ fn build_review_entries(
             continue;
         }
 
-        entries.push(Review::new(
-            body.to_string(),
-            false,
+        entries.push(Review::new_from_components(
+            None,
             comment.user.login.clone(),
+            Some(ReviewState::Commented),
             Some(comment.created_at),
+            Some(body.to_string()),
+            Vec::new(),
         ));
     }
 
