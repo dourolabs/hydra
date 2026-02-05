@@ -19,6 +19,7 @@ use std::collections::HashSet;
 mod issue_graph;
 mod memory_store;
 pub mod postgres;
+pub mod postgres_v2;
 
 pub use crate::domain::jobs::Task;
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
