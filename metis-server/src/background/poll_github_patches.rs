@@ -3,7 +3,7 @@ use crate::{
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
-        UpsertPatchRequest,
+        ReviewComment, ReviewState, UpsertPatchRequest,
     },
 };
 use anyhow::Context;
@@ -311,27 +311,29 @@ fn build_review_entries(
     let mut entries = Vec::new();
 
     for review in reviews {
-        let Some(body) = review.body.as_ref().map(|value| value.trim().to_string()) else {
-            continue;
-        };
-        if body.is_empty() {
-            continue;
-        }
-
         let Some(author) = review.user.as_ref().map(|user| user.login.clone()) else {
             continue;
         };
 
-        entries.push(Review::new(
-            body,
-            review
-                .state
-                .as_ref()
-                .map(|state| state == &octocrab::models::pulls::ReviewState::Approved)
-                .unwrap_or(false),
+        let review_message = review
+            .body
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let review_state = review.state.map(Into::into);
+        if review_message.is_none() && review_state.is_none() {
+            continue;
+        }
+
+        let entry = Review::new_from_components(
             author,
+            review_state,
+            review_message,
+            Vec::new(),
             review.submitted_at,
-        ));
+        );
+        entries.push(entry);
     }
 
     for comment in review_comments {
@@ -344,12 +346,31 @@ fn build_review_entries(
             continue;
         };
 
-        entries.push(Review::new(
-            body.to_string(),
-            false,
+        let url = Some(comment.html_url.clone());
+        let start_line = comment.start_line.and_then(|line| u32::try_from(line).ok());
+        let end_line = comment.line.and_then(|line| u32::try_from(line).ok());
+
+        let review_comment = ReviewComment {
+            comment_id: None,
+            review_id: None,
+            body: body.to_string(),
+            url,
+            filepath: Some(comment.path),
+            start_line,
+            end_line,
+            in_reply_to: None,
+            created_at: Some(comment.created_at),
+            updated_at: Some(comment.updated_at),
+        };
+
+        let entry = Review::new_from_components(
             author,
+            Some(ReviewState::Commented),
+            Some(body.to_string()),
+            vec![review_comment],
             Some(comment.created_at),
-        ));
+        );
+        entries.push(entry);
     }
 
     for comment in issue_comments {
@@ -360,12 +381,14 @@ fn build_review_entries(
             continue;
         }
 
-        entries.push(Review::new(
-            body.to_string(),
-            false,
+        let entry = Review::new_from_components(
             comment.user.login.clone(),
+            Some(ReviewState::Commented),
+            Some(body.to_string()),
+            Vec::new(),
             Some(comment.created_at),
-        ));
+        );
+        entries.push(entry);
     }
 
     dedupe_reviews(entries)
@@ -410,9 +433,10 @@ fn review_updates(existing: &[Review], github_reviews: Vec<Review>) -> ReviewUpd
 
 fn has_new_non_approved_reviews(existing: &[Review], github_reviews: &[Review]) -> bool {
     let existing_keys: HashSet<_> = existing.iter().map(review_key).collect();
-    github_reviews
-        .iter()
-        .any(|review| !review_is_approved(review) && !existing_keys.contains(&review_key(review)))
+    github_reviews.iter().any(|review| {
+        !matches!(review.review_state, Some(ReviewState::Approved))
+            && !existing_keys.contains(&review_key(review))
+    })
 }
 
 fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
@@ -429,21 +453,17 @@ fn dedupe_reviews(reviews: Vec<Review>) -> Vec<Review> {
     unique
 }
 
-fn review_is_approved(review: &Review) -> bool {
-    matches!(review.review_state.as_deref(), Some("approved"))
-}
-
 fn review_key(
     review: &Review,
 ) -> (
     String,
-    Option<String>,
+    Option<ReviewState>,
     Option<String>,
     Option<DateTime<Utc>>,
 ) {
     (
         review.author.clone(),
-        review.review_state.clone(),
+        review.review_state,
         review.review_message.clone(),
         review.submitted_at,
     )
@@ -494,6 +514,20 @@ fn apply_github_sync(
     latest_patch.github = Some(updated_github);
 
     latest_patch
+}
+
+impl From<octocrab::models::pulls::ReviewState> for ReviewState {
+    fn from(value: octocrab::models::pulls::ReviewState) -> Self {
+        match value {
+            octocrab::models::pulls::ReviewState::Open => ReviewState::Pending,
+            octocrab::models::pulls::ReviewState::Approved => ReviewState::Approved,
+            octocrab::models::pulls::ReviewState::ChangesRequested => ReviewState::ChangesRequested,
+            octocrab::models::pulls::ReviewState::Commented => ReviewState::Commented,
+            octocrab::models::pulls::ReviewState::Dismissed => ReviewState::Dismissed,
+            octocrab::models::pulls::ReviewState::Pending => ReviewState::Pending,
+            _ => ReviewState::Unknown,
+        }
+    }
 }
 
 async fn fetch_ci_status(
@@ -725,10 +759,11 @@ mod tests {
 
         assert!(has_new_non_approved_reviews(&existing, &github_reviews));
 
-        let approvals_only = vec![Review::new(
-            "lgtm".to_string(),
-            true,
+        let approvals_only = vec![Review::new_from_components(
             "carol".to_string(),
+            Some(ReviewState::Approved),
+            Some("lgtm".to_string()),
+            Vec::new(),
             None,
         )];
         assert!(!has_new_non_approved_reviews(&existing, &approvals_only));

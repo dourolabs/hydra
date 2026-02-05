@@ -4,13 +4,27 @@ use git2::Oid;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PatchStatus {
     Open,
     Closed,
     Merged,
     ChangesRequested,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReviewState {
+    Approved,
+    #[serde(alias = "changes-requested")]
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
     #[serde(other)]
     Unknown,
 }
@@ -63,7 +77,7 @@ pub struct Review {
     pub review_id: Option<MetisId>,
     pub author: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_state: Option<String>,
+    pub review_state: Option<ReviewState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_message: Option<String>,
     /// Timestamp for when the review was recorded.
@@ -84,18 +98,38 @@ impl Review {
         author: String,
         submitted_at: Option<DateTime<Utc>>,
     ) -> Self {
-        let review_state = Some(if is_approved {
-            "approved".to_string()
-        } else {
-            "commented".to_string()
-        });
+        Self {
+            review_id: None,
+            author,
+            review_state: None,
+            review_message: None,
+            submitted_at,
+            comments: Vec::new(),
+            contents,
+            is_approved,
+        }
+    }
+
+    pub fn new_from_components(
+        author: String,
+        review_state: Option<ReviewState>,
+        review_message: Option<String>,
+        comments: Vec<ReviewComment>,
+        submitted_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        let is_approved = matches!(review_state, Some(ReviewState::Approved));
+        let contents = review_message
+            .clone()
+            .or_else(|| comments.first().map(|comment| comment.body.clone()))
+            .unwrap_or_default();
+
         Self {
             review_id: None,
             author,
             review_state,
-            review_message: Some(contents.clone()),
+            review_message,
             submitted_at,
-            comments: Vec::new(),
+            comments,
             contents,
             is_approved,
         }
@@ -127,18 +161,30 @@ pub struct ReviewComment {
 }
 
 impl ReviewComment {
-    pub fn new(body: String) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        body: String,
+        comment_id: Option<MetisId>,
+        review_id: Option<MetisId>,
+        url: Option<String>,
+        filepath: Option<String>,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+        in_reply_to: Option<MetisId>,
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    ) -> Self {
         Self {
-            comment_id: None,
-            review_id: None,
             body,
-            url: None,
-            filepath: None,
-            start_line: None,
-            end_line: None,
-            in_reply_to: None,
-            created_at: None,
-            updated_at: None,
+            comment_id,
+            review_id,
+            url,
+            filepath,
+            start_line,
+            end_line,
+            in_reply_to,
+            created_at,
+            updated_at,
         }
     }
 }

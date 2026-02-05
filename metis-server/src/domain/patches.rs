@@ -5,12 +5,25 @@ use metis_common::{MetisId, PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PatchStatus {
     Open,
     Closed,
     Merged,
     ChangesRequested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Approved,
+    #[serde(alias = "changes-requested")]
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+    #[serde(other)]
+    Unknown,
 }
 
 impl Default for PatchStatus {
@@ -59,7 +72,7 @@ pub struct Review {
     pub review_id: Option<MetisId>,
     pub author: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub review_state: Option<String>,
+    pub review_state: Option<ReviewState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_message: Option<String>,
     /// Timestamp for when the review was recorded.
@@ -67,6 +80,10 @@ pub struct Review {
     pub submitted_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub comments: Vec<ReviewComment>,
+    #[serde(default)]
+    pub contents: String,
+    #[serde(default)]
+    pub is_approved: bool,
 }
 
 impl Review {
@@ -76,18 +93,40 @@ impl Review {
         author: String,
         submitted_at: Option<DateTime<Utc>>,
     ) -> Self {
-        let review_state = Some(if is_approved {
-            "approved".to_string()
-        } else {
-            "commented".to_string()
-        });
+        Self {
+            review_id: None,
+            author,
+            review_state: None,
+            review_message: None,
+            submitted_at,
+            comments: Vec::new(),
+            contents,
+            is_approved,
+        }
+    }
+
+    pub fn new_from_components(
+        author: String,
+        review_state: Option<ReviewState>,
+        review_message: Option<String>,
+        comments: Vec<ReviewComment>,
+        submitted_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        let is_approved = matches!(review_state, Some(ReviewState::Approved));
+        let contents = review_message
+            .clone()
+            .or_else(|| comments.first().map(|comment| comment.body.clone()))
+            .unwrap_or_default();
+
         Self {
             review_id: None,
             author,
             review_state,
-            review_message: Some(contents),
+            review_message,
             submitted_at,
-            comments: Vec::new(),
+            comments,
+            contents,
+            is_approved,
         }
     }
 }
@@ -380,42 +419,58 @@ impl From<PatchStatus> for api::patches::PatchStatus {
     }
 }
 
+impl From<api::patches::ReviewState> for ReviewState {
+    fn from(value: api::patches::ReviewState) -> Self {
+        match value {
+            api::patches::ReviewState::Approved => ReviewState::Approved,
+            api::patches::ReviewState::ChangesRequested => ReviewState::ChangesRequested,
+            api::patches::ReviewState::Commented => ReviewState::Commented,
+            api::patches::ReviewState::Dismissed => ReviewState::Dismissed,
+            api::patches::ReviewState::Pending => ReviewState::Pending,
+            api::patches::ReviewState::Unknown => ReviewState::Unknown,
+            _ => ReviewState::Unknown,
+        }
+    }
+}
+
+impl From<ReviewState> for api::patches::ReviewState {
+    fn from(value: ReviewState) -> Self {
+        match value {
+            ReviewState::Approved => api::patches::ReviewState::Approved,
+            ReviewState::ChangesRequested => api::patches::ReviewState::ChangesRequested,
+            ReviewState::Commented => api::patches::ReviewState::Commented,
+            ReviewState::Dismissed => api::patches::ReviewState::Dismissed,
+            ReviewState::Pending => api::patches::ReviewState::Pending,
+            ReviewState::Unknown => api::patches::ReviewState::Unknown,
+        }
+    }
+}
+
 impl From<api::patches::Review> for Review {
     fn from(value: api::patches::Review) -> Self {
-        let review_message = value.review_message.or(if value.contents.is_empty() {
-            None
-        } else {
-            Some(value.contents)
-        });
-        let review_state = value.review_state.or_else(|| {
-            if value.is_approved {
-                Some("approved".to_string())
-            } else if review_message.is_some() {
-                Some("commented".to_string())
-            } else {
-                None
-            }
-        });
-
         Review {
             review_id: value.review_id,
             author: value.author,
-            review_state,
-            review_message,
+            review_state: value.review_state.map(Into::into),
+            review_message: value.review_message,
             submitted_at: value.submitted_at,
             comments: value.comments.into_iter().map(Into::into).collect(),
+            contents: value.contents,
+            is_approved: value.is_approved,
         }
     }
 }
 
 impl From<Review> for api::patches::Review {
     fn from(value: Review) -> Self {
-        let is_approved = matches!(value.review_state.as_deref(), Some("approved"));
-        let contents = value.review_message.clone().unwrap_or_default();
-        let mut review =
-            api::patches::Review::new(contents, is_approved, value.author, value.submitted_at);
+        let mut review = api::patches::Review::new(
+            value.contents,
+            value.is_approved,
+            value.author,
+            value.submitted_at,
+        );
         review.review_id = value.review_id;
-        review.review_state = value.review_state;
+        review.review_state = value.review_state.map(Into::into);
         review.review_message = value.review_message;
         review.comments = value.comments.into_iter().map(Into::into).collect();
         review
@@ -441,17 +496,18 @@ impl From<api::patches::ReviewComment> for ReviewComment {
 
 impl From<ReviewComment> for api::patches::ReviewComment {
     fn from(value: ReviewComment) -> Self {
-        let mut comment = api::patches::ReviewComment::new(value.body);
-        comment.comment_id = value.comment_id;
-        comment.review_id = value.review_id;
-        comment.url = value.url;
-        comment.filepath = value.filepath;
-        comment.start_line = value.start_line;
-        comment.end_line = value.end_line;
-        comment.in_reply_to = value.in_reply_to;
-        comment.created_at = value.created_at;
-        comment.updated_at = value.updated_at;
-        comment
+        api::patches::ReviewComment::new(
+            value.body,
+            value.comment_id,
+            value.review_id,
+            value.url,
+            value.filepath,
+            value.start_line,
+            value.end_line,
+            value.in_reply_to,
+            value.created_at,
+            value.updated_at,
+        )
     }
 }
 

@@ -2,6 +2,20 @@ use crate::MetisId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReviewState {
+    Approved,
+    #[serde(alias = "changes-requested")]
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ReviewDraft {
@@ -10,7 +24,7 @@ pub struct ReviewDraft {
     /// Reviewer login from Octocrab `Review.user.login`.
     pub author: String,
     /// Review state from Octocrab `Review.state` (ex: approved, changes_requested, commented).
-    pub review_state: String,
+    pub review_state: ReviewState,
     /// Timestamp when the review was submitted from Octocrab `Review.submitted_at`.
     pub submitted_at: Option<DateTime<Utc>>,
     /// Top-level review body from Octocrab `Review.body`.
