@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
@@ -484,6 +485,126 @@ impl PostgresStore {
         Ok(documents)
     }
 
+    async fn fetch_latest_issues(
+        &self,
+        query: &SearchIssuesQuery,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct IssueRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        let mut sql = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at FROM {TABLE_ISSUES}"
+        );
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        // Filter by issue_type
+        if let Some(issue_type) = query.issue_type.as_ref() {
+            predicates.push(format!("payload->>'type' = ${}", bindings.len() + 1));
+            bindings.push(issue_type.as_str().to_string());
+        }
+
+        // Filter by status
+        if let Some(status) = query.status.as_ref() {
+            predicates.push(format!("payload->>'status' = ${}", bindings.len() + 1));
+            bindings.push(status.as_str().to_string());
+        }
+
+        // Filter by assignee (case-insensitive)
+        if let Some(assignee) = query
+            .assignee
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            predicates.push(format!(
+                "LOWER(payload->>'assignee') = ${}",
+                bindings.len() + 1
+            ));
+            bindings.push(assignee.to_lowercase());
+        }
+
+        // Filter by search term (q)
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let idx_id = bindings.len() + 1;
+            let idx_desc = bindings.len() + 2;
+            let idx_progress = bindings.len() + 3;
+            let idx_type = bindings.len() + 4;
+            let idx_status = bindings.len() + 5;
+            let idx_creator = bindings.len() + 6;
+            let idx_assignee = bindings.len() + 7;
+            predicates.push(format!(
+                "(LOWER(id) LIKE ${idx_id} \
+                 OR LOWER(payload->>'description') LIKE ${idx_desc} \
+                 OR LOWER(COALESCE(payload->>'progress','')) LIKE ${idx_progress} \
+                 OR payload->>'type' = ${idx_type} \
+                 OR payload->>'status' = ${idx_status} \
+                 OR LOWER(payload->>'creator') LIKE ${idx_creator} \
+                 OR LOWER(COALESCE(payload->>'assignee','')) LIKE ${idx_assignee})"
+            ));
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone()); // id
+            bindings.push(pattern.clone()); // description
+            bindings.push(pattern.clone()); // progress
+            bindings.push(term.clone()); // type (exact match)
+            bindings.push(term.clone()); // status (exact match)
+            bindings.push(pattern.clone()); // creator
+            bindings.push(pattern); // assignee
+        }
+
+        // Filter deleted issues by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY id, version_number DESC");
+
+        let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut issues = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version("issue", row.schema_version, ISSUE_SCHEMA_VERSION)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for issue '{}'",
+                    row.id
+                ))
+            })?;
+            let issue: Issue =
+                serde_json::from_value(row.payload).map_err(map_serde_error("issue"))?;
+            let issue_id = row.id.parse::<IssueId>().map_err(|err| {
+                StoreError::Internal(format!("invalid issue id stored in database: {err}"))
+            })?;
+            issues.push((issue_id, Versioned::new(issue, version, row.created_at)));
+        }
+
+        Ok(issues)
+    }
+
     async fn fetch_latest_patches(
         &self,
         query: &SearchPatchesQuery,
@@ -820,22 +941,9 @@ impl Store for PostgresStore {
 
     async fn list_issues(
         &self,
-        include_deleted: bool,
+        query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        let rows = self
-            .fetch_versioned_payloads_with_ids::<Issue>(TABLE_ISSUES, "issue", ISSUE_SCHEMA_VERSION)
-            .await?;
-
-        rows.into_iter()
-            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
-            .map(|(id, issue)| {
-                id.parse::<IssueId>()
-                    .map(|issue_id| (issue_id, issue))
-                    .map_err(|err| {
-                        StoreError::Internal(format!("invalid issue id stored in database: {err}"))
-                    })
-            })
-            .collect()
+        self.fetch_latest_issues(query).await
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
@@ -849,7 +957,7 @@ impl Store for PostgresStore {
         &self,
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
-        let issues = self.list_issues(false).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
         let issue_values: Vec<(IssueId, Issue)> = issues
             .into_iter()
             .map(|(id, issue)| (id, issue.item))
@@ -917,7 +1025,7 @@ impl Store for PostgresStore {
 
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_patch_exists(patch_id).await?;
-        let issues = self.list_issues(false).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
 
         Ok(issues
             .into_iter()
@@ -1011,7 +1119,7 @@ impl Store for PostgresStore {
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(false).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
         Ok(issues
             .into_iter()
             .filter_map(|(id, issue)| {
@@ -1030,7 +1138,7 @@ impl Store for PostgresStore {
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues(false).await?;
+        let issues = self.list_issues(&SearchIssuesQuery::default()).await?;
         Ok(issues
             .into_iter()
             .filter_map(|(id, issue)| {
@@ -1549,7 +1657,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let issues: HashSet<_> = store
-            .list_issues(false)
+            .list_issues(&SearchIssuesQuery::default())
             .await
             .unwrap()
             .into_iter()
