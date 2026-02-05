@@ -397,6 +397,7 @@ fn initialize_tracking_branches(
     let mut task_branch_target = head_commit.id();
     let mut task_head_branch = format!("metis/{task_id}/head");
     let mut override_commit = None;
+    let mut checkout_branch = None;
 
     if let Some(override_branch) = task_head_branch_override {
         task_head_branch = override_branch.to_string();
@@ -418,6 +419,7 @@ fn initialize_tracking_branches(
     if let Some(issue_id) = issue_id {
         let issue_base_branch = format!("metis/{issue_id}/base");
         let issue_head_branch = format!("metis/{issue_id}/head");
+        checkout_branch = Some(issue_head_branch.clone());
         if let Some(override_commit) = override_commit.as_ref() {
             set_branch_to_commit(&repo, &issue_base_branch, override_commit.id()).with_context(
                 || format!("failed to align issue base branch '{issue_base_branch}' with override"),
@@ -520,8 +522,9 @@ fn initialize_tracking_branches(
         })?;
     }
 
-    checkout_local_branch(&repo, &task_head_branch).with_context(|| {
-        format!("failed to checkout task head branch '{task_head_branch}' before worker run")
+    let checkout_branch = checkout_branch.unwrap_or(task_head_branch);
+    checkout_local_branch(&repo, &checkout_branch).with_context(|| {
+        format!("failed to checkout tracking branch '{checkout_branch}' before worker run")
     })?;
 
     Ok(())
@@ -984,8 +987,8 @@ mod tests {
             .context("failed to open cloned repository for assertions")?;
         assert_eq!(
             git_current_branch(clone_dir.path())?,
-            task_head_branch,
-            "task head branch should be checked out for worker execution"
+            head_branch,
+            "issue head branch should be checked out for worker execution"
         );
         let head_oid = repo
             .head()?
@@ -1057,6 +1060,11 @@ mod tests {
             cloned_head, initial_issue_head_target,
             "task branches should reuse the existing issue head commit"
         );
+        assert_eq!(
+            git_current_branch(second_clone.path())?,
+            head_branch,
+            "issue head branch should be checked out for worker execution"
+        );
 
         let updated_remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repo for updated branch assertions")?;
@@ -1096,40 +1104,19 @@ mod tests {
     }
 
     #[test]
-    fn initialize_tracking_branches_uses_override_head_branch() -> Result<()> {
+    fn initialize_tracking_branches_without_issue_checks_out_task_head() -> Result<()> {
         let fixture = RemoteFixture::new()?;
-        let override_branch = "metis/t-worker-override/head";
-        let override_commit = fixture.create_branch(override_branch)?;
-        let issue_id = "i-worker-999";
-        let job_id = task_id("t-worker-999");
+        let job_id = task_id("t-worker-no-issue");
         let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
 
-        initialize_tracking_branches(
-            clone_dir.path(),
-            Some(issue_id),
-            &job_id,
-            None,
-            Some(override_branch),
-        )?;
+        initialize_tracking_branches(clone_dir.path(), None, &job_id, None, None)?;
 
+        let task_head_branch = format!("metis/{job_id}/head");
         assert_eq!(
             git_current_branch(clone_dir.path())?,
-            override_branch,
-            "override branch should be checked out for worker execution"
-        );
-
-        let remote_repo = Repository::open(fixture.remote_dir())
-            .context("failed to open remote repository for override assertions")?;
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/metis/{job_id}/base"))?,
-            override_commit,
-            "task base branch should match override branch commit"
-        );
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/metis/{issue_id}/head"))?,
-            override_commit,
-            "issue head branch should align with override branch commit"
+            task_head_branch,
+            "task head branch should be checked out when no issue is provided"
         );
 
         Ok(())
@@ -1227,21 +1214,6 @@ mod tests {
                 upstream_dir,
                 remote_path,
             })
-        }
-
-        fn create_branch(&self, branch: &str) -> Result<Oid> {
-            let repo = Repository::open(self.upstream_dir.path())
-                .context("failed to open upstream repository for branch creation")?;
-            let commit = repo
-                .head()
-                .context("failed to read upstream HEAD")?
-                .peel_to_commit()
-                .context("failed to peel upstream HEAD commit")?;
-            repo.branch(branch, &commit, true)
-                .with_context(|| format!("failed to create branch '{branch}' in upstream repo"))?;
-            git_push_branch(self.upstream_dir.path(), branch, None, false)
-                .with_context(|| format!("failed to push branch '{branch}' to remote fixture"))?;
-            Ok(commit.id())
         }
 
         fn remote_path(&self) -> &str {
