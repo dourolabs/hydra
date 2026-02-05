@@ -8,7 +8,7 @@ use axum::{
     http::request::Parts,
 };
 use chrono::{DateTime, Utc};
-use metis_common::{IssueId, TaskId, VersionNumber, api::v1};
+use metis_common::{TaskId, VersionNumber, api::v1};
 use tracing::{error, info};
 
 pub use metis_common::api::v1::ApiError;
@@ -64,33 +64,19 @@ pub async fn list_jobs(
     );
     let namespace = state.config.metis.namespace.clone();
 
-    let search_term = query
-        .q
-        .as_ref()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty());
-    let spawned_from_filter = query.spawned_from.as_ref();
-    let include_deleted = query.include_deleted.unwrap_or(false);
-
-    // Get all tasks with all statuses
-    let task_ids = state
-        .list_tasks_with_deleted(include_deleted)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to list tasks");
-            ApiError::internal(format!("Failed to list tasks: {err}"))
-        })?;
+    // All filtering (q, spawned_from, include_deleted) is done at the Store level.
+    // Text search (q) matches task ID, prompt, and status (NOT notes).
+    let tasks = state.list_tasks_with_query(&query).await.map_err(|err| {
+        error!(error = %err, "failed to list tasks");
+        ApiError::internal(format!("Failed to list tasks: {err}"))
+    })?;
 
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(v1::jobs::JobRecord, Option<DateTime<Utc>>)> = Vec::new();
-    for task_id in task_ids {
+    for (task_id, _task) in tasks {
         match job_record_with_time_from_state(&state, &task_id).await {
             Ok(summary) => {
-                if spawned_from_matches(spawned_from_filter, &summary.0)
-                    && job_matches(search_term.as_deref(), &summary.0)
-                {
-                    summaries_with_times.push(summary);
-                }
+                summaries_with_times.push(summary);
             }
             Err(err) => {
                 error!(
@@ -309,34 +295,6 @@ fn job_record_with_time(
         v1::jobs::JobRecord::new(job_id.clone(), task.into(), notes, status_log.into()),
         reference_time,
     )
-}
-
-fn spawned_from_matches(expected: Option<&IssueId>, job: &v1::jobs::JobRecord) -> bool {
-    match expected {
-        Some(issue_id) => job.task.spawned_from.as_ref() == Some(issue_id),
-        None => true,
-    }
-}
-
-fn job_matches(search_term: Option<&str>, job: &v1::jobs::JobRecord) -> bool {
-    if let Some(term) = search_term {
-        let lower_term = term.to_lowercase();
-        let contains = |value: &str| value.to_lowercase().contains(&lower_term);
-
-        if contains(job.id.as_ref()) || contains(&job.task.prompt) {
-            return true;
-        }
-
-        if let Some(note) = &job.notes {
-            if contains(note) {
-                return true;
-            }
-        }
-
-        return contains(&format!("{:?}", job.status_log.current_status()));
-    }
-
-    true
 }
 
 fn job_notes_from_status_log(status_log: &TaskStatusLog) -> Option<String> {
