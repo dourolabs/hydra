@@ -1,6 +1,6 @@
 use crate::domain::{
     actors::Actor,
-    patches::{GithubPr, Patch, PatchRecord, SearchPatchesQuery},
+    patches::{GithubPr, Patch},
 };
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -174,7 +174,6 @@ pub async fn list_patches(
     State(state): State<AppState>,
     Query(query): Query<v1::patches::SearchPatchesQuery>,
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
-    let query: SearchPatchesQuery = query.into();
     info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
 
     let search_term = query
@@ -628,6 +627,6 @@ pub async fn delete_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "delete_patch completed");
-    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch.item).into();
+    let response = v1::patches::PatchRecord::new(patch_id, patch.item.into());
     Ok(Json(response))
 }
