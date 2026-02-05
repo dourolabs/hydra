@@ -198,6 +198,8 @@ pub struct Patch {
     pub service_repo_name: RepoName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 impl Patch {
@@ -223,6 +225,7 @@ impl Patch {
             reviews,
             service_repo_name,
             github,
+            deleted: false,
         }
     }
 }
@@ -329,11 +332,13 @@ impl CreatePatchAssetResponse {
 pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 impl SearchPatchesQuery {
-    pub fn new(q: Option<String>) -> Self {
-        Self { q }
+    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
+        Self { q, include_deleted }
     }
 }
 
@@ -415,6 +420,7 @@ mod tests {
     fn search_patches_query_serializes_with_reqwest() {
         let query = SearchPatchesQuery {
             q: Some("test query".to_string()),
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)

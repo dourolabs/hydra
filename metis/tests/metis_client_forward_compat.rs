@@ -579,6 +579,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
             Some("docs/".to_string()),
             None,
             Some(job_id.clone()),
+            None,
         ))
         .await?;
     assert_eq!(documents.documents.len(), 1);

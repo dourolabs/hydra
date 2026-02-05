@@ -197,6 +197,7 @@ mod tests {
             todo_list: Vec::new(),
             dependencies: Vec::new(),
             patches: Vec::new(),
+            deleted: false,
         };
         let updated_issue = Issue {
             description: "Updated".to_string(),
@@ -246,6 +247,7 @@ mod tests {
             reviews: Vec::new(),
             service_repo_name: repo_name.clone(),
             github: None,
+            deleted: false,
         };
         let patch_v2 = Patch {
             title: "v2".to_string(),

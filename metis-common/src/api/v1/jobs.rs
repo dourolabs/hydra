@@ -30,6 +30,8 @@ pub struct Task {
     pub last_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<TaskError>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 impl Task {
@@ -55,6 +57,7 @@ impl Task {
             status: Status::Created,
             last_message: None,
             error: None,
+            deleted: false,
         }
     }
 
@@ -84,6 +87,7 @@ impl Task {
             status,
             last_message,
             error,
+            deleted: false,
         }
     }
 }
@@ -351,6 +355,8 @@ pub struct SearchJobsQuery {
     pub q: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,8 +372,16 @@ impl ListJobVersionsResponse {
 }
 
 impl SearchJobsQuery {
-    pub fn new(q: Option<String>, spawned_from: Option<IssueId>) -> Self {
-        Self { q, spawned_from }
+    pub fn new(
+        q: Option<String>,
+        spawned_from: Option<IssueId>,
+        include_deleted: Option<bool>,
+    ) -> Self {
+        Self {
+            q,
+            spawned_from,
+            include_deleted,
+        }
     }
 }
 
@@ -396,6 +410,7 @@ mod tests {
         let query = SearchJobsQuery {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query)

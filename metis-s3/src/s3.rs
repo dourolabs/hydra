@@ -114,17 +114,17 @@ impl S3State {
 
     fn bucket_dir(&self, bucket: &str) -> Result<PathBuf, S3Error> {
         validate_bucket(bucket)?;
-        Ok(self.root_dir.join(bucket))
+        Ok(self.root_dir.join("buckets").join(bucket))
     }
 
     fn object_path(&self, bucket: &str, key: &str) -> Result<PathBuf, S3Error> {
         validate_bucket(bucket)?;
         let key = sanitize_key(key)?;
-        Ok(self.root_dir.join(bucket).join(key))
+        Ok(self.root_dir.join("buckets").join(bucket).join(key))
     }
 
     fn multipart_dir(&self) -> PathBuf {
-        self.root_dir.join(".multipart")
+        self.root_dir.join("multipart")
     }
 
     fn upload_dir(&self, upload_id: &str) -> PathBuf {
@@ -142,7 +142,6 @@ impl S3State {
 
     /// Returns the path for storing an object's ETag metadata.
     /// Path format: `{root_dir}/metadata/{bucket}/{key}.etag`
-    #[allow(dead_code)] // Used by subsequent ETag caching tasks
     fn metadata_path(&self, bucket: &str, key: &str) -> Result<PathBuf, S3Error> {
         validate_bucket(bucket)?;
         let key = sanitize_key(key)?;
@@ -154,7 +153,6 @@ impl S3State {
     }
 
     /// Creates parent directories for the metadata file as needed.
-    #[allow(dead_code)] // Used by subsequent ETag caching tasks
     async fn ensure_metadata_dir(&self, bucket: &str, key: &str) -> Result<(), S3Error> {
         let path = self.metadata_path(bucket, key)?;
         if let Some(parent) = path.parent() {
@@ -406,8 +404,6 @@ async fn list_objects(
     max_keys: usize,
 ) -> Result<ListResult, S3Error> {
     let bucket_dir = state.bucket_dir(bucket)?;
-    let root_dir = state.root_dir.clone();
-    let bucket_name = bucket.to_string();
     let prefix = prefix.to_string();
     let marker = continuation_token.or(start_after);
 
@@ -431,16 +427,12 @@ async fn list_objects(
                 continue;
             }
 
-            let relative = entry
+            let key = entry
                 .path()
-                .strip_prefix(&root_dir)
-                .map_err(|err| S3Error::io("computing object key", err))?;
-            let key = relative.to_string_lossy().replace('\\', "/");
-            let key = key
-                .strip_prefix(&bucket_name)
-                .and_then(|value| value.strip_prefix('/'))
-                .unwrap_or(&key)
-                .to_string();
+                .strip_prefix(&bucket_dir)
+                .map_err(|err| S3Error::io("computing object key", err))?
+                .to_string_lossy()
+                .replace('\\', "/");
 
             // Skip entries that don't match the prefix
             if !prefix.is_empty() && !key.starts_with(&prefix) {
@@ -554,6 +546,17 @@ async fn put_object(
     }
 
     let etag = compute_etag(&body);
+
+    // Write ETag to metadata cache (non-fatal on failure)
+    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &etag).await {
+        warn!(
+            bucket = %bucket,
+            key = %key,
+            error = %err.message,
+            "failed to write ETag to metadata cache"
+        );
+    }
+
     let mut response = Response::new(axum::body::Body::empty());
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
@@ -1457,6 +1460,21 @@ async fn write_file(path: &StdPath, body: &Bytes) -> Result<(), std::io::Error> 
     Ok(())
 }
 
+/// Writes an ETag to the metadata cache for an object.
+async fn write_etag_metadata(
+    state: &S3State,
+    bucket: &str,
+    key: &str,
+    etag: &str,
+) -> Result<(), S3Error> {
+    state.ensure_metadata_dir(bucket, key).await?;
+    let metadata_path = state.metadata_path(bucket, key)?;
+    tokio::fs::write(&metadata_path, etag)
+        .await
+        .map_err(|e| S3Error::io("write ETag metadata", e))?;
+    Ok(())
+}
+
 fn render_list_response(
     bucket: &str,
     prefix: &str,
@@ -1999,7 +2017,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify staging directory was cleaned up
-        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        let multipart_dir = dir.path().join("multipart").join(upload_id);
         assert!(
             !multipart_dir.exists(),
             "staging directory should be cleaned up"
@@ -2051,7 +2069,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // Verify staging directory exists
-        let multipart_dir = dir.path().join(".multipart").join(upload_id);
+        let multipart_dir = dir.path().join("multipart").join(upload_id);
         assert!(
             multipart_dir.exists(),
             "staging directory should exist before abort"
@@ -2632,6 +2650,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn put_object_creates_etag_metadata_file() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = b"test content";
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/test-bucket/test-key.txt")
+                    .body(Body::from(payload.as_slice()))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify ETag metadata file was created
+        let etag_path = dir.path().join("metadata/test-bucket/test-key.txt.etag");
+        assert!(etag_path.exists(), "ETag metadata file should exist");
+
+        // Verify the ETag file contains the correct quoted MD5 hash
+        let etag_content = std::fs::read_to_string(&etag_path).expect("read etag file");
+        let expected_etag = compute_etag(&Bytes::from(payload.as_slice()));
+        assert_eq!(etag_content, expected_etag);
+
+        // Verify it matches the ETag header in the response
+        let response_etag = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag string");
+        assert_eq!(etag_content, response_etag);
+    }
+
+    #[tokio::test]
+    async fn put_object_creates_etag_for_nested_keys() {
+        let dir = tempdir().expect("temp dir");
+        let router: axum::Router = RouterWithState::new(Arc::new(
+            S3State::new(dir.path().to_path_buf()).expect("state"),
+        ))
+        .into();
+
+        let payload = b"nested content";
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/my-bucket/path/to/nested/file.bin")
+                    .body(Body::from(payload.as_slice()))
+                    .unwrap(),
+            )
+            .await
+            .expect("put response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify ETag metadata file was created at the correct nested path
+        let etag_path = dir
+            .path()
+            .join("metadata/my-bucket/path/to/nested/file.bin.etag");
+        assert!(etag_path.exists(), "ETag metadata file should exist");
+
+        let etag_content = std::fs::read_to_string(&etag_path).expect("read etag file");
+        let expected_etag = compute_etag(&Bytes::from(payload.as_slice()));
+        assert_eq!(etag_content, expected_etag);
+    }
+
+    #[tokio::test]
     async fn delete_object_removes_etag_metadata_file() {
         let dir = tempdir().expect("temp dir");
         let state = Arc::new(S3State::new(dir.path().to_path_buf()).expect("state"));
@@ -2691,7 +2781,7 @@ mod tests {
         let state = Arc::new(S3State::new(dir.path().to_path_buf()).expect("state"));
         let router: axum::Router = RouterWithState::new(state.clone()).into();
 
-        // PUT an object (without any metadata file)
+        // PUT an object (this will create a metadata file)
         let response = router
             .clone()
             .oneshot(
@@ -2705,10 +2795,15 @@ mod tests {
             .expect("put response");
         assert_eq!(response.status(), StatusCode::OK);
 
-        // Ensure no metadata file exists
+        // Manually remove the metadata file to simulate a missing metadata scenario
         let metadata_path = state
             .metadata_path("test-bucket", "noetag/key.txt")
             .unwrap();
+        if metadata_path.exists() {
+            tokio::fs::remove_file(&metadata_path)
+                .await
+                .expect("remove metadata file");
+        }
         assert!(
             !metadata_path.exists(),
             "metadata file should not exist for this test"

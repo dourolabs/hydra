@@ -367,6 +367,8 @@ pub struct Issue {
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl Issue {
@@ -394,6 +396,7 @@ impl Issue {
             todo_list,
             dependencies,
             patches,
+            deleted: false,
         }
     }
 }
@@ -537,6 +540,8 @@ pub struct SearchIssuesQuery {
         deserialize_with = "deserialize_graph_filters"
     )]
     pub graph_filters: Vec<IssueGraphFilter>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -849,13 +854,14 @@ impl From<api::issues::Issue> for Issue {
             todo_list: value.todo_list.into_iter().map(Into::into).collect(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
+            deleted: value.deleted,
         }
     }
 }
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        let mut issue = api::issues::Issue::new(
             value.issue_type.into(),
             value.description,
             value.creator.into(),
@@ -866,7 +872,9 @@ impl From<Issue> for api::issues::Issue {
             value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
-        )
+        );
+        issue.deleted = value.deleted;
+        issue
     }
 }
 
@@ -922,6 +930,7 @@ impl From<api::issues::SearchIssuesQuery> for SearchIssuesQuery {
             assignee: value.assignee,
             q: value.q,
             graph_filters: value.graph_filters.into_iter().map(Into::into).collect(),
+            include_deleted: value.include_deleted,
         }
     }
 }
@@ -942,6 +951,7 @@ impl TryFrom<SearchIssuesQuery> for api::issues::SearchIssuesQuery {
             value.assignee,
             value.q,
             graph_filters,
+            value.include_deleted,
         ))
     }
 }
@@ -1052,6 +1062,7 @@ mod tests {
             assignee: Some("alice".to_string()),
             q: Some("test query".to_string()),
             graph_filters: vec![IssueGraphFilter::from_str(&filter).unwrap()],
+            include_deleted: None,
         };
 
         let params = serialize_query_params(&query);
@@ -1102,6 +1113,7 @@ mod tests {
                     issue_id: dependency_id,
                 }],
                 patches: vec![patch_id.clone()],
+                deleted: false,
             },
             job_id: Some(TaskId::new()),
         };
