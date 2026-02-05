@@ -158,6 +158,7 @@ impl TestEnvironment {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
         );
         let response = self
             .client
@@ -186,6 +187,7 @@ impl TestEnvironment {
             Vec::new(),
             self.service_repo_name.clone(),
             github,
+            false,
         );
         let response = self
             .client
@@ -291,6 +293,7 @@ async fn init_test_server_with_remote_internal(
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
             None,
         ))

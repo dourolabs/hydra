@@ -434,6 +434,7 @@ impl Issue {
         todo_list: Vec<TodoItem>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
+        deleted: bool,
     ) -> Self {
         Self {
             issue_type,
@@ -446,7 +447,7 @@ impl Issue {
             todo_list,
             dependencies,
             patches,
-            deleted: false,
+            deleted,
         }
     }
 }

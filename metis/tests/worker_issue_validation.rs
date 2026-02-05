@@ -48,6 +48,7 @@ async fn worker_rejects_closing_parent_with_open_child_issue() -> Result<()> {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
         ),
         None,
     );
@@ -136,6 +137,7 @@ async fn worker_rejects_closing_issue_with_open_todos() -> Result<()> {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
         ),
         None,
     );

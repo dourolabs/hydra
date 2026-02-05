@@ -763,7 +763,7 @@ mod tests {
         for index in 0..25 {
             body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
         }
-        let document = Document::new("Doc".to_string(), body_lines.join("\n"))
+        let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
         let record = DocumentRecord::new(DocumentId::new(), document);
@@ -783,7 +783,7 @@ mod tests {
         for index in 0..25 {
             body_lines.push(format!("line {index:02} {}", "x".repeat(10)));
         }
-        let document = Document::new("Doc".to_string(), body_lines.join("\n"))
+        let document = Document::new("Doc".to_string(), body_lines.join("\n"), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
         let record = DocumentRecord::new(DocumentId::new(), document);

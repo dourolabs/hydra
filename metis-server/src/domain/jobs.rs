@@ -256,7 +256,7 @@ impl From<api::jobs::Task> for Task {
 
 impl From<Task> for api::jobs::Task {
     fn from(value: Task) -> Self {
-        let mut task = api::jobs::Task::new_with_status(
+        api::jobs::Task::new_with_status(
             value.prompt,
             value.context.into(),
             value.spawned_from,
@@ -268,9 +268,8 @@ impl From<Task> for api::jobs::Task {
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
-        );
-        task.deleted = value.deleted;
-        task
+            value.deleted,
+        )
     }
 }
 
