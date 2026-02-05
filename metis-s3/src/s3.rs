@@ -404,6 +404,7 @@ async fn list_objects(
     max_keys: usize,
 ) -> Result<ListResult, S3Error> {
     let bucket_dir = state.bucket_dir(bucket)?;
+    let metadata_dir = state.root_dir.join("metadata").join(bucket);
     let prefix = prefix.to_string();
     let marker = continuation_token.or(start_after);
 
@@ -451,7 +452,10 @@ async fn list_objects(
                 .map_err(|err| S3Error::io("reading metadata", err))?;
             let last_modified = metadata.modified().ok();
             let size = metadata.len();
-            let etag = compute_etag_from_path(entry.path()).ok();
+
+            // Read ETag from metadata cache, falling back to computing if missing
+            let metadata_path = metadata_dir.join(format!("{key}.etag"));
+            let etag = read_etag_with_fallback_sync(&metadata_path, entry.path());
 
             let obj = ObjectEntry {
                 key,
@@ -610,17 +614,17 @@ async fn get_object(
     let total_len = metadata.len();
     let last_modified = metadata.modified().ok();
 
-    // Compute ETag incrementally without loading entire file into memory
-    let etag = match compute_etag_from_path(&path) {
+    // Read ETag from metadata cache (falls back to computing if cache missing)
+    let etag = match read_etag_with_fallback(&state, &bucket, &key, &path).await {
         Ok(etag) => etag,
         Err(err) => {
             error!(
                 bucket = %bucket,
                 key = %key,
                 error = %err,
-                "get_object failed: computing etag"
+                "get_object failed: reading etag"
             );
-            return S3Error::io("computing etag", err).into_response();
+            return S3Error::io("reading etag", err).into_response();
         }
     };
 
@@ -728,16 +732,17 @@ async fn head_object(
         }
     };
 
-    let etag = match compute_etag_from_path(&path) {
+    // Read ETag from metadata cache (falls back to computing if cache missing)
+    let etag = match read_etag_with_fallback(&state, &bucket, &key, &path).await {
         Ok(etag) => etag,
         Err(err) => {
             error!(
                 bucket = %bucket,
                 key = %key,
                 error = %err,
-                "head_object failed: reading object for etag"
+                "head_object failed: reading etag"
             );
-            return S3Error::io("reading object", err).into_response();
+            return S3Error::io("reading etag", err).into_response();
         }
     };
     response_with_body(Vec::new(), metadata.modified().ok(), metadata.len(), etag)
@@ -1484,6 +1489,42 @@ async fn write_etag_metadata(
         .await
         .map_err(|e| S3Error::io("write ETag metadata", e))?;
     Ok(())
+}
+
+/// Reads an ETag from the metadata cache for an object.
+/// Returns None if the cache file doesn't exist.
+async fn read_cached_etag(state: &S3State, bucket: &str, key: &str) -> Option<String> {
+    let metadata_path = state.metadata_path(bucket, key).ok()?;
+    let contents = tokio::fs::read_to_string(&metadata_path).await.ok()?;
+    Some(contents)
+}
+
+/// Reads an ETag from the metadata cache, falling back to computing it from the object file.
+/// Used for backwards compatibility with objects created before ETag caching.
+async fn read_etag_with_fallback(
+    state: &S3State,
+    bucket: &str,
+    key: &str,
+    object_path: &StdPath,
+) -> Result<String, std::io::Error> {
+    // Try to read from cache first
+    if let Some(etag) = read_cached_etag(state, bucket, key).await {
+        return Ok(etag);
+    }
+
+    // Fall back to computing ETag from the object file
+    compute_etag_from_path(object_path)
+}
+
+/// Synchronous version of read_etag_with_fallback for use in spawn_blocking contexts.
+fn read_etag_with_fallback_sync(metadata_path: &StdPath, object_path: &StdPath) -> Option<String> {
+    // Try to read from cache first
+    if let Ok(contents) = std::fs::read_to_string(metadata_path) {
+        return Some(contents);
+    }
+
+    // Fall back to computing ETag from the object file
+    compute_etag_from_path(object_path).ok()
 }
 
 fn render_list_response(
