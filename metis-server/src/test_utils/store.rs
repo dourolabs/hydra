@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -102,7 +103,7 @@ impl Store for FailingStore {
 
     async fn list_patches(
         &self,
-        _include_deleted: bool,
+        _query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         fail()
     }

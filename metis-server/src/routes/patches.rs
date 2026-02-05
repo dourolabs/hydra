@@ -1,7 +1,4 @@
-use crate::domain::{
-    actors::Actor,
-    patches::{GithubPr, Patch},
-};
+use crate::domain::{actors::Actor, patches::GithubPr};
 use crate::{
     app::{AppState, UpsertPatchError},
     store::StoreError,
@@ -176,25 +173,17 @@ pub async fn list_patches(
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
     info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
 
-    let search_term = query
-        .q
-        .as_ref()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty());
-    let include_deleted = query.include_deleted.unwrap_or(false);
-
     let patches = state
-        .list_patches_with_deleted(include_deleted)
+        .list_patches_with_query(&query)
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
-    let filtered: Vec<v1::patches::PatchRecord> = patches
+    let records: Vec<v1::patches::PatchRecord> = patches
         .into_iter()
-        .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, &patch.item))
         .map(|(id, patch)| v1::patches::PatchRecord::new(id, patch.item.into()))
         .collect();
 
-    let response = v1::patches::ListPatchesResponse::new(filtered);
+    let response = v1::patches::ListPatchesResponse::new(records);
     info!(
         query = ?query.q,
         returned = response.patches.len(),
@@ -300,46 +289,6 @@ pub async fn create_patch_asset(
 
     info!(patch_id = %patch_id, asset_url = %asset_url, "create_patch_asset completed");
     Ok(Json(v1::patches::CreatePatchAssetResponse::new(asset_url)))
-}
-
-fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
-    if let Some(term) = search_term {
-        let lower_id = patch_id.to_string().to_lowercase();
-        if lower_id.contains(term) {
-            return true;
-        }
-
-        return patch.title.to_lowercase().contains(term)
-            || patch.description.to_lowercase().contains(term)
-            || format!("{:?}", patch.status).to_lowercase().contains(term)
-            || patch
-                .service_repo_name
-                .to_string()
-                .to_lowercase()
-                .contains(term)
-            || patch.diff.to_lowercase().contains(term)
-            || patch
-                .github
-                .as_ref()
-                .map(|github| {
-                    github.owner.to_lowercase().contains(term)
-                        || github.repo.to_lowercase().contains(term)
-                        || github.number.to_string().contains(term)
-                        || github
-                            .head_ref
-                            .as_deref()
-                            .map(|value| value.to_lowercase().contains(term))
-                            .unwrap_or(false)
-                        || github
-                            .base_ref
-                            .as_deref()
-                            .map(|value| value.to_lowercase().contains(term))
-                            .unwrap_or(false)
-                })
-                .unwrap_or(false);
-    }
-
-    true
 }
 
 #[derive(Debug, Deserialize)]

@@ -17,6 +17,7 @@ use crate::domain::{
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
+use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -89,6 +90,47 @@ impl MemoryStore {
 
     fn versioned_at<T>(item: T, version: VersionNumber, timestamp: DateTime<Utc>) -> Versioned<T> {
         Versioned::new(item, version, timestamp)
+    }
+
+    /// Returns true if the patch matches the search term.
+    fn patch_matches(search_term: Option<&str>, patch_id: &PatchId, patch: &Patch) -> bool {
+        let Some(term) = search_term else {
+            return true;
+        };
+
+        let lower_id = patch_id.to_string().to_lowercase();
+        if lower_id.contains(term) {
+            return true;
+        }
+
+        patch.title.to_lowercase().contains(term)
+            || patch.description.to_lowercase().contains(term)
+            || format!("{:?}", patch.status).to_lowercase().contains(term)
+            || patch
+                .service_repo_name
+                .to_string()
+                .to_lowercase()
+                .contains(term)
+            || patch.diff.to_lowercase().contains(term)
+            || patch
+                .github
+                .as_ref()
+                .map(|github| {
+                    github.owner.to_lowercase().contains(term)
+                        || github.repo.to_lowercase().contains(term)
+                        || github.number.to_string().contains(term)
+                        || github
+                            .head_ref
+                            .as_deref()
+                            .map(|value| value.to_lowercase().contains(term))
+                            .unwrap_or(false)
+                        || github
+                            .base_ref
+                            .as_deref()
+                            .map(|value| value.to_lowercase().contains(term))
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false)
     }
 
     /// Updates issue adjacency indexes to match the provided dependency list.
@@ -508,14 +550,24 @@ impl Store for MemoryStore {
 
     async fn list_patches(
         &self,
-        include_deleted: bool,
+        query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
         Ok(self
             .patches
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
                 if !include_deleted && latest.item.deleted {
+                    return None;
+                }
+                if !Self::patch_matches(search_term.as_deref(), entry.key(), &latest.item) {
                     return None;
                 }
                 Some((entry.key().clone(), latest))
@@ -1010,7 +1062,7 @@ mod tests {
                 IssueType,
             },
             jobs::BundleSpec,
-            patches::{Patch, PatchStatus},
+            patches::{GithubPr, Patch, PatchStatus},
             task_status::Event,
             users::{User, Username},
         },
@@ -2348,7 +2400,10 @@ mod tests {
         let patch_id = store.add_patch(sample_patch()).await.unwrap();
 
         // Patch should be visible in list initially
-        let patches = store.list_patches(false).await.unwrap();
+        let patches = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap();
         assert_eq!(patches.len(), 1);
         assert!(!patches[0].1.item.deleted);
 
@@ -2356,17 +2411,221 @@ mod tests {
         store.delete_patch(&patch_id).await.unwrap();
 
         // Deleted patch should not appear in default list
-        let patches = store.list_patches(false).await.unwrap();
+        let patches = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap();
         assert!(patches.is_empty());
 
         // Deleted patch should appear with include_deleted=true
-        let patches = store.list_patches(true).await.unwrap();
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(None, Some(true)))
+            .await
+            .unwrap();
         assert_eq!(patches.len(), 1);
         assert!(patches[0].1.item.deleted);
 
         // get_patch should still return the deleted patch
         let patch = store.get_patch(&patch_id).await.unwrap();
         assert!(patch.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_search_term() {
+        let store = MemoryStore::new();
+
+        // Create patches with different titles and descriptions
+        let mut patch1 = sample_patch();
+        patch1.title = "first patch".to_string();
+        patch1.description = "adds the login feature".to_string();
+        let patch1_id = store.add_patch(patch1).await.unwrap();
+
+        let mut patch2 = sample_patch();
+        patch2.title = "second patch".to_string();
+        patch2.description = "fixes authentication bug".to_string();
+        let patch2_id = store.add_patch(patch2).await.unwrap();
+
+        let mut patch3 = sample_patch();
+        patch3.title = "third update".to_string();
+        patch3.description = "refactors login module".to_string();
+        store.add_patch(patch3).await.unwrap();
+
+        // Search by title
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("first".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+
+        // Search by description
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("authentication".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch2_id);
+
+        // Search term matching multiple patches (login)
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("login".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 2);
+
+        // Search by patch (matches all)
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("patch".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 2); // patch1 and patch2, patch3 has "update" in title
+
+        // No matches
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("nonexistent".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert!(patches.is_empty());
+
+        // Empty query returns all
+        let patches = store
+            .list_patches(&SearchPatchesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 3);
+
+        // Whitespace-only query returns all
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("   ".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_patches_filters_by_github_fields() {
+        let store = MemoryStore::new();
+
+        let mut patch1 = sample_patch();
+        patch1.github = Some(GithubPr::new(
+            "orgxyz".to_string(),
+            "repoabc".to_string(),
+            123,
+            Some("feature/login".to_string()),
+            Some("main".to_string()),
+            None,
+            None,
+        ));
+        let patch1_id = store.add_patch(patch1).await.unwrap();
+
+        let mut patch2 = sample_patch();
+        patch2.github = Some(GithubPr::new(
+            "acme".to_string(),
+            "project".to_string(),
+            456,
+            Some("bugfix/auth".to_string()),
+            Some("develop".to_string()),
+            None,
+            None,
+        ));
+        let patch2_id = store.add_patch(patch2).await.unwrap();
+
+        // Search by github owner
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("orgxyz".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+
+        // Search by github repo (patch1 has "repoabc")
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("repoabc".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+
+        // Search by github repo (patch2 has "project")
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("project".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch2_id);
+
+        // Search by PR number
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("123".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+
+        // Search by head ref
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("feature/login".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch1_id);
+
+        // Search by base ref
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(Some("develop".to_string()), None))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch2_id);
+    }
+
+    #[tokio::test]
+    async fn list_patches_search_is_case_insensitive() {
+        let store = MemoryStore::new();
+
+        let mut patch = sample_patch();
+        patch.title = "Important Feature".to_string();
+        let patch_id = store.add_patch(patch).await.unwrap();
+
+        // Search with different cases
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("important".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch_id);
+
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("IMPORTANT".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch_id);
+
+        let patches = store
+            .list_patches(&SearchPatchesQuery::new(
+                Some("ImPoRtAnT".to_string()),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, patch_id);
     }
 
     #[tokio::test]
