@@ -461,6 +461,19 @@ impl AppState {
         store.list_patches(false).await
     }
 
+    pub async fn list_patches_with_deleted(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_patches(include_deleted).await
+    }
+
+    pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<(), StoreError> {
+        let store = self.store.as_ref();
+        store.delete_patch(patch_id).await
+    }
+
     pub async fn upsert_document(
         &self,
         document_id: Option<DocumentId>,
@@ -562,6 +575,11 @@ impl AppState {
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let store = self.store.as_ref();
         store.list_documents(query).await
+    }
+
+    pub async fn delete_document(&self, document_id: &DocumentId) -> Result<(), StoreError> {
+        let store = self.store.as_ref();
+        store.delete_document(document_id).await
     }
 
     pub async fn get_documents_by_path(
@@ -1927,10 +1945,34 @@ impl AppState {
         store.list_issues(false).await
     }
 
+    pub async fn list_issues_with_deleted(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        let store = self.store.as_ref();
+        store.list_issues(include_deleted).await
+    }
+
+    pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<(), StoreError> {
+        let store = self.store.as_ref();
+        store.delete_issue(issue_id).await
+    }
+
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store
             .list_tasks(false)
+            .await
+            .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
+    }
+
+    pub async fn list_tasks_with_deleted(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<TaskId>, StoreError> {
+        let store = self.store.as_ref();
+        store
+            .list_tasks(include_deleted)
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }

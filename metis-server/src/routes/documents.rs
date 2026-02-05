@@ -117,7 +117,7 @@ pub async fn list_documents(
     State(state): State<AppState>,
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
-    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, "list_documents invoked");
+    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, include_deleted = ?query.include_deleted, "list_documents invoked");
     let query: SearchDocumentsQuery = query.into();
     let documents = state
         .list_documents(&query)
@@ -238,4 +238,24 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
             ApiError::internal(anyhow!("document store operation failed: {source}"))
         }
     }
+}
+
+pub async fn delete_document(
+    State(state): State<AppState>,
+    DocumentIdPath(document_id): DocumentIdPath,
+) -> Result<Json<v1::documents::DocumentRecord>, ApiError> {
+    info!(document_id = %document_id, "delete_document invoked");
+    state
+        .delete_document(&document_id)
+        .await
+        .map_err(|err| map_document_error(err, Some(&document_id)))?;
+
+    let document = state
+        .get_document(&document_id)
+        .await
+        .map_err(|err| map_document_error(err, Some(&document_id)))?;
+
+    info!(document_id = %document_id, "delete_document completed");
+    let response = v1::documents::DocumentRecord::new(document_id, document.item.into());
+    Ok(Json(response))
 }

@@ -202,6 +202,7 @@ pub async fn list_issues(
         assignee = ?query.assignee,
         query = ?query.q,
         graph_filters = ?query.graph_filters,
+        include_deleted = ?query.include_deleted,
         "list_issues invoked"
     );
 
@@ -215,9 +216,10 @@ pub async fn list_issues(
         .as_ref()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
+    let include_deleted = query.include_deleted.unwrap_or(false);
 
     let issues = state
-        .list_issues()
+        .list_issues_with_deleted(include_deleted)
         .await
         .map_err(|err| map_issue_error(err, None))?;
 
@@ -491,4 +493,24 @@ fn map_todo_error(err: UpdateTodoListError) -> ApiError {
         }
         UpdateTodoListError::Store { issue_id, source } => map_issue_error(source, Some(&issue_id)),
     }
+}
+
+pub async fn delete_issue(
+    State(state): State<AppState>,
+    IssueIdPath(issue_id): IssueIdPath,
+) -> Result<Json<v1::issues::IssueRecord>, ApiError> {
+    info!(issue_id = %issue_id, "delete_issue invoked");
+    state
+        .delete_issue(&issue_id)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    let issue = state
+        .get_issue(&issue_id)
+        .await
+        .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
+
+    info!(issue_id = %issue_id, "delete_issue completed");
+    let response: v1::issues::IssueRecord = IssueRecord::new(issue_id, issue.item).into();
+    Ok(Json(response))
 }

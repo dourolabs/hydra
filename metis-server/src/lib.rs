@@ -60,7 +60,9 @@ pub async fn run_with_state(
         )
         .route(
             "/v1/issues/:issue_id",
-            get(routes::issues::get_issue).put(routes::issues::update_issue),
+            get(routes::issues::get_issue)
+                .put(routes::issues::update_issue)
+                .delete(routes::issues::delete_issue),
         )
         .route(
             "/v1/issues/:issue_id/versions",
@@ -88,7 +90,9 @@ pub async fn run_with_state(
         )
         .route(
             "/v1/patches/:patch_id",
-            get(routes::patches::get_patch).put(routes::patches::update_patch),
+            get(routes::patches::get_patch)
+                .put(routes::patches::update_patch)
+                .delete(routes::patches::delete_patch),
         )
         .route(
             "/v1/patches/:patch_id/versions",
@@ -108,7 +112,9 @@ pub async fn run_with_state(
         )
         .route(
             "/v1/documents/:document_id",
-            get(routes::documents::get_document).put(routes::documents::update_document),
+            get(routes::documents::get_document)
+                .put(routes::documents::update_document)
+                .delete(routes::documents::delete_document),
         )
         .route(
             "/v1/documents/:document_id/versions",

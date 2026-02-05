@@ -62,6 +62,7 @@ pub async fn list_jobs(
     info!(
         query = ?query.q,
         spawned_from = ?query.spawned_from,
+        include_deleted = ?query.include_deleted,
         "list_jobs invoked"
     );
     let namespace = state.config.metis.namespace.clone();
@@ -72,12 +73,16 @@ pub async fn list_jobs(
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
     let spawned_from_filter = query.spawned_from.as_ref();
+    let include_deleted = query.include_deleted.unwrap_or(false);
 
     // Get all tasks with all statuses
-    let task_ids = state.list_tasks().await.map_err(|err| {
-        error!(error = %err, "failed to list tasks");
-        ApiError::internal(format!("Failed to list tasks: {err}"))
-    })?;
+    let task_ids = state
+        .list_tasks_with_deleted(include_deleted)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to list tasks");
+            ApiError::internal(format!("Failed to list tasks: {err}"))
+        })?;
 
     // Collect all summaries with their reference times for sorting
     let mut summaries_with_times: Vec<(JobRecord, Option<DateTime<Utc>>)> = Vec::new();

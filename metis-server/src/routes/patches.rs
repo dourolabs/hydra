@@ -178,7 +178,7 @@ pub async fn list_patches(
     State(state): State<AppState>,
     Query(query): Query<v1::patches::SearchPatchesQuery>,
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
-    info!(query = ?query.q, "list_patches invoked");
+    info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
     let query: SearchPatchesQuery = query.into();
 
     let search_term = query
@@ -186,9 +186,10 @@ pub async fn list_patches(
         .as_ref()
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
+    let include_deleted = query.include_deleted.unwrap_or(false);
 
     let patches = state
-        .list_patches()
+        .list_patches_with_deleted(include_deleted)
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
@@ -613,4 +614,24 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
             ApiError::internal(anyhow!("patch store error: {other}"))
         }
     }
+}
+
+pub async fn delete_patch(
+    State(state): State<AppState>,
+    PatchIdPath(patch_id): PatchIdPath,
+) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
+    info!(patch_id = %patch_id, "delete_patch invoked");
+    state
+        .delete_patch(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    let patch = state
+        .get_patch(&patch_id)
+        .await
+        .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    info!(patch_id = %patch_id, "delete_patch completed");
+    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch.item).into();
+    Ok(Json(response))
 }
