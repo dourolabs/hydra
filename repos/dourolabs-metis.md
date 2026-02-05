@@ -58,7 +58,7 @@ Rust workspace powering the Metis CLI, API server, UI, and supporting services. 
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 
-## Images & Scripts
+## Images and Scripts
 - Dockerfiles: `images/`
 - Helper scripts: `scripts/`
 
