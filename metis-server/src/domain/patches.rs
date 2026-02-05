@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
-use metis_common::{RepoName, TaskId};
+use metis_common::{PatchId, RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -430,6 +430,41 @@ impl From<api::patches::GithubCiStatus> for GithubCiStatus {
 impl From<GithubCiStatus> for api::patches::GithubCiStatus {
     fn from(value: GithubCiStatus) -> Self {
         api::patches::GithubCiStatus::new(value.state.into(), value.failure.map(Into::into))
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchPatchesQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+}
+
+impl From<api::patches::SearchPatchesQuery> for SearchPatchesQuery {
+    fn from(value: api::patches::SearchPatchesQuery) -> Self {
+        Self {
+            q: value.q,
+            include_deleted: value.include_deleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchRecord {
+    pub id: PatchId,
+    pub patch: Patch,
+}
+
+impl PatchRecord {
+    pub fn new(id: PatchId, patch: Patch) -> Self {
+        Self { id, patch }
+    }
+}
+
+impl From<PatchRecord> for api::patches::PatchRecord {
+    fn from(value: PatchRecord) -> Self {
+        api::patches::PatchRecord::new(value.id, value.patch.into())
     }
 }
 
