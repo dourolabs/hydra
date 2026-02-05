@@ -437,6 +437,11 @@ impl PostgresStore {
             bindings.push(pattern);
         }
 
+        // Filter deleted documents by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
+        }
+
         if !predicates.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
@@ -714,14 +719,14 @@ impl Store for PostgresStore {
 
     async fn list_issues(
         &self,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Issue>(TABLE_ISSUES, "issue", ISSUE_SCHEMA_VERSION)
             .await?;
 
         rows.into_iter()
+            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
             .map(|(id, issue)| {
                 id.parse::<IssueId>()
                     .map(|issue_id| (issue_id, issue))
@@ -797,9 +802,8 @@ impl Store for PostgresStore {
 
     async fn list_patches(
         &self,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Patch>(
                 TABLE_PATCHES,
@@ -809,6 +813,7 @@ impl Store for PostgresStore {
             .await?;
 
         rows.into_iter()
+            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
             .map(|(id, patch)| {
                 id.parse::<PatchId>()
                     .map(|patch_id| (patch_id, patch))
@@ -1065,14 +1070,14 @@ impl Store for PostgresStore {
 
     async fn list_tasks(
         &self,
-        _include_deleted: bool,
+        include_deleted: bool,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
             .await?;
 
         rows.into_iter()
+            .filter(|(_, versioned)| include_deleted || !versioned.item.deleted)
             .map(|(id, task)| {
                 let task_id = id.parse::<TaskId>().map_err(|err| {
                     StoreError::Internal(format!("invalid task id stored in database: {err}"))

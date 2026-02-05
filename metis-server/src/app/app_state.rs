@@ -9,7 +9,7 @@ use crate::{
             TodoItem, UpsertIssueRequest,
         },
         jobs::{BundleSpec, CreateJobRequest},
-        patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
+        patches::{GithubPr, Patch, PatchStatus},
         users::{User, UserSummary, Username},
     },
     job_engine::{JobEngine, JobEngineError, JobStatus},
@@ -1318,12 +1318,14 @@ impl AppState {
         &self,
         actor: Option<&Actor>,
         patch_id: Option<PatchId>,
-        request: UpsertPatchRequest,
+        request: api::patches::UpsertPatchRequest,
     ) -> Result<PatchId, UpsertPatchError> {
-        let UpsertPatchRequest {
-            mut patch,
+        let api::patches::UpsertPatchRequest {
+            patch,
             sync_github_branch,
+            ..
         } = request;
+        let mut patch: Patch = patch.into();
 
         let mut should_close_merge_requests = false;
         let mut should_create_merge_request = false;
@@ -2306,7 +2308,7 @@ mod tests {
                 TodoItem, UpsertIssueRequest,
             },
             jobs::{BundleSpec, Task},
-            patches::{GithubPr, Patch, PatchStatus, UpsertPatchRequest},
+            patches::{GithubPr, Patch, PatchStatus},
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
@@ -2319,7 +2321,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use httpmock::Method::PATCH;
     use httpmock::prelude::*;
-    use metis_common::{IssueId, RepoName, TaskId};
+    use metis_common::{IssueId, RepoName, TaskId, api::v1 as api};
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
@@ -2520,10 +2522,8 @@ mod tests {
             repo_name,
             None,
         );
-        let request = UpsertPatchRequest {
-            patch: request_patch,
-            sync_github_branch: Some(String::from("feature")),
-        };
+        let request = api::patches::UpsertPatchRequest::new(request_patch.into())
+            .with_sync_github_branch("feature");
 
         handles
             .state
@@ -2617,10 +2617,8 @@ mod tests {
             repo_name,
             None,
         );
-        let request = UpsertPatchRequest {
-            patch,
-            sync_github_branch: Some(String::from("metis-t-test")),
-        };
+        let request = api::patches::UpsertPatchRequest::new(patch.into())
+            .with_sync_github_branch("metis-t-test");
 
         let patch_id = handles
             .state

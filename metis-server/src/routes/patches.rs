@@ -1,8 +1,6 @@
 use crate::domain::{
     actors::Actor,
-    patches::{
-        GithubPr, ListPatchesResponse, Patch, PatchRecord, SearchPatchesQuery, UpsertPatchRequest,
-    },
+    patches::{GithubPr, Patch, PatchRecord, SearchPatchesQuery},
 };
 use crate::{
     app::{AppState, UpsertPatchError},
@@ -74,9 +72,8 @@ pub async fn create_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!("create_patch invoked");
-    let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(Some(&actor), None, request)
+        .upsert_patch(Some(&actor), None, payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -91,9 +88,8 @@ pub async fn update_patch(
     Json(payload): Json<v1::patches::UpsertPatchRequest>,
 ) -> Result<Json<v1::patches::UpsertPatchResponse>, ApiError> {
     info!(patch_id = %patch_id, "update_patch invoked");
-    let request: UpsertPatchRequest = payload.into();
     let patch_id = state
-        .upsert_patch(Some(&actor), Some(patch_id), request)
+        .upsert_patch(Some(&actor), Some(patch_id), payload)
         .await
         .map_err(map_upsert_patch_error)?;
 
@@ -112,7 +108,7 @@ pub async fn get_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     info!(patch_id = %patch_id, "get_patch completed");
-    let response: v1::patches::PatchRecord = PatchRecord::new(patch_id, patch.item).into();
+    let response = v1::patches::PatchRecord::new(patch_id, patch.item.into());
     Ok(Json(response))
 }
 
@@ -178,8 +174,8 @@ pub async fn list_patches(
     State(state): State<AppState>,
     Query(query): Query<v1::patches::SearchPatchesQuery>,
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
-    info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
     let query: SearchPatchesQuery = query.into();
+    info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
 
     let search_term = query
         .q
@@ -193,13 +189,13 @@ pub async fn list_patches(
         .await
         .map_err(|err| map_patch_error(err, None))?;
 
-    let filtered = patches
+    let filtered: Vec<v1::patches::PatchRecord> = patches
         .into_iter()
         .filter(|(id, patch)| patch_matches(search_term.as_deref(), id, &patch.item))
-        .map(|(id, patch)| PatchRecord::new(id, patch.item))
+        .map(|(id, patch)| v1::patches::PatchRecord::new(id, patch.item.into()))
         .collect();
 
-    let response: v1::patches::ListPatchesResponse = ListPatchesResponse::new(filtered).into();
+    let response = v1::patches::ListPatchesResponse::new(filtered);
     info!(
         query = ?query.q,
         returned = response.patches.len(),

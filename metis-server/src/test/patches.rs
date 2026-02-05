@@ -5,10 +5,7 @@ use crate::{
             Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest, UpsertIssueResponse,
         },
         jobs::BundleSpec,
-        patches::{
-            GithubPr, ListPatchesResponse, Patch, PatchRecord, PatchStatus, SearchPatchesQuery,
-            UpsertPatchRequest, UpsertPatchResponse,
-        },
+        patches::{GithubPr, Patch, PatchStatus},
         users::{User, Username},
     },
     store::{Status, Task},
@@ -22,7 +19,10 @@ use httpmock::prelude::HttpMockRequest;
 use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
     PatchId,
-    api::v1::patches::{CreatePatchAssetResponse, ListPatchVersionsResponse, PatchVersionRecord},
+    api::v1::patches::{
+        CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse, PatchRecord,
+        PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+    },
 };
 use reqwest::Client;
 use reqwest::StatusCode;
@@ -47,7 +47,7 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch.clone()))
+        .json(&UpsertPatchRequest::new(patch.clone().into()))
         .send()
         .await?;
 
@@ -67,7 +67,8 @@ async fn patches_can_be_created_and_retrieved() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(fetched.id, created.patch_id);
-    assert_eq!(fetched.patch, patch);
+    let expected_patch: metis_common::api::v1::patches::Patch = patch.into();
+    assert_eq!(fetched.patch, expected_patch);
     Ok(())
 }
 
@@ -89,7 +90,7 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch.clone()))
+        .json(&UpsertPatchRequest::new(patch.clone().into()))
         .send()
         .await?;
 
@@ -113,7 +114,7 @@ async fn patch_versions_endpoints_return_history() -> anyhow::Result<()> {
             server.base_url(),
             created.patch_id
         ))
-        .json(&UpsertPatchRequest::new(updated_patch))
+        .json(&UpsertPatchRequest::new(updated_patch.into()))
         .send()
         .await?
         .json()
@@ -186,7 +187,7 @@ async fn patch_version_endpoints_return_404s() -> anyhow::Result<()> {
     );
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?;
     let created: UpsertPatchResponse = response.json().await?;
@@ -239,17 +240,20 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     let client = test_client();
     let response = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(Patch::new(
-            "artifact with creator".to_string(),
-            "artifact with creator".to_string(),
-            patch_diff(),
-            PatchStatus::Open,
-            false,
-            Some(job_id.clone()),
-            Vec::new(),
-            service_repo_name(),
-            None,
-        )))
+        .json(&UpsertPatchRequest::new(
+            Patch::new(
+                "artifact with creator".to_string(),
+                "artifact with creator".to_string(),
+                patch_diff(),
+                PatchStatus::Open,
+                false,
+                Some(job_id.clone()),
+                Vec::new(),
+                service_repo_name(),
+                None,
+            )
+            .into(),
+        ))
         .send()
         .await?;
 
@@ -280,7 +284,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .json(&UpsertPatchRequest::new(base_patch.clone().into()))
         .send()
         .await?
         .json()
@@ -318,7 +322,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(merged_patch))
+        .json(&UpsertPatchRequest::new(merged_patch.into()))
         .send()
         .await?
         .error_for_status()?;
@@ -357,7 +361,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .json(&UpsertPatchRequest::new(base_patch.clone().into()))
         .send()
         .await?
         .json()
@@ -395,7 +399,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(changes_requested_patch))
+        .json(&UpsertPatchRequest::new(changes_requested_patch.into()))
         .send()
         .await?
         .error_for_status()?;
@@ -435,7 +439,7 @@ async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyho
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .json(&UpsertPatchRequest::new(base_patch.clone().into()))
         .send()
         .await?
         .json()
@@ -474,7 +478,7 @@ async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyho
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(updated_patch))
+        .json(&UpsertPatchRequest::new(updated_patch.into()))
         .send()
         .await?
         .error_for_status()?
@@ -527,7 +531,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .json(&UpsertPatchRequest::new(base_patch.clone().into()))
         .send()
         .await?
         .json()
@@ -565,7 +569,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(changes_requested_patch))
+        .json(&UpsertPatchRequest::new(changes_requested_patch.into()))
         .send()
         .await?
         .error_for_status()?
@@ -596,7 +600,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(reopened_patch))
+        .json(&UpsertPatchRequest::new(reopened_patch.into()))
         .send()
         .await?
         .error_for_status()?
@@ -648,7 +652,7 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
 
     let created_patch: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(base_patch.clone()))
+        .json(&UpsertPatchRequest::new(base_patch.clone().into()))
         .send()
         .await?
         .json()
@@ -686,7 +690,7 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
             server.base_url(),
             created_patch.patch_id
         ))
-        .json(&UpsertPatchRequest::new(updated_patch))
+        .json(&UpsertPatchRequest::new(updated_patch.into()))
         .send()
         .await?
         .error_for_status()?;
@@ -750,7 +754,7 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
     for patch in [patch.clone(), filtered_patch.clone()] {
         let response = client
             .post(format!("{}/v1/patches", server.base_url()))
-            .json(&UpsertPatchRequest::new(patch))
+            .json(&UpsertPatchRequest::new(patch.into()))
             .send()
             .await?;
         assert!(response.status().is_success());
@@ -765,7 +769,8 @@ async fn list_patches_supports_filters() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(patch_results.patches.len(), 1);
-    assert_eq!(patch_results.patches[0].patch, filtered_patch);
+    let expected_patch: metis_common::api::v1::patches::Patch = filtered_patch.into();
+    assert_eq!(patch_results.patches[0].patch, expected_patch);
     Ok(())
 }
 
@@ -827,7 +832,7 @@ async fn create_patch_asset_uploads_to_github() -> anyhow::Result<()> {
 
     let created: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?
         .json()
@@ -909,7 +914,7 @@ async fn create_patch_asset_surfaces_github_400() -> anyhow::Result<()> {
 
     let created: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?
         .json()
@@ -1017,7 +1022,7 @@ async fn create_patch_asset_sets_content_length_for_tiny_payload() -> anyhow::Re
 
     let created: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?
         .json()
@@ -1097,7 +1102,7 @@ async fn create_patch_asset_surfaces_github_bad_size() -> anyhow::Result<()> {
 
     let created: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?
         .json()
@@ -1143,7 +1148,7 @@ async fn create_patch_asset_errors_without_github_pr() -> anyhow::Result<()> {
 
     let created: UpsertPatchResponse = client
         .post(format!("{}/v1/patches", server.base_url()))
-        .json(&UpsertPatchRequest::new(patch))
+        .json(&UpsertPatchRequest::new(patch.into()))
         .send()
         .await?
         .json()
