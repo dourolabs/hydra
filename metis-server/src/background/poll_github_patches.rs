@@ -3,11 +3,11 @@ use crate::{
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::patches::{
         GithubCiFailure, GithubCiState, GithubCiStatus, GithubPr, Patch, PatchStatus, Review,
-        UpsertPatchRequest,
     },
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use metis_common::api::v1 as api;
 use metis_common::{PatchId, Versioned};
 use octocrab::{
     Octocrab,
@@ -250,7 +250,7 @@ async fn sync_patch_from_github(
             .upsert_patch(
                 None,
                 Some(patch_id.clone()),
-                UpsertPatchRequest::new(updated_patch),
+                api::patches::UpsertPatchRequest::new(updated_patch.into()),
             )
             .await
             .with_context(|| format!("failed to persist GitHub sync for patch '{patch_id}'"))?;

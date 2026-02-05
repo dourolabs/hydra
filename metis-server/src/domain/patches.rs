@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use git2::Oid;
 use metis_common::api::v1 as api;
-use metis_common::{PatchId, RepoName, TaskId};
+use metis_common::{RepoName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
@@ -223,59 +223,6 @@ impl Patch {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PatchRecord {
-    pub id: PatchId,
-    pub patch: Patch,
-}
-
-impl PatchRecord {
-    pub fn new(id: PatchId, patch: Patch) -> Self {
-        Self { id, patch }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertPatchRequest {
-    pub patch: Patch,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sync_github_branch: Option<String>,
-}
-
-impl UpsertPatchRequest {
-    pub fn new(patch: Patch) -> Self {
-        Self {
-            patch,
-            sync_github_branch: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertPatchResponse {
-    pub patch_id: PatchId,
-}
-
-impl UpsertPatchResponse {
-    pub fn new(patch_id: PatchId) -> Self {
-        Self { patch_id }
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchPatchesQuery {
-    #[serde(default)]
-    pub q: Option<String>,
-    #[serde(default)]
-    pub include_deleted: Option<bool>,
-}
-
-impl SearchPatchesQuery {
-    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
-        Self { q, include_deleted }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GithubCiState {
     Pending,
@@ -312,17 +259,6 @@ pub struct GithubCiStatus {
 impl GithubCiStatus {
     pub fn new(state: GithubCiState, failure: Option<GithubCiFailure>) -> Self {
         Self { state, failure }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListPatchesResponse {
-    pub patches: Vec<PatchRecord>,
-}
-
-impl ListPatchesResponse {
-    pub fn new(patches: Vec<PatchRecord>) -> Self {
-        Self { patches }
     }
 }
 
@@ -445,69 +381,6 @@ impl From<Patch> for api::patches::Patch {
     }
 }
 
-impl From<api::patches::PatchRecord> for PatchRecord {
-    fn from(value: api::patches::PatchRecord) -> Self {
-        PatchRecord {
-            id: value.id,
-            patch: value.patch.into(),
-        }
-    }
-}
-
-impl From<PatchRecord> for api::patches::PatchRecord {
-    fn from(value: PatchRecord) -> Self {
-        api::patches::PatchRecord::new(value.id, value.patch.into())
-    }
-}
-
-impl From<api::patches::UpsertPatchRequest> for UpsertPatchRequest {
-    fn from(value: api::patches::UpsertPatchRequest) -> Self {
-        UpsertPatchRequest {
-            patch: value.patch.into(),
-            sync_github_branch: value.sync_github_branch,
-        }
-    }
-}
-
-impl From<UpsertPatchRequest> for api::patches::UpsertPatchRequest {
-    fn from(value: UpsertPatchRequest) -> Self {
-        let upsert_request = api::patches::UpsertPatchRequest::new(value.patch.into());
-        match value.sync_github_branch {
-            Some(sync_github_branch) => upsert_request.with_sync_github_branch(&sync_github_branch),
-            None => upsert_request,
-        }
-    }
-}
-
-impl From<api::patches::UpsertPatchResponse> for UpsertPatchResponse {
-    fn from(value: api::patches::UpsertPatchResponse) -> Self {
-        UpsertPatchResponse {
-            patch_id: value.patch_id,
-        }
-    }
-}
-
-impl From<UpsertPatchResponse> for api::patches::UpsertPatchResponse {
-    fn from(value: UpsertPatchResponse) -> Self {
-        api::patches::UpsertPatchResponse::new(value.patch_id)
-    }
-}
-
-impl From<api::patches::SearchPatchesQuery> for SearchPatchesQuery {
-    fn from(value: api::patches::SearchPatchesQuery) -> Self {
-        SearchPatchesQuery {
-            q: value.q,
-            include_deleted: value.include_deleted,
-        }
-    }
-}
-
-impl From<SearchPatchesQuery> for api::patches::SearchPatchesQuery {
-    fn from(value: SearchPatchesQuery) -> Self {
-        api::patches::SearchPatchesQuery::new(value.q, value.include_deleted)
-    }
-}
-
 impl From<api::patches::GithubCiState> for GithubCiState {
     fn from(value: api::patches::GithubCiState) -> Self {
         match value {
@@ -560,31 +433,10 @@ impl From<GithubCiStatus> for api::patches::GithubCiStatus {
     }
 }
 
-impl From<api::patches::ListPatchesResponse> for ListPatchesResponse {
-    fn from(value: api::patches::ListPatchesResponse) -> Self {
-        ListPatchesResponse {
-            patches: value.patches.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<ListPatchesResponse> for api::patches::ListPatchesResponse {
-    fn from(value: ListPatchesResponse) -> Self {
-        api::patches::ListPatchesResponse::new(value.patches.into_iter().map(Into::into).collect())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use metis_common::api::v1 as api;
-    use serde::Serialize;
-    use std::collections::HashMap;
-
-    fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
-        let encoded = serde_urlencoded::to_string(value).unwrap();
-        serde_urlencoded::from_str(&encoded).unwrap()
-    }
 
     #[test]
     fn patch_status_from_str() {
@@ -619,19 +471,6 @@ mod tests {
         let json = serde_json::to_string(&pr).unwrap();
         let deserialized: GithubPr = serde_json::from_str(&json).unwrap();
         assert_eq!(pr, deserialized);
-    }
-
-    #[test]
-    fn patch_query_serializes_with_reqwest() {
-        let query = SearchPatchesQuery {
-            q: Some("my search".to_string()),
-            include_deleted: None,
-        };
-
-        let params = serialize_query_params(&query);
-        let params: HashMap<_, _> = params.into_iter().collect();
-
-        assert_eq!(params.get("q").map(String::as_str), Some("my search"));
     }
 
     #[test]
