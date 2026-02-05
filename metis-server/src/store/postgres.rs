@@ -2,7 +2,7 @@ use crate::{
     config::DatabaseSection,
     domain::{
         actors::Actor,
-        documents::{Document, SearchDocumentsQuery},
+        documents::Document,
         issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
         patches::Patch,
         users::{User, Username},
@@ -12,6 +12,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -915,13 +916,13 @@ impl Store for PostgresStore {
         &self,
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        self.list_documents(&SearchDocumentsQuery {
-            q: None,
-            path_prefix: Some(path_prefix.to_string()),
-            path_is_exact: None,
-            created_by: None,
-            include_deleted: None,
-        })
+        self.list_documents(&SearchDocumentsQuery::new(
+            None,
+            Some(path_prefix.to_string()),
+            None,
+            None,
+            None,
+        ))
         .await
     }
 
@@ -1252,7 +1253,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
-            documents::{Document, SearchDocumentsQuery},
+            documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem,
             },
@@ -1752,13 +1753,13 @@ mod tests {
             .await
             .unwrap();
 
-        let query = SearchDocumentsQuery {
-            q: Some("howto".to_string()),
-            path_prefix: Some("docs/".to_string()),
-            path_is_exact: None,
-            created_by: Some(task_id),
-            include_deleted: None,
-        };
+        let query = SearchDocumentsQuery::new(
+            Some("howto".to_string()),
+            Some("docs/".to_string()),
+            None,
+            Some(task_id),
+            None,
+        );
 
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);

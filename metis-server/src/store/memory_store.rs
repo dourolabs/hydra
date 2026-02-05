@@ -7,11 +7,12 @@ use super::issue_graph::IssueGraphContext;
 use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::Actor,
-    documents::{Document, SearchDocumentsQuery},
+    documents::Document,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
     patches::Patch,
     users::{User, Username},
 };
+use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -1591,26 +1592,26 @@ mod tests {
             .await
             .unwrap();
 
-        let query = SearchDocumentsQuery {
-            q: Some("how".to_string()),
-            path_prefix: Some("docs/".to_string()),
-            path_is_exact: None,
-            created_by: Some(task_id.clone()),
-            include_deleted: None,
-        };
+        let query = SearchDocumentsQuery::new(
+            Some("how".to_string()),
+            Some("docs/".to_string()),
+            None,
+            Some(task_id.clone()),
+            None,
+        );
 
         let filtered = store.list_documents(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, first);
 
         let created_by_filtered = store
-            .list_documents(&SearchDocumentsQuery {
-                q: None,
-                path_prefix: None,
-                path_is_exact: None,
-                created_by: Some(other_task),
-                include_deleted: None,
-            })
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                None,
+                None,
+                Some(other_task),
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(created_by_filtered.len(), 1);
@@ -2148,26 +2149,26 @@ mod tests {
 
         // Prefix matching returns all 3
         let by_prefix = store
-            .list_documents(&SearchDocumentsQuery {
-                q: None,
-                path_prefix: Some("docs/guide.md".to_string()),
-                path_is_exact: None,
-                created_by: None,
-                include_deleted: None,
-            })
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                Some("docs/guide.md".to_string()),
+                None,
+                None,
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(by_prefix.len(), 3);
 
         // Exact matching returns only the exact path
         let by_exact = store
-            .list_documents(&SearchDocumentsQuery {
-                q: None,
-                path_prefix: Some("docs/guide.md".to_string()),
-                path_is_exact: Some(true),
-                created_by: None,
-                include_deleted: None,
-            })
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                Some("docs/guide.md".to_string()),
+                Some(true),
+                None,
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(by_exact.len(), 1);
@@ -2175,13 +2176,13 @@ mod tests {
 
         // path_is_exact=false uses prefix matching
         let by_prefix_explicit = store
-            .list_documents(&SearchDocumentsQuery {
-                q: None,
-                path_prefix: Some("docs/guide.md".to_string()),
-                path_is_exact: Some(false),
-                created_by: None,
-                include_deleted: None,
-            })
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                Some("docs/guide.md".to_string()),
+                Some(false),
+                None,
+                None,
+            ))
             .await
             .unwrap();
         assert_eq!(by_prefix_explicit.len(), 3);
@@ -2269,10 +2270,13 @@ mod tests {
 
         // Deleted document should appear with include_deleted=true
         let docs = store
-            .list_documents(&SearchDocumentsQuery {
-                include_deleted: Some(true),
-                ..Default::default()
-            })
+            .list_documents(&SearchDocumentsQuery::new(
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+            ))
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);

@@ -1,7 +1,7 @@
 use crate::{
     domain::{
         actors::Actor,
-        documents::{Document, SearchDocumentsQuery},
+        documents::Document,
         issues::{Issue, IssueGraphFilter},
         patches::Patch,
         users::{User, Username},
@@ -10,6 +10,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };

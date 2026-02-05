@@ -1,5 +1,4 @@
 use crate::domain::actors::Actor;
-use crate::domain::documents::{SearchDocumentsQuery, UpsertDocumentRequest};
 use crate::{
     app::{AppState, UpsertDocumentError},
     store::StoreError,
@@ -67,9 +66,8 @@ pub async fn create_document(
     Json(payload): Json<v1::documents::UpsertDocumentRequest>,
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), "create_document invoked");
-    let request: UpsertDocumentRequest = payload.into();
     let document_id = state
-        .upsert_document(None, request.document)
+        .upsert_document(None, payload.document.into())
         .await
         .map_err(map_upsert_document_error)?;
 
@@ -86,9 +84,8 @@ pub async fn update_document(
     Json(payload): Json<v1::documents::UpsertDocumentRequest>,
 ) -> Result<Json<v1::documents::UpsertDocumentResponse>, ApiError> {
     info!(actor = %actor.name(), document_id = %document_id, "update_document invoked");
-    let request: UpsertDocumentRequest = payload.into();
     let document_id = state
-        .upsert_document(Some(document_id.clone()), request.document)
+        .upsert_document(Some(document_id.clone()), payload.document.into())
         .await
         .map_err(map_upsert_document_error)?;
 
@@ -118,7 +115,6 @@ pub async fn list_documents(
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
     info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, created_by = ?query.created_by, include_deleted = ?query.include_deleted, "list_documents invoked");
-    let query: SearchDocumentsQuery = query.into();
     let documents = state
         .list_documents(&query)
         .await
