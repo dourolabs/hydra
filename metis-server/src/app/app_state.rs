@@ -6,7 +6,7 @@ use crate::{
         documents::{Document, SearchDocumentsQuery},
         issues::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
-            TodoItem, UpsertIssueRequest,
+            TodoItem,
         },
         jobs::{BundleSpec, CreateJobRequest},
         patches::{GithubPr, Patch, PatchStatus},
@@ -1557,7 +1557,10 @@ impl AppState {
         );
 
         let issue_id = self
-            .upsert_issue(None, UpsertIssueRequest::new(issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+            )
             .await
             .map_err(|source| UpsertPatchError::MergeRequestCreate {
                 patch_id: patch_id.clone(),
@@ -1576,11 +1579,10 @@ impl AppState {
     pub async fn upsert_issue(
         &self,
         issue_id: Option<IssueId>,
-        request: UpsertIssueRequest,
+        request: api::issues::UpsertIssueRequest,
     ) -> Result<IssueId, UpsertIssueError> {
-        let UpsertIssueRequest {
-            mut issue, job_id, ..
-        } = request;
+        let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
+        let mut issue: Issue = issue.into();
         let mut tasks_to_kill = Vec::new();
 
         let store = self.store.as_ref();
@@ -2263,7 +2265,7 @@ mod tests {
             actors::Actor,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, JobSettings,
-                TodoItem, UpsertIssueRequest,
+                TodoItem,
             },
             jobs::{BundleSpec, Task},
             patches::{GithubPr, Patch, PatchStatus},
@@ -2968,7 +2970,10 @@ mod tests {
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(parent_issue.clone(), None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.clone().into(), None),
+            )
             .await
             .unwrap();
 
@@ -2977,7 +2982,10 @@ mod tests {
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
         let child_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(child_issue.clone(), None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.clone().into(), None),
+            )
             .await
             .unwrap();
 
@@ -2991,7 +2999,7 @@ mod tests {
         let grandchild_id = state
             .upsert_issue(
                 None,
-                UpsertIssueRequest::new(grandchild_issue.clone(), None),
+                api::issues::UpsertIssueRequest::new(grandchild_issue.clone().into(), None),
             )
             .await
             .unwrap();
@@ -3028,7 +3036,7 @@ mod tests {
         state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest::new(dropped_parent, None),
+                api::issues::UpsertIssueRequest::new(dropped_parent.into(), None),
             )
             .await
             .unwrap();
@@ -3061,7 +3069,10 @@ mod tests {
 
         let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
         let blocker_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(blocker_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(blocker_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3072,15 +3083,19 @@ mod tests {
         let blocked_issue =
             issue_with_status("blocked", IssueStatus::Open, blocked_dependencies.clone());
         let blocked_issue_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(blocked_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(blocked_issue.into(), None),
+            )
             .await
             .unwrap();
 
         let err = state
             .upsert_issue(
                 Some(blocked_issue_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies.clone()),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies.clone())
+                        .into(),
                     None,
                 ),
             )
@@ -3098,8 +3113,8 @@ mod tests {
         state
             .upsert_issue(
                 Some(blocker_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("blocker", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
             )
@@ -3109,8 +3124,8 @@ mod tests {
         state
             .upsert_issue(
                 Some(blocked_issue_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("blocked", IssueStatus::Closed, blocked_dependencies).into(),
                     None,
                 ),
             )
@@ -3125,7 +3140,10 @@ mod tests {
 
         let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         let parent_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3134,15 +3152,18 @@ mod tests {
         let child_issue =
             issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
         let child_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
             .await
             .unwrap();
 
         let err = state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("parent", IssueStatus::Closed, vec![]),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
             )
@@ -3160,8 +3181,9 @@ mod tests {
         state
             .upsert_issue(
                 Some(child_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("child", IssueStatus::Closed, vec![child_dependency.clone()]),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("child", IssueStatus::Closed, vec![child_dependency.clone()])
+                        .into(),
                     None,
                 ),
             )
@@ -3171,8 +3193,8 @@ mod tests {
         state
             .upsert_issue(
                 Some(parent_id.clone()),
-                UpsertIssueRequest::new(
-                    issue_with_status("parent", IssueStatus::Closed, vec![]),
+                api::issues::UpsertIssueRequest::new(
+                    issue_with_status("parent", IssueStatus::Closed, vec![]).into(),
                     None,
                 ),
             )
@@ -3190,7 +3212,10 @@ mod tests {
             .todo_list
             .push(TodoItem::new("finish task".to_string(), false));
         let issue_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(issue.clone(), None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.clone().into(), None),
+            )
             .await
             .unwrap();
 
@@ -3200,7 +3225,7 @@ mod tests {
         let err = state
             .upsert_issue(
                 Some(issue_id.clone()),
-                UpsertIssueRequest::new(closed_issue.clone(), None),
+                api::issues::UpsertIssueRequest::new(closed_issue.clone().into(), None),
             )
             .await
             .unwrap_err();
@@ -3226,7 +3251,7 @@ mod tests {
         state
             .upsert_issue(
                 Some(issue_id.clone()),
-                UpsertIssueRequest::new(closed_issue, None),
+                api::issues::UpsertIssueRequest::new(closed_issue.into(), None),
             )
             .await
             .unwrap();
@@ -3240,7 +3265,10 @@ mod tests {
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = Username::from("parent-creator");
         let parent_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3249,7 +3277,10 @@ mod tests {
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = Username::from("");
         let child_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3266,7 +3297,10 @@ mod tests {
         let mut parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
         parent_issue.creator = Username::from("parent-creator");
         let parent_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(parent_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(parent_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3275,7 +3309,10 @@ mod tests {
         let mut child_issue = issue_with_status("child", IssueStatus::Open, vec![child_dependency]);
         child_issue.creator = Username::from("explicit-creator");
         let child_id = state
-            .upsert_issue(None, UpsertIssueRequest::new(child_issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(child_issue.into(), None),
+            )
             .await
             .unwrap();
 
@@ -3295,7 +3332,10 @@ mod tests {
         let mut issue = issue_with_status("solo", IssueStatus::Open, vec![]);
         issue.creator = Username::from("");
         let err = state
-            .upsert_issue(None, UpsertIssueRequest::new(issue, None))
+            .upsert_issue(
+                None,
+                api::issues::UpsertIssueRequest::new(issue.into(), None),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, UpsertIssueError::MissingCreator));
