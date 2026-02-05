@@ -18,6 +18,7 @@ use crate::{
 use chrono::{DateTime, Duration, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::{
     DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
@@ -1159,7 +1160,7 @@ impl AppState {
 
         let store_task_ids: Vec<TaskId> = {
             let store = self.store.as_ref();
-            match store.list_tasks(false).await {
+            match store.list_tasks(&SearchJobsQuery::default()).await {
                 Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
@@ -1970,20 +1971,17 @@ impl AppState {
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
         let store = self.store.as_ref();
         store
-            .list_tasks(false)
+            .list_tasks(&SearchJobsQuery::default())
             .await
             .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
     }
 
-    pub async fn list_tasks_with_deleted(
+    pub async fn list_tasks_with_query(
         &self,
-        include_deleted: bool,
-    ) -> Result<Vec<TaskId>, StoreError> {
+        query: &SearchJobsQuery,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let store = self.store.as_ref();
-        store
-            .list_tasks(include_deleted)
-            .await
-            .map(|tasks| tasks.into_iter().map(|(id, _)| id).collect())
+        store.list_tasks(query).await
     }
 
     pub async fn transition_task_to_running(
