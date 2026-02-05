@@ -8,11 +8,14 @@ use super::{Status, Store, StoreError, Task, TaskStatusLog};
 use crate::domain::{
     actors::Actor,
     documents::Document,
-    issues::{Issue, IssueDependency, IssueDependencyType, IssueGraphFilter},
+    issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType,
+    },
     patches::Patch,
     users::{User, Username},
 };
 use metis_common::api::v1::documents::SearchDocumentsQuery;
+use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -373,8 +376,22 @@ impl Store for MemoryStore {
 
     async fn list_issues(
         &self,
-        include_deleted: bool,
+        query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
+        let status_filter: Option<IssueStatus> = query.status.map(Into::into);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+        let assignee_filter = query
+            .assignee
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+
         Ok(self
             .issues
             .iter()
@@ -383,7 +400,18 @@ impl Store for MemoryStore {
                 if !include_deleted && latest.item.deleted {
                     return None;
                 }
-                Some((entry.key().clone(), latest))
+                let issue_id = entry.key();
+                if !issue_matches(
+                    issue_type_filter,
+                    status_filter,
+                    search_term.as_deref(),
+                    assignee_filter,
+                    issue_id,
+                    &latest.item,
+                ) {
+                    return None;
+                }
+                Some((issue_id.clone(), latest))
             })
             .collect())
     }
@@ -888,6 +916,55 @@ impl Store for MemoryStore {
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
     }
+}
+
+/// Helper function to check if an issue matches the provided filter criteria.
+fn issue_matches(
+    issue_type_filter: Option<IssueType>,
+    status_filter: Option<IssueStatus>,
+    search_term: Option<&str>,
+    assignee_filter: Option<&str>,
+    issue_id: &IssueId,
+    issue: &Issue,
+) -> bool {
+    if let Some(issue_type) = issue_type_filter {
+        if issue.issue_type != issue_type {
+            return false;
+        }
+    }
+
+    if let Some(status) = status_filter {
+        if issue.status != status {
+            return false;
+        }
+    }
+
+    if let Some(expected_assignee) = assignee_filter {
+        match issue.assignee.as_ref() {
+            Some(current) if current.eq_ignore_ascii_case(expected_assignee) => {}
+            _ => return false,
+        }
+    }
+
+    if let Some(term) = search_term {
+        let lower_id = issue_id.to_string().to_lowercase();
+        if lower_id.contains(term) {
+            return true;
+        }
+
+        return issue.description.to_lowercase().contains(term)
+            || issue.progress.to_lowercase().contains(term)
+            || issue.issue_type.as_str() == term
+            || issue.status.as_str() == term
+            || issue.creator.as_ref().to_lowercase().contains(term)
+            || issue
+                .assignee
+                .as_deref()
+                .map(|value| value.to_lowercase().contains(term))
+                .unwrap_or(false);
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -2194,7 +2271,10 @@ mod tests {
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
         // Issue should be visible in list initially
-        let issues = store.list_issues(false).await.unwrap();
+        let issues = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
         assert_eq!(issues.len(), 1);
         assert!(!issues[0].1.item.deleted);
 
@@ -2202,11 +2282,24 @@ mod tests {
         store.delete_issue(&issue_id).await.unwrap();
 
         // Deleted issue should not appear in default list
-        let issues = store.list_issues(false).await.unwrap();
+        let issues = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
         assert!(issues.is_empty());
 
         // Deleted issue should appear with include_deleted=true
-        let issues = store.list_issues(true).await.unwrap();
+        let issues = store
+            .list_issues(&SearchIssuesQuery::new(
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                Some(true),
+            ))
+            .await
+            .unwrap();
         assert_eq!(issues.len(), 1);
         assert!(issues[0].1.item.deleted);
 
@@ -2365,5 +2458,199 @@ mod tests {
         let version_after = store.get_issue(&issue_id).await.unwrap().version;
 
         assert_eq!(version_after, version_before + 1);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_issue_type() {
+        let store = MemoryStore::new();
+
+        // Create a task issue
+        let task_issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Create a bug issue
+        let mut bug_issue = sample_issue(vec![]);
+        bug_issue.issue_type = IssueType::Bug;
+        let bug_issue_id = store.add_issue(bug_issue).await.unwrap();
+
+        // Filter by task type
+        let query = SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Task),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, task_issue_id);
+
+        // Filter by bug type
+        let query = SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, bug_issue_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_status() {
+        let store = MemoryStore::new();
+
+        // Create an open issue
+        let open_issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Create a closed issue
+        let mut closed_issue = sample_issue(vec![]);
+        closed_issue.status = IssueStatus::Closed;
+        let closed_issue_id = store.add_issue(closed_issue).await.unwrap();
+
+        // Filter by open status
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Open),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, open_issue_id);
+
+        // Filter by closed status
+        let query = SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, closed_issue_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_assignee() {
+        let store = MemoryStore::new();
+
+        // Create an issue with assignee
+        let mut assigned_issue = sample_issue(vec![]);
+        assigned_issue.assignee = Some("alice".to_string());
+        let assigned_issue_id = store.add_issue(assigned_issue).await.unwrap();
+
+        // Create an issue without assignee
+        store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Filter by assignee
+        let query = SearchIssuesQuery::new(
+            None,
+            None,
+            Some("alice".to_string()),
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, assigned_issue_id);
+
+        // Case-insensitive assignee matching
+        let query = SearchIssuesQuery::new(
+            None,
+            None,
+            Some("ALICE".to_string()),
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, assigned_issue_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_search_term() {
+        let store = MemoryStore::new();
+
+        // Create issues with different descriptions
+        let mut issue1 = sample_issue(vec![]);
+        issue1.description = "fix the login bug".to_string();
+        let issue1_id = store.add_issue(issue1).await.unwrap();
+
+        let mut issue2 = sample_issue(vec![]);
+        issue2.description = "add new feature".to_string();
+        store.add_issue(issue2).await.unwrap();
+
+        // Search for "login"
+        let query = SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            Some("login".to_string()),
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, issue1_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_search_term_matches_issue_id() {
+        let store = MemoryStore::new();
+
+        let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
+
+        // Search by issue ID prefix
+        let id_prefix = issue_id.to_string()[..4].to_string();
+        let query = SearchIssuesQuery::new(None, None, None, Some(id_prefix), Vec::new(), None);
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, issue_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_combines_multiple_filters() {
+        let store = MemoryStore::new();
+
+        // Create a bug issue assigned to alice
+        let mut bug_alice = sample_issue(vec![]);
+        bug_alice.issue_type = IssueType::Bug;
+        bug_alice.assignee = Some("alice".to_string());
+        let bug_alice_id = store.add_issue(bug_alice).await.unwrap();
+
+        // Create a bug issue assigned to bob
+        let mut bug_bob = sample_issue(vec![]);
+        bug_bob.issue_type = IssueType::Bug;
+        bug_bob.assignee = Some("bob".to_string());
+        store.add_issue(bug_bob).await.unwrap();
+
+        // Create a task issue assigned to alice
+        let mut task_alice = sample_issue(vec![]);
+        task_alice.issue_type = IssueType::Task;
+        task_alice.assignee = Some("alice".to_string());
+        store.add_issue(task_alice).await.unwrap();
+
+        // Filter by bug type AND alice assignee
+        let query = SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            Some("alice".to_string()),
+            None,
+            Vec::new(),
+            None,
+        );
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, bug_alice_id);
     }
 }
