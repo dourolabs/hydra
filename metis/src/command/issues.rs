@@ -64,6 +64,10 @@ pub enum IssueCommands {
             conflicts_with = "id"
         )]
         graph_filters: Vec<IssueGraphFilter>,
+
+        /// Include deleted issues in the listing.
+        #[arg(long = "include-deleted")]
+        include_deleted: bool,
     },
     /// Create a new issue.
     Create {
@@ -270,6 +274,12 @@ pub enum IssueCommands {
         #[arg(long)]
         verbose: bool,
     },
+    /// Delete an issue.
+    Delete {
+        /// Issue ID to delete.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+    },
 }
 
 pub async fn run(
@@ -285,9 +295,19 @@ pub async fn run(
             assignee,
             query,
             graph_filters,
+            include_deleted,
         } => {
-            let issues =
-                fetch_issues(client, id, r#type, status, assignee, query, graph_filters).await?;
+            let issues = fetch_issues(
+                client,
+                id,
+                r#type,
+                status,
+                assignee,
+                query,
+                graph_filters,
+                include_deleted,
+            )
+            .await?;
             write_issue_records(context.output_format, &issues)?;
             Ok(())
         }
@@ -393,6 +413,14 @@ pub async fn run(
         }
         IssueCommands::Describe { id, verbose } => {
             describe_issue(client, id, context.output_format, verbose).await
+        }
+        IssueCommands::Delete { id } => {
+            let deleted = client
+                .delete_issue(&id)
+                .await
+                .with_context(|| format!("failed to delete issue '{id}'"))?;
+            println!("Deleted issue '{}'", deleted.id);
+            Ok(())
         }
     }
 }
@@ -1051,6 +1079,7 @@ async fn fetch_issues(
     assignee: Option<String>,
     query: Option<String>,
     graph_filters: Vec<IssueGraphFilter>,
+    include_deleted: bool,
 ) -> Result<Vec<IssueRecord>> {
     if let Some(issue_id) = id {
         let record = client
@@ -1101,6 +1130,7 @@ async fn fetch_issues(
         }
     });
 
+    let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let issues = client
         .list_issues(&SearchIssuesQuery::new(
             issue_type,
@@ -1108,7 +1138,7 @@ async fn fetch_issues(
             trimmed_assignee.clone(),
             trimmed_query,
             graph_filters,
-            None,
+            include_deleted_opt,
         ))
         .await
         .context("failed to list issues")?
@@ -2478,6 +2508,7 @@ mod tests {
             None,
             Some("bug".into()),
             Vec::new(),
+            false,
         )
         .await
         .unwrap();
@@ -2529,6 +2560,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         )
         .await
         .unwrap();
@@ -2574,6 +2606,7 @@ mod tests {
             Some("OWNER-A".into()),
             None,
             Vec::new(),
+            false,
         )
         .await
         .unwrap();
@@ -2605,7 +2638,7 @@ mod tests {
                 .json_body_obj(&ListIssuesResponse::new(vec![]));
         });
 
-        let _ = fetch_issues(&client, None, None, None, None, None, filters.clone())
+        let _ = fetch_issues(&client, None, None, None, None, None, filters.clone(), false)
             .await
             .unwrap();
 

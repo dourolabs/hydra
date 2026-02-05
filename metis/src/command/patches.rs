@@ -41,6 +41,10 @@ pub enum PatchesCommand {
         /// Query string to filter patches.
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
+
+        /// Include deleted patches in the listing.
+        #[arg(long = "include-deleted")]
+        include_deleted: bool,
     },
 
     /// Create a patch from the current git repository.
@@ -150,6 +154,12 @@ pub enum PatchesCommand {
         #[command(subcommand)]
         command: PatchAssetsCommand,
     },
+    /// Delete a patch.
+    Delete {
+        /// Patch ID to delete.
+        #[arg(value_name = "PATCH_ID")]
+        id: PatchId,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -175,9 +185,11 @@ pub async fn run(
     context: &CommandContext,
 ) -> Result<()> {
     match command {
-        PatchesCommand::List { id, query } => {
-            list_patches(client, id, query, context.output_format).await
-        }
+        PatchesCommand::List {
+            id,
+            query,
+            include_deleted,
+        } => list_patches(client, id, query, include_deleted, context.output_format).await,
         PatchesCommand::Create {
             title,
             description,
@@ -234,6 +246,14 @@ pub async fn run(
         } => merge_queue(client, repo, branch, patch_id, context.output_format).await,
         PatchesCommand::Assets { command } => {
             patch_assets(client, command, context.output_format).await
+        }
+        PatchesCommand::Delete { id } => {
+            let deleted = client
+                .delete_patch(&id)
+                .await
+                .with_context(|| format!("failed to delete patch '{id}'"))?;
+            println!("Deleted patch '{}'", deleted.id);
+            Ok(())
         }
     }
 }
@@ -331,10 +351,19 @@ async fn list_patches(
     client: &dyn MetisClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
+    include_deleted: bool,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let mut buffer = Vec::new();
-    list_patches_with_writer(client, id, query, output_format, &mut buffer).await?;
+    list_patches_with_writer(
+        client,
+        id,
+        query,
+        include_deleted,
+        output_format,
+        &mut buffer,
+    )
+    .await?;
     std::io::stdout().write_all(&buffer)?;
     std::io::stdout().flush()?;
     Ok(())
@@ -344,6 +373,7 @@ async fn list_patches_with_writer(
     client: &dyn MetisClientInterface,
     id: Option<PatchId>,
     query: Option<String>,
+    include_deleted: bool,
     output_format: ResolvedOutputFormat,
     writer: &mut impl Write,
 ) -> Result<()> {
@@ -360,7 +390,7 @@ async fn list_patches_with_writer(
         return Ok(());
     }
 
-    let patches = fetch_patches(client, query).await?;
+    let patches = fetch_patches(client, query, include_deleted).await?;
 
     render_patch_records(output_format, &patches, writer)?;
 
@@ -370,9 +400,11 @@ async fn list_patches_with_writer(
 async fn fetch_patches(
     client: &dyn MetisClientInterface,
     query: Option<String>,
+    include_deleted: bool,
 ) -> Result<Vec<PatchRecord>> {
+    let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let response = client
-        .list_patches(&SearchPatchesQuery::new(query, None))
+        .list_patches(&SearchPatchesQuery::new(query, include_deleted_opt))
         .await
         .context("failed to search for patches")?;
     Ok(response.patches)
@@ -1017,6 +1049,7 @@ mod tests {
             &client,
             None,
             Some("login".to_string()),
+            false,
             ResolvedOutputFormat::Jsonl,
         )
         .await?;
@@ -1040,6 +1073,7 @@ mod tests {
             &client,
             None,
             None,
+            false,
             ResolvedOutputFormat::Jsonl,
             &mut output,
         )

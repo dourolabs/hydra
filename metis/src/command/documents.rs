@@ -31,6 +31,12 @@ pub enum DocumentsCommand {
     Create(CreateDocumentArgs),
     /// Update an existing document.
     Update(UpdateDocumentArgs),
+    /// Delete a document.
+    Delete {
+        /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
+        #[arg(value_name = "ID_OR_PATH")]
+        id_or_path: String,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -50,6 +56,10 @@ pub struct DocumentsListArgs {
     /// Show complete document body instead of truncated preview.
     #[arg(long = "full")]
     pub full: bool,
+
+    /// Include deleted documents in the listing.
+    #[arg(long = "include-deleted")]
+    pub include_deleted: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -130,6 +140,14 @@ pub async fn run(
             let document = update_document(client, args).await?;
             write_documents_output(context.output_format, &[document], true)?;
         }
+        DocumentsCommand::Delete { id_or_path } => {
+            let document = get_document_by_id_or_path(client, &id_or_path).await?;
+            let deleted = client
+                .delete_document(&document.id)
+                .await
+                .with_context(|| format!("failed to delete document '{}'", document.id))?;
+            println!("Deleted document '{}'", deleted.id);
+        }
     }
 
     Ok(())
@@ -186,8 +204,18 @@ async fn list_documents(
     client: &dyn MetisClientInterface,
     args: DocumentsListArgs,
 ) -> Result<Vec<DocumentRecord>> {
-    let query =
-        SearchDocumentsQuery::new(args.query, args.path_prefix, None, args.created_by, None);
+    let include_deleted = if args.include_deleted {
+        Some(true)
+    } else {
+        None
+    };
+    let query = SearchDocumentsQuery::new(
+        args.query,
+        args.path_prefix,
+        None,
+        args.created_by,
+        include_deleted,
+    );
     let response = client
         .list_documents(&query)
         .await
@@ -376,6 +404,7 @@ mod tests {
                 path_prefix: Some("docs/".to_string()),
                 created_by: Some(created_by),
                 full: false,
+                include_deleted: false,
             },
         )
         .await
