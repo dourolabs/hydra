@@ -211,6 +211,9 @@ pub trait MetisClientInterface: Send + Sync {
     async fn update_agent(&self, name: &str, request: &UpsertAgentRequest)
         -> Result<AgentResponse>;
     async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse>;
+    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord>;
+    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord>;
+    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord>;
 }
 
 impl MetisClientUnauthenticated {
@@ -1274,6 +1277,60 @@ impl MetisClient {
             .context("failed to decode delete agent response")
     }
 
+    /// Call `DELETE /v1/issues/:issue_id` to soft-delete an issue.
+    pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+        let path = format!("/v1/issues/{issue_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete issue request")?
+            .error_for_status_with_body("metis-server returned an error while deleting issue")
+            .await?;
+
+        response
+            .json::<IssueRecord>()
+            .await
+            .context("failed to decode delete issue response")
+    }
+
+    /// Call `DELETE /v1/patches/:patch_id` to soft-delete a patch.
+    pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+        let path = format!("/v1/patches/{patch_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete patch request")?
+            .error_for_status_with_body("metis-server returned an error while deleting patch")
+            .await?;
+
+        response
+            .json::<PatchRecord>()
+            .await
+            .context("failed to decode delete patch response")
+    }
+
+    /// Call `DELETE /v1/documents/:document_id` to soft-delete a document.
+    pub async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+        let path = format!("/v1/documents/{document_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete document request")?
+            .error_for_status_with_body("metis-server returned an error while deleting document")
+            .await?;
+
+        response
+            .json::<DocumentRecord>()
+            .await
+            .context("failed to decode delete document response")
+    }
+
     fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
@@ -1612,6 +1669,18 @@ impl MetisClientInterface for MetisClient {
 
     async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
         MetisClient::delete_agent(self, name).await
+    }
+
+    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueRecord> {
+        MetisClient::delete_issue(self, issue_id).await
+    }
+
+    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchRecord> {
+        MetisClient::delete_patch(self, patch_id).await
+    }
+
+    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentRecord> {
+        MetisClient::delete_document(self, document_id).await
     }
 }
 
