@@ -3,7 +3,7 @@ use crate::app::{AppState, ServiceState};
 use crate::config::BuildCacheSection;
 use crate::domain::{
     issues::{Issue, IssueStatus, IssueType, JobSettings},
-    jobs::{Bundle, BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse},
+    jobs::{Bundle, BundleSpec},
     patches::{Patch, PatchStatus},
     task_status::Event,
     users::Username,
@@ -22,7 +22,7 @@ use metis_common::{
     BuildCacheStorageConfig, TaskId,
     api::v1::{
         self,
-        jobs::{JobVersionRecord, ListJobVersionsResponse},
+        jobs::{CreateJobResponse, JobRecord, JobVersionRecord, ListJobVersionsResponse, ListJobsResponse},
     },
     job_status::GetJobStatusResponse,
 };
@@ -716,7 +716,10 @@ async fn get_job_returns_summary_for_existing_job() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let summary: JobRecord = response.json().await?;
     assert_eq!(summary.id, job_id);
-    assert_eq!(summary.status_log.current_status(), Status::Running);
+    assert_eq!(
+        summary.status_log.current_status(),
+        v1::task_status::Status::Running
+    );
     let start_time = summary.status_log.start_time().expect("start time");
     assert!(start_time >= now - Duration::seconds(20));
     Ok(())
@@ -1287,7 +1290,10 @@ async fn job_output_can_be_retrieved_via_patches() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let summary: JobRecord = response.json().await?;
-    assert_eq!(summary.status_log.current_status(), Status::Complete);
+    assert_eq!(
+        summary.status_log.current_status(),
+        v1::task_status::Status::Complete
+    );
 
     let patch_response = client
         .get(format!("{}/v1/patches/{patch_id}", server.base_url()))

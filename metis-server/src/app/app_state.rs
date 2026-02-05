@@ -8,7 +8,7 @@ use crate::{
             Issue, IssueDependencyType, IssueGraphFilter, IssueStatus, IssueType, JobSettings,
             TodoItem,
         },
-        jobs::{BundleSpec, CreateJobRequest},
+        jobs::BundleSpec,
         patches::{GithubPr, Patch, PatchStatus},
         users::{User, UserSummary, Username},
     },
@@ -882,7 +882,10 @@ impl AppState {
         Ok(removed.as_config())
     }
 
-    pub async fn create_job(&self, request: CreateJobRequest) -> Result<TaskId, CreateJobError> {
+    pub async fn create_job(
+        &self,
+        request: api::jobs::CreateJobRequest,
+    ) -> Result<TaskId, CreateJobError> {
         let job_id = TaskId::new();
 
         let mut env_vars = request.variables;
@@ -905,7 +908,7 @@ impl AppState {
             .map(|issue| self.apply_job_settings_defaults(issue.item.job_settings.clone()))
             .filter(|settings| !JobSettings::is_default(settings));
 
-        let mut context = request.context;
+        let mut context: BundleSpec = request.context.into();
         let image = job_settings
             .as_ref()
             .and_then(|settings| settings.image.clone())
