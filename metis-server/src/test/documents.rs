@@ -36,7 +36,7 @@ fn sample_task(status: Status) -> Task {
 async fn documents_can_be_created_listed_and_retrieved() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
-    let document = Document::new("Design doc".to_string(), "initial body".to_string())
+    let document = Document::new("Design doc".to_string(), "initial body".to_string(), false)
         .with_path("docs/design.md");
 
     let created: UpsertDocumentResponse = client
@@ -88,6 +88,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertDocumentRequest::new(Document::new(
             "Doc v1".to_string(),
             "body v1".to_string(),
+            false,
         )))
         .send()
         .await?
@@ -99,6 +100,7 @@ async fn document_versions_endpoints_return_history() -> anyhow::Result<()> {
         .json(&UpsertDocumentRequest::new(Document::new(
             "Doc v2".to_string(),
             "body v2".to_string(),
+            false,
         )))
         .send()
         .await?
@@ -142,7 +144,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string())
+            Document::new("Doc".to_string(), "body".to_string(), false)
                 .with_created_by(missing_job.clone()),
         ))
         .send()
@@ -162,7 +164,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string())
+            Document::new("Doc".to_string(), "body".to_string(), false)
                 .with_created_by(non_running.clone()),
         ))
         .send()
@@ -183,7 +185,7 @@ async fn documents_require_running_task_for_created_by() -> anyhow::Result<()> {
     let response = client
         .post(format!("{}/v1/documents", server.base_url()))
         .json(&UpsertDocumentRequest::new(
-            Document::new("Doc".to_string(), "body".to_string())
+            Document::new("Doc".to_string(), "body".to_string(), false)
                 .with_created_by(running_job.clone()),
         ))
         .send()
@@ -208,10 +210,11 @@ async fn documents_support_search_filters() -> anyhow::Result<()> {
     let base = server.base_url();
 
     let docs = [
-        Document::new("Runbook".to_string(), "operations".to_string()).with_path("docs/runbook.md"),
-        Document::new("API Guide".to_string(), "api details".to_string())
+        Document::new("Runbook".to_string(), "operations".to_string(), false)
+            .with_path("docs/runbook.md"),
+        Document::new("API Guide".to_string(), "api details".to_string(), false)
             .with_path("docs/guide.md"),
-        Document::new("Notes".to_string(), "private".to_string())
+        Document::new("Notes".to_string(), "private".to_string(), false)
             .with_path("notes/internal.md")
             .with_created_by(running_task.clone()),
     ];
@@ -302,11 +305,11 @@ async fn documents_support_exact_path_matching() -> anyhow::Result<()> {
     let base = server.base_url();
 
     let docs = [
-        Document::new("Exact Doc".to_string(), "exact match".to_string())
+        Document::new("Exact Doc".to_string(), "exact match".to_string(), false)
             .with_path("docs/guide.md"),
-        Document::new("Prefix Doc".to_string(), "prefix match".to_string())
+        Document::new("Prefix Doc".to_string(), "prefix match".to_string(), false)
             .with_path("docs/guide.md.bak"),
-        Document::new("Nested Doc".to_string(), "nested match".to_string())
+        Document::new("Nested Doc".to_string(), "nested match".to_string(), false)
             .with_path("docs/guide.md/extra"),
     ];
 

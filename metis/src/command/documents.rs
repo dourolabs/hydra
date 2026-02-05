@@ -210,7 +210,7 @@ async fn create_document(
     }
 
     let body = args.body.read_required(true)?;
-    let mut document = DocumentPayload::new(args.title.clone(), body);
+    let mut document = DocumentPayload::new(args.title.clone(), body, false);
     if let Some(path) = &args.path {
         document.path = Some(path.clone());
     }
@@ -347,7 +347,7 @@ mod tests {
     }
 
     fn sample_document_record(id: &DocumentId) -> DocumentRecord {
-        let document = DocumentPayload::new("Runbook".to_string(), "# Steps".to_string())
+        let document = DocumentPayload::new("Runbook".to_string(), "# Steps".to_string(), false)
             .with_path("docs/runbook.md")
             .with_created_by(TaskId::new());
         DocumentRecord::new(id.clone(), document)

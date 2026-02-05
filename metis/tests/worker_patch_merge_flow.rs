@@ -166,6 +166,7 @@ async fn tracking_branch_override_allows_changes_requested_child_merge_request_i
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        false,
     );
     let issue_id = env
         .client

@@ -897,6 +897,7 @@ mod tests {
             Vec::new(),
             repo_name.clone(),
             None,
+            false,
         ));
         let server = MockServer::start();
         let patch_mock = server.mock(|when, then| {

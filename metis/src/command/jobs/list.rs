@@ -78,6 +78,7 @@ mod tests {
                 HashMap::new(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::new(Status::Created, Utc::now()),

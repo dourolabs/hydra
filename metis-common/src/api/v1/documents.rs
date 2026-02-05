@@ -17,13 +17,13 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new(title: String, body_markdown: String) -> Self {
+    pub fn new(title: String, body_markdown: String, deleted: bool) -> Self {
         Self {
             title,
             body_markdown,
             path: None,
             created_by: None,
-            deleted: false,
+            deleted,
         }
     }
 
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn document_builder_supports_option_fields() {
         let created_by = TaskId::new();
-        let document = Document::new("Title".to_string(), "Body".to_string())
+        let document = Document::new("Title".to_string(), "Body".to_string(), false)
             .with_path("docs/path.md")
             .with_created_by(created_by.clone());
         assert_eq!(document.path.as_deref(), Some("docs/path.md"));

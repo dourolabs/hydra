@@ -214,6 +214,7 @@ impl Patch {
         reviews: Vec<Review>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
+        deleted: bool,
     ) -> Self {
         Self {
             title,
@@ -225,7 +226,7 @@ impl Patch {
             reviews,
             service_repo_name,
             github,
-            deleted: false,
+            deleted,
         }
     }
 }

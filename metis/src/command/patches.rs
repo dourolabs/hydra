@@ -713,6 +713,7 @@ pub async fn create_merge_request_issue(
         Vec::new(),
         dependencies,
         vec![patch_id],
+        false,
     );
 
     let response = client
@@ -777,6 +778,7 @@ pub async fn create_patch_artifact_from_repo(
         Vec::new(),
         service_repo_name.clone(),
         None,
+        false,
     );
     let mut upsert_request = UpsertPatchRequest::new(patch_payload.clone());
 
@@ -1108,6 +1110,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1126,6 +1129,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-1"));
@@ -1143,6 +1147,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let server = MockServer::start();
@@ -1193,6 +1198,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1214,6 +1220,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-2"));
@@ -1231,6 +1238,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let server = MockServer::start();
@@ -1316,6 +1324,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1332,6 +1341,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         ));
         let patch_response = UpsertPatchResponse::new(patch_id("p-gh-token"));
         let _patch_mock = mock_create_patch(&server, expected_patch_request, patch_response);
@@ -1348,6 +1358,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let issue_mock = mock_get_issue(&server, issue_record);
@@ -1404,6 +1415,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1420,6 +1432,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         );
         let expected_patch_request = UpsertPatchRequest::new(patch.clone());
         let parent_issue_record = IssueRecord::new(
@@ -1435,6 +1448,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let issue_request = UpsertIssueRequest::new(
@@ -1455,6 +1469,7 @@ mod tests {
                     parent_issue.clone(),
                 )],
                 vec![created_patch_id.clone()],
+                false,
             ),
             None,
         );
@@ -1516,6 +1531,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1540,6 +1556,7 @@ mod tests {
             reviews.clone(),
             sample_repo_name(),
             None,
+            false,
         );
         let patch_record = PatchRecord::new(patch_id.clone(), existing_patch);
         let issue_record = IssueRecord::new(
@@ -1555,6 +1572,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 vec![patch_id.clone()],
+                false,
             ),
         );
         let updated_patch = Patch::new(
@@ -1567,6 +1585,7 @@ mod tests {
             reviews,
             sample_repo_name(),
             None,
+            false,
         );
         let expected_request = UpsertPatchRequest::new(updated_patch);
         let patch_response = UpsertPatchResponse::new(patch_id.clone());
@@ -1616,6 +1635,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         ));
         let patch_response = UpsertPatchResponse::new(patch_id("p-automatic"));
         let server = MockServer::start();
@@ -1659,6 +1679,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1676,6 +1697,7 @@ mod tests {
             Vec::new(),
             RepoName::from_str("dourolabs/api")?,
             None,
+            false,
         );
         let expected_request = UpsertPatchRequest::new(patch.clone());
         let patch_response = UpsertPatchResponse::new(patch_id("p-service"));
@@ -1693,6 +1715,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let server = MockServer::start();
@@ -1759,6 +1782,7 @@ mod tests {
                 Default::default(),
                 None,
                 None,
+                false,
             ),
             None,
             TaskStatusLog::from_events(Vec::new()),
@@ -1796,6 +1820,7 @@ mod tests {
                 vec![existing_review.clone()],
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let server = MockServer::start();
@@ -1856,6 +1881,7 @@ mod tests {
                 )],
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let expected_request = UpsertPatchRequest::new(Patch::new(
@@ -1873,6 +1899,7 @@ mod tests {
             )],
             sample_repo_name(),
             None,
+            false,
         ));
         let server = MockServer::start();
         let client = metis_client(&server);

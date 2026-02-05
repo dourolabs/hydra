@@ -861,7 +861,7 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        let mut issue = api::issues::Issue::new(
+        api::issues::Issue::new(
             value.issue_type.into(),
             value.description,
             value.creator.into(),
@@ -872,9 +872,8 @@ impl From<Issue> for api::issues::Issue {
             value.todo_list.into_iter().map(Into::into).collect(),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
-        );
-        issue.deleted = value.deleted;
-        issue
+            value.deleted,
+        )
     }
 }
 

@@ -430,7 +430,7 @@ impl From<api::patches::Patch> for Patch {
 
 impl From<Patch> for api::patches::Patch {
     fn from(value: Patch) -> Self {
-        let mut patch = api::patches::Patch::new(
+        api::patches::Patch::new(
             value.title,
             value.description,
             value.diff,
@@ -440,9 +440,8 @@ impl From<Patch> for api::patches::Patch {
             value.reviews.into_iter().map(Into::into).collect(),
             value.service_repo_name,
             value.github.map(Into::into),
-        );
-        patch.deleted = value.deleted;
-        patch
+            value.deleted,
+        )
     }
 }
 

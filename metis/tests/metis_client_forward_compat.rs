@@ -478,6 +478,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![TodoItem::new("existing".to_string(), false)],
         vec![],
         vec![],
+        false,
     );
     let issue_request = UpsertIssueRequest::new(issue, None);
 
@@ -534,6 +535,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![],
         repo_name.clone(),
         None,
+        false,
     );
     let upsert_patch = UpsertPatchRequest::new(patch);
 
@@ -553,7 +555,7 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(patches.patches.len(), 1);
 
     // Documents
-    let document = Document::new("forward doc".to_string(), "# Runbook".to_string())
+    let document = Document::new("forward doc".to_string(), "# Runbook".to_string(), false)
         .with_path("docs/runbook.md")
         .with_created_by(job_id.clone());
     let upsert_document = UpsertDocumentRequest::new(document);

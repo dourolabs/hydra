@@ -1279,6 +1279,7 @@ async fn submit_issue(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
         ),
         None,
     );
@@ -1310,6 +1311,7 @@ async fn update_issue_status(
         issue.todo_list,
         issue.dependencies,
         issue.patches,
+        issue.deleted,
     );
     let response = client
         .update_issue(
@@ -3680,6 +3682,7 @@ mod tests {
                 HashMap::new(),
                 None,
                 None,
+                false,
             ),
             None,
             log,

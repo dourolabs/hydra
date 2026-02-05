@@ -36,6 +36,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
         );
         let parent_id = handles.store.add_issue(parent_issue.into()).await?;
         (auth_token, parent_id)

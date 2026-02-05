@@ -35,6 +35,7 @@ pub struct Task {
 }
 
 impl Task {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompt: String,
         context: BundleSpec,
@@ -44,6 +45,7 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
+        deleted: bool,
     ) -> Self {
         Self {
             prompt,
@@ -57,7 +59,7 @@ impl Task {
             status: Status::Created,
             last_message: None,
             error: None,
-            deleted: false,
+            deleted,
         }
     }
 
@@ -74,6 +76,7 @@ impl Task {
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
+        deleted: bool,
     ) -> Self {
         Self {
             prompt,
@@ -87,7 +90,7 @@ impl Task {
             status,
             last_message,
             error,
-            deleted: false,
+            deleted,
         }
     }
 }

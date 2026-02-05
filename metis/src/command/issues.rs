@@ -1300,6 +1300,7 @@ async fn create_issue(
         Vec::new(),
         dependencies,
         patches,
+        false,
     );
     let request = UpsertIssueRequest::new(issue.clone(), None);
 
@@ -1432,6 +1433,7 @@ async fn update_issue(
         current.issue.todo_list,
         dependencies_update.unwrap_or(current.issue.dependencies),
         patches_update.unwrap_or(current.issue.patches),
+        current.issue.deleted,
     );
 
     let response = client
@@ -2434,6 +2436,7 @@ mod tests {
                 Vec::new(),
                 dependencies,
                 patches,
+                false,
             ),
         )
     }
@@ -2455,6 +2458,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                false,
             ),
         )]);
         let list_mock = server.mock(|when, then| {
@@ -2508,6 +2512,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                false,
             ),
         );
         let get_mock = server.mock(|when, then| {
@@ -2551,6 +2556,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                false,
             ),
         )]);
         let list_mock = server.mock(|when, then| {
@@ -2689,6 +2695,7 @@ mod tests {
                 Vec::new(),
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let parent_patch_record = PatchRecord::new(
@@ -2703,6 +2710,7 @@ mod tests {
                 Vec::new(),
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let child_patch_record = PatchRecord::new(
@@ -2717,6 +2725,7 @@ mod tests {
                 Vec::new(),
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let version_timestamp = Utc.with_ymd_and_hms(2024, 2, 1, 12, 0, 0).unwrap();
@@ -2880,6 +2889,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 patch_ids.clone(),
+                false,
             ),
             None,
         );
@@ -2939,6 +2949,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 vec![],
+                false,
             ),
             None,
         );
@@ -2999,6 +3010,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let current_issue_mock = server.mock(|when, then| {
@@ -3018,6 +3030,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 vec![],
+                false,
             ),
             None,
         );
@@ -3080,6 +3093,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let current_issue_mock = server.mock(|when, then| {
@@ -3105,6 +3119,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 vec![],
+                false,
             ),
             None,
         );
@@ -3260,6 +3275,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                false,
             ),
         );
         let parent_mock = server.mock(|when, then| {
@@ -3321,6 +3337,7 @@ mod tests {
                     issue_id("i-2"),
                 )],
                 vec![patch_id("p-3")],
+                false,
             ),
             None,
         );
@@ -3392,6 +3409,7 @@ mod tests {
                     issue_id("i-5"),
                 )],
                 Vec::new(),
+                false,
             ),
         );
         let update_request = UpsertIssueRequest::new(
@@ -3406,6 +3424,7 @@ mod tests {
                 Vec::new(),
                 vec![],
                 Vec::new(),
+                false,
             ),
             None,
         );
@@ -3475,6 +3494,7 @@ mod tests {
                     issue_id("i-5"),
                 )],
                 Vec::new(),
+                false,
             ),
         );
         let update_request = UpsertIssueRequest::new(
@@ -3492,6 +3512,7 @@ mod tests {
                     issue_id("i-5"),
                 )],
                 Vec::new(),
+                false,
             ),
             None,
         );
@@ -3558,6 +3579,7 @@ mod tests {
                         issue_id("i-99"),
                     )],
                     Vec::new(),
+                    false,
                 ),
             ),
             IssueRecord::new(
@@ -3573,6 +3595,7 @@ mod tests {
                     Vec::new(),
                     vec![],
                     Vec::new(),
+                    false,
                 ),
             ),
         ];
@@ -3621,6 +3644,7 @@ mod tests {
                     todo_list.clone(),
                     vec![],
                     Vec::new(),
+                    false,
                 ),
             ));
         });
@@ -3779,6 +3803,7 @@ mod tests {
                 Vec::new(),
                 sample_repo_name(),
                 None,
+                false,
             ),
         );
         let description = IssueDescription {
@@ -3796,6 +3821,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         vec![main_patch_id],
+                        false,
                     ),
                 ),
                 patches: vec![main_patch_record],
@@ -3814,6 +3840,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -3853,6 +3880,7 @@ mod tests {
             Vec::new(),
             vec![],
             vec![main_patch_id.clone()],
+            false,
         );
         let mut updated_issue = base_issue.clone();
         updated_issue.status = IssueStatus::InProgress;
@@ -3882,6 +3910,7 @@ mod tests {
             Vec::new(),
             sample_repo_name(),
             None,
+            false,
         );
         let mut updated_patch = base_patch.clone();
         updated_patch.status = PatchStatus::Merged;
@@ -3914,6 +3943,7 @@ mod tests {
             Status::Created,
             None,
             None,
+            false,
         );
         let mut updated_task = base_task.clone();
         updated_task.status = Status::Running;
@@ -3974,6 +4004,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -3992,6 +4023,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -4010,6 +4042,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -4048,6 +4081,7 @@ mod tests {
                         root_todos.clone(),
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -4066,6 +4100,7 @@ mod tests {
                         vec![TodoItem::new("parent todo".into(), false)],
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -4084,6 +4119,7 @@ mod tests {
                         vec![TodoItem::new("child todo".into(), true)],
                         vec![],
                         Vec::new(),
+                        false,
                     ),
                 ),
                 patches: Vec::new(),
@@ -4141,6 +4177,7 @@ mod tests {
                         Vec::new(),
                         vec![],
                         vec![main_patch_id.clone()],
+                        false,
                     ),
                 ),
                 patches: vec![PatchRecord::new(
@@ -4155,6 +4192,7 @@ mod tests {
                         patch_reviews,
                         sample_repo_name(),
                         None,
+                        false,
                     ),
                 )],
             },

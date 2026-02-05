@@ -78,10 +78,10 @@ impl From<api::documents::Document> for Document {
 
 impl From<Document> for api::documents::Document {
     fn from(value: Document) -> Self {
-        let mut document = api::documents::Document::new(value.title, value.body_markdown);
+        let mut document =
+            api::documents::Document::new(value.title, value.body_markdown, value.deleted);
         document.path = value.path;
         document.created_by = value.created_by;
-        document.deleted = value.deleted;
         document
     }
 }
