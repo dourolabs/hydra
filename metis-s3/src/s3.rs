@@ -1101,6 +1101,17 @@ async fn complete_multipart_upload(
     let final_md5 = md5::compute(&etag_hashes);
     let final_etag = format!("\"{:x}-{}\"", final_md5, parts.len());
 
+    // Write ETag to metadata cache
+    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &final_etag).await {
+        error!(
+            bucket = %bucket,
+            key = %key,
+            error = %err.message,
+            "complete_multipart_upload: failed to write ETag to metadata cache"
+        );
+        return err.into_response();
+    }
+
     // Clean up staging directory
     let upload_dir = state.upload_dir(upload_id);
     if let Err(err) = tokio::fs::remove_dir_all(&upload_dir).await {
@@ -1981,6 +1992,168 @@ mod tests {
         assert!(
             !multipart_dir.exists(),
             "staging directory should be cleaned up"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_upload_writes_etag_to_metadata_cache() {
+        let dir = tempdir().expect("temp dir");
+        let state = Arc::new(S3State::new(dir.path().to_path_buf()).expect("state"));
+        let router: axum::Router = RouterWithState::new(state.clone()).into();
+
+        // Step 1: Create multipart upload
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test-bucket/cached-etag.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("create multipart response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body_str = String::from_utf8(body.to_vec()).expect("utf8");
+        let upload_id = extract_xml_value(&body_str, "UploadId").expect("upload_id");
+
+        // Step 2: Upload parts
+        let part1_data = b"first-part-data";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/cached-etag.bin?uploadId={upload_id}&partNumber=1"
+                    ))
+                    .body(Body::from(&part1_data[..]))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part 1 response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag1 = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        let part2_data = b"second-part-data";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/cached-etag.bin?uploadId={upload_id}&partNumber=2"
+                    ))
+                    .body(Body::from(&part2_data[..]))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part 2 response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag2 = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        let part3_data = b"third-part-data";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/test-bucket/cached-etag.bin?uploadId={upload_id}&partNumber=3"
+                    ))
+                    .body(Body::from(&part3_data[..]))
+                    .unwrap(),
+            )
+            .await
+            .expect("upload part 3 response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag3 = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        // Step 3: Complete multipart upload
+        let complete_body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUpload>
+    <Part>
+        <PartNumber>1</PartNumber>
+        <ETag>{etag1}</ETag>
+    </Part>
+    <Part>
+        <PartNumber>2</PartNumber>
+        <ETag>{etag2}</ETag>
+    </Part>
+    <Part>
+        <PartNumber>3</PartNumber>
+        <ETag>{etag3}</ETag>
+    </Part>
+</CompleteMultipartUpload>"#
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/test-bucket/cached-etag.bin?uploadId={upload_id}"))
+                    .body(Body::from(complete_body))
+                    .unwrap(),
+            )
+            .await
+            .expect("complete multipart response");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Extract ETag from response header (not XML body, which has escaped quotes)
+        let response_etag = response
+            .headers()
+            .get("etag")
+            .expect("etag header")
+            .to_str()
+            .expect("etag str")
+            .to_string();
+
+        // Verify ETag file exists at metadata/{bucket}/{key}.etag
+        let etag_path = state
+            .metadata_path("test-bucket", "cached-etag.bin")
+            .expect("metadata path");
+        assert!(
+            etag_path.exists(),
+            "ETag metadata file should exist at {etag_path:?}"
+        );
+
+        // Verify ETag file contains the correct multipart-style ETag
+        let cached_etag = tokio::fs::read_to_string(&etag_path)
+            .await
+            .expect("read cached etag");
+        assert_eq!(
+            cached_etag, response_etag,
+            "cached ETag should match response ETag"
+        );
+
+        // Verify ETag has multipart format (contains dash followed by part count)
+        assert!(
+            cached_etag.contains("-3"),
+            "ETag should contain multipart marker '-3' for 3 parts, got: {cached_etag}"
         );
     }
 
