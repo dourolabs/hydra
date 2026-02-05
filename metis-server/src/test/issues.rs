@@ -1,12 +1,7 @@
 use super::common::default_image;
 use crate::{
     domain::{
-        issues::{
-            AddTodoItemRequest, Issue, IssueDependency, IssueDependencyType, IssueRecord,
-            IssueStatus, IssueType, ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery,
-            SetTodoItemStatusRequest, TodoItem, TodoListResponse, UpsertIssueRequest,
-            UpsertIssueResponse,
-        },
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, TodoItem},
         jobs::BundleSpec,
         users::Username,
     },
@@ -20,7 +15,11 @@ use crate::{
 use chrono::Utc;
 use metis_common::{
     IssueId, PatchId, TaskId,
-    api::v1::issues::{IssueVersionRecord, ListIssueVersionsResponse},
+    api::v1::issues::{
+        AddTodoItemRequest, IssueRecord, IssueVersionRecord, ListIssueVersionsResponse,
+        ListIssuesResponse, ReplaceTodoListRequest, SearchIssuesQuery, SetTodoItemStatusRequest,
+        TodoListResponse, UpsertIssueRequest, UpsertIssueResponse,
+    },
 };
 use reqwest::StatusCode;
 use serde_json::json;
@@ -86,7 +85,8 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -112,7 +112,8 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -135,7 +136,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
 
     assert_eq!(
         fetched.issue,
-        Issue::new(
+        metis_common::api::v1::issues::Issue::from(Issue::new(
             IssueType::Task,
             "updated details".to_string(),
             default_user(),
@@ -146,7 +147,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
             Vec::new(),
             vec![],
             Vec::new(),
-        )
+        ))
     );
     Ok(())
 }
@@ -170,7 +171,8 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -196,7 +198,8 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -272,7 +275,8 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -313,7 +317,8 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -338,7 +343,8 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
                 Vec::new(),
                 child_dependencies.clone(),
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -357,7 +363,10 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
         .json()
         .await?;
 
-    assert_eq!(fetched.issue.creator, parent_creator);
+    assert_eq!(
+        fetched.issue.creator,
+        metis_common::api::v1::users::Username::from(parent_creator)
+    );
 
     let explicit_creator = user("explicit-creator");
     let explicit_child: UpsertIssueResponse = client
@@ -373,7 +382,8 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
                 Vec::new(),
                 child_dependencies.clone(),
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -392,7 +402,10 @@ async fn create_issue_inherits_creator_from_parent_when_missing() -> anyhow::Res
         .json()
         .await?;
 
-    assert_eq!(fetched_explicit.issue.creator, explicit_creator);
+    assert_eq!(
+        fetched_explicit.issue.creator,
+        metis_common::api::v1::users::Username::from(explicit_creator)
+    );
 
     Ok(())
 }
@@ -415,7 +428,8 @@ async fn create_issue_rejects_missing_creator_without_parent() -> anyhow::Result
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -444,7 +458,8 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -469,7 +484,8 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 Vec::new(),
                 blocked_dependencies.clone(),
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -494,7 +510,8 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 Vec::new(),
                 blocked_dependencies.clone(),
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -527,7 +544,8 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -551,7 +569,8 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 Vec::new(),
                 blocked_dependencies,
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -579,7 +598,8 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -604,7 +624,8 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 Vec::new(),
                 child_dependencies.clone(),
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -629,7 +650,8 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -662,7 +684,8 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 Vec::new(),
                 child_dependencies,
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -686,7 +709,8 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 Vec::new(),
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -716,7 +740,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
 
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(base_issue.clone(), None))
+        .json(&UpsertIssueRequest::new(base_issue.clone().into(), None))
         .send()
         .await?
         .json()
@@ -730,7 +754,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest::new(closed_issue.clone(), None))
+        .json(&UpsertIssueRequest::new(closed_issue.clone().into(), None))
         .send()
         .await?;
 
@@ -749,7 +773,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
                 created.issue_id,
                 item_number
             ))
-            .json(&SetTodoItemStatusRequest { is_done: true })
+            .json(&SetTodoItemStatusRequest::new(true))
             .send()
             .await?
             .error_for_status()?;
@@ -763,7 +787,7 @@ async fn update_issue_rejects_closing_with_open_todos() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&UpsertIssueRequest::new(completed_issue, None))
+        .json(&UpsertIssueRequest::new(completed_issue.into(), None))
         .send()
         .await?
         .error_for_status()?;
@@ -792,7 +816,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
 
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest::new(base_issue.clone(), None))
+        .json(&UpsertIssueRequest::new(base_issue.clone().into(), None))
         .send()
         .await?
         .json()
@@ -834,7 +858,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
             {
                 let mut dropped_issue = base_issue.clone();
                 dropped_issue.status = IssueStatus::Dropped;
-                dropped_issue
+                dropped_issue.into()
             },
             None,
         ))
@@ -894,7 +918,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     ] {
         let response = client
             .post(format!("{}/v1/issues", server.base_url()))
-            .json(&UpsertIssueRequest::new(issue, None))
+            .json(&UpsertIssueRequest::new(issue.into(), None))
             .send()
             .await?;
         assert!(response.status().is_success());
@@ -902,57 +926,66 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
 
     let filtered_issues: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
-        .query(&SearchIssuesQuery {
-            issue_type: Some(IssueType::Bug),
-            status: None,
-            assignee: None,
-            q: None,
-            graph_filters: Vec::new(),
-            include_deleted: None,
-        })
+        .query(&SearchIssuesQuery::new(
+            Some(metis_common::api::v1::issues::IssueType::Bug),
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
     assert_eq!(filtered_issues.issues.len(), 1);
-    assert_eq!(filtered_issues.issues[0].issue, base_issue);
+    assert_eq!(
+        filtered_issues.issues[0].issue,
+        metis_common::api::v1::issues::Issue::from(base_issue)
+    );
 
     let filtered_by_assignee: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
-        .query(&SearchIssuesQuery {
-            issue_type: None,
-            status: None,
-            assignee: Some("OWNER-1".to_string()),
-            q: None,
-            graph_filters: Vec::new(),
-            include_deleted: None,
-        })
+        .query(&SearchIssuesQuery::new(
+            None,
+            None,
+            Some("OWNER-1".to_string()),
+            None,
+            Vec::new(),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
     assert_eq!(filtered_by_assignee.issues.len(), 1);
-    assert_eq!(filtered_by_assignee.issues[0].issue, assigned_issue);
+    assert_eq!(
+        filtered_by_assignee.issues[0].issue,
+        metis_common::api::v1::issues::Issue::from(assigned_issue)
+    );
 
     let filtered_by_status: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
-        .query(&SearchIssuesQuery {
-            issue_type: None,
-            status: Some(IssueStatus::Closed),
-            assignee: None,
-            q: None,
-            graph_filters: Vec::new(),
-            include_deleted: None,
-        })
+        .query(&SearchIssuesQuery::new(
+            None,
+            Some(metis_common::api::v1::issues::IssueStatus::Closed),
+            None,
+            None,
+            Vec::new(),
+            None,
+        ))
         .send()
         .await?
         .json()
         .await?;
 
     assert_eq!(filtered_by_status.issues.len(), 1);
-    assert_eq!(filtered_by_status.issues[0].issue, closed_issue);
+    assert_eq!(
+        filtered_by_status.issues[0].issue,
+        metis_common::api::v1::issues::Issue::from(closed_issue)
+    );
     Ok(())
 }
 
@@ -975,7 +1008,8 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
                 vec![initial_todo.clone()],
                 vec![],
                 Vec::new(),
-            ),
+            )
+            .into(),
             None,
         ))
         .send()
@@ -989,17 +1023,17 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&AddTodoItemRequest {
-            description: "review PR".to_string(),
-            is_done: false,
-        })
+        .json(&AddTodoItemRequest::new("review PR".to_string(), false))
         .send()
         .await?
         .json()
         .await?;
     assert_eq!(
         added.todo_list,
-        vec![initial_todo.clone(), todo("review PR", false)]
+        vec![
+            metis_common::api::v1::issues::TodoItem::from(initial_todo.clone()),
+            metis_common::api::v1::issues::TodoItem::from(todo("review PR", false))
+        ]
     );
 
     let updated: TodoListResponse = client
@@ -1008,7 +1042,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&SetTodoItemStatusRequest { is_done: true })
+        .json(&SetTodoItemStatusRequest::new(true))
         .send()
         .await?
         .json()
@@ -1021,7 +1055,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&SetTodoItemStatusRequest { is_done: true })
+        .json(&SetTodoItemStatusRequest::new(true))
         .send()
         .await?
         .json()
@@ -1034,16 +1068,17 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&SetTodoItemStatusRequest { is_done: false })
+        .json(&SetTodoItemStatusRequest::new(false))
         .send()
         .await?
         .json()
         .await?;
     assert!(!unset.todo_list[1].is_done);
 
-    let replacement = ReplaceTodoListRequest {
-        todo_list: vec![todo("rewrite docs", false), todo("review PR", true)],
-    };
+    let replacement = ReplaceTodoListRequest::new(vec![
+        todo("rewrite docs", false).into(),
+        todo("review PR", true).into(),
+    ]);
 
     let replaced: TodoListResponse = client
         .put(format!(
@@ -1076,7 +1111,7 @@ async fn todo_list_endpoints_append_update_and_replace() -> anyhow::Result<()> {
             server.base_url(),
             created.issue_id
         ))
-        .json(&SetTodoItemStatusRequest { is_done: true })
+        .json(&SetTodoItemStatusRequest::new(true))
         .send()
         .await?;
     assert_eq!(invalid_update.status(), reqwest::StatusCode::BAD_REQUEST);

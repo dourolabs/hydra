@@ -1,6 +1,6 @@
 use super::users::Username;
 use metis_common::api::v1 as api;
-use metis_common::{IssueId, PatchId, RepoName, TaskId};
+use metis_common::{IssueId, PatchId, RepoName};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
@@ -157,40 +157,6 @@ impl TodoItem {
             is_done,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TodoListResponse {
-    pub issue_id: IssueId,
-    #[serde(default)]
-    pub todo_list: Vec<TodoItem>,
-}
-
-impl TodoListResponse {
-    pub fn new(issue_id: IssueId, todo_list: Vec<TodoItem>) -> Self {
-        Self {
-            issue_id,
-            todo_list,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AddTodoItemRequest {
-    pub description: String,
-    #[serde(default)]
-    pub is_done: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReplaceTodoListRequest {
-    #[serde(default)]
-    pub todo_list: Vec<TodoItem>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SetTodoItemStatusRequest {
-    pub is_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -459,102 +425,6 @@ impl JobSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IssueRecord {
-    pub id: IssueId,
-    pub issue: Issue,
-}
-
-impl IssueRecord {
-    pub fn new(id: IssueId, issue: Issue) -> Self {
-        Self { id, issue }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertIssueRequest {
-    pub issue: Issue,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<TaskId>,
-}
-
-impl UpsertIssueRequest {
-    pub fn new(issue: Issue, job_id: Option<TaskId>) -> Self {
-        Self { issue, job_id }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpsertIssueResponse {
-    pub issue_id: IssueId,
-}
-
-impl UpsertIssueResponse {
-    pub fn new(issue_id: IssueId) -> Self {
-        Self { issue_id }
-    }
-}
-
-fn serialize_graph_filters<S>(
-    filters: &[IssueGraphFilter],
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = filters
-        .iter()
-        .map(|f| f.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&s)
-}
-
-fn deserialize_graph_filters<'de, D>(deserializer: D) -> Result<Vec<IssueGraphFilter>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    s.split(',')
-        .map(|part| part.parse().map_err(de::Error::custom))
-        .collect()
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchIssuesQuery {
-    #[serde(default)]
-    pub issue_type: Option<IssueType>,
-    #[serde(default)]
-    pub status: Option<IssueStatus>,
-    #[serde(default)]
-    pub assignee: Option<String>,
-    #[serde(default)]
-    pub q: Option<String>,
-    #[serde(
-        default,
-        rename = "graph",
-        serialize_with = "serialize_graph_filters",
-        deserialize_with = "deserialize_graph_filters"
-    )]
-    pub graph_filters: Vec<IssueGraphFilter>,
-    #[serde(default)]
-    pub include_deleted: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListIssuesResponse {
-    pub issues: Vec<IssueRecord>,
-}
-
-impl ListIssuesResponse {
-    pub fn new(issues: Vec<IssueRecord>) -> Self {
-        Self { issues }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum IssueConversionError {
     #[error("invalid graph filter '{filter}': {reason}")]
@@ -658,69 +528,6 @@ impl From<api::issues::TodoItem> for TodoItem {
 impl From<TodoItem> for api::issues::TodoItem {
     fn from(value: TodoItem) -> Self {
         api::issues::TodoItem::new(value.description, value.is_done)
-    }
-}
-
-impl From<api::issues::TodoListResponse> for TodoListResponse {
-    fn from(value: api::issues::TodoListResponse) -> Self {
-        Self {
-            issue_id: value.issue_id,
-            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<TodoListResponse> for api::issues::TodoListResponse {
-    fn from(value: TodoListResponse) -> Self {
-        api::issues::TodoListResponse::new(
-            value.issue_id,
-            value.todo_list.into_iter().map(Into::into).collect(),
-        )
-    }
-}
-
-impl From<api::issues::AddTodoItemRequest> for AddTodoItemRequest {
-    fn from(value: api::issues::AddTodoItemRequest) -> Self {
-        Self {
-            description: value.description,
-            is_done: value.is_done,
-        }
-    }
-}
-
-impl From<AddTodoItemRequest> for api::issues::AddTodoItemRequest {
-    fn from(value: AddTodoItemRequest) -> Self {
-        api::issues::AddTodoItemRequest::new(value.description, value.is_done)
-    }
-}
-
-impl From<api::issues::ReplaceTodoListRequest> for ReplaceTodoListRequest {
-    fn from(value: api::issues::ReplaceTodoListRequest) -> Self {
-        Self {
-            todo_list: value.todo_list.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<ReplaceTodoListRequest> for api::issues::ReplaceTodoListRequest {
-    fn from(value: ReplaceTodoListRequest) -> Self {
-        api::issues::ReplaceTodoListRequest::new(
-            value.todo_list.into_iter().map(Into::into).collect(),
-        )
-    }
-}
-
-impl From<api::issues::SetTodoItemStatusRequest> for SetTodoItemStatusRequest {
-    fn from(value: api::issues::SetTodoItemStatusRequest) -> Self {
-        Self {
-            is_done: value.is_done,
-        }
-    }
-}
-
-impl From<SetTodoItemStatusRequest> for api::issues::SetTodoItemStatusRequest {
-    fn from(value: SetTodoItemStatusRequest) -> Self {
-        api::issues::SetTodoItemStatusRequest::new(value.is_done)
     }
 }
 
@@ -877,118 +684,13 @@ impl From<Issue> for api::issues::Issue {
     }
 }
 
-impl From<api::issues::IssueRecord> for IssueRecord {
-    fn from(value: api::issues::IssueRecord) -> Self {
-        IssueRecord {
-            id: value.id,
-            issue: value.issue.into(),
-        }
-    }
-}
-
-impl From<IssueRecord> for api::issues::IssueRecord {
-    fn from(value: IssueRecord) -> Self {
-        api::issues::IssueRecord::new(value.id, value.issue.into())
-    }
-}
-
-impl From<api::issues::UpsertIssueRequest> for UpsertIssueRequest {
-    fn from(value: api::issues::UpsertIssueRequest) -> Self {
-        Self {
-            issue: value.issue.into(),
-            job_id: value.job_id,
-        }
-    }
-}
-
-impl From<UpsertIssueRequest> for api::issues::UpsertIssueRequest {
-    fn from(value: UpsertIssueRequest) -> Self {
-        api::issues::UpsertIssueRequest::new(value.issue.into(), value.job_id)
-    }
-}
-
-impl From<api::issues::UpsertIssueResponse> for UpsertIssueResponse {
-    fn from(value: api::issues::UpsertIssueResponse) -> Self {
-        Self {
-            issue_id: value.issue_id,
-        }
-    }
-}
-
-impl From<UpsertIssueResponse> for api::issues::UpsertIssueResponse {
-    fn from(value: UpsertIssueResponse) -> Self {
-        api::issues::UpsertIssueResponse::new(value.issue_id)
-    }
-}
-
-impl From<api::issues::SearchIssuesQuery> for SearchIssuesQuery {
-    fn from(value: api::issues::SearchIssuesQuery) -> Self {
-        Self {
-            issue_type: value.issue_type.map(Into::into),
-            status: value.status.map(Into::into),
-            assignee: value.assignee,
-            q: value.q,
-            graph_filters: value.graph_filters.into_iter().map(Into::into).collect(),
-            include_deleted: value.include_deleted,
-        }
-    }
-}
-
-impl TryFrom<SearchIssuesQuery> for api::issues::SearchIssuesQuery {
-    type Error = IssueConversionError;
-
-    fn try_from(value: SearchIssuesQuery) -> Result<Self, Self::Error> {
-        let graph_filters = value
-            .graph_filters
-            .into_iter()
-            .map(api::issues::IssueGraphFilter::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(api::issues::SearchIssuesQuery::new(
-            value.issue_type.map(Into::into),
-            value.status.map(Into::into),
-            value.assignee,
-            value.q,
-            graph_filters,
-            value.include_deleted,
-        ))
-    }
-}
-
-impl From<api::issues::ListIssuesResponse> for ListIssuesResponse {
-    fn from(value: api::issues::ListIssuesResponse) -> Self {
-        Self {
-            issues: value.issues.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<ListIssuesResponse> for api::issues::ListIssuesResponse {
-    fn from(value: ListIssuesResponse) -> Self {
-        api::issues::ListIssuesResponse::new(
-            value
-                .issues
-                .into_iter()
-                .map(api::issues::IssueRecord::from)
-                .collect(),
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::users::Username;
     use metis_common::api::v1 as api;
-    use metis_common::{IssueId, PatchId, RepoName, TaskId};
-    use serde::Serialize;
-    use serde_json::json;
-    use std::{collections::HashMap, str::FromStr};
-
-    fn serialize_query_params<T: Serialize>(value: &T) -> Vec<(String, String)> {
-        let encoded = serde_urlencoded::to_string(value).unwrap();
-        serde_urlencoded::from_str(&encoded).unwrap()
-    }
+    use metis_common::{IssueId, PatchId, RepoName};
+    use std::str::FromStr;
 
     #[test]
     fn issue_graph_filters_roundtrip() {
@@ -1013,75 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn search_query_deserialization() {
-        let issue_id = IssueId::new();
-        let filters = [format!(
-            "{}:{}:**",
-            issue_id.as_ref(),
-            IssueDependencyType::ChildOf.as_str()
-        )];
-
-        let json_value = json!({
-            "issue_type": "feature",
-            "status": "open",
-            "assignee": "alice",
-            "q": "some query",
-            "graph": filters.join(","),
-        });
-
-        let query: SearchIssuesQuery =
-            serde_json::from_value(json_value).expect("JSON should be valid");
-
-        assert_eq!(query.issue_type, Some(IssueType::Feature));
-        assert_eq!(query.status, Some(IssueStatus::Open));
-        assert_eq!(query.assignee, Some("alice".to_string()));
-        assert_eq!(query.q, Some("some query".to_string()));
-        assert_eq!(query.graph_filters.len(), 1);
-        assert_eq!(
-            query.graph_filters[0].to_string(),
-            format!(
-                "{}:{}:**",
-                issue_id.as_ref(),
-                IssueDependencyType::ChildOf.as_str()
-            )
-        );
-    }
-
-    #[test]
-    fn search_issues_query_serializes_with_reqwest() {
-        let issue_id = IssueId::new();
-        let filter = format!(
-            "{}:{}:**",
-            issue_id.as_ref(),
-            IssueDependencyType::ChildOf.as_str()
-        );
-        let query = SearchIssuesQuery {
-            issue_type: Some(IssueType::Feature),
-            status: Some(IssueStatus::Open),
-            assignee: Some("alice".to_string()),
-            q: Some("test query".to_string()),
-            graph_filters: vec![IssueGraphFilter::from_str(&filter).unwrap()],
-            include_deleted: None,
-        };
-
-        let params = serialize_query_params(&query);
-        let params: HashMap<_, _> = params.into_iter().collect();
-
-        assert_eq!(
-            params.get("issue_type").map(String::as_str),
-            Some("feature")
-        );
-        assert_eq!(params.get("status").map(String::as_str), Some("open"));
-        assert_eq!(params.get("assignee").map(String::as_str), Some("alice"));
-        assert_eq!(params.get("q").map(String::as_str), Some("test query"));
-        assert_eq!(
-            params.get("graph").map(String::as_str),
-            Some(filter.as_str())
-        );
-    }
-
-    #[test]
-    fn upsert_issue_request_roundtrip_json() {
+    fn issue_roundtrip_json() {
         let dependency_id = IssueId::new();
         let patch_id = PatchId::new();
         let job_settings = JobSettings {
@@ -1094,47 +728,42 @@ mod tests {
             cpu_limit: Some("400m".to_string()),
             memory_limit: Some("768Mi".to_string()),
         };
-        let payload = UpsertIssueRequest {
-            issue: Issue {
-                issue_type: IssueType::Task,
-                description: "cool feature".to_string(),
-                creator: Username::from("alice"),
-                progress: "in-progress".to_string(),
-                status: IssueStatus::Open,
-                assignee: Some("bob".to_string()),
-                job_settings: job_settings.clone(),
-                todo_list: vec![TodoItem {
-                    description: "todo".to_string(),
-                    is_done: false,
-                }],
-                dependencies: vec![IssueDependency {
-                    dependency_type: IssueDependencyType::ChildOf,
-                    issue_id: dependency_id,
-                }],
-                patches: vec![patch_id.clone()],
-                deleted: false,
-            },
-            job_id: Some(TaskId::new()),
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "cool feature".to_string(),
+            creator: Username::from("alice"),
+            progress: "in-progress".to_string(),
+            status: IssueStatus::Open,
+            assignee: Some("bob".to_string()),
+            job_settings: job_settings.clone(),
+            todo_list: vec![TodoItem {
+                description: "todo".to_string(),
+                is_done: false,
+            }],
+            dependencies: vec![IssueDependency {
+                dependency_type: IssueDependencyType::ChildOf,
+                issue_id: dependency_id,
+            }],
+            patches: vec![patch_id.clone()],
+            deleted: false,
         };
 
-        let payload_json = serde_json::to_string(&payload).expect("should serialize to JSON");
-        let decoded: UpsertIssueRequest =
-            serde_json::from_str(&payload_json).expect("should parse payload");
+        let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");
+        let decoded: Issue = serde_json::from_str(&issue_json).expect("should parse issue");
 
         assert_eq!(
-            decoded.issue.dependencies[0].dependency_type,
+            decoded.dependencies[0].dependency_type,
             IssueDependencyType::ChildOf
         );
-        assert_eq!(decoded.issue.patches[0], patch_id);
-        assert_eq!(decoded.job_id, payload.job_id);
-        assert_eq!(decoded.issue.creator, payload.issue.creator);
-        assert_eq!(decoded.issue.assignee, Some("bob".to_string()));
-        assert_eq!(decoded.issue.status, payload.issue.status);
-        assert_eq!(decoded.issue.progress, payload.issue.progress);
-        assert_eq!(decoded.issue.issue_type, payload.issue.issue_type);
-        assert_eq!(decoded.issue.description, payload.issue.description);
-        assert_eq!(decoded.issue.todo_list.len(), 1);
-        assert_eq!(decoded.issue.job_settings, job_settings);
+        assert_eq!(decoded.patches[0], patch_id);
+        assert_eq!(decoded.creator, issue.creator);
+        assert_eq!(decoded.assignee, Some("bob".to_string()));
+        assert_eq!(decoded.status, issue.status);
+        assert_eq!(decoded.progress, issue.progress);
+        assert_eq!(decoded.issue_type, issue.issue_type);
+        assert_eq!(decoded.description, issue.description);
+        assert_eq!(decoded.todo_list.len(), 1);
+        assert_eq!(decoded.job_settings, job_settings);
     }
 
     #[test]

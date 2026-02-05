@@ -1,9 +1,7 @@
 use super::common::{default_image, patch_diff, service_repo_name};
 use crate::{
     domain::{
-        issues::{
-            Issue, IssueRecord, IssueStatus, IssueType, UpsertIssueRequest, UpsertIssueResponse,
-        },
+        issues::{Issue, IssueStatus, IssueType},
         jobs::BundleSpec,
         patches::{GithubPr, Patch, PatchStatus},
         users::{User, Username},
@@ -19,9 +17,12 @@ use httpmock::prelude::HttpMockRequest;
 use httpmock::{Method::GET, Method::POST, MockServer};
 use metis_common::{
     PatchId,
-    api::v1::patches::{
-        CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse, PatchRecord,
-        PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+    api::v1::{
+        issues::{IssueRecord, UpsertIssueRequest, UpsertIssueResponse},
+        patches::{
+            CreatePatchAssetResponse, ListPatchVersionsResponse, ListPatchesResponse, PatchRecord,
+            PatchVersionRecord, SearchPatchesQuery, UpsertPatchRequest, UpsertPatchResponse,
+        },
     },
 };
 use reqwest::Client;
@@ -305,10 +306,7 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
 
     let created_issue: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: merge_request_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
         .send()
         .await?
         .json()
@@ -338,7 +336,10 @@ async fn closing_patch_closes_merge_request_issues() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert_eq!(fetched_issue.issue.status, IssueStatus::Closed);
+    assert_eq!(
+        fetched_issue.issue.status,
+        metis_common::api::v1::issues::IssueStatus::Closed
+    );
     Ok(())
 }
 
@@ -382,10 +383,7 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
 
     let created_issue: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: merge_request_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
         .send()
         .await?
         .json()
@@ -415,7 +413,10 @@ async fn changes_requested_closes_merge_request_issues() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    assert_eq!(fetched_issue.issue.status, IssueStatus::Closed);
+    assert_eq!(
+        fetched_issue.issue.status,
+        metis_common::api::v1::issues::IssueStatus::Closed
+    );
     Ok(())
 }
 
@@ -460,10 +461,7 @@ async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyho
 
     client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: merge_request_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
         .send()
         .await?
         .error_for_status()?;
@@ -552,10 +550,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
 
     let created_issue: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: merge_request_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
         .send()
         .await?
         .json()
@@ -589,7 +584,10 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
         .json()
         .await?;
 
-    assert_eq!(fetched_issue.issue.status, IssueStatus::Closed);
+    assert_eq!(
+        fetched_issue.issue.status,
+        metis_common::api::v1::issues::IssueStatus::Closed
+    );
 
     let mut reopened_patch = base_patch.clone();
     reopened_patch.title = "Review patch v2".to_string();
@@ -673,10 +671,7 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
 
     client
         .post(format!("{}/v1/issues", server.base_url()))
-        .json(&UpsertIssueRequest {
-            issue: merge_request_issue,
-            job_id: None,
-        })
+        .json(&UpsertIssueRequest::new(merge_request_issue.into(), None))
         .send()
         .await?
         .error_for_status()?;
