@@ -712,7 +712,11 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_issues(&self) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+    async fn list_issues(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Issue>(TABLE_ISSUES, "issue", ISSUE_SCHEMA_VERSION)
             .await?;
@@ -728,11 +732,18 @@ impl Store for PostgresStore {
             .collect()
     }
 
+    async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
+        let current = self.get_issue(id).await?;
+        let mut issue = current.item;
+        issue.deleted = true;
+        self.update_issue(id, issue).await
+    }
+
     async fn search_issue_graph(
         &self,
         filters: &[IssueGraphFilter],
     ) -> Result<HashSet<IssueId>, StoreError> {
-        let issues = self.list_issues().await?;
+        let issues = self.list_issues(false).await?;
         let issue_values: Vec<(IssueId, Issue)> = issues
             .into_iter()
             .map(|(id, issue)| (id, issue.item))
@@ -784,7 +795,11 @@ impl Store for PostgresStore {
         .await
     }
 
-    async fn list_patches(&self) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+    async fn list_patches(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
+        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Patch>(
                 TABLE_PATCHES,
@@ -804,9 +819,16 @@ impl Store for PostgresStore {
             .collect()
     }
 
+    async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
+        let current = self.get_patch(id).await?;
+        let mut patch = current.item;
+        patch.deleted = true;
+        self.update_patch(id, patch).await
+    }
+
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_patch_exists(patch_id).await?;
-        let issues = self.list_issues().await?;
+        let issues = self.list_issues(false).await?;
 
         Ok(issues
             .into_iter()
@@ -870,6 +892,13 @@ impl Store for PostgresStore {
         .await
     }
 
+    async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
+        let current = self.get_document(id).await?;
+        let mut document = current.item;
+        document.deleted = true;
+        self.update_document(id, document).await
+    }
+
     async fn list_documents(
         &self,
         query: &SearchDocumentsQuery,
@@ -893,7 +922,7 @@ impl Store for PostgresStore {
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues().await?;
+        let issues = self.list_issues(false).await?;
         Ok(issues
             .into_iter()
             .filter_map(|(id, issue)| {
@@ -912,7 +941,7 @@ impl Store for PostgresStore {
 
     async fn get_issue_blocked_on(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let issues = self.list_issues().await?;
+        let issues = self.list_issues(false).await?;
         Ok(issues
             .into_iter()
             .filter_map(|(id, issue)| {
@@ -931,7 +960,7 @@ impl Store for PostgresStore {
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let tasks = self.list_tasks().await?;
+        let tasks = self.list_tasks(false).await?;
         let mut results = Vec::new();
 
         for (task_id, task) in tasks {
@@ -1034,7 +1063,11 @@ impl Store for PostgresStore {
         Ok(versions)
     }
 
-    async fn list_tasks(&self) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+    async fn list_tasks(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
+        // TODO: Implement include_deleted filtering in PostgresStore
         let rows = self
             .fetch_versioned_payloads_with_ids::<Task>(TABLE_TASKS, "task", TASK_SCHEMA_VERSION)
             .await?;
@@ -1047,6 +1080,14 @@ impl Store for PostgresStore {
                 Ok((task_id, task))
             })
             .collect()
+    }
+
+    async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
+        let current = self.get_task(id).await?;
+        let mut task = current.item;
+        task.deleted = true;
+        self.update_task(id, task).await?;
+        Ok(())
     }
 
     async fn list_tasks_with_status(&self, status: Status) -> Result<Vec<TaskId>, StoreError> {
@@ -1419,7 +1460,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let issues: HashSet<_> = store
-            .list_issues()
+            .list_issues(false)
             .await
             .unwrap()
             .into_iter()
@@ -1647,7 +1688,7 @@ mod tests {
             .await
             .unwrap();
         let all_tasks: HashSet<_> = store
-            .list_tasks()
+            .list_tasks(false)
             .await
             .unwrap()
             .into_iter()
