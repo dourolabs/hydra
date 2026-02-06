@@ -1010,15 +1010,13 @@ impl Store for PostgresStore {
 
         match existing {
             Some(repo) if repo.item.deleted => {
-                // Undelete: re-create by updating with deleted=false
-                let mut undeleted = config;
-                undeleted.deleted = false;
+                // Re-create over deleted: use caller's config as-is
                 self.update_payload(
                     TABLE_REPOSITORIES,
                     "repository",
                     name_str.as_str(),
                     REPOSITORY_SCHEMA_VERSION,
-                    &undeleted,
+                    &config,
                 )
                 .await
             }

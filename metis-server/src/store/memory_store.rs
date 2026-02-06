@@ -315,11 +315,9 @@ impl Store for MemoryStore {
         if let Some(entry) = self.repositories.get(&name) {
             if let Some(latest) = Self::latest_versioned(entry.value()) {
                 if latest.item.deleted {
-                    // Undelete: update with deleted=false
+                    // Re-create over deleted: use caller's config as-is
                     drop(entry);
-                    let mut undeleted = config;
-                    undeleted.deleted = false;
-                    return self.update_repository(name, undeleted).await;
+                    return self.update_repository(name, config).await;
                 }
                 return Err(StoreError::RepositoryAlreadyExists(name));
             }
@@ -1357,7 +1355,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_repository_undeletes_soft_deleted_repo() {
+    async fn add_repository_recreates_over_soft_deleted_repo() {
         let store = MemoryStore::new();
         let name = RepoName::from_str("dourolabs/metis").unwrap();
         let config = sample_repository_config();
@@ -1369,9 +1367,10 @@ mod tests {
             .unwrap();
         store.delete_repository(&name).await.unwrap();
 
-        // Re-create with different config should undelete
+        // Re-create with deleted=false (caller controls the deleted field)
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
+        new_config.deleted = false;
         store
             .add_repository(name.clone(), new_config.clone())
             .await
@@ -1390,6 +1389,42 @@ mod tests {
             .unwrap();
         assert_eq!(list.len(), 1);
         assert!(!list[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn add_repository_respects_caller_deleted_field() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        // Create and delete
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+        store.delete_repository(&name).await.unwrap();
+
+        // Re-create with deleted=true (caller wants to keep it deleted)
+        let mut new_config = config.clone();
+        new_config.default_branch = Some("develop".to_string());
+        new_config.deleted = true;
+        store
+            .add_repository(name.clone(), new_config.clone())
+            .await
+            .unwrap();
+
+        // Repository should still be deleted (caller's choice)
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert!(fetched.item.deleted);
+        assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
+        assert_eq!(fetched.version, 3);
+
+        // List_repositories should not include it by default
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
+        assert!(list.is_empty());
     }
 
     #[tokio::test]
