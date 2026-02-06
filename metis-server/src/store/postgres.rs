@@ -1489,10 +1489,21 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::TaskNotFound(metis_id.clone()))
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
-        self.fetch_versioned_payload(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
+    async fn get_task(
+        &self,
+        id: &TaskId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Task>, StoreError> {
+        let versioned: Versioned<Task> = self
+            .fetch_versioned_payload(TABLE_TASKS, "task", id.as_ref(), TASK_SCHEMA_VERSION)
             .await?
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
@@ -1513,7 +1524,7 @@ impl Store for PostgresStore {
     }
 
     async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
-        let current = self.get_task(id).await?;
+        let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
         self.update_task(id, task).await?;
@@ -2097,7 +2108,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -2112,7 +2129,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -2122,14 +2145,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
 
         let tasks = handles.store.get_tasks_for_issue(&issue_id).await.unwrap();
         assert_eq!(tasks, vec![task_id.clone()]);
 
-        let mut updated_task = handles.store.get_task(&task_id).await.unwrap().item;
+        let mut updated_task = handles.store.get_task(&task_id, false).await.unwrap().item;
         updated_task.spawned_from = None;
         let updated_version = handles
             .store
@@ -2137,7 +2166,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated_version.item, updated_task);
-        let fetched = handles.store.get_task(&task_id).await.unwrap();
+        let fetched = handles.store.get_task(&task_id, false).await.unwrap();
         assert_eq!(fetched.item, updated_task);
         assert!(
             handles

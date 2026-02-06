@@ -373,10 +373,16 @@ pub trait Store: Send + Sync {
     ///
     /// # Arguments
     /// * `id` - The TaskId to look up
+    /// * `include_deleted` - If true, returns the task even if it has been soft-deleted.
+    ///   If false, returns `StoreError::TaskNotFound` for deleted tasks.
     ///
     /// # Returns
     /// The task if found, or an error if not found
-    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError>;
+    async fn get_task(
+        &self,
+        id: &TaskId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Task>, StoreError>;
 
     /// Retrieves all versions of a task in ascending version order.
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError>;
