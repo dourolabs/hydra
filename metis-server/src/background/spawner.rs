@@ -1172,4 +1172,87 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn spawner_passes_secrets_from_job_settings() -> anyhow::Result<()> {
+        let (repo_name, repository) = repository();
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
+        handles
+            .store
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Issue with secrets".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: Some(repo_name.clone()),
+                    remote_url: None,
+                    image: Some("worker:latest".to_string()),
+                    model: None,
+                    branch: None,
+                    max_retries: None,
+                    cpu_limit: None,
+                    memory_limit: None,
+                    secrets: Some(secrets.clone()),
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+                deleted: false,
+            })
+            .await?;
+        let queue = queue("agent-a");
+
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        let task = &tasks[0];
+        assert_eq!(task.secrets, Some(secrets));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawner_handles_none_secrets() -> anyhow::Result<()> {
+        let (repo_name, repository) = repository();
+        let handles = test_state_with_repo_handles(repo_name.clone(), repository.clone()).await?;
+        handles
+            .store
+            .add_issue(Issue {
+                issue_type: IssueType::Task,
+                description: "Issue without secrets".to_string(),
+                creator: default_user(),
+                progress: String::new(),
+                status: IssueStatus::Open,
+                assignee: Some("agent-a".to_string()),
+                job_settings: JobSettings {
+                    repo_name: Some(repo_name.clone()),
+                    remote_url: None,
+                    image: Some("worker:latest".to_string()),
+                    model: None,
+                    branch: None,
+                    max_retries: None,
+                    cpu_limit: None,
+                    memory_limit: None,
+                    secrets: None,
+                },
+                todo_list: Vec::new(),
+                dependencies: vec![],
+                patches: Vec::new(),
+                deleted: false,
+            })
+            .await?;
+        let queue = queue("agent-a");
+
+        let tasks = queue.spawn(&handles.state).await?;
+        assert_eq!(tasks.len(), 1);
+
+        let task = &tasks[0];
+        assert!(task.secrets.is_none());
+
+        Ok(())
+    }
 }

@@ -1142,6 +1142,7 @@ impl AppState {
                 memory_limit,
                 cpu_request,
                 memory_request,
+                resolved.secrets.as_deref(),
             )
             .await
         {
