@@ -862,10 +862,15 @@ impl Store for MemoryStore {
     }
 
     async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
-        self.tasks
+        let versioned = self
+            .tasks
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
+            .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
+        if versioned.item.deleted {
+            return Err(StoreError::TaskNotFound(id.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn get_task_versions(&self, id: &TaskId) -> Result<Vec<Versioned<Task>>, StoreError> {
@@ -2898,9 +2903,9 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
 
-        // get_task should still return the deleted task
-        let task = store.get_task(&task_id).await.unwrap();
-        assert!(task.item.deleted);
+        // get_task should return TaskNotFound for deleted task
+        let err = store.get_task(&task_id).await.unwrap_err();
+        assert!(matches!(err, StoreError::TaskNotFound(id) if id == task_id));
     }
 
     #[tokio::test]
