@@ -2,14 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use httpmock::prelude::*;
 use httpmock::Mock;
 use jsonwebtoken::EncodingKey;
-use metis::command::jobs::worker_run::resolve_tracking_branch_override;
 use metis::command::output::{CommandContext, ResolvedOutputFormat};
 use metis::command::patches::create_merge_request_issue;
 use metis_common::{
-    issues::{Issue, IssueStatus, IssueType, JobSettings, UpsertIssueRequest},
+    issues::{IssueStatus, IssueType, JobSettings},
     jobs::SearchJobsQuery,
-    patches::{GithubPr, PatchStatus, UpsertPatchRequest},
-    users::Username,
+    patches::{GithubPr, PatchStatus},
 };
 use metis_server::background::run_spawners::RunSpawnersWorker;
 use metis_server::background::scheduler::ScheduledWorker;
@@ -31,7 +29,7 @@ use tempfile::TempDir;
 mod common;
 
 use common::bash_commands::BashCommands;
-use common::test_helpers::{init_test_server_with_remote, init_test_server_with_remote_and_github};
+use common::test_helpers::init_test_server_with_remote_and_github;
 
 struct GithubMocks<'a> {
     installation: Mock<'a>,
@@ -127,75 +125,6 @@ fn set_remote_head(remote_url: &str, branch: &str) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn tracking_branch_override_allows_changes_requested_child_merge_request_issue() -> Result<()>
-{
-    let env = init_test_server_with_remote("octo/repo").await?;
-    let head_ref = "repo/t-abc123/head";
-
-    let patch_id = env
-        .create_patch(
-            "Code change summary",
-            "Code change description",
-            "diff",
-            PatchStatus::ChangesRequested,
-            Some(GithubPr::new(
-                "octo".to_string(),
-                "repo".to_string(),
-                101,
-                Some(head_ref.to_string()),
-                None,
-                None,
-                None,
-            )),
-            None,
-        )
-        .await?;
-
-    let issue = Issue::new(
-        IssueType::Task,
-        "review task".to_string(),
-        Username::from("creator"),
-        String::new(),
-        IssueStatus::Open,
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        false,
-    );
-    let issue_id = env
-        .client
-        .create_issue(&UpsertIssueRequest::new(issue, None))
-        .await?
-        .issue_id;
-
-    create_merge_request_issue(
-        &env.client,
-        patch_id.clone(),
-        "reviewer".to_string(),
-        issue_id.clone(),
-        "Code change summary".to_string(),
-        "Code change description".to_string(),
-    )
-    .await?;
-
-    let override_branch = resolve_tracking_branch_override(&env.client, &issue_id).await?;
-    assert_eq!(override_branch.as_deref(), Some(head_ref));
-
-    let mut patch_record = env.client.get_patch(&patch_id).await?;
-    patch_record.patch.status = PatchStatus::Open;
-    env.client
-        .update_patch(&patch_id, &UpsertPatchRequest::new(patch_record.patch))
-        .await?;
-
-    let override_branch = resolve_tracking_branch_override(&env.client, &issue_id).await?;
-    assert!(override_branch.is_none());
-
     Ok(())
 }
 
@@ -374,7 +303,7 @@ fn setup_github_mocks<'a>(
 }
 
 #[tokio::test]
-async fn merge_request_override_accepts_additional_commits_and_merges() -> Result<()> {
+async fn merge_request_issue_tracks_issue_head_and_merges() -> Result<()> {
     let github_server = MockServer::start();
     let repo_owner = "octo";
     let repo_name = "repo";
@@ -532,10 +461,7 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
 
     env.state.start_pending_task(job_id.clone()).await;
 
-    let override_branch =
-        resolve_tracking_branch_override(&env.client, &merge_request_issue_id).await?;
-    assert_eq!(override_branch.as_deref(), Some(head_ref));
-
+    let main_head_before = branch_head(&repo_config.remote_url, "main")?;
     let worker_dir = tempfile::tempdir().context("failed to create worker tempdir")?;
     let bash_commands = BashCommands::new_with_failure(
         vec![
@@ -559,8 +485,9 @@ async fn merge_request_override_accepts_additional_commits_and_merges() -> Resul
     )
     .await?;
 
-    let head_after_worker = branch_head(&repo_config.remote_url, head_ref)?;
-    assert_ne!(head_after_worker, head_sha);
+    let issue_head_branch = format!("metis/{merge_request_issue_id}/head");
+    let head_after_worker = branch_head(&repo_config.remote_url, &issue_head_branch)?;
+    assert_ne!(head_after_worker, main_head_before);
 
     let head_after_extra =
         push_additional_commit(&repo_config.remote_url, head_ref, "additional fix\n")?;
