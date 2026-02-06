@@ -17,7 +17,9 @@ use metis_common::{
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
-    repositories::{CreateRepositoryRequest, Repository, UpdateRepositoryRequest},
+    repositories::{
+        CreateRepositoryRequest, Repository, SearchRepositoriesQuery, UpdateRepositoryRequest,
+    },
     task_status::{Event, Status},
     users::Username,
     whoami::ActorIdentity,
@@ -609,7 +611,9 @@ async fn metis_client_handles_forward_compatible_payloads() -> Result<()> {
     let updated_repo = client.update_repository(&repo_name, &repo_update).await?;
     assert_eq!(updated_repo.repository.name, repo_name);
 
-    let repos = client.list_repositories().await?;
+    let repos = client
+        .list_repositories(&SearchRepositoriesQuery::default())
+        .await?;
     assert_eq!(repos.repositories.len(), 1);
 
     let github_token = client.get_github_token().await?;

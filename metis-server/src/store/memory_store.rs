@@ -21,7 +21,7 @@ use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
-    repositories::Repository,
+    repositories::{Repository, SearchRepositoriesQuery},
 };
 
 /// An in-memory implementation of the Store trait.
@@ -311,8 +311,18 @@ impl Default for MemoryStore {
 #[async_trait]
 impl Store for MemoryStore {
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
-        if self.repositories.contains_key(&name) {
-            return Err(StoreError::RepositoryAlreadyExists(name));
+        // Check if exists and if deleted
+        if let Some(entry) = self.repositories.get(&name) {
+            if let Some(latest) = Self::latest_versioned(entry.value()) {
+                if latest.item.deleted {
+                    // Undelete: update with deleted=false
+                    drop(entry);
+                    let mut undeleted = config;
+                    undeleted.deleted = false;
+                    return self.update_repository(name, undeleted).await;
+                }
+                return Err(StoreError::RepositoryAlreadyExists(name));
+            }
         }
 
         self.repositories
@@ -344,17 +354,30 @@ impl Store for MemoryStore {
 
     async fn list_repositories(
         &self,
+        query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
         let mut repositories: Vec<_> = self
             .repositories
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
+                // Skip deleted unless include_deleted
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
                 Some((entry.key().clone(), latest))
             })
             .collect();
         repositories.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(repositories)
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        let current = self.get_repository(name).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
     }
 
     async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
@@ -1127,7 +1150,8 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use metis_common::{
-        IssueId, RepoName, TaskId, VersionNumber, Versioned, repositories::Repository,
+        IssueId, RepoName, TaskId, VersionNumber, Versioned,
+        repositories::{Repository, SearchRepositoriesQuery},
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
@@ -1230,7 +1254,10 @@ mod tests {
             .await
             .unwrap();
 
-        let list = store.list_repositories().await.unwrap();
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, name);
         assert_versioned(&list[0].1, &updated, 2);
@@ -1295,6 +1322,87 @@ mod tests {
         assert!(matches!(
             err,
             StoreError::RepositoryNotFound(existing) if existing == missing_name
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_repository_soft_deletes() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+
+        // Delete the repository
+        store.delete_repository(&name).await.unwrap();
+
+        // Repository is still retrievable via get_repository
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert!(fetched.item.deleted);
+        assert_eq!(fetched.version, 2);
+
+        // By default, list_repositories excludes deleted
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
+        assert!(list.is_empty());
+
+        // With include_deleted=true, deleted repos are shown
+        let query = SearchRepositoriesQuery::new(Some(true));
+        let list = store.list_repositories(&query).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn add_repository_undeletes_soft_deleted_repo() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        // Create and delete
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+        store.delete_repository(&name).await.unwrap();
+
+        // Re-create with different config should undelete
+        let mut new_config = config.clone();
+        new_config.default_branch = Some("develop".to_string());
+        store
+            .add_repository(name.clone(), new_config.clone())
+            .await
+            .unwrap();
+
+        // Repository should be active again
+        let fetched = store.get_repository(&name).await.unwrap();
+        assert!(!fetched.item.deleted);
+        assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
+        assert_eq!(fetched.version, 3);
+
+        // List_repositories should include it by default
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(!list[0].1.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn delete_repository_not_found_error() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/nonexistent").unwrap();
+
+        let err = store.delete_repository(&name).await.unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::RepositoryNotFound(n) if n == name
         ));
     }
 

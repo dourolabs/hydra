@@ -1,6 +1,10 @@
 use crate::RepoName;
 use serde::{Deserialize, Serialize};
 
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Repository {
@@ -9,6 +13,8 @@ pub struct Repository {
     pub default_branch: Option<String>,
     #[serde(default)]
     pub default_image: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deleted: bool,
 }
 
 impl Repository {
@@ -21,6 +27,7 @@ impl Repository {
             remote_url,
             default_branch,
             default_image,
+            deleted: false,
         }
     }
 }
@@ -83,6 +90,19 @@ impl UpsertRepositoryResponse {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SearchRepositoriesQuery {
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+}
+
+impl SearchRepositoriesQuery {
+    pub fn new(include_deleted: Option<bool>) -> Self {
+        Self { include_deleted }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ListRepositoriesResponse {
@@ -92,5 +112,17 @@ pub struct ListRepositoriesResponse {
 impl ListRepositoriesResponse {
     pub fn new(repositories: Vec<RepositoryRecord>) -> Self {
         Self { repositories }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DeleteRepositoryResponse {
+    pub repository: RepositoryRecord,
+}
+
+impl DeleteRepositoryResponse {
+    pub fn new(repository: RepositoryRecord) -> Self {
+        Self { repository }
     }
 }

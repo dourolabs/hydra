@@ -25,8 +25,8 @@ pub use ids::{DocumentId, IssueId, MetisId, MetisIdError, PatchId, TaskId};
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use repo_name::{RepoName, RepoNameError};
 pub use repositories::{
-    CreateRepositoryRequest, ListRepositoriesResponse, Repository, RepositoryRecord,
-    UpdateRepositoryRequest, UpsertRepositoryResponse,
+    CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse, Repository,
+    RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest, UpsertRepositoryResponse,
 };
 pub use util::EnvGuard;
 pub use versioning::{VersionNumber, Versioned};
