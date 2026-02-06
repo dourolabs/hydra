@@ -2054,7 +2054,11 @@ impl Store for PostgresStoreV2 {
         Ok(Versioned::new(user, version, row.created_at))
     }
 
-    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
         let query = format!(
             "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
              FROM {TABLE_USERS_V2}
@@ -2069,6 +2073,9 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for user '{}'",
@@ -2087,7 +2094,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
-        let current = self.get_user(username).await?;
+        let current = self.get_user(username, true).await?;
         let mut user = current.item;
         user.deleted = true;
         self.update_user(user).await?;
@@ -2403,7 +2410,10 @@ mod tests {
         };
         store.add_user(user.clone()).await.unwrap();
 
-        let fetched = store.get_user(&Username::from("alice")).await.unwrap();
+        let fetched = store
+            .get_user(&Username::from("alice"), false)
+            .await
+            .unwrap();
         assert_eq!(fetched.item, user);
         assert_eq!(fetched.version, 1);
 

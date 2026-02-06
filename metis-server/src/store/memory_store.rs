@@ -1050,11 +1050,20 @@ impl Store for MemoryStore {
         Ok(versioned)
     }
 
-    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
-        self.users
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
+        let versioned = self
+            .users
             .get(username)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn list_users(
@@ -1093,7 +1102,7 @@ impl Store for MemoryStore {
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
-        let current = self.get_user(username).await?;
+        let current = self.get_user(username, true).await?;
         let mut user = current.item;
         user.deleted = true;
         self.update_user(user).await?;
@@ -2416,11 +2425,41 @@ mod tests {
         assert_eq!(updated.item.github_refresh_token, "new-refresh");
         assert_eq!(updated.version, 2);
 
-        let user = store.get_user(&username).await.unwrap();
+        let user = store.get_user(&username, false).await.unwrap();
         assert_eq!(user.item.github_token, "new-token");
         assert_eq!(user.item.github_user_id, 202);
         assert_eq!(user.item.github_refresh_token, "new-refresh");
         assert_eq!(user.version, 2);
+    }
+
+    #[tokio::test]
+    async fn get_user_filters_deleted_users() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+        let user = User {
+            username: username.clone(),
+            github_user_id: 101,
+            github_token: "token".to_string(),
+            github_refresh_token: "refresh".to_string(),
+            deleted: false,
+        };
+        store.add_user(user).await.unwrap();
+
+        // User is accessible when not deleted
+        let fetched = store.get_user(&username, false).await.unwrap();
+        assert_eq!(fetched.item.username, username);
+
+        // Delete the user
+        store.delete_user(&username).await.unwrap();
+
+        // User is not found with include_deleted=false
+        let err = store.get_user(&username, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::UserNotFound(_)));
+
+        // User is still accessible with include_deleted=true
+        let fetched = store.get_user(&username, true).await.unwrap();
+        assert_eq!(fetched.item.username, username);
+        assert!(fetched.item.deleted);
     }
 
     #[tokio::test]
