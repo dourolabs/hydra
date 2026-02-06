@@ -102,6 +102,7 @@ mod tests {
             HashMap::new(),
             None,
             None,
+            None,
         );
         let first_id = state
             .add_task(task.clone(), Utc::now())

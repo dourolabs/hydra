@@ -836,6 +836,7 @@ async fn dropping_issue_kills_spawned_tasks() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                secrets: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,

@@ -115,6 +115,7 @@ mod tests {
             HashMap::new(),
             None,
             None,
+            None,
         );
         let task_id = handles
             .store
