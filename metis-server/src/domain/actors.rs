@@ -61,6 +61,8 @@ pub struct Actor {
     pub auth_token_hash: String,
     pub auth_token_salt: String,
     pub user_or_worker: UserOrWorker,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl Actor {
@@ -71,6 +73,7 @@ impl Actor {
             auth_token_hash,
             auth_token_salt,
             user_or_worker,
+            deleted: false,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)
@@ -97,6 +100,7 @@ impl Actor {
             auth_token_hash,
             auth_token_salt,
             user_or_worker,
+            deleted: false,
         };
         let auth_token = Self::format_auth_token(&actor, &raw_auth_token);
         (actor, auth_token)

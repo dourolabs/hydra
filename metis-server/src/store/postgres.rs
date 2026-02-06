@@ -1401,27 +1401,45 @@ impl Store for PostgresStore {
 
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
 
-        if exists > 0 {
-            return Err(StoreError::ActorAlreadyExists(name));
+        // Check if actor already exists (including deleted ones)
+        let existing = self
+            .fetch_versioned_payload::<Actor>(TABLE_ACTORS, "actor", &name, ACTOR_SCHEMA_VERSION)
+            .await?;
+
+        match existing {
+            Some(existing_actor) => {
+                if existing_actor.item.deleted {
+                    // Undelete: create a new version with deleted=false
+                    let mut undeleted_actor = actor;
+                    undeleted_actor.deleted = false;
+                    self.update_payload(
+                        TABLE_ACTORS,
+                        "actor",
+                        &name,
+                        ACTOR_SCHEMA_VERSION,
+                        &undeleted_actor,
+                    )
+                    .await
+                } else {
+                    Err(StoreError::ActorAlreadyExists(name))
+                }
+            }
+            None => {
+                // Actor doesn't exist, create it
+                let mut new_actor = actor;
+                new_actor.deleted = false;
+                self.insert_payload(
+                    TABLE_ACTORS,
+                    "actor",
+                    &name,
+                    ACTOR_SCHEMA_VERSION,
+                    1,
+                    &new_actor,
+                )
+                .await
+            }
         }
-
-        self.insert_payload(
-            TABLE_ACTORS,
-            "actor",
-            &name,
-            ACTOR_SCHEMA_VERSION,
-            1,
-            &actor,
-        )
-        .await
     }
 
     async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
@@ -1449,12 +1467,28 @@ impl Store for PostgresStore {
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+    async fn list_actors(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let mut actors = self
             .fetch_versioned_payloads_with_ids::<Actor>(TABLE_ACTORS, "actor", ACTOR_SCHEMA_VERSION)
             .await?;
+
+        // Filter out deleted actors unless include_deleted is true
+        if !include_deleted {
+            actors.retain(|(_, actor)| !actor.item.deleted);
+        }
+
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
+    }
+
+    async fn delete_actor(&self, name: &str) -> Result<(), StoreError> {
+        let current = self.get_actor(name).await?;
+        let mut actor = current.item;
+        actor.deleted = true;
+        self.update_actor(actor).await
     }
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {

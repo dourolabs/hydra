@@ -54,7 +54,7 @@ async fn login_creates_actor_and_returns_token() -> anyhow::Result<()> {
     assert_eq!(user.item.github_user_id, 42);
     assert_eq!(user.item.github_refresh_token, "gh-refresh");
 
-    let actors = check_store.list_actors().await?;
+    let actors = check_store.list_actors(false).await?;
     assert!(
         actors.iter().any(|(name, _)| name == "u-octo"),
         "expected login actor to be created"

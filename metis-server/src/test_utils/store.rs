@@ -234,7 +234,14 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+    async fn list_actors(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_actor(&self, _name: &str) -> Result<(), StoreError> {
         fail()
     }
 

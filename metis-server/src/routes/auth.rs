@@ -45,6 +45,14 @@ pub async fn require_auth(
         }
     };
 
+    // Reject deleted actors
+    if actor.deleted {
+        let error = StoreError::ActorNotFound(actor.name());
+        let message = auth_failure_message(&error);
+        info!(actor = %actor.name(), "authorization rejected: actor is deleted");
+        return Err(ApiError::unauthorized(message));
+    }
+
     if actor.verify_auth_token(&auth_token) {
         info!(actor = %actor.name(), "authorization accepted");
         request.extensions_mut().insert(actor);

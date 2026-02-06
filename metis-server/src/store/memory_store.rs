@@ -932,12 +932,28 @@ impl Store for MemoryStore {
 
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
-        if self.actors.contains_key(&name) {
+
+        // Check if actor already exists
+        if let Some(mut versions) = self.actors.get_mut(&name) {
+            // Check if the latest version is deleted
+            if let Some(latest) = Self::latest_versioned(&versions) {
+                if latest.item.deleted {
+                    // Undelete: create a new version with deleted=false
+                    let mut undeleted_actor = actor;
+                    undeleted_actor.deleted = false;
+                    let next_version = Self::next_version(&versions);
+                    versions.push(Self::versioned_now(undeleted_actor, next_version));
+                    return Ok(());
+                }
+            }
             return Err(StoreError::ActorAlreadyExists(name));
         }
 
+        // Actor doesn't exist, create it
+        let mut new_actor = actor;
+        new_actor.deleted = false;
         self.actors
-            .insert(name, vec![Self::versioned_now(actor, 1)]);
+            .insert(name, vec![Self::versioned_now(new_actor, 1)]);
         Ok(())
     }
 
@@ -960,17 +976,31 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::ActorNotFound(name.to_string()))
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+    async fn list_actors(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let mut actors: Vec<_> = self
             .actors
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
+                // Filter out deleted actors unless include_deleted is true
+                if !include_deleted && latest.item.deleted {
+                    return None;
+                }
                 Some((entry.key().clone(), latest))
             })
             .collect();
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
+    }
+
+    async fn delete_actor(&self, name: &str) -> Result<(), StoreError> {
+        let current = self.get_actor(name).await?;
+        let mut actor = current.item;
+        actor.deleted = true;
+        self.update_actor(actor).await
     }
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {
@@ -2201,6 +2231,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
         };
 
         let name = actor.name();
@@ -2218,6 +2249,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             user_or_worker: UserOrWorker::Task(TaskId::new()),
+            deleted: false,
         };
         let name = actor.name();
 
@@ -2238,6 +2270,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             user_or_worker: UserOrWorker::Task(task_id),
+            deleted: false,
         };
         let mut updated = actor.clone();
         updated.auth_token_hash = "new-hash".to_string();
@@ -2257,6 +2290,7 @@ mod tests {
             auth_token_hash: "hash".to_string(),
             auth_token_salt: "salt".to_string(),
             user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
         };
 
         let err = store.update_actor(actor).await.unwrap_err();
@@ -2265,6 +2299,90 @@ mod tests {
             err,
             StoreError::ActorNotFound(name) if name == "u-ada"
         ));
+    }
+
+    #[tokio::test]
+    async fn delete_actor_sets_deleted_flag() {
+        let store = MemoryStore::new();
+        let actor = Actor {
+            auth_token_hash: "hash".to_string(),
+            auth_token_salt: "salt".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
+        };
+        let name = actor.name();
+
+        store.add_actor(actor).await.unwrap();
+        store.delete_actor(&name).await.unwrap();
+
+        let fetched = store.get_actor(&name).await.unwrap();
+        assert!(fetched.item.deleted);
+        assert_eq!(fetched.version, 2);
+    }
+
+    #[tokio::test]
+    async fn list_actors_excludes_deleted_by_default() {
+        let store = MemoryStore::new();
+        let actor1 = Actor {
+            auth_token_hash: "hash1".to_string(),
+            auth_token_salt: "salt1".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
+        };
+        let actor2 = Actor {
+            auth_token_hash: "hash2".to_string(),
+            auth_token_salt: "salt2".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("bob")),
+            deleted: false,
+        };
+
+        store.add_actor(actor1).await.unwrap();
+        store.add_actor(actor2).await.unwrap();
+        store.delete_actor("u-ada").await.unwrap();
+
+        // Without include_deleted, only bob should appear
+        let actors = store.list_actors(false).await.unwrap();
+        assert_eq!(actors.len(), 1);
+        assert_eq!(actors[0].0, "u-bob");
+
+        // With include_deleted, both should appear
+        let actors_all = store.list_actors(true).await.unwrap();
+        assert_eq!(actors_all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn add_actor_undeletes_deleted_actor() {
+        let store = MemoryStore::new();
+        let actor = Actor {
+            auth_token_hash: "hash".to_string(),
+            auth_token_salt: "salt".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
+        };
+        let name = actor.name();
+
+        // Add and delete the actor
+        store.add_actor(actor.clone()).await.unwrap();
+        store.delete_actor(&name).await.unwrap();
+
+        // Verify it's deleted
+        let deleted = store.get_actor(&name).await.unwrap();
+        assert!(deleted.item.deleted);
+
+        // Re-add should undelete
+        let new_actor = Actor {
+            auth_token_hash: "new-hash".to_string(),
+            auth_token_salt: "new-salt".to_string(),
+            user_or_worker: UserOrWorker::Username(Username::from("ada")),
+            deleted: false,
+        };
+        store.add_actor(new_actor.clone()).await.unwrap();
+
+        // Verify it's undeleted with new values
+        let undeleted = store.get_actor(&name).await.unwrap();
+        assert!(!undeleted.item.deleted);
+        assert_eq!(undeleted.item.auth_token_hash, "new-hash");
+        assert_eq!(undeleted.version, 3); // version incremented
     }
 
     #[tokio::test]

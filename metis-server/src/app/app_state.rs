@@ -2434,7 +2434,7 @@ mod tests {
 
         let store_read = handles.store.as_ref();
         let user = store_read.get_user(&Username::from("octo")).await?;
-        let actors = store_read.list_actors().await?;
+        let actors = store_read.list_actors(false).await?;
         assert_eq!(actors.len(), 1);
         assert_eq!(user.item.username.as_str(), "octo");
 

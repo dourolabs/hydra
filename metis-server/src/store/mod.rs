@@ -378,16 +378,35 @@ pub trait Store: Send + Sync {
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
 
     /// Adds a new actor to the store.
+    ///
+    /// If an actor with the same name exists but is deleted (soft-deleted),
+    /// this will undelete the actor by creating a new version with deleted=false.
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;
 
     /// Updates an existing actor in the store.
     async fn update_actor(&self, actor: Actor) -> Result<(), StoreError>;
 
     /// Gets an actor by its canonical name.
+    ///
+    /// Returns the actor regardless of deleted status. Callers that need
+    /// to exclude deleted actors should check the `deleted` field.
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
 
     /// Lists all actors with their canonical names.
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
+    ///
+    /// By default, deleted actors are filtered out unless `include_deleted`
+    /// is set to true.
+    async fn list_actors(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
+
+    /// Soft-deletes an actor by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the actor with `deleted: true`.
+    /// The actor can still be retrieved via `get_actor` but will be filtered
+    /// from `list_actors` by default.
+    async fn delete_actor(&self, name: &str) -> Result<(), StoreError>;
 
     /// Adds a new user to the store.
     async fn add_user(&self, user: User) -> Result<(), StoreError>;

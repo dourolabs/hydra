@@ -588,8 +588,8 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, user_or_worker)
-             VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, user_or_worker, deleted)
+             VALUES ($1, $2, $3, $4, $5, $6)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -597,6 +597,7 @@ impl PostgresStoreV2 {
             .bind(&actor.auth_token_hash)
             .bind(&actor.auth_token_salt)
             .bind(&user_or_worker_json)
+            .bind(actor.deleted)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -614,6 +615,7 @@ impl PostgresStoreV2 {
             auth_token_hash: row.auth_token_hash.clone(),
             auth_token_salt: row.auth_token_salt.clone(),
             user_or_worker,
+            deleted: row.deleted,
         })
     }
 }
@@ -728,6 +730,7 @@ struct ActorRow {
     auth_token_hash: String,
     auth_token_salt: String,
     user_or_worker: Value,
+    deleted: bool,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -1752,19 +1755,43 @@ impl Store for PostgresStoreV2 {
 
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
 
-        if exists > 0 {
-            return Err(StoreError::ActorAlreadyExists(name));
+        // Check if actor already exists (including deleted ones)
+        let existing = self.get_actor(&name).await;
+
+        match existing {
+            Ok(existing_actor) => {
+                if existing_actor.item.deleted {
+                    // Undelete: create a new version with deleted=false
+                    let mut undeleted_actor = actor;
+                    undeleted_actor.deleted = false;
+
+                    let latest_version = self
+                        .fetch_latest_version_number(TABLE_ACTORS_V2, &name)
+                        .await?
+                        .ok_or_else(|| {
+                            StoreError::Internal(format!(
+                                "actor '{name}' was missing during undelete"
+                            ))
+                        })?;
+                    let next_version = latest_version.checked_add(1).ok_or_else(|| {
+                        StoreError::Internal(format!("version number overflow for actor '{name}'"))
+                    })?;
+
+                    self.insert_actor(&name, next_version, &undeleted_actor)
+                        .await
+                } else {
+                    Err(StoreError::ActorAlreadyExists(name))
+                }
+            }
+            Err(StoreError::ActorNotFound(_)) => {
+                // Actor doesn't exist, create it
+                let mut new_actor = actor;
+                new_actor.deleted = false;
+                self.insert_actor(&name, 1, &new_actor).await
+            }
+            Err(e) => Err(e),
         }
-
-        self.insert_actor(&name, 1, &actor).await
     }
 
     async fn update_actor(&self, actor: Actor) -> Result<(), StoreError> {
@@ -1797,7 +1824,7 @@ impl Store for PostgresStoreV2 {
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
         super::validate_actor_name(name)?;
         let query = format!(
-            "SELECT id, version_number, auth_token_hash, auth_token_salt, user_or_worker, created_at, updated_at
+            "SELECT id, version_number, auth_token_hash, auth_token_salt, user_or_worker, deleted, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1820,9 +1847,12 @@ impl Store for PostgresStoreV2 {
         Ok(Versioned::new(actor, version, row.created_at))
     }
 
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
+    async fn list_actors(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, user_or_worker, created_at, updated_at
+            "SELECT DISTINCT ON (id) id, version_number, auth_token_hash, auth_token_salt, user_or_worker, deleted, created_at, updated_at
              FROM {TABLE_ACTORS_V2}
              ORDER BY id, version_number DESC"
         );
@@ -1833,6 +1863,11 @@ impl Store for PostgresStoreV2 {
 
         let mut actors = Vec::with_capacity(rows.len());
         for row in rows {
+            // Filter out deleted actors unless include_deleted is true
+            if !include_deleted && row.deleted {
+                continue;
+            }
+
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
                 StoreError::Internal(format!(
                     "invalid version number stored for actor '{}'",
@@ -1840,11 +1875,21 @@ impl Store for PostgresStoreV2 {
                 ))
             })?;
             let actor = self.row_to_actor(&row)?;
-            actors.push((row.id, Versioned::new(actor, version, row.created_at)));
+            actors.push((
+                row.id.clone(),
+                Versioned::new(actor, version, row.created_at),
+            ));
         }
 
         actors.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(actors)
+    }
+
+    async fn delete_actor(&self, name: &str) -> Result<(), StoreError> {
+        let current = self.get_actor(name).await?;
+        let mut actor = current.item;
+        actor.deleted = true;
+        self.update_actor(actor).await
     }
 
     // -------------------------------------------------------------------------
