@@ -5,10 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, head, post, put},
 };
-use std::{
-    path::{Path as StdPath, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
@@ -17,10 +14,11 @@ use walkdir::WalkDir;
 
 use crate::util::{
     ByteRange, DEFAULT_MAX_KEYS, ListObjectsQuery, ListResult, MultipartQuery,
-    MultipartUploadMetadata, ObjectEntry, S3_XML_NAMESPACE, S3Error,
-    parse_complete_multipart_request, range_not_satisfiable_response, render_list_response,
-    response_with_body, s3_error, sanitize_key, sanitize_prefix, streaming_partial_response,
-    streaming_response, validate_bucket, xml_escape,
+    MultipartUploadMetadata, ObjectEntry, S3_XML_NAMESPACE, S3Error, compute_etag,
+    parse_complete_multipart_request, range_not_satisfiable_response, read_etag_with_fallback,
+    read_etag_with_fallback_sync, render_list_response, response_with_body, s3_error, sanitize_key,
+    sanitize_prefix, streaming_partial_response, streaming_response, validate_bucket,
+    write_etag_metadata, write_file, xml_escape,
 };
 
 #[derive(Clone, Debug)]
@@ -72,17 +70,6 @@ impl S3State {
             .join("metadata")
             .join(bucket)
             .join(format!("{key}.etag")))
-    }
-
-    /// Creates parent directories for the metadata file as needed.
-    async fn ensure_metadata_dir(&self, bucket: &str, key: &str) -> Result<(), S3Error> {
-        let path = self.metadata_path(bucket, key)?;
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| S3Error::io("create metadata directory", e))?;
-        }
-        Ok(())
     }
 }
 
@@ -400,13 +387,25 @@ async fn put_object(
     let etag = compute_etag(&body);
 
     // Write ETag to metadata cache (non-fatal on failure)
-    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &etag).await {
-        warn!(
-            bucket = %bucket,
-            key = %key,
-            error = %err.message,
-            "failed to write ETag to metadata cache"
-        );
+    match state.metadata_path(&bucket, &key) {
+        Ok(metadata_path) => {
+            if let Err(err) = write_etag_metadata(&metadata_path, &etag).await {
+                warn!(
+                    bucket = %bucket,
+                    key = %key,
+                    error = %err.message,
+                    "failed to write ETag to metadata cache"
+                );
+            }
+        }
+        Err(err) => {
+            warn!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "failed to get metadata path for ETag cache"
+            );
+        }
     }
 
     let mut response = Response::new(axum::body::Body::empty());
@@ -463,7 +462,19 @@ async fn get_object(
     let last_modified = metadata.modified().ok();
 
     // Read ETag from metadata cache (falls back to computing if cache missing)
-    let etag = match read_etag_with_fallback(&state, &bucket, &key, &path).await {
+    let metadata_path = match state.metadata_path(&bucket, &key) {
+        Ok(p) => p,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "get_object failed: getting metadata path"
+            );
+            return err.into_response();
+        }
+    };
+    let etag = match read_etag_with_fallback(&metadata_path, &path).await {
         Ok(etag) => etag,
         Err(err) => {
             error!(
@@ -581,7 +592,19 @@ async fn head_object(
     };
 
     // Read ETag from metadata cache (falls back to computing if cache missing)
-    let etag = match read_etag_with_fallback(&state, &bucket, &key, &path).await {
+    let metadata_path = match state.metadata_path(&bucket, &key) {
+        Ok(p) => p,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "head_object failed: getting metadata path"
+            );
+            return err.into_response();
+        }
+    };
+    let etag = match read_etag_with_fallback(&metadata_path, &path).await {
         Ok(etag) => etag,
         Err(err) => {
             error!(
@@ -955,7 +978,19 @@ async fn complete_multipart_upload(
     let final_etag = format!("\"{:x}-{}\"", final_md5, parts.len());
 
     // Write ETag to metadata cache
-    if let Err(err) = write_etag_metadata(&state, &bucket, &key, &final_etag).await {
+    let metadata_path = match state.metadata_path(&bucket, &key) {
+        Ok(p) => p,
+        Err(err) => {
+            error!(
+                bucket = %bucket,
+                key = %key,
+                error = %err.message,
+                "complete_multipart_upload: failed to get metadata path"
+            );
+            return err.into_response();
+        }
+    };
+    if let Err(err) = write_etag_metadata(&metadata_path, &final_etag).await {
         error!(
             bucket = %bucket,
             key = %key,
@@ -1134,88 +1169,6 @@ async fn delete_object(
     let mut response = Response::new(axum::body::Body::empty());
     *response.status_mut() = StatusCode::NO_CONTENT;
     response
-}
-
-async fn write_file(path: &StdPath, body: &Bytes) -> Result<(), std::io::Error> {
-    let mut file = tokio::fs::File::create(path).await?;
-    file.write_all(body).await?;
-    file.flush().await?;
-    Ok(())
-}
-
-/// Writes an ETag to the metadata cache for an object.
-async fn write_etag_metadata(
-    state: &S3State,
-    bucket: &str,
-    key: &str,
-    etag: &str,
-) -> Result<(), S3Error> {
-    state.ensure_metadata_dir(bucket, key).await?;
-    let metadata_path = state.metadata_path(bucket, key)?;
-    tokio::fs::write(&metadata_path, etag)
-        .await
-        .map_err(|e| S3Error::io("write ETag metadata", e))?;
-    Ok(())
-}
-
-/// Reads an ETag from the metadata cache for an object.
-/// Returns None if the cache file doesn't exist.
-async fn read_cached_etag(state: &S3State, bucket: &str, key: &str) -> Option<String> {
-    let metadata_path = state.metadata_path(bucket, key).ok()?;
-    let contents = tokio::fs::read_to_string(&metadata_path).await.ok()?;
-    Some(contents)
-}
-
-/// Reads an ETag from the metadata cache, falling back to computing it from the object file.
-/// Used for backwards compatibility with objects created before ETag caching.
-async fn read_etag_with_fallback(
-    state: &S3State,
-    bucket: &str,
-    key: &str,
-    object_path: &StdPath,
-) -> Result<String, std::io::Error> {
-    // Try to read from cache first
-    if let Some(etag) = read_cached_etag(state, bucket, key).await {
-        return Ok(etag);
-    }
-
-    // Fall back to computing ETag from the object file
-    compute_etag_from_path(object_path)
-}
-
-/// Synchronous version of read_etag_with_fallback for use in spawn_blocking contexts.
-fn read_etag_with_fallback_sync(metadata_path: &StdPath, object_path: &StdPath) -> Option<String> {
-    // Try to read from cache first
-    if let Ok(contents) = std::fs::read_to_string(metadata_path) {
-        return Some(contents);
-    }
-
-    // Fall back to computing ETag from the object file
-    compute_etag_from_path(object_path).ok()
-}
-
-fn compute_etag(bytes: &[u8]) -> String {
-    format!("\"{:x}\"", md5::compute(bytes))
-}
-
-fn compute_etag_from_path(path: &StdPath) -> Result<String, std::io::Error> {
-    use std::io::Read;
-
-    let file = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut context = md5::Context::new();
-    let mut buffer = [0u8; 8192];
-
-    loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        context.consume(&buffer[..bytes_read]);
-    }
-
-    let digest = context.compute();
-    Ok(format!("\"{digest:x}\""))
 }
 
 #[cfg(test)]
@@ -2283,20 +2236,6 @@ mod tests {
         assert!(state.metadata_path("bucket", "../secret").is_err());
         assert!(state.metadata_path("bucket", "/absolute").is_err());
         assert!(state.metadata_path("bucket", "").is_err());
-    }
-
-    #[tokio::test]
-    async fn ensure_metadata_dir_creates_directories() {
-        let dir = tempdir().expect("temp dir");
-        let state = S3State::new(dir.path().to_path_buf()).expect("state");
-
-        state
-            .ensure_metadata_dir("test-bucket", "some/nested/key.txt")
-            .await
-            .expect("should create directories");
-
-        let expected_dir = dir.path().join("metadata/test-bucket/some/nested");
-        assert!(expected_dir.exists(), "parent directories should exist");
     }
 
     #[tokio::test]
