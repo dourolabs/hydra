@@ -612,7 +612,7 @@ impl AppState {
 
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
         let store = self.store.as_ref();
-        store.get_user(username).await.map(|user| user.item)
+        store.get_user(username, false).await.map(|user| user.item)
     }
 
     pub async fn set_user_github_token(
@@ -623,7 +623,7 @@ impl AppState {
         github_refresh_token: String,
     ) -> Result<User, StoreError> {
         let store = self.store.as_ref();
-        let mut user = store.get_user(username).await?.item;
+        let mut user = store.get_user(username, false).await?.item;
         user.github_token = github_token;
         user.github_user_id = github_user_id;
         user.github_refresh_token = github_refresh_token;
@@ -2480,7 +2480,7 @@ mod tests {
         assert_eq!(response.user.username.as_str(), "octo");
 
         let store_read = handles.store.as_ref();
-        let user = store_read.get_user(&Username::from("octo")).await?;
+        let user = store_read.get_user(&Username::from("octo"), false).await?;
         let actors = store_read.list_actors().await?;
         assert_eq!(actors.len(), 1);
         assert_eq!(user.item.username.as_str(), "octo");

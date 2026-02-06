@@ -261,7 +261,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_user(&self, _username: &Username) -> Result<Versioned<User>, StoreError> {
+    async fn get_user(
+        &self,
+        _username: &Username,
+        _include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
         fail()
     }
 

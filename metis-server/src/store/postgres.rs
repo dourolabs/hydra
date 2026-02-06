@@ -1657,10 +1657,19 @@ impl Store for PostgresStore {
         })
     }
 
-    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
-        self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError> {
+        let versioned: Versioned<User> = self
+            .fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn list_users(
@@ -1671,7 +1680,7 @@ impl Store for PostgresStore {
     }
 
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
-        let current = self.get_user(username).await?;
+        let current = self.get_user(username, true).await?;
         let mut user = current.item;
         user.deleted = true;
         self.update_user(user).await?;
@@ -2217,7 +2226,10 @@ mod tests {
         };
         store.add_user(user.clone()).await.unwrap();
 
-        let fetched = store.get_user(&Username::from("alice")).await.unwrap();
+        let fetched = store
+            .get_user(&Username::from("alice"), false)
+            .await
+            .unwrap();
         assert_eq!(fetched.item, user);
         assert_eq!(fetched.version, 1);
 

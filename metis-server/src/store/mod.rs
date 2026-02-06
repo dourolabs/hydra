@@ -432,7 +432,16 @@ pub trait Store: Send + Sync {
     async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError>;
 
     /// Gets a user by their username.
-    async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError>;
+    ///
+    /// # Arguments
+    /// * `username` - The Username to look up
+    /// * `include_deleted` - If true, returns the user even if it has been soft-deleted.
+    ///   If false, returns `StoreError::UserNotFound` for deleted users.
+    async fn get_user(
+        &self,
+        username: &Username,
+        include_deleted: bool,
+    ) -> Result<Versioned<User>, StoreError>;
 
     /// Lists users that match the provided search query.
     ///
@@ -446,8 +455,9 @@ pub trait Store: Send + Sync {
     /// Soft-deletes a user by setting its `deleted` flag to true.
     ///
     /// This creates a new version of the user with `deleted: true`.
-    /// The user can still be retrieved via `get_user` but will be filtered
-    /// from `list_users` by default.
+    /// The user can still be retrieved via `get_user` with `include_deleted: true`,
+    /// but will be filtered from `get_user` with `include_deleted: false` and from
+    /// `list_users` by default (unless `include_deleted: true` is in the query).
     async fn delete_user(&self, username: &Username) -> Result<(), StoreError>;
 }
 
