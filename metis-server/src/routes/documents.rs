@@ -101,7 +101,7 @@ pub async fn get_document(
 ) -> Result<Json<v1::documents::DocumentRecord>, ApiError> {
     info!(document_id = %document_id, "get_document invoked");
     let document = state
-        .get_document(&document_id)
+        .get_document(&document_id, false)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
@@ -247,7 +247,7 @@ pub async fn delete_document(
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
     let document = state
-        .get_document(&document_id)
+        .get_document(&document_id, true)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 

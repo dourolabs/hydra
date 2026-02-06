@@ -1259,15 +1259,24 @@ impl Store for PostgresStore {
         Ok(id)
     }
 
-    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
-        self.fetch_versioned_payload(
-            TABLE_DOCUMENTS,
-            "document",
-            id.as_ref(),
-            DOCUMENT_SCHEMA_VERSION,
-        )
-        .await?
-        .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+    async fn get_document(
+        &self,
+        id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Document>, StoreError> {
+        let versioned: Versioned<Document> = self
+            .fetch_versioned_payload(
+                TABLE_DOCUMENTS,
+                "document",
+                id.as_ref(),
+                DOCUMENT_SCHEMA_VERSION,
+            )
+            .await?
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn get_document_versions(
@@ -1289,7 +1298,7 @@ impl Store for PostgresStore {
     }
 
     async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
-        self.get_document(id).await?;
+        self.get_document(id, true).await?;
         self.update_payload(
             TABLE_DOCUMENTS,
             "document",
@@ -1301,7 +1310,7 @@ impl Store for PostgresStore {
     }
 
     async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
-        let current = self.get_document(id).await?;
+        let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
         self.update_document(id, document).await
@@ -2130,7 +2139,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_document(&doc_id).await.unwrap();
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
         assert_eq!(fetched.item.title, "Doc");
         assert_eq!(fetched.version, 1);
 

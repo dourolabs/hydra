@@ -1352,7 +1352,11 @@ impl Store for PostgresStoreV2 {
         Ok(id)
     }
 
-    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
+    async fn get_document(
+        &self,
+        id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Document>, StoreError> {
         let query = format!(
             "SELECT id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at
              FROM {TABLE_DOCUMENTS_V2}
@@ -1367,6 +1371,9 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for document '{}'",
@@ -1413,7 +1420,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn update_document(&self, id: &DocumentId, document: Document) -> Result<(), StoreError> {
-        self.get_document(id).await?;
+        self.get_document(id, true).await?;
 
         let latest_version = self
             .fetch_latest_version_number(TABLE_DOCUMENTS_V2, id.as_ref())
@@ -1429,7 +1436,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
-        let current = self.get_document(id).await?;
+        let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
         self.update_document(id, document).await
@@ -2346,7 +2353,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_document(&doc_id).await.unwrap();
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
         assert_eq!(fetched.item.title, "Doc");
         assert_eq!(fetched.version, 1);
 
