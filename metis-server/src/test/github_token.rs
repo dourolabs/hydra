@@ -107,6 +107,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
         HashMap::new(),
         None,
         None,
+        None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
     handles
@@ -220,6 +221,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         HashMap::new(),
         None,
         None,
+        None,
     );
     let (actor, auth_token) = Actor::new_for_task(task_id.clone());
     handles
@@ -305,6 +307,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         None,
         None,
         HashMap::new(),
+        None,
         None,
         None,
     );

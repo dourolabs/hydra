@@ -431,6 +431,7 @@ impl PostgresStoreV2 {
             env_vars,
             cpu_limit: row.cpu_limit.clone(),
             memory_limit: row.memory_limit.clone(),
+            secrets: None,
             status,
             last_message: row.last_message.clone(),
             error,
@@ -2167,6 +2168,7 @@ mod tests {
             Some("metis-worker:latest".to_string()),
             None,
             Default::default(),
+            None,
             None,
             None,
         )

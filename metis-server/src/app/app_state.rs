@@ -1003,6 +1003,7 @@ impl AppState {
             env_vars,
             cpu_limit,
             memory_limit,
+            None,
         );
 
         self.resolve_task(&task).await?;
@@ -2381,6 +2382,7 @@ mod tests {
             HashMap::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -2392,6 +2394,7 @@ mod tests {
             Some("worker:latest".to_string()),
             None,
             HashMap::new(),
+            None,
             None,
             None,
         )

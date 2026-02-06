@@ -127,6 +127,7 @@ impl AgentQueue {
             env_vars,
             job_settings.cpu_limit.clone(),
             job_settings.memory_limit.clone(),
+            job_settings.secrets.clone(),
         )))
     }
 
@@ -452,6 +453,7 @@ mod tests {
             image.map(str::to_string),
             None,
             env_vars,
+            None,
             None,
             None,
         )
@@ -804,6 +806,7 @@ mod tests {
                     max_retries: None,
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                 },
                 todo_list: Vec::new(),
                 dependencies: vec![],
@@ -830,6 +833,7 @@ mod tests {
                     max_retries: None,
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                 },
                 todo_list: Vec::new(),
                 dependencies: vec![],
@@ -874,6 +878,7 @@ mod tests {
                     max_retries: Some(1),
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                 },
                 todo_list: Vec::new(),
                 dependencies: vec![],
@@ -930,6 +935,7 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1000,6 +1006,7 @@ mod tests {
                     ]),
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                     status: Status::Created,
                     last_message: None,
                     error: None,
@@ -1126,6 +1133,7 @@ mod tests {
                     max_retries: None,
                     cpu_limit: None,
                     memory_limit: None,
+                    secrets: None,
                 },
                 todo_list: Vec::new(),
                 dependencies: vec![],

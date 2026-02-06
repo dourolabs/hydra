@@ -226,6 +226,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
                 env_vars: HashMap::new(),
                 cpu_limit: None,
                 memory_limit: None,
+                secrets: None,
                 status: Status::Created,
                 last_message: None,
                 error: None,

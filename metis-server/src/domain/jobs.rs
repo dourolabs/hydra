@@ -24,6 +24,8 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets: Option<Vec<String>>,
     #[serde(default = "default_task_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -35,6 +37,7 @@ pub struct Task {
 }
 
 impl Task {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompt: String,
         context: BundleSpec,
@@ -44,6 +47,7 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
+        secrets: Option<Vec<String>>,
     ) -> Self {
         Self {
             prompt,
@@ -54,6 +58,7 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+            secrets,
             status: Status::Created,
             last_message: None,
             error: None,
@@ -169,6 +174,7 @@ impl From<api::jobs::Task> for Task {
             env_vars: value.env_vars,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
+            secrets: value.secrets,
             status: value.status.into(),
             last_message: value.last_message,
             error: value.error.map(Into::into),
@@ -188,6 +194,7 @@ impl From<Task> for api::jobs::Task {
             value.env_vars,
             value.cpu_limit,
             value.memory_limit,
+            value.secrets,
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),

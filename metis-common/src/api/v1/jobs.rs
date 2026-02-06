@@ -24,6 +24,8 @@ pub struct Task {
     pub cpu_limit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets: Option<Vec<String>>,
     #[serde(default = "default_status")]
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +47,7 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
+        secrets: Option<Vec<String>>,
         deleted: bool,
     ) -> Self {
         Self {
@@ -56,6 +59,7 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+            secrets,
             status: Status::Created,
             last_message: None,
             error: None,
@@ -73,6 +77,7 @@ impl Task {
         env_vars: HashMap<String, String>,
         cpu_limit: Option<String>,
         memory_limit: Option<String>,
+        secrets: Option<Vec<String>>,
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
@@ -87,6 +92,7 @@ impl Task {
             env_vars,
             cpu_limit,
             memory_limit,
+            secrets,
             status,
             last_message,
             error,

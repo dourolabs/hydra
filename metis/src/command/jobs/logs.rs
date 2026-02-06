@@ -114,6 +114,7 @@ mod tests {
                 HashMap::new(),
                 None,
                 None,
+                None,
                 false,
             ),
             None,

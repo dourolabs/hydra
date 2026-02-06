@@ -385,6 +385,8 @@ pub struct JobSettings {
     pub cpu_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub memory_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub secrets: Option<Vec<String>>,
 }
 
 impl JobSettings {
@@ -421,6 +423,9 @@ impl JobSettings {
         }
         if self.memory_limit.is_none() {
             self.memory_limit = other.memory_limit.take();
+        }
+        if self.secrets.is_none() {
+            self.secrets = other.secrets.take();
         }
     }
 }
@@ -629,6 +634,7 @@ impl From<api::issues::JobSettings> for JobSettings {
             max_retries: value.max_retries,
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
+            secrets: value.secrets,
         }
     }
 }
@@ -644,6 +650,7 @@ impl From<JobSettings> for api::issues::JobSettings {
         job_settings.max_retries = value.max_retries;
         job_settings.cpu_limit = value.cpu_limit;
         job_settings.memory_limit = value.memory_limit;
+        job_settings.secrets = value.secrets;
         job_settings
     }
 }
@@ -727,6 +734,7 @@ mod tests {
             max_retries: Some(2),
             cpu_limit: Some("400m".to_string()),
             memory_limit: Some("768Mi".to_string()),
+            secrets: None,
         };
         let issue = Issue {
             issue_type: IssueType::Task,
