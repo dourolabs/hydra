@@ -1,4 +1,5 @@
 pub mod config;
+mod routes;
 pub mod s3;
 pub mod util;
 
