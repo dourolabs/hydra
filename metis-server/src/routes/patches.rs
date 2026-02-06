@@ -570,10 +570,16 @@ pub async fn delete_patch(
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
-    let patch = state
-        .get_patch(&patch_id)
+    // Use get_patch_versions to retrieve the deleted patch, since get_patch
+    // now returns PatchNotFound for deleted patches
+    let versions = state
+        .get_patch_versions(&patch_id)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
+
+    let patch = versions.into_iter().last().ok_or_else(|| {
+        map_patch_error(StoreError::PatchNotFound(patch_id.clone()), Some(&patch_id))
+    })?;
 
     info!(patch_id = %patch_id, "delete_patch completed");
     let response = v1::patches::PatchRecord::new(patch_id, patch.item.into());

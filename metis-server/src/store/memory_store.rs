@@ -547,10 +547,17 @@ impl Store for MemoryStore {
     }
 
     async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
-        self.patches
+        let patch = self
+            .patches
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+
+        if patch.item.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+
+        Ok(patch)
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
@@ -598,7 +605,18 @@ impl Store for MemoryStore {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        let current = self.get_patch(id).await?;
+        // Use get_patch_versions to get the latest version regardless of deleted status
+        let versions = self.get_patch_versions(id).await?;
+        let current = versions
+            .into_iter()
+            .last()
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+
+        // If already deleted, this is a no-op (idempotent)
+        if current.item.deleted {
+            return Ok(());
+        }
+
         let mut patch = current.item;
         patch.deleted = true;
         self.update_patch(id, patch).await
@@ -2624,9 +2642,9 @@ mod tests {
         assert_eq!(patches.len(), 1);
         assert!(patches[0].1.item.deleted);
 
-        // get_patch should still return the deleted patch
-        let patch = store.get_patch(&patch_id).await.unwrap();
-        assert!(patch.item.deleted);
+        // get_patch should return PatchNotFound for deleted patch
+        let result = store.get_patch(&patch_id).await;
+        assert!(matches!(result, Err(StoreError::PatchNotFound(_))));
     }
 
     #[tokio::test]

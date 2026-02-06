@@ -1175,6 +1175,12 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+
+        // Return PatchNotFound if the latest version is deleted
+        if row.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for patch '{}'",
@@ -1325,7 +1331,18 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        let current = self.get_patch(id).await?;
+        // Use get_patch_versions to get the latest version regardless of deleted status
+        let versions = self.get_patch_versions(id).await?;
+        let current = versions
+            .into_iter()
+            .last()
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+
+        // If already deleted, this is a no-op (idempotent)
+        if current.item.deleted {
+            return Ok(());
+        }
+
         let mut patch = current.item;
         patch.deleted = true;
         self.update_patch(id, patch).await
