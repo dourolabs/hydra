@@ -1488,7 +1488,8 @@ impl Store for PostgresStoreV2 {
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), Some(false));
+        // Use spawned_from filter at the database level for efficiency
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
         let tasks = self.list_tasks(&query).await?;
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }

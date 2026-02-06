@@ -195,6 +195,40 @@ pub struct JobSection {
     pub memory_request: String,
 }
 
+/// Store version for selecting between v1 (JSONB) and v2 (column-based) postgres tables.
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StoreVersion {
+    /// v1 uses JSONB payloads for all object types (default for backward compatibility).
+    #[default]
+    V1,
+    /// v2 uses column-based tables with proper schema definitions.
+    V2,
+}
+
+impl std::fmt::Display for StoreVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreVersion::V1 => write!(f, "v1"),
+            StoreVersion::V2 => write!(f, "v2"),
+        }
+    }
+}
+
+impl std::str::FromStr for StoreVersion {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "v1" => Ok(StoreVersion::V1),
+            "v2" => Ok(StoreVersion::V2),
+            _ => Err(format!(
+                "invalid store version '{s}', expected 'v1' or 'v2'"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct DatabaseSection {
     #[serde(default)]
@@ -207,6 +241,10 @@ pub struct DatabaseSection {
     pub connect_timeout_secs: u64,
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
+    /// Store version to use: "v1" (JSONB, default) or "v2" (column-based).
+    /// Can be overridden by the METIS_STORE_VERSION environment variable.
+    #[serde(default)]
+    pub store_version: StoreVersion,
 }
 
 impl DatabaseSection {
@@ -231,6 +269,7 @@ impl Default for DatabaseSection {
             max_connections: default_max_connections(),
             connect_timeout_secs: default_connect_timeout_secs(),
             idle_timeout_secs: default_idle_timeout_secs(),
+            store_version: StoreVersion::default(),
         }
     }
 }
@@ -822,5 +861,42 @@ prompt = "prompt"
         ));
 
         Ok(())
+    }
+
+    #[test]
+    fn store_version_defaults_to_v1() {
+        let database = DatabaseSection::default();
+        assert_eq!(database.store_version, StoreVersion::V1);
+    }
+
+    #[test]
+    fn store_version_parses_v1() {
+        let version: StoreVersion = "v1".parse().unwrap();
+        assert_eq!(version, StoreVersion::V1);
+
+        let version: StoreVersion = "V1".parse().unwrap();
+        assert_eq!(version, StoreVersion::V1);
+    }
+
+    #[test]
+    fn store_version_parses_v2() {
+        let version: StoreVersion = "v2".parse().unwrap();
+        assert_eq!(version, StoreVersion::V2);
+
+        let version: StoreVersion = "V2".parse().unwrap();
+        assert_eq!(version, StoreVersion::V2);
+    }
+
+    #[test]
+    fn store_version_rejects_invalid() {
+        let result: Result<StoreVersion, _> = "v3".parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid store version"));
+    }
+
+    #[test]
+    fn store_version_display() {
+        assert_eq!(StoreVersion::V1.to_string(), "v1");
+        assert_eq!(StoreVersion::V2.to_string(), "v2");
     }
 }

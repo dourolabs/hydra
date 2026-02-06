@@ -1,5 +1,6 @@
 pub mod config;
 pub mod s3;
+pub mod util;
 
 use anyhow::Result;
 use axum::{Json, Router, extract::DefaultBodyLimit, routing::get};

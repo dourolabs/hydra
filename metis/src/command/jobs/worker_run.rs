@@ -9,13 +9,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
 use metis_common::{
     constants::{ENV_CLAUDE_CODE_OAUTH_TOKEN, ENV_METIS_ISSUE_ID},
-    issues::{
-        IssueDependencyType, IssueGraphFilter, IssueGraphSelector, IssueGraphWildcard, IssueRecord,
-        IssueType, SearchIssuesQuery,
-    },
     job_status::JobStatusUpdate,
     jobs::{Bundle, WorkerContext},
-    patches::{GitOid, PatchStatus},
+    patches::GitOid,
     IssueId, RepoName, TaskId,
 };
 use tempfile::Builder;
@@ -64,10 +60,6 @@ pub async fn run(
         .map(|value| value.to_string())
         .or_else(|| execution_env.get(ENV_METIS_ISSUE_ID).cloned());
     let github_token = client.get_github_token().await.ok();
-    let tracking_branch_override = match issue_id.as_ref() {
-        Some(issue_id) => resolve_tracking_branch_override(client, issue_id).await?,
-        None => None,
-    };
     let base_commit = match request_context {
         Bundle::None => {
             fs::create_dir_all(&dest).with_context(|| format!("failed to create {dest:?}"))?;
@@ -89,7 +81,6 @@ pub async fn run(
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
-            tracking_branch_override.as_deref(),
         )
         .context("failed to initialize tracking branches")?;
     }
@@ -154,7 +145,6 @@ pub async fn run(
             issue_branch_id.as_deref(),
             &job,
             github_token.as_deref(),
-            tracking_branch_override.as_deref(),
         ) {
             errors.push(err.context("failed to finalize task output branches"));
         }
@@ -379,7 +369,6 @@ fn initialize_tracking_branches(
     issue_id: Option<&str>,
     task_id: &TaskId,
     github_token: Option<&str>,
-    task_head_branch_override: Option<&str>,
 ) -> Result<()> {
     let issue_label = issue_id.unwrap_or("unknown");
     log_status(format!(
@@ -395,113 +384,63 @@ fn initialize_tracking_branches(
 
     let remote_name = "origin";
     let mut task_branch_target = head_commit.id();
-    let mut task_head_branch = format!("metis/{task_id}/head");
-    let mut override_commit = None;
-
-    if let Some(override_branch) = task_head_branch_override {
-        task_head_branch = override_branch.to_string();
-        let resolved_commit = find_branch_commit(&repo, override_branch, remote_name)?
-            .ok_or_else(|| {
-                anyhow!(
-                    "tracking branch override '{override_branch}' not found locally or on {remote_name}"
-                )
-            })?;
-        if remote_branch_exists(&repo, remote_name, override_branch) {
-            ensure_local_branch_from_remote(&repo, override_branch, remote_name).with_context(
-                || format!("failed to track remote branch override '{override_branch}'"),
-            )?;
-        }
-        task_branch_target = resolved_commit.id();
-        override_commit = Some(resolved_commit);
-    }
+    let task_head_branch = format!("metis/{task_id}/head");
 
     if let Some(issue_id) = issue_id {
         let issue_base_branch = format!("metis/{issue_id}/base");
         let issue_head_branch = format!("metis/{issue_id}/head");
-        if let Some(override_commit) = override_commit.as_ref() {
-            set_branch_to_commit(&repo, &issue_base_branch, override_commit.id()).with_context(
-                || format!("failed to align issue base branch '{issue_base_branch}' with override"),
+        let issue_head_exists = remote_branch_exists(&repo, remote_name, &issue_head_branch)
+            || repo
+                .find_branch(&issue_head_branch, BranchType::Local)
+                .is_ok();
+
+        if issue_head_exists {
+            let issue_head_commit = find_branch_commit(&repo, &issue_head_branch, remote_name)?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "issue head branch '{issue_head_branch}' exists but failed to resolve commit"
+                    )
+                })?;
+
+            if remote_branch_exists(&repo, remote_name, &issue_base_branch) {
+                ensure_local_branch_from_remote(&repo, &issue_base_branch, remote_name)
+                    .with_context(|| {
+                        format!("failed to track remote issue base branch '{issue_base_branch}'")
+                    })?;
+            } else {
+                set_branch_to_commit(&repo, &issue_base_branch, issue_head_commit.id())
+                    .with_context(|| {
+                        format!("failed to align issue base branch '{issue_base_branch}' with head")
+                    })?;
+            }
+
+            if remote_branch_exists(&repo, remote_name, &issue_head_branch) {
+                ensure_local_branch_from_remote(&repo, &issue_head_branch, remote_name)
+                    .with_context(|| {
+                        format!("failed to track remote issue head branch '{issue_head_branch}'")
+                    })?;
+            } else {
+                set_branch_to_commit(&repo, &issue_head_branch, issue_head_commit.id())
+                    .with_context(|| {
+                        format!("failed to align issue head branch '{issue_head_branch}' locally")
+                    })?;
+            }
+
+            task_branch_target = issue_head_commit.id();
+        } else {
+            set_branch_to_commit(&repo, &issue_base_branch, head_commit.id()).with_context(
+                || format!("failed to create issue base branch '{issue_base_branch}'"),
             )?;
             push_branch(repo_root, &issue_base_branch, github_token, false).with_context(|| {
                 format!("failed to push issue base branch '{issue_base_branch}' to remote origin")
             })?;
 
-            set_branch_to_commit(&repo, &issue_head_branch, override_commit.id()).with_context(
-                || format!("failed to align issue head branch '{issue_head_branch}' with override"),
+            set_branch_to_commit(&repo, &issue_head_branch, head_commit.id()).with_context(
+                || format!("failed to create issue head branch '{issue_head_branch}'"),
             )?;
             push_branch(repo_root, &issue_head_branch, github_token, false).with_context(|| {
                 format!("failed to push issue head branch '{issue_head_branch}' to remote origin")
             })?;
-        } else {
-            let issue_head_exists = remote_branch_exists(&repo, remote_name, &issue_head_branch)
-                || repo
-                    .find_branch(&issue_head_branch, BranchType::Local)
-                    .is_ok();
-
-            if issue_head_exists {
-                let issue_head_commit = find_branch_commit(&repo, &issue_head_branch, remote_name)?
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "issue head branch '{issue_head_branch}' exists but failed to resolve commit"
-                        )
-                    })?;
-
-                if remote_branch_exists(&repo, remote_name, &issue_base_branch) {
-                    ensure_local_branch_from_remote(&repo, &issue_base_branch, remote_name)
-                        .with_context(|| {
-                            format!(
-                                "failed to track remote issue base branch '{issue_base_branch}'"
-                            )
-                        })?;
-                } else {
-                    set_branch_to_commit(&repo, &issue_base_branch, issue_head_commit.id())
-                        .with_context(|| {
-                            format!(
-                                "failed to align issue base branch '{issue_base_branch}' with head"
-                            )
-                        })?;
-                }
-
-                if remote_branch_exists(&repo, remote_name, &issue_head_branch) {
-                    ensure_local_branch_from_remote(&repo, &issue_head_branch, remote_name)
-                        .with_context(|| {
-                            format!(
-                                "failed to track remote issue head branch '{issue_head_branch}'"
-                            )
-                        })?;
-                } else {
-                    set_branch_to_commit(&repo, &issue_head_branch, issue_head_commit.id())
-                        .with_context(|| {
-                            format!(
-                                "failed to align issue head branch '{issue_head_branch}' locally"
-                            )
-                        })?;
-                }
-
-                task_branch_target = issue_head_commit.id();
-            } else {
-                set_branch_to_commit(&repo, &issue_base_branch, head_commit.id()).with_context(
-                    || format!("failed to create issue base branch '{issue_base_branch}'"),
-                )?;
-                push_branch(repo_root, &issue_base_branch, github_token, false).with_context(
-                    || {
-                        format!(
-                        "failed to push issue base branch '{issue_base_branch}' to remote origin"
-                    )
-                    },
-                )?;
-
-                set_branch_to_commit(&repo, &issue_head_branch, head_commit.id()).with_context(
-                    || format!("failed to create issue head branch '{issue_head_branch}'"),
-                )?;
-                push_branch(repo_root, &issue_head_branch, github_token, false).with_context(
-                    || {
-                        format!(
-                        "failed to push issue head branch '{issue_head_branch}' to remote origin"
-                    )
-                    },
-                )?;
-            }
         }
     }
 
@@ -512,16 +451,19 @@ fn initialize_tracking_branches(
         format!("failed to push task base branch '{task_base_branch}' to remote origin")
     })?;
 
-    if task_head_branch_override.is_none() {
-        set_branch_to_commit(&repo, &task_head_branch, task_branch_target)
-            .with_context(|| format!("failed to update task head branch '{task_head_branch}'"))?;
-        push_branch(repo_root, &task_head_branch, github_token, false).with_context(|| {
-            format!("failed to push task head branch '{task_head_branch}' to remote origin")
-        })?;
-    }
+    set_branch_to_commit(&repo, &task_head_branch, task_branch_target)
+        .with_context(|| format!("failed to update task head branch '{task_head_branch}'"))?;
+    push_branch(repo_root, &task_head_branch, github_token, false).with_context(|| {
+        format!("failed to push task head branch '{task_head_branch}' to remote origin")
+    })?;
 
-    checkout_local_branch(&repo, &task_head_branch).with_context(|| {
-        format!("failed to checkout task head branch '{task_head_branch}' before worker run")
+    let working_branch = if let Some(issue_id) = issue_id {
+        format!("metis/{issue_id}/head")
+    } else {
+        task_head_branch.clone()
+    };
+    checkout_local_branch(&repo, &working_branch).with_context(|| {
+        format!("failed to checkout working branch '{working_branch}' before worker run")
     })?;
 
     Ok(())
@@ -532,7 +474,6 @@ fn finalize_task_run(
     issue_id: Option<&str>,
     task_id: &TaskId,
     github_token: Option<&str>,
-    task_head_branch_override: Option<&str>,
 ) -> Result<()> {
     log_status(format!(
         "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
@@ -554,9 +495,7 @@ fn finalize_task_run(
     let repo = Repository::open(repo_root)
         .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
 
-    let task_head_branch = task_head_branch_override
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("metis/{task_id}/head"));
+    let task_head_branch = format!("metis/{task_id}/head");
     update_branch_to_head(&repo, &task_head_branch).with_context(|| {
         format!("failed to update task head branch '{task_head_branch}' to latest commit")
     })?;
@@ -575,83 +514,6 @@ fn finalize_task_run(
     }
 
     Ok(())
-}
-
-/// Determine the branch override for changes-requested review patches.
-///
-/// Workers are launched from parent task issues, but review patches are tracked on child
-/// merge-request issues. To find a changes-requested branch, we must scan those child issues.
-pub async fn resolve_tracking_branch_override(
-    client: &dyn MetisClientInterface,
-    issue_id: &IssueId,
-) -> Result<Option<String>> {
-    let issue = client
-        .get_issue(issue_id)
-        .await
-        .with_context(|| format!("failed to fetch issue '{issue_id}' for tracking branch"))?;
-    if issue.issue.issue_type == IssueType::MergeRequest {
-        return resolve_tracking_branch_override_for_issue(client, &issue).await;
-    }
-
-    let filter = IssueGraphFilter::new(
-        IssueGraphSelector::Wildcard(IssueGraphWildcard::Immediate),
-        IssueDependencyType::ChildOf,
-        IssueGraphSelector::Issue(issue_id.clone()),
-    )
-    .map_err(|err| anyhow!(err))?;
-
-    let response = client
-        .list_issues(&SearchIssuesQuery::new(
-            Some(IssueType::MergeRequest),
-            None,
-            None,
-            None,
-            vec![filter],
-            None,
-        ))
-        .await
-        .with_context(|| {
-            format!("failed to fetch merge request children for issue '{issue_id}'")
-        })?;
-
-    for child_issue in response.issues {
-        if let Some(branch) =
-            resolve_tracking_branch_override_for_issue(client, &child_issue).await?
-        {
-            return Ok(Some(branch));
-        }
-    }
-
-    Ok(None)
-}
-
-async fn resolve_tracking_branch_override_for_issue(
-    client: &dyn MetisClientInterface,
-    issue: &IssueRecord,
-) -> Result<Option<String>> {
-    let Some(patch_id) = issue.issue.patches.last() else {
-        return Ok(None);
-    };
-    let patch = client
-        .get_patch(patch_id)
-        .await
-        .with_context(|| format!("failed to fetch patch '{patch_id}' for tracking branch"))?;
-    if patch.patch.status != PatchStatus::ChangesRequested {
-        return Ok(None);
-    }
-    if let Some(head_ref) = patch
-        .patch
-        .github
-        .as_ref()
-        .and_then(|github| github.head_ref.clone())
-    {
-        return Ok(Some(head_ref));
-    }
-    Ok(patch
-        .patch
-        .created_by
-        .as_ref()
-        .map(|job_id| format!("metis/{}/head", job_id.as_ref())))
 }
 
 fn ensure_local_branch_from_remote(repo: &Repository, branch: &str, remote: &str) -> Result<()> {
@@ -974,7 +836,7 @@ mod tests {
 
         let issue_id = "i-worker-123";
         let job_id = task_id("t-worker-123");
-        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None, None)?;
+        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
         let base_branch = format!("metis/{issue_id}/base");
         let head_branch = format!("metis/{issue_id}/head");
@@ -984,8 +846,8 @@ mod tests {
             .context("failed to open cloned repository for assertions")?;
         assert_eq!(
             git_current_branch(clone_dir.path())?,
-            task_head_branch,
-            "task head branch should be checked out for worker execution"
+            head_branch,
+            "issue head branch should be checked out for worker execution"
         );
         let head_oid = repo
             .head()?
@@ -1029,7 +891,7 @@ mod tests {
         let job_id = task_id("t-worker-456");
         let first_clone = tempfile::tempdir().context("failed to create first clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", first_clone.path(), None)?;
-        initialize_tracking_branches(first_clone.path(), Some(issue_id), &job_id, None, None)?;
+        initialize_tracking_branches(first_clone.path(), Some(issue_id), &job_id, None)?;
 
         let remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repo for initial base ref")?;
@@ -1045,7 +907,7 @@ mod tests {
         let next_job = task_id("t-worker-456b");
         let second_clone = tempfile::tempdir().context("failed to create second clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", second_clone.path(), None)?;
-        initialize_tracking_branches(second_clone.path(), Some(issue_id), &next_job, None, None)?;
+        initialize_tracking_branches(second_clone.path(), Some(issue_id), &next_job, None)?;
 
         let repo = Repository::open(second_clone.path())
             .context("failed to open second clone for assertions")?;
@@ -1096,46 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn initialize_tracking_branches_uses_override_head_branch() -> Result<()> {
-        let fixture = RemoteFixture::new()?;
-        let override_branch = "metis/t-worker-override/head";
-        let override_commit = fixture.create_branch(override_branch)?;
-        let issue_id = "i-worker-999";
-        let job_id = task_id("t-worker-999");
-        let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
-        git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
-
-        initialize_tracking_branches(
-            clone_dir.path(),
-            Some(issue_id),
-            &job_id,
-            None,
-            Some(override_branch),
-        )?;
-
-        assert_eq!(
-            git_current_branch(clone_dir.path())?,
-            override_branch,
-            "override branch should be checked out for worker execution"
-        );
-
-        let remote_repo = Repository::open(fixture.remote_dir())
-            .context("failed to open remote repository for override assertions")?;
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/metis/{job_id}/base"))?,
-            override_commit,
-            "task base branch should match override branch commit"
-        );
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/metis/{issue_id}/head"))?,
-            override_commit,
-            "issue head branch should align with override branch commit"
-        );
-
-        Ok(())
-    }
-
-    #[test]
     fn finalize_task_run_commits_changes_and_pushes_task_head_branch() -> Result<()> {
         let fixture = RemoteFixture::new()?;
         let issue_id = "i-worker-789";
@@ -1144,7 +966,7 @@ mod tests {
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
         configure_repo(clone_dir.path(), "Metis Worker", "metis-worker@example.com")
             .context("failed to configure git repository")?;
-        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None, None)?;
+        initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
         std::fs::write(clone_dir.path().join("README.md"), "updated content\n")
             .context("failed to edit README during finalize test")?;
@@ -1154,7 +976,7 @@ mod tests {
         )
         .context("failed to write new file during finalize test")?;
 
-        finalize_task_run(clone_dir.path(), Some(issue_id), &job_id, None, None)?;
+        finalize_task_run(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for finalize assertions")?;
@@ -1227,21 +1049,6 @@ mod tests {
                 upstream_dir,
                 remote_path,
             })
-        }
-
-        fn create_branch(&self, branch: &str) -> Result<Oid> {
-            let repo = Repository::open(self.upstream_dir.path())
-                .context("failed to open upstream repository for branch creation")?;
-            let commit = repo
-                .head()
-                .context("failed to read upstream HEAD")?
-                .peel_to_commit()
-                .context("failed to peel upstream HEAD commit")?;
-            repo.branch(branch, &commit, true)
-                .with_context(|| format!("failed to create branch '{branch}' in upstream repo"))?;
-            git_push_branch(self.upstream_dir.path(), branch, None, false)
-                .with_context(|| format!("failed to push branch '{branch}' to remote fixture"))?;
-            Ok(commit.id())
         }
 
         fn remote_path(&self) -> &str {
