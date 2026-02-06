@@ -2050,6 +2050,12 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+
+        // Return not found for deleted users
+        if row.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for user '{}'",
@@ -2400,6 +2406,34 @@ mod tests {
         assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
         assert_eq!(updated.version, 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_user_returns_not_found_for_deleted_user_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let username = Username::from("alice");
+
+        // Create a user
+        let user = User {
+            username: username.clone(),
+            github_user_id: 101,
+            github_token: "token".to_string(),
+            github_refresh_token: "refresh".to_string(),
+            deleted: false,
+        };
+        store.add_user(user).await.unwrap();
+
+        // Verify user exists
+        let fetched = store.get_user(&username).await.unwrap();
+        assert_eq!(fetched.item.github_user_id, 101);
+
+        // Delete the user
+        store.delete_user(&username).await.unwrap();
+
+        // get_user should now return UserNotFound
+        let result = store.get_user(&username).await;
+        assert!(matches!(result, Err(StoreError::UserNotFound(_))));
     }
 
     #[sqlx::test(migrations = "./migrations")]

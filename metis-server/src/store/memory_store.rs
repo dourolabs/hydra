@@ -1027,10 +1027,18 @@ impl Store for MemoryStore {
     }
 
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
-        self.users
+        let versioned = self
+            .users
             .get(username)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+            .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
+
+        // Return not found for deleted users
+        if versioned.item.deleted {
+            return Err(StoreError::UserNotFound(username.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn list_users(
@@ -2391,6 +2399,35 @@ mod tests {
         assert_eq!(user.item.github_user_id, 202);
         assert_eq!(user.item.github_refresh_token, "new-refresh");
         assert_eq!(user.version, 2);
+    }
+
+    #[tokio::test]
+    async fn get_user_returns_not_found_for_deleted_user() {
+        let store = MemoryStore::new();
+        let username = Username::from("alice");
+
+        // Create a user
+        store
+            .add_user(User {
+                username: username.clone(),
+                github_user_id: 101,
+                github_token: "token".to_string(),
+                github_refresh_token: "refresh".to_string(),
+                deleted: false,
+            })
+            .await
+            .unwrap();
+
+        // Verify user exists
+        let user = store.get_user(&username).await.unwrap();
+        assert_eq!(user.item.github_user_id, 101);
+
+        // Delete the user
+        store.delete_user(&username).await.unwrap();
+
+        // get_user should now return UserNotFound
+        let result = store.get_user(&username).await;
+        assert!(matches!(result, Err(StoreError::UserNotFound(_))));
     }
 
     #[tokio::test]
