@@ -14,6 +14,7 @@ pub struct MockJobEngine {
     env_vars: Arc<Mutex<HashMap<TaskId, HashMap<String, String>>>>,
     resource_limits: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
     resource_requests: Arc<Mutex<HashMap<TaskId, (String, String)>>>,
+    secrets: Arc<Mutex<HashMap<TaskId, Vec<String>>>>,
 }
 
 impl MockJobEngine {
@@ -80,6 +81,11 @@ impl MockJobEngine {
         let requests = self.resource_requests.lock().unwrap();
         requests.get(metis_id).cloned()
     }
+
+    pub fn secrets_for_job(&self, metis_id: &TaskId) -> Option<Vec<String>> {
+        let secrets = self.secrets.lock().unwrap();
+        secrets.get(metis_id).cloned()
+    }
 }
 
 #[async_trait]
@@ -95,6 +101,7 @@ impl JobEngine for MockJobEngine {
         memory_limit: String,
         cpu_request: String,
         memory_request: String,
+        secrets: Option<&[String]>,
     ) -> Result<(), JobEngineError> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|job| &job.id == metis_id) {
@@ -121,6 +128,12 @@ impl JobEngine for MockJobEngine {
             .lock()
             .unwrap()
             .insert(metis_id.clone(), (cpu_request, memory_request));
+        if let Some(secrets) = secrets {
+            self.secrets
+                .lock()
+                .unwrap()
+                .insert(metis_id.clone(), secrets.to_vec());
+        }
         Ok(())
     }
 
@@ -251,6 +264,7 @@ mod tests {
                 "128Mi".to_string(),
                 "100m".to_string(),
                 "64Mi".to_string(),
+                None,
             )
             .await
             .expect("job creation should succeed");
@@ -269,5 +283,61 @@ mod tests {
             .resource_requests_for_job(&metis_id)
             .expect("resource requests should be recorded");
         assert_eq!(requests, ("100m".to_string(), "64Mi".to_string()));
+    }
+
+    #[tokio::test]
+    async fn create_job_records_secrets() {
+        let engine = MockJobEngine::new();
+        let env_vars = HashMap::new();
+        let secrets = vec!["db-secret".to_string(), "api-key".to_string()];
+        let metis_id = TaskId::new();
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                "token",
+                "image",
+                &env_vars,
+                "250m".to_string(),
+                "128Mi".to_string(),
+                "100m".to_string(),
+                "64Mi".to_string(),
+                Some(&secrets),
+            )
+            .await
+            .expect("job creation should succeed");
+
+        let recorded = engine
+            .secrets_for_job(&metis_id)
+            .expect("secrets should be recorded");
+        assert_eq!(recorded, secrets);
+    }
+
+    #[tokio::test]
+    async fn create_job_handles_none_secrets() {
+        let engine = MockJobEngine::new();
+        let env_vars = HashMap::new();
+        let metis_id = TaskId::new();
+        let (actor, _) = crate::domain::actors::Actor::new_for_task(TaskId::new());
+
+        engine
+            .create_job(
+                &metis_id,
+                &actor,
+                "token",
+                "image",
+                &env_vars,
+                "250m".to_string(),
+                "128Mi".to_string(),
+                "100m".to_string(),
+                "64Mi".to_string(),
+                None,
+            )
+            .await
+            .expect("job creation should succeed");
+
+        assert!(engine.secrets_for_job(&metis_id).is_none());
     }
 }
