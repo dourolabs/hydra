@@ -624,11 +624,20 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
-        self.documents
+    async fn get_document(
+        &self,
+        id: &DocumentId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Document>, StoreError> {
+        let versioned = self
+            .documents
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn get_document_versions(
@@ -662,7 +671,7 @@ impl Store for MemoryStore {
     }
 
     async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError> {
-        let current = self.get_document(id).await?;
+        let current = self.get_document(id, true).await?;
         let mut document = current.item;
         document.deleted = true;
         self.update_document(id, document).await
@@ -1909,7 +1918,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_document(&doc_id).await.unwrap();
+        let fetched = store.get_document(&doc_id, false).await.unwrap();
         assert_eq!(fetched.item.title, "Doc");
         assert_eq!(fetched.version, 1);
 
@@ -1990,7 +1999,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut updated = store.get_document(&doc_id).await.unwrap().item;
+        let mut updated = store.get_document(&doc_id, false).await.unwrap().item;
         updated.path = Some("docs/new.md".to_string());
         store.update_document(&doc_id, updated).await.unwrap();
 
@@ -2872,8 +2881,12 @@ mod tests {
         assert_eq!(docs.len(), 1);
         assert!(docs[0].1.item.deleted);
 
-        // get_document should still return the deleted document
-        let doc = store.get_document(&doc_id).await.unwrap();
+        // get_document with include_deleted=false should return not found
+        let result = store.get_document(&doc_id, false).await;
+        assert!(matches!(result, Err(StoreError::DocumentNotFound(_))));
+
+        // get_document with include_deleted=true should return the deleted document
+        let doc = store.get_document(&doc_id, true).await.unwrap();
         assert!(doc.item.deleted);
     }
 

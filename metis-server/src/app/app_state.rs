@@ -488,16 +488,19 @@ impl AppState {
         let store = self.store.as_ref();
         match document_id {
             Some(id) => {
-                let existing = store
-                    .get_document(&id)
-                    .await
-                    .map_err(|source| match source {
-                        StoreError::DocumentNotFound(_) => UpsertDocumentError::DocumentNotFound {
-                            document_id: id.clone(),
-                            source,
-                        },
-                        other => UpsertDocumentError::Store { source: other },
-                    })?;
+                let existing =
+                    store
+                        .get_document(&id, false)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::DocumentNotFound(_) => {
+                                UpsertDocumentError::DocumentNotFound {
+                                    document_id: id.clone(),
+                                    source,
+                                }
+                            }
+                            other => UpsertDocumentError::Store { source: other },
+                        })?;
 
                 let mut document = document;
                 document.created_by = existing.item.created_by;
@@ -562,9 +565,10 @@ impl AppState {
     pub async fn get_document(
         &self,
         document_id: &DocumentId,
+        include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let store = self.store.as_ref();
-        store.get_document(document_id).await
+        store.get_document(document_id, include_deleted).await
     }
 
     pub async fn get_document_versions(

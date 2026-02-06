@@ -516,16 +516,13 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should still return it
-    let fetched: DocumentRecord = client
+    // GET by ID should return 404 for deleted documents
+    let response = client
         .get(format!("{base}/v1/documents/{}", created.document_id))
         .send()
-        .await?
-        .json()
         .await?;
 
-    // Verify deleted=true in response
-    assert!(fetched.document.deleted);
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
 
     Ok(())
 }

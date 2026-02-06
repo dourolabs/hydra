@@ -127,7 +127,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_document(&self, _id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
+    async fn get_document(
+        &self,
+        _id: &DocumentId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Document>, StoreError> {
         fail()
     }
 
