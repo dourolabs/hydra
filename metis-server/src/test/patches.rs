@@ -262,7 +262,7 @@ async fn creating_patch_with_created_by_links_job() -> anyhow::Result<()> {
     assert!(response.status().is_success());
     let created: UpsertPatchResponse = response.json().await?;
 
-    let patch = check_state.get_patch(&created.patch_id).await?;
+    let patch = check_state.get_patch(&created.patch_id, false).await?;
     assert_eq!(patch.item.created_by, Some(job_id));
     Ok(())
 }
@@ -1337,20 +1337,17 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should still return it
-    let fetched: PatchRecord = client
+    // GET by ID should return 404 for deleted patches
+    let response = client
         .get(format!(
             "{}/v1/patches/{}",
             server.base_url(),
             created.patch_id
         ))
         .send()
-        .await?
-        .json()
         .await?;
 
-    // Verify deleted=true in response
-    assert!(fetched.patch.deleted);
+    assert_eq!(response.status().as_u16(), 404);
 
     Ok(())
 }

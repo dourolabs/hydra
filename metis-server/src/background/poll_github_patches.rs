@@ -221,7 +221,7 @@ async fn sync_patch_from_github(
 
     let github_reviews = build_review_entries(reviews, review_comments, issue_comments);
 
-    let latest_patch = state.get_patch(patch_id).await?;
+    let latest_patch = state.get_patch(patch_id, false).await?;
     let latest_patch = latest_patch.item;
     if !matches!(
         latest_patch.status,

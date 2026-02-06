@@ -556,11 +556,20 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
-        self.patches
+    async fn get_patch(
+        &self,
+        id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
+        let versioned = self
+            .patches
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
@@ -608,7 +617,7 @@ impl Store for MemoryStore {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        let current = self.get_patch(id).await?;
+        let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
         self.update_patch(id, patch).await
@@ -1570,7 +1579,7 @@ mod tests {
         let patch = sample_patch();
         let id = store.add_patch(patch.clone()).await.unwrap();
 
-        let fetched = store.get_patch(&id).await.unwrap();
+        let fetched = store.get_patch(&id, false).await.unwrap();
         assert_eq!(fetched.item, patch);
         assert_eq!(fetched.version, 1);
     }
@@ -1594,7 +1603,7 @@ mod tests {
 
         store.update_patch(&id, updated.clone()).await.unwrap();
 
-        let fetched = store.get_patch(&id).await.unwrap();
+        let fetched = store.get_patch(&id, false).await.unwrap();
         assert_eq!(fetched.item, updated);
         assert_eq!(fetched.version, 2);
 
@@ -2693,9 +2702,32 @@ mod tests {
         assert_eq!(patches.len(), 1);
         assert!(patches[0].1.item.deleted);
 
-        // get_patch should still return the deleted patch
-        let patch = store.get_patch(&patch_id).await.unwrap();
+        // get_patch with include_deleted=true should still return the deleted patch
+        let patch = store.get_patch(&patch_id, true).await.unwrap();
         assert!(patch.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_patch_filters_deleted_patches() {
+        let store = MemoryStore::new();
+        let patch = sample_patch();
+        let patch_id = store.add_patch(patch.clone()).await.unwrap();
+
+        // Patch is accessible when not deleted
+        let fetched = store.get_patch(&patch_id, false).await.unwrap();
+        assert_eq!(fetched.item.title, patch.title);
+
+        // Delete the patch
+        store.delete_patch(&patch_id).await.unwrap();
+
+        // Patch is not found with include_deleted=false
+        let err = store.get_patch(&patch_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::PatchNotFound(_)));
+
+        // Patch is still accessible with include_deleted=true
+        let fetched = store.get_patch(&patch_id, true).await.unwrap();
+        assert_eq!(fetched.item.title, patch.title);
+        assert!(fetched.item.deleted);
     }
 
     #[tokio::test]

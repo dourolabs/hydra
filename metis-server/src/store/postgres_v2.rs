@@ -1169,7 +1169,11 @@ impl Store for PostgresStoreV2 {
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
+    async fn get_patch(
+        &self,
+        id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
             "SELECT id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
@@ -1191,6 +1195,9 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
         let patch = self.row_to_patch(&row)?;
+        if !include_deleted && patch.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
         Ok(Versioned::new(patch, version, row.created_at))
     }
 
@@ -1227,7 +1234,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
-        self.get_patch(id).await?;
+        self.get_patch(id, true).await?;
 
         let latest_version = self
             .fetch_latest_version_number(TABLE_PATCHES_V2, id.as_ref())
@@ -1334,7 +1341,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        let current = self.get_patch(id).await?;
+        let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
         self.update_patch(id, patch).await
@@ -2301,7 +2308,7 @@ mod tests {
             .update_patch(&patch_id, updated.clone())
             .await
             .unwrap();
-        let fetched = store.get_patch(&patch_id).await.unwrap();
+        let fetched = store.get_patch(&patch_id, false).await.unwrap();
         assert_eq!(fetched.item.title, "updated");
         assert_eq!(fetched.version, 2);
     }

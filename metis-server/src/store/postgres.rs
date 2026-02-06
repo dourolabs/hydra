@@ -1201,10 +1201,19 @@ impl Store for PostgresStore {
         Ok(id)
     }
 
-    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
-        self.fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
+    async fn get_patch(
+        &self,
+        id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
+        let versioned: Versioned<Patch> = self
+            .fetch_versioned_payload(TABLE_PATCHES, "patch", id.as_ref(), PATCH_SCHEMA_VERSION)
             .await?
-            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))
+            .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::PatchNotFound(id.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
@@ -1218,7 +1227,7 @@ impl Store for PostgresStore {
     }
 
     async fn update_patch(&self, id: &PatchId, patch: Patch) -> Result<(), StoreError> {
-        self.get_patch(id).await?;
+        self.get_patch(id, true).await?;
 
         self.update_payload(
             TABLE_PATCHES,
@@ -1238,7 +1247,7 @@ impl Store for PostgresStore {
     }
 
     async fn delete_patch(&self, id: &PatchId) -> Result<(), StoreError> {
-        let current = self.get_patch(id).await?;
+        let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
         patch.deleted = true;
         self.update_patch(id, patch).await
@@ -2057,7 +2066,7 @@ mod tests {
             .update_patch(&patch_id, updated.clone())
             .await
             .unwrap();
-        let fetched = store.get_patch(&patch_id).await.unwrap();
+        let fetched = store.get_patch(&patch_id, false).await.unwrap();
         assert_eq!(fetched.item.title, "updated");
         assert_eq!(fetched.version, 2);
     }

@@ -218,7 +218,16 @@ pub trait Store: Send + Sync {
     async fn add_patch(&self, patch: Patch) -> Result<PatchId, StoreError>;
 
     /// Retrieves a patch by its PatchId.
-    async fn get_patch(&self, id: &PatchId) -> Result<Versioned<Patch>, StoreError>;
+    ///
+    /// # Arguments
+    /// * `id` - The PatchId to look up
+    /// * `include_deleted` - If true, returns the patch even if it has been soft-deleted.
+    ///   If false, returns `StoreError::PatchNotFound` for deleted patches.
+    async fn get_patch(
+        &self,
+        id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError>;
 
     /// Retrieves all versions of a patch in ascending version order.
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError>;
