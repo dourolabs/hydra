@@ -822,19 +822,27 @@ impl Store for PostgresStoreV2 {
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
         let name_str = name.as_str();
 
-        // Check if repository exists (including deleted)
-        let existing = self.get_repository(&name).await;
+        // Check if repository exists (including deleted) by querying directly
+        let query = format!(
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
+             FROM {TABLE_REPOSITORIES_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let existing = sqlx::query_as::<_, RepositoryRow>(&query)
+            .bind(name_str.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
 
         match existing {
-            Ok(repo) if repo.item.deleted => {
+            Some(row) if row.deleted => {
                 // Re-create over deleted: use caller's config as-is
                 self.update_repository(name, config).await
             }
-            Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
-            Err(StoreError::RepositoryNotFound(_)) => {
-                self.insert_repository(name_str.as_str(), 1, &config).await
-            }
-            Err(e) => Err(e),
+            Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
+            None => self.insert_repository(name_str.as_str(), 1, &config).await,
         }
     }
 
@@ -854,6 +862,12 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+
+        // Return NotFound for deleted repositories
+        if row.deleted {
+            return Err(StoreError::RepositoryNotFound(name.clone()));
+        }
+
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for repository '{}'",
@@ -928,8 +942,23 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        let current = self.get_repository(name).await?;
-        let mut repo = current.item;
+        // Access repository directly (including deleted) to allow deleting already-deleted repos
+        let name_str = name.as_str();
+        let query = format!(
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
+             FROM {TABLE_REPOSITORIES_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let row = sqlx::query_as::<_, RepositoryRow>(&query)
+            .bind(name_str.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+        let mut repo = self.row_to_repository(&row);
         repo.deleted = true;
         self.update_repository(name.clone(), repo).await
     }

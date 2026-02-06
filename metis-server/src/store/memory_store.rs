@@ -329,10 +329,17 @@ impl Store for MemoryStore {
     }
 
     async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
-        self.repositories
+        let versioned = self
+            .repositories
             .get(name)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
+            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+
+        if versioned.item.deleted {
+            return Err(StoreError::RepositoryNotFound(name.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn update_repository(
@@ -372,7 +379,13 @@ impl Store for MemoryStore {
     }
 
     async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        let current = self.get_repository(name).await?;
+        // Access repository directly to allow deleting already-deleted repositories
+        let current = self
+            .repositories
+            .get(name)
+            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+
         let mut repo = current.item;
         repo.deleted = true;
         self.update_repository(name.clone(), repo).await
@@ -1335,10 +1348,9 @@ mod tests {
         // Delete the repository
         store.delete_repository(&name).await.unwrap();
 
-        // Repository is still retrievable via get_repository
-        let fetched = store.get_repository(&name).await.unwrap();
-        assert!(fetched.item.deleted);
-        assert_eq!(fetched.version, 2);
+        // get_repository returns NotFound for deleted repository
+        let err = store.get_repository(&name).await.unwrap_err();
+        assert!(matches!(err, StoreError::RepositoryNotFound(_)));
 
         // By default, list_repositories excludes deleted
         let list = store
@@ -1352,6 +1364,7 @@ mod tests {
         let list = store.list_repositories(&query).await.unwrap();
         assert_eq!(list.len(), 1);
         assert!(list[0].1.item.deleted);
+        assert_eq!(list[0].1.version, 2);
     }
 
     #[tokio::test]
@@ -1413,11 +1426,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Repository should still be deleted (caller's choice)
-        let fetched = store.get_repository(&name).await.unwrap();
-        assert!(fetched.item.deleted);
-        assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
-        assert_eq!(fetched.version, 3);
+        // get_repository returns NotFound for deleted repository
+        let err = store.get_repository(&name).await.unwrap_err();
+        assert!(matches!(err, StoreError::RepositoryNotFound(_)));
 
         // List_repositories should not include it by default
         let list = store
@@ -1425,6 +1436,14 @@ mod tests {
             .await
             .unwrap();
         assert!(list.is_empty());
+
+        // With include_deleted=true, verify the repository state
+        let query = SearchRepositoriesQuery::new(Some(true));
+        let list = store.list_repositories(&query).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].1.item.deleted);
+        assert_eq!(list[0].1.item.default_branch, Some("develop".to_string()));
+        assert_eq!(list[0].1.version, 3);
     }
 
     #[tokio::test]
@@ -1433,6 +1452,29 @@ mod tests {
         let name = RepoName::from_str("dourolabs/nonexistent").unwrap();
 
         let err = store.delete_repository(&name).await.unwrap_err();
+        assert!(matches!(
+            err,
+            StoreError::RepositoryNotFound(n) if n == name
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_repository_returns_not_found_for_deleted_repository() {
+        let store = MemoryStore::new();
+        let name = RepoName::from_str("dourolabs/metis").unwrap();
+        let config = sample_repository_config();
+
+        // Create a repository
+        store
+            .add_repository(name.clone(), config.clone())
+            .await
+            .unwrap();
+
+        // Delete the repository
+        store.delete_repository(&name).await.unwrap();
+
+        // get_repository should return RepositoryNotFound for deleted repository
+        let err = store.get_repository(&name).await.unwrap_err();
         assert!(matches!(
             err,
             StoreError::RepositoryNotFound(n) if n == name
