@@ -1038,7 +1038,7 @@ mod tests {
 
         // Verify data is readable from v2 store
         let v2_store = PostgresStoreV2::new(pool.clone());
-        let migrated_issue = v2_store.get_issue(&issue_id).await.unwrap();
+        let migrated_issue = v2_store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(migrated_issue.item.description, issue.description);
         assert_eq!(migrated_issue.item.creator, issue.creator);
         assert_eq!(migrated_issue.item.progress, issue.progress);
@@ -1070,7 +1070,7 @@ mod tests {
         let issue_id = v2_store.add_issue(issue.clone()).await.unwrap();
 
         // Verify data can be read back
-        let retrieved = v2_store.get_issue(&issue_id).await.unwrap();
+        let retrieved = v2_store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(retrieved.item.description, issue.description);
         assert_eq!(retrieved.item.creator, issue.creator);
 

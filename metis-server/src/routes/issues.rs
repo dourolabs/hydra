@@ -118,7 +118,7 @@ pub async fn get_issue(
 ) -> Result<Json<api_issues::IssueRecord>, ApiError> {
     info!(issue_id = %issue_id, "get_issue invoked");
     let issue = state
-        .get_issue(&issue_id)
+        .get_issue(&issue_id, false)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
@@ -451,7 +451,7 @@ pub async fn delete_issue(
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
     let issue = state
-        .get_issue(&issue_id)
+        .get_issue(&issue_id, true)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 

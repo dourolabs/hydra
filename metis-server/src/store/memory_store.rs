@@ -406,11 +406,22 @@ impl Store for MemoryStore {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
-        self.issues
+    async fn get_issue(
+        &self,
+        id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError> {
+        let versioned = self
+            .issues
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
@@ -492,7 +503,7 @@ impl Store for MemoryStore {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        let current = self.get_issue(id).await?;
+        let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
         self.update_issue(id, issue).await
@@ -1542,7 +1553,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_issue(&issue_id).await.unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item, updated);
         assert_eq!(fetched.version, 2);
 
@@ -2666,9 +2677,36 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert!(issues[0].1.item.deleted);
 
-        // get_issue should still return the deleted issue
-        let issue = store.get_issue(&issue_id).await.unwrap();
+        // get_issue with include_deleted: true should still return the deleted issue
+        let issue = store.get_issue(&issue_id, true).await.unwrap();
         assert!(issue.item.deleted);
+
+        // get_issue with include_deleted: false should return IssueNotFound
+        let err = store.get_issue(&issue_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_issue_filters_deleted_issues() {
+        let store = MemoryStore::new();
+        let issue = sample_issue(vec![]);
+        let issue_id = store.add_issue(issue.clone()).await.unwrap();
+
+        // Issue is accessible when not deleted
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.description, issue.description);
+
+        // Delete the issue
+        store.delete_issue(&issue_id).await.unwrap();
+
+        // Issue is not found with include_deleted=false
+        let err = store.get_issue(&issue_id, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(_)));
+
+        // Issue is still accessible with include_deleted=true
+        let fetched = store.get_issue(&issue_id, true).await.unwrap();
+        assert_eq!(fetched.item.description, issue.description);
+        assert!(fetched.item.deleted);
     }
 
     #[tokio::test]
@@ -3053,9 +3091,10 @@ mod tests {
         let store = MemoryStore::new();
         let issue_id = store.add_issue(sample_issue(vec![])).await.unwrap();
 
-        let version_before = store.get_issue(&issue_id).await.unwrap().version;
+        let version_before = store.get_issue(&issue_id, false).await.unwrap().version;
         store.delete_issue(&issue_id).await.unwrap();
-        let version_after = store.get_issue(&issue_id).await.unwrap().version;
+        // After deletion, we need include_deleted: true to get the issue
+        let version_after = store.get_issue(&issue_id, true).await.unwrap().version;
 
         assert_eq!(version_after, version_before + 1);
     }

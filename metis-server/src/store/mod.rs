@@ -175,7 +175,16 @@ pub trait Store: Send + Sync {
     async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError>;
 
     /// Retrieves an issue by its IssueId.
-    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError>;
+    ///
+    /// # Arguments
+    /// * `id` - The IssueId to look up
+    /// * `include_deleted` - If true, returns the issue even if it has been soft-deleted.
+    ///   If false, returns `StoreError::IssueNotFound` for deleted issues.
+    async fn get_issue(
+        &self,
+        id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError>;
 
     /// Retrieves all versions of an issue in ascending version order.
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError>;

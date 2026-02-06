@@ -428,9 +428,13 @@ impl AppState {
         Ok((actor, auth_token))
     }
 
-    pub async fn get_issue(&self, issue_id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
+    pub async fn get_issue(
+        &self,
+        issue_id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError> {
         let store = self.store.as_ref();
-        store.get_issue(issue_id).await
+        store.get_issue(issue_id, include_deleted).await
     }
 
     pub async fn get_issue_versions(
@@ -941,7 +945,7 @@ impl AppState {
         let issue = match request.issue_id.as_ref() {
             Some(issue_id) => {
                 let store = self.store.as_ref();
-                Some(store.get_issue(issue_id).await.map_err(|source| {
+                Some(store.get_issue(issue_id, false).await.map_err(|source| {
                     CreateJobError::IssueLookup {
                         source,
                         issue_id: issue_id.clone(),
@@ -1490,7 +1494,7 @@ impl AppState {
 
             let mut closed_issue_ids = Vec::new();
             for issue_id in merge_request_issue_ids {
-                let issue = store.get_issue(&issue_id).await.map_err(|source| {
+                let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
                     UpsertPatchError::MergeRequestUpdate {
                         patch_id: patch_id.clone(),
                         issue_id: issue_id.clone(),
@@ -1575,7 +1579,7 @@ impl AppState {
 
         let mut merge_request_issues = Vec::new();
         for issue_id in issue_ids {
-            let issue = store.get_issue(&issue_id).await.map_err(|source| {
+            let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
                 UpsertPatchError::MergeRequestLookup {
                     patch_id: patch_id.clone(),
                     source,
@@ -1760,7 +1764,7 @@ impl AppState {
                     if let Some(parent_dependency) = issue.dependencies.iter().find(|dependency| {
                         dependency.dependency_type == IssueDependencyType::ChildOf
                     }) {
-                        match store.get_issue(&parent_dependency.issue_id).await {
+                        match store.get_issue(&parent_dependency.issue_id, false).await {
                             Ok(parent_issue) => {
                                 issue.creator = parent_issue.item.creator;
                             }
@@ -1849,7 +1853,7 @@ impl AppState {
         item: TodoItem,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
@@ -1876,7 +1880,7 @@ impl AppState {
         todo_list: Vec<TodoItem>,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
@@ -1903,7 +1907,7 @@ impl AppState {
         is_done: bool,
     ) -> Result<Vec<TodoItem>, UpdateTodoListError> {
         let store = self.store.as_ref();
-        let issue = store.get_issue(&issue_id).await.map_err(|source| {
+        let issue = store.get_issue(&issue_id, false).await.map_err(|source| {
             UpdateTodoListError::IssueNotFound {
                 source,
                 issue_id: issue_id.clone(),
@@ -2158,7 +2162,7 @@ fn join_item_numbers(numbers: &[usize]) -> String {
 }
 
 async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, StoreError> {
-    let issue = store.get_issue(issue_id).await?;
+    let issue = store.get_issue(issue_id, false).await?;
     let issue = issue.item;
 
     match issue.status {
@@ -2169,7 +2173,7 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
                 .iter()
                 .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
             {
-                let blocker = store.get_issue(&dependency.issue_id).await?;
+                let blocker = store.get_issue(&dependency.issue_id, false).await?;
                 if blocker.item.status != IssueStatus::Closed {
                     return Ok(false);
                 }
@@ -2179,7 +2183,7 @@ async fn issue_ready(store: &dyn Store, issue_id: &IssueId) -> Result<bool, Stor
         }
         IssueStatus::InProgress => {
             for child_id in store.get_issue_children(issue_id).await? {
-                let child = store.get_issue(&child_id).await?;
+                let child = store.get_issue(&child_id, false).await?;
                 if child.item.status != IssueStatus::Closed {
                     return Ok(false);
                 }
@@ -2205,13 +2209,16 @@ async fn validate_issue_lifecycle(
         .iter()
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::BlockedOn)
     {
-        let blocker = store
-            .get_issue(&dependency.issue_id)
-            .await
-            .map_err(|err| match err {
-                StoreError::IssueNotFound(missing_id) => StoreError::InvalidDependency(missing_id),
-                other => other,
-            })?;
+        let blocker =
+            store
+                .get_issue(&dependency.issue_id, false)
+                .await
+                .map_err(|err| match err {
+                    StoreError::IssueNotFound(missing_id) => {
+                        StoreError::InvalidDependency(missing_id)
+                    }
+                    other => other,
+                })?;
 
         if blocker.item.status != IssueStatus::Closed {
             open_blockers.push(dependency.issue_id.clone());
@@ -2235,7 +2242,7 @@ async fn validate_issue_lifecycle(
     if let Some(issue_id) = issue_id {
         let mut open_children = Vec::new();
         for child_id in store.get_issue_children(issue_id).await? {
-            let child = store.get_issue(&child_id).await?;
+            let child = store.get_issue(&child_id, false).await?;
             if child.item.status != IssueStatus::Closed {
                 open_children.push(child_id);
             }
@@ -2281,7 +2288,7 @@ async fn drop_issue_children(
 
         let child_issue =
             store
-                .get_issue(&child_id)
+                .get_issue(&child_id, false)
                 .await
                 .map_err(|source| UpsertIssueError::Store {
                     source,
@@ -3145,11 +3152,16 @@ mod tests {
         {
             let store = state.store.as_ref();
             assert_eq!(
-                store.get_issue(&child_id).await.unwrap().item.status,
+                store.get_issue(&child_id, false).await.unwrap().item.status,
                 IssueStatus::Dropped
             );
             assert_eq!(
-                store.get_issue(&grandchild_id).await.unwrap().item.status,
+                store
+                    .get_issue(&grandchild_id, false)
+                    .await
+                    .unwrap()
+                    .item
+                    .status,
                 IssueStatus::Dropped
             );
         }
@@ -3386,7 +3398,7 @@ mod tests {
             .unwrap();
 
         let store = state.store.as_ref();
-        let stored_child = store.get_issue(&child_id).await.unwrap();
+        let stored_child = store.get_issue(&child_id, false).await.unwrap();
         assert_eq!(stored_child.item.creator, Username::from("parent-creator"));
     }
 
@@ -3418,7 +3430,7 @@ mod tests {
             .unwrap();
 
         let store = state.store.as_ref();
-        let stored_child = store.get_issue(&child_id).await.unwrap();
+        let stored_child = store.get_issue(&child_id, false).await.unwrap();
         assert_eq!(
             stored_child.item.creator,
             Username::from("explicit-creator")
