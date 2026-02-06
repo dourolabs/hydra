@@ -492,7 +492,7 @@ async fn updating_changes_requested_patch_creates_merge_request_issue() -> anyho
         .await?;
     let mut merge_request_issues = Vec::new();
     for issue_id in issue_ids {
-        let issue = handles.store.get_issue(&issue_id).await?;
+        let issue = handles.store.get_issue(&issue_id, false).await?;
         if issue.item.issue_type == IssueType::MergeRequest {
             merge_request_issues.push(issue);
         }
@@ -614,7 +614,7 @@ async fn reopening_changes_requested_patch_reuses_patch_and_opens_new_issue() ->
         .await?;
     let mut merge_request_issues = Vec::new();
     for issue_id in issue_ids {
-        let issue = handles.store.get_issue(&issue_id).await?;
+        let issue = handles.store.get_issue(&issue_id, false).await?;
         if issue.item.issue_type == IssueType::MergeRequest {
             merge_request_issues.push(issue);
         }
@@ -697,7 +697,7 @@ async fn updating_open_patch_does_not_create_merge_request_issue() -> anyhow::Re
         .await?;
     let mut merge_request_issues = Vec::new();
     for issue_id in issue_ids {
-        let issue = handles.store.get_issue(&issue_id).await?;
+        let issue = handles.store.get_issue(&issue_id, false).await?;
         if issue.item.issue_type == IssueType::MergeRequest {
             merge_request_issues.push(issue);
         }

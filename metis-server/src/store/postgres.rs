@@ -1129,10 +1129,21 @@ impl Store for PostgresStore {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
-        self.fetch_versioned_payload(TABLE_ISSUES, "issue", id.as_ref(), ISSUE_SCHEMA_VERSION)
+    async fn get_issue(
+        &self,
+        id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError> {
+        let versioned: Versioned<Issue> = self
+            .fetch_versioned_payload(TABLE_ISSUES, "issue", id.as_ref(), ISSUE_SCHEMA_VERSION)
             .await?
-            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
@@ -1146,7 +1157,7 @@ impl Store for PostgresStore {
     }
 
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
-        self.get_issue(id).await?;
+        self.get_issue(id, true).await?;
 
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
@@ -1168,7 +1179,7 @@ impl Store for PostgresStore {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        let current = self.get_issue(id).await?;
+        let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
         self.update_issue(id, issue).await
@@ -1917,7 +1928,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_issue(&issue).await.unwrap();
+        let fetched = store.get_issue(&issue, false).await.unwrap();
         assert_eq!(fetched.item.dependencies.len(), 1);
         assert_eq!(fetched.version, 1);
 
@@ -1941,7 +1952,7 @@ mod tests {
         updated_issue.patches = Vec::new();
         store.update_issue(&issue, updated_issue).await.unwrap();
 
-        let fetched_after_update = store.get_issue(&issue).await.unwrap();
+        let fetched_after_update = store.get_issue(&issue, false).await.unwrap();
         assert_eq!(fetched_after_update.version, 2);
 
         assert!(store.get_issue_children(&parent).await.unwrap().is_empty());
@@ -1998,7 +2009,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = store.get_issue(&issue_id).await.unwrap_err();
+        let err = store.get_issue(&issue_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::Internal(message) if message.contains("schema version")));
     }
 

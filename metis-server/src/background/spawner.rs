@@ -1078,7 +1078,7 @@ mod tests {
         assert_eq!(first_run.len(), 1);
         assert!(queue.spawn(&handles.state).await?.is_empty());
 
-        let issue = handles.store.get_issue(&issue_id).await?;
+        let issue = handles.store.get_issue(&issue_id, false).await?;
         let mut issue = issue.item;
         issue.status = IssueStatus::InProgress;
         handles.store.update_issue(&issue_id, issue).await?;

@@ -169,18 +169,22 @@ impl Actor {
                         ApiError::not_found(format!("task '{task_id}' missing spawned_from issue"))
                     })?;
 
-                    let issue = state.get_issue(&issue_id).await.map_err(|err| match err {
-                        StoreError::IssueNotFound(_) => {
-                            error!(issue_id = %issue_id, "issue not found");
-                            ApiError::not_found(format!("issue '{issue_id}' not found"))
-                        }
-                        other => {
-                            error!(issue_id = %issue_id, error = %other, "failed to load issue");
-                            ApiError::internal(format!(
-                                "failed to load issue '{issue_id}': {other}"
-                            ))
-                        }
-                    })?;
+                    let issue =
+                        state
+                            .get_issue(&issue_id, false)
+                            .await
+                            .map_err(|err| match err {
+                                StoreError::IssueNotFound(_) => {
+                                    error!(issue_id = %issue_id, "issue not found");
+                                    ApiError::not_found(format!("issue '{issue_id}' not found"))
+                                }
+                                other => {
+                                    error!(issue_id = %issue_id, error = %other, "failed to load issue");
+                                    ApiError::internal(format!(
+                                        "failed to load issue '{issue_id}': {other}"
+                                    ))
+                                }
+                            })?;
 
                     issue.item.creator
                 }

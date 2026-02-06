@@ -66,7 +66,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_issue(&self, _id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
+    async fn get_issue(
+        &self,
+        _id: &IssueId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError> {
         fail()
     }
 

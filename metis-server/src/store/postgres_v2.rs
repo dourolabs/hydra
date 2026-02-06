@@ -955,7 +955,11 @@ impl Store for PostgresStoreV2 {
         Ok(id)
     }
 
-    async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
+    async fn get_issue(
+        &self,
+        id: &IssueId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
             "SELECT id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at
              FROM {TABLE_ISSUES_V2}
@@ -977,6 +981,11 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
         let issue = self.row_to_issue(&row)?;
+
+        if !include_deleted && issue.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
         Ok(Versioned::new(issue, version, row.created_at))
     }
 
@@ -1013,7 +1022,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<(), StoreError> {
-        self.get_issue(id).await?;
+        self.get_issue(id, true).await?;
         self.validate_issue_dependencies(&issue.dependencies)
             .await?;
 
@@ -1140,7 +1149,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        let current = self.get_issue(id).await?;
+        let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
         issue.deleted = true;
         self.update_issue(id, issue).await
@@ -2256,7 +2265,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_issue(&issue).await.unwrap();
+        let fetched = store.get_issue(&issue, false).await.unwrap();
         assert_eq!(fetched.item.dependencies.len(), 1);
         assert_eq!(fetched.version, 1);
 
@@ -2280,7 +2289,7 @@ mod tests {
         updated_issue.patches = Vec::new();
         store.update_issue(&issue, updated_issue).await.unwrap();
 
-        let fetched_after_update = store.get_issue(&issue).await.unwrap();
+        let fetched_after_update = store.get_issue(&issue, false).await.unwrap();
         assert_eq!(fetched_after_update.version, 2);
 
         assert!(store.get_issue_children(&parent).await.unwrap().is_empty());
