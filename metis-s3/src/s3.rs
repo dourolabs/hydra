@@ -6,11 +6,10 @@ use axum::{
     routing::{delete, get, head, post, put},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use serde::Deserialize;
 use std::{
     borrow::Cow,
     fmt::Write as _,
-    path::{Component, Path as StdPath, PathBuf},
+    path::{Path as StdPath, PathBuf},
     sync::Arc,
     time::SystemTime,
 };
@@ -20,86 +19,11 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-const S3_XML_NAMESPACE: &str = "http://s3.amazonaws.com/doc/2006-03-01/";
-const DEFAULT_MAX_KEYS: usize = 1000;
-
-/// Represents a parsed byte range from an HTTP Range header.
-/// Supports three forms: bytes=start-end, bytes=start-, bytes=-suffix
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ByteRange {
-    start: u64,
-    end: u64, // inclusive
-}
-
-impl ByteRange {
-    /// Resolves the range against the total content length.
-    /// Returns None if the range is invalid or unsatisfiable.
-    fn resolve(range_spec: &str, total_len: u64) -> Option<Self> {
-        if total_len == 0 {
-            return None;
-        }
-
-        let range_spec = range_spec.trim();
-        if !range_spec.starts_with("bytes=") {
-            return None;
-        }
-
-        let range_part = &range_spec[6..];
-
-        // S3 doesn't support multiple ranges
-        if range_part.contains(',') {
-            return None;
-        }
-
-        let parts: Vec<&str> = range_part.split('-').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-
-        let start_str = parts[0].trim();
-        let end_str = parts[1].trim();
-
-        if start_str.is_empty() && end_str.is_empty() {
-            return None;
-        }
-
-        if start_str.is_empty() {
-            // Suffix range: bytes=-500 means last 500 bytes
-            let suffix_len: u64 = end_str.parse().ok()?;
-            if suffix_len == 0 {
-                return None;
-            }
-            let start = total_len.saturating_sub(suffix_len);
-            Some(ByteRange {
-                start,
-                end: total_len - 1,
-            })
-        } else if end_str.is_empty() {
-            // Open-ended range: bytes=500-
-            let start: u64 = start_str.parse().ok()?;
-            if start >= total_len {
-                return None;
-            }
-            Some(ByteRange {
-                start,
-                end: total_len - 1,
-            })
-        } else {
-            // Explicit range: bytes=0-999
-            let start: u64 = start_str.parse().ok()?;
-            let end: u64 = end_str.parse().ok()?;
-            if start > end {
-                return None;
-            }
-            if start >= total_len {
-                return None;
-            }
-            // Clamp end to content length - 1
-            let end = end.min(total_len - 1);
-            Some(ByteRange { start, end })
-        }
-    }
-}
+use crate::util::{
+    ByteRange, DEFAULT_MAX_KEYS, ListObjectsQuery, ListResult, MultipartQuery,
+    MultipartUploadMetadata, ObjectEntry, PartInfo, S3_XML_NAMESPACE, S3Error, s3_error,
+    sanitize_key, sanitize_prefix, validate_bucket,
+};
 
 #[derive(Clone, Debug)]
 pub struct S3State {
@@ -194,80 +118,6 @@ impl From<RouterWithState> for axum::Router {
     fn from(value: RouterWithState) -> Self {
         value.router
     }
-}
-
-#[derive(Debug)]
-struct ObjectEntry {
-    key: String,
-    last_modified: Option<SystemTime>,
-    size: u64,
-    etag: Option<String>,
-}
-
-impl PartialEq for ObjectEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-impl Eq for ObjectEntry {}
-
-impl PartialOrd for ObjectEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ObjectEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.key.cmp(&other.key)
-    }
-}
-
-#[derive(Debug)]
-struct ListResult {
-    entries: Vec<ObjectEntry>,
-    is_truncated: bool,
-    next_token: Option<String>,
-}
-
-/// Metadata stored for each multipart upload
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct MultipartUploadMetadata {
-    bucket: String,
-    key: String,
-    upload_id: String,
-    created_at: String,
-}
-
-/// Query parameters for multipart upload operations
-#[derive(Debug, Deserialize)]
-struct MultipartQuery {
-    uploads: Option<String>,
-    #[serde(rename = "uploadId")]
-    upload_id: Option<String>,
-    #[serde(rename = "partNumber")]
-    part_number: Option<u32>,
-}
-
-/// Part information in CompleteMultipartUpload request body
-#[derive(Debug)]
-struct PartInfo {
-    part_number: u32,
-    etag: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListObjectsQuery {
-    #[serde(rename = "list-type")]
-    list_type: Option<u8>,
-    prefix: Option<String>,
-    #[serde(rename = "continuation-token")]
-    continuation_token: Option<String>,
-    #[serde(rename = "max-keys")]
-    max_keys: Option<usize>,
-    #[serde(rename = "start-after")]
-    start_after: Option<String>,
 }
 
 /// Handler for PUT requests - dispatches to put_object or upload_part based on query params
@@ -1605,113 +1455,6 @@ fn xml_escape(value: &str) -> Cow<'_, str> {
     Cow::Owned(escaped)
 }
 
-fn validate_bucket(bucket: &str) -> Result<(), S3Error> {
-    if bucket.trim().is_empty() {
-        return Err(S3Error::bad_request(
-            "InvalidBucketName",
-            "Bucket name is required",
-        ));
-    }
-    if bucket.contains('/') || bucket.contains('\\') {
-        return Err(S3Error::bad_request(
-            "InvalidBucketName",
-            "Bucket name must not contain path separators",
-        ));
-    }
-    if bucket == "." || bucket == ".." {
-        return Err(S3Error::bad_request(
-            "InvalidBucketName",
-            "Bucket name must be a simple segment",
-        ));
-    }
-    Ok(())
-}
-
-fn sanitize_key(key: &str) -> Result<String, S3Error> {
-    if key.starts_with('/') {
-        return Err(S3Error::bad_request(
-            "InvalidObjectName",
-            "Object key must not start with a slash",
-        ));
-    }
-    let trimmed = key;
-    if trimmed.trim().is_empty() {
-        return Err(S3Error::bad_request(
-            "InvalidObjectName",
-            "Object key is required",
-        ));
-    }
-
-    let path = StdPath::new(trimmed);
-    if path.is_absolute() {
-        return Err(S3Error::bad_request(
-            "InvalidObjectName",
-            "Object key must be relative",
-        ));
-    }
-
-    for component in path.components() {
-        match component {
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
-                return Err(S3Error::bad_request(
-                    "InvalidObjectName",
-                    "Object key contains invalid path segments",
-                ));
-            }
-            Component::CurDir => {
-                return Err(S3Error::bad_request(
-                    "InvalidObjectName",
-                    "Object key contains invalid path segments",
-                ));
-            }
-            Component::Normal(_) => {}
-        }
-    }
-
-    Ok(path.to_string_lossy().replace('\\', "/"))
-}
-
-fn sanitize_prefix(prefix: &str) -> Result<String, S3Error> {
-    if prefix.starts_with('/') {
-        return Err(S3Error::bad_request(
-            "InvalidRequest",
-            "Prefix must not start with a slash",
-        ));
-    }
-    let trimmed = prefix;
-    if trimmed.trim().is_empty() {
-        return Ok(String::new());
-    }
-
-    let path = StdPath::new(trimmed);
-    if path.is_absolute() {
-        return Err(S3Error::bad_request(
-            "InvalidRequest",
-            "Prefix must be relative",
-        ));
-    }
-
-    for component in path.components() {
-        match component {
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
-                return Err(S3Error::bad_request(
-                    "InvalidRequest",
-                    "Prefix contains invalid path segments",
-                ));
-            }
-            Component::CurDir => {
-                return Err(S3Error::bad_request(
-                    "InvalidRequest",
-                    "Prefix contains invalid path segments",
-                ));
-            }
-            Component::Normal(_) => {}
-        }
-    }
-
-    Ok(path.to_string_lossy().replace('\\', "/"))
-}
-
 fn compute_etag(bytes: &[u8]) -> String {
     format!("\"{:x}\"", md5::compute(bytes))
 }
@@ -1734,53 +1477,6 @@ fn compute_etag_from_path(path: &StdPath) -> Result<String, std::io::Error> {
 
     let digest = context.compute();
     Ok(format!("\"{digest:x}\""))
-}
-
-#[derive(Debug)]
-struct S3Error {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
-}
-
-impl S3Error {
-    fn bad_request(code: &'static str, message: &str) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            code,
-            message: message.to_string(),
-        }
-    }
-
-    fn io(context: &'static str, err: impl std::fmt::Display) -> Self {
-        warn!(error = %err, "S3 storage error: {context}");
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "InternalError",
-            message: context.to_string(),
-        }
-    }
-}
-
-impl IntoResponse for S3Error {
-    fn into_response(self) -> Response {
-        s3_error(self.status, self.code, &self.message)
-    }
-}
-
-fn s3_error(status: StatusCode, code: &'static str, message: &str) -> Response {
-    let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error>\n  <Code>{}</Code>\n  <Message>{}</Message>\n  <RequestId>metis-s3</RequestId>\n</Error>\n",
-        xml_escape(code),
-        xml_escape(message)
-    );
-    let mut response = Response::new(axum::body::Body::from(xml));
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/xml"),
-    );
-    response
 }
 
 #[cfg(test)]
