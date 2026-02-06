@@ -1685,10 +1685,14 @@ impl Store for PostgresStoreV2 {
         })?;
 
         self.insert_task(metis_id, next_version, &task).await?;
-        self.get_task(metis_id).await
+        self.get_task(metis_id, true).await
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
+    async fn get_task(
+        &self,
+        id: &TaskId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Task>, StoreError> {
         let query = format!(
             "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
              FROM {TABLE_TASKS_V2}
@@ -1703,7 +1707,7 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        if row.deleted {
+        if !include_deleted && row.deleted {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -1829,7 +1833,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
-        let current = self.get_task(id).await?;
+        let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
         self.update_task(id, task).await?;
@@ -2337,7 +2341,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Created
         );
 
@@ -2352,7 +2362,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Running
         );
 
@@ -2362,7 +2378,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            handles.store.get_task(&task_id).await.unwrap().item.status,
+            handles
+                .store
+                .get_task(&task_id, false)
+                .await
+                .unwrap()
+                .item
+                .status,
             Status::Complete
         );
 

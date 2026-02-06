@@ -531,7 +531,7 @@ impl AppState {
                 let new_document = document;
                 if let Some(job_id) = new_document.created_by.clone() {
                     let status = store
-                        .get_task(&job_id)
+                        .get_task(&job_id, false)
                         .await
                         .map_err(|source| match source {
                             StoreError::TaskNotFound(_) => UpsertDocumentError::JobNotFound {
@@ -1050,7 +1050,7 @@ impl AppState {
             let store = self.store.as_ref();
 
             store
-                .get_task(&job_id)
+                .get_task(&job_id, false)
                 .await
                 .map(|_| ())
                 .map_err(|source| SetJobStatusError::NotFound {
@@ -1077,7 +1077,7 @@ impl AppState {
         let job_config = self.config.job.clone();
         let (resolved, cpu_limit, memory_limit) = {
             let store = self.store.as_ref();
-            match store.get_task(&task_id).await {
+            match store.get_task(&task_id, false).await {
                 Ok(task) => match self.resolve_task(&task.item).await {
                     Ok(resolved) => (
                         resolved,
@@ -1248,7 +1248,7 @@ impl AppState {
     pub async fn reconcile_running_task(&self, task_id: TaskId) {
         let current_status = {
             let store = self.store.as_ref();
-            match store.get_task(&task_id).await {
+            match store.get_task(&task_id, false).await {
                 Ok(task) => task.item.status,
                 Err(err) => {
                     warn!(
@@ -1441,7 +1441,7 @@ impl AppState {
             None => {
                 if let Some(ref job_id) = patch.created_by {
                     let status = store
-                        .get_task(job_id)
+                        .get_task(job_id, false)
                         .await
                         .map_err(|source| match source {
                             StoreError::TaskNotFound(_) => UpsertPatchError::JobNotFound {
@@ -1738,7 +1738,7 @@ impl AppState {
             None => {
                 if let Some(ref job_id) = job_id {
                     let status = store
-                        .get_task(job_id)
+                        .get_task(job_id, false)
                         .await
                         .map_err(|source| match source {
                             StoreError::TaskNotFound(_) => UpsertIssueError::JobNotFound {
@@ -2044,7 +2044,7 @@ impl AppState {
         task_id: &TaskId,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
-        let latest = store.get_task(task_id).await?;
+        let latest = store.get_task(task_id, false).await?;
         if !matches!(latest.item.status, Status::Created | Status::Pending) {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -2064,7 +2064,7 @@ impl AppState {
         last_message: Option<String>,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
-        let latest = store.get_task(task_id).await?;
+        let latest = store.get_task(task_id, false).await?;
         let can_transition = match latest.item.status {
             Status::Created => result.is_err(),
             Status::Pending | Status::Running => true,
@@ -2096,7 +2096,7 @@ impl AppState {
         task_id: &TaskId,
     ) -> Result<Versioned<Task>, StoreError> {
         let store = self.store.as_ref();
-        let latest = store.get_task(task_id).await?;
+        let latest = store.get_task(task_id, false).await?;
         if latest.item.status != Status::Created {
             return Err(StoreError::InvalidStatusTransition);
         }
@@ -2111,7 +2111,7 @@ impl AppState {
 
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
         let store = self.store.as_ref();
-        store.get_task(task_id).await.map(|task| task.item)
+        store.get_task(task_id, false).await.map(|task| task.item)
     }
 
     pub async fn get_task_versions(
@@ -2338,7 +2338,7 @@ async fn active_tasks_for_issue(
 
     let mut active_task_ids = Vec::new();
     for task_id in task_ids {
-        let status = store.get_task(&task_id).await?.item.status;
+        let status = store.get_task(&task_id, false).await?.item.status;
         if matches!(status, Status::Created | Status::Pending | Status::Running) {
             active_task_ids.push(task_id);
         }
@@ -2882,7 +2882,7 @@ mod tests {
 
         {
             let store = state.store.as_ref();
-            let status = store.get_task(&task_id).await.unwrap().item.status;
+            let status = store.get_task(&task_id, false).await.unwrap().item.status;
             assert_eq!(status, Status::Pending);
         }
 
@@ -3020,7 +3020,7 @@ mod tests {
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_task(&task_id).await.unwrap().item.status,
+            store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Failed
         );
 
@@ -3057,7 +3057,7 @@ mod tests {
 
         let store = state.store.as_ref();
         assert_eq!(
-            store.get_task(&task_id).await.unwrap().item.status,
+            store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Failed
         );
         let status_log = store.get_status_log(&task_id).await.unwrap();

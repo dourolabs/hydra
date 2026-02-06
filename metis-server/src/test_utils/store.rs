@@ -217,7 +217,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_task(&self, _id: &TaskId) -> Result<Versioned<Task>, StoreError> {
+    async fn get_task(
+        &self,
+        _id: &TaskId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Task>, StoreError> {
         fail()
     }
 

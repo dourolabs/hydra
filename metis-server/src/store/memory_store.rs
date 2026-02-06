@@ -900,13 +900,17 @@ impl Store for MemoryStore {
         Ok(updated)
     }
 
-    async fn get_task(&self, id: &TaskId) -> Result<Versioned<Task>, StoreError> {
+    async fn get_task(
+        &self,
+        id: &TaskId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Task>, StoreError> {
         let versioned = self
             .tasks
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))?;
-        if versioned.item.deleted {
+        if !include_deleted && versioned.item.deleted {
             return Err(StoreError::TaskNotFound(id.clone()));
         }
         Ok(versioned)
@@ -968,7 +972,7 @@ impl Store for MemoryStore {
     }
 
     async fn delete_task(&self, id: &TaskId) -> Result<(), StoreError> {
-        let current = self.get_task(id).await?;
+        let current = self.get_task(id, true).await?;
         let mut task = current.item;
         task.deleted = true;
         self.update_task(id, task).await?;
@@ -2067,10 +2071,10 @@ mod tests {
         let task = spawn_task();
         let task_id = store.add_task(task.clone(), Utc::now()).await.unwrap();
 
-        let fetched = store.get_task(&task_id).await.unwrap();
+        let fetched = store.get_task(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &task, 1);
         assert_eq!(
-            store.get_task(&task_id).await.unwrap().item.status,
+            store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Created
         );
 
@@ -2096,7 +2100,7 @@ mod tests {
         updated.prompt = "v2".to_string();
         store.update_task(&task_id, updated.clone()).await.unwrap();
 
-        let fetched = store.get_task(&task_id).await.unwrap();
+        let fetched = store.get_task(&task_id, false).await.unwrap();
         assert_versioned(&fetched, &updated, 2);
 
         let versions = store.tasks.get(&task_id).unwrap();
@@ -2137,7 +2141,7 @@ mod tests {
         let versions = store.tasks.get(&task_id).unwrap();
         assert_eq!(version_numbers(versions.value()), vec![1, 2, 3, 4]);
         assert_eq!(
-            store.get_task(&task_id).await.unwrap().item.status,
+            store.get_task(&task_id, false).await.unwrap().item.status,
             Status::Complete
         );
     }
@@ -2168,7 +2172,7 @@ mod tests {
         let log = store.get_status_log(&task_id).await.unwrap();
         assert!(matches!(log.events.last(), Some(Event::Started { .. })));
 
-        let mut running = store.get_task(&task_id).await.unwrap().item;
+        let mut running = store.get_task(&task_id, false).await.unwrap().item;
         running.prompt = "v3".to_string();
         store.update_task(&task_id, running).await.unwrap();
 
@@ -2261,7 +2265,7 @@ mod tests {
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Created
         );
     }
@@ -2275,13 +2279,13 @@ mod tests {
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Created
         );
 
         state.transition_task_to_pending(&root_id).await.unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Pending
         );
     }
@@ -2297,7 +2301,7 @@ mod tests {
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
         );
     }
@@ -2311,7 +2315,7 @@ mod tests {
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Created
         );
 
@@ -2319,7 +2323,7 @@ mod tests {
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
         );
 
@@ -2329,7 +2333,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Complete
         );
     }
@@ -2343,7 +2347,7 @@ mod tests {
         let root_id = store.add_task(root_task, Utc::now()).await.unwrap();
 
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Created
         );
 
@@ -2351,7 +2355,7 @@ mod tests {
         state.transition_task_to_pending(&root_id).await.unwrap();
         state.transition_task_to_running(&root_id).await.unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Running
         );
 
@@ -2367,7 +2371,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Failed
         );
     }
@@ -2408,7 +2412,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.get_task(&root_id).await.unwrap().item.status,
+            store.get_task(&root_id, false).await.unwrap().item.status,
             Status::Failed
         );
     }
@@ -3041,9 +3045,13 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].1.item.deleted);
 
-        // get_task should return TaskNotFound for deleted task
-        let err = store.get_task(&task_id).await.unwrap_err();
+        // get_task with include_deleted=false should return TaskNotFound for deleted task
+        let err = store.get_task(&task_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::TaskNotFound(id) if id == task_id));
+
+        // get_task with include_deleted=true should return the deleted task
+        let deleted_task = store.get_task(&task_id, true).await.unwrap();
+        assert!(deleted_task.item.deleted);
     }
 
     #[tokio::test]
