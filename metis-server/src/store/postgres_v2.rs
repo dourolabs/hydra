@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
+use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
@@ -1481,15 +1482,10 @@ impl Store for PostgresStoreV2 {
 
     async fn get_tasks_for_issue(&self, issue_id: &IssueId) -> Result<Vec<TaskId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
-        let tasks = self.list_tasks(false).await?;
-        let mut results = Vec::new();
-
-        for (task_id, task) in tasks {
-            if task.item.spawned_from.as_ref() == Some(issue_id) {
-                results.push(task_id);
-            }
-        }
-        Ok(results)
+        // Use spawned_from filter at the database level for efficiency
+        let query = SearchJobsQuery::new(None, Some(issue_id.clone()), None);
+        let tasks = self.list_tasks(&query).await?;
+        Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
     // -------------------------------------------------------------------------
@@ -1621,20 +1617,60 @@ impl Store for PostgresStoreV2 {
 
     async fn list_tasks(
         &self,
-        include_deleted: bool,
+        query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let mut sql = format!(
             "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
              FROM {TABLE_TASKS_V2}"
         );
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
 
-        if !include_deleted {
-            sql.push_str(" WHERE deleted = false");
+        // Filter by spawned_from
+        if let Some(spawned_from) = query.spawned_from.as_ref() {
+            predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
+            bindings.push(spawned_from.as_ref().to_string());
+        }
+
+        // Filter by search term (q) - matches task ID, prompt, status
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            let idx_id = bindings.len() + 1;
+            let idx_prompt = bindings.len() + 2;
+            let idx_status = bindings.len() + 3;
+            predicates.push(format!(
+                "(LOWER(id) LIKE ${idx_id} \
+                 OR LOWER(prompt) LIKE ${idx_prompt} \
+                 OR LOWER(status) LIKE ${idx_status})"
+            ));
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone()); // id
+            bindings.push(pattern.clone()); // prompt
+            bindings.push(pattern); // status
+        }
+
+        // Filter deleted tasks by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("deleted = false".to_string());
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
         }
 
         sql.push_str(" ORDER BY id, version_number DESC");
 
-        let rows = sqlx::query_as::<_, TaskRow>(&sql)
+        let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
