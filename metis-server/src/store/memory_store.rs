@@ -625,10 +625,17 @@ impl Store for MemoryStore {
     }
 
     async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError> {
-        self.documents
+        let versioned = self
+            .documents
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))
+            .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+
+        if versioned.item.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn get_document_versions(
@@ -2867,9 +2874,9 @@ mod tests {
         assert_eq!(docs.len(), 1);
         assert!(docs[0].1.item.deleted);
 
-        // get_document should still return the deleted document
-        let doc = store.get_document(&doc_id).await.unwrap();
-        assert!(doc.item.deleted);
+        // get_document should return DocumentNotFound for deleted document
+        let result = store.get_document(&doc_id).await;
+        assert!(matches!(result, Err(StoreError::DocumentNotFound(_))));
     }
 
     #[tokio::test]

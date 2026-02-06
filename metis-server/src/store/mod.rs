@@ -237,6 +237,9 @@ pub trait Store: Send + Sync {
     async fn add_document(&self, document: Document) -> Result<DocumentId, StoreError>;
 
     /// Retrieves a document by its DocumentId.
+    ///
+    /// Returns `StoreError::DocumentNotFound` if the document does not exist
+    /// or if its latest version has `deleted: true`.
     async fn get_document(&self, id: &DocumentId) -> Result<Versioned<Document>, StoreError>;
 
     /// Retrieves all versions of a document in ascending order.
@@ -251,8 +254,9 @@ pub trait Store: Send + Sync {
     /// Soft-deletes a document by setting its `deleted` flag to true.
     ///
     /// This creates a new version of the document with `deleted: true`.
-    /// The document can still be retrieved via `get_document` but will be filtered
-    /// from `list_documents` by default (unless `include_deleted: true` is in the query).
+    /// After deletion, `get_document` will return `DocumentNotFound` and the document
+    /// will be filtered from `list_documents` by default (unless `include_deleted: true`
+    /// is set in the query).
     async fn delete_document(&self, id: &DocumentId) -> Result<(), StoreError>;
 
     /// Lists documents that match the provided search query.

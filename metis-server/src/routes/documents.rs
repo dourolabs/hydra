@@ -241,17 +241,23 @@ pub async fn delete_document(
     DocumentIdPath(document_id): DocumentIdPath,
 ) -> Result<Json<v1::documents::DocumentRecord>, ApiError> {
     info!(document_id = %document_id, "delete_document invoked");
+
+    // Get the document before deleting to return it in the response
+    let current = state
+        .get_document(&document_id)
+        .await
+        .map_err(|err| map_document_error(err, Some(&document_id)))?;
+
     state
         .delete_document(&document_id)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
-    let document = state
-        .get_document(&document_id)
-        .await
-        .map_err(|err| map_document_error(err, Some(&document_id)))?;
-
     info!(document_id = %document_id, "delete_document completed");
-    let response = v1::documents::DocumentRecord::new(document_id, document.item.into());
+
+    // Return the document with deleted=true
+    let mut deleted_document = current.item;
+    deleted_document.deleted = true;
+    let response = v1::documents::DocumentRecord::new(document_id, deleted_document.into());
     Ok(Json(response))
 }

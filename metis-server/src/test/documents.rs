@@ -516,16 +516,13 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should still return it
-    let fetched: DocumentRecord = client
+    // GET by ID should return 404 for deleted documents
+    let response = client
         .get(format!("{base}/v1/documents/{}", created.document_id))
         .send()
-        .await?
-        .json()
         .await?;
 
-    // Verify deleted=true in response
-    assert!(fetched.document.deleted);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }
@@ -617,13 +614,13 @@ async fn delete_document_idempotency() -> anyhow::Result<()> {
 
     assert!(first_delete.status().is_success());
 
-    // Second delete - should return 200 (idempotent)
+    // Second delete - should return 404 (document already deleted)
     let second_delete = client
         .delete(format!("{base}/v1/documents/{}", created.document_id))
         .send()
         .await?;
 
-    assert!(second_delete.status().is_success());
+    assert_eq!(second_delete.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }

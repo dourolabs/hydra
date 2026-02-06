@@ -1367,6 +1367,11 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
+
+        if row.deleted {
+            return Err(StoreError::DocumentNotFound(id.clone()));
+        }
+
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for document '{}'",
