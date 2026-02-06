@@ -827,10 +827,8 @@ impl Store for PostgresStoreV2 {
 
         match existing {
             Ok(repo) if repo.item.deleted => {
-                // Undelete: re-create by updating with deleted=false
-                let mut undeleted = config;
-                undeleted.deleted = false;
-                self.update_repository(name, undeleted).await
+                // Re-create over deleted: use caller's config as-is
+                self.update_repository(name, config).await
             }
             Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
             Err(StoreError::RepositoryNotFound(_)) => {
