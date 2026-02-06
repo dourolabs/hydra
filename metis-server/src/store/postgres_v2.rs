@@ -823,7 +823,7 @@ impl Store for PostgresStoreV2 {
         let name_str = name.as_str();
 
         // Check if repository exists (including deleted)
-        let existing = self.get_repository(&name).await;
+        let existing = self.get_repository(&name, true).await;
 
         match existing {
             Ok(repo) if repo.item.deleted => {
@@ -838,7 +838,11 @@ impl Store for PostgresStoreV2 {
         }
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
+    async fn get_repository(
+        &self,
+        name: &RepoName,
+        include_deleted: bool,
+    ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
             "SELECT id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
@@ -854,6 +858,9 @@ impl Store for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+        if !include_deleted && row.deleted {
+            return Err(StoreError::RepositoryNotFound(name.clone()));
+        }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
             StoreError::Internal(format!(
                 "invalid version number stored for repository '{}'",
@@ -928,7 +935,8 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        let current = self.get_repository(name).await?;
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
         repo.deleted = true;
         self.update_repository(name.clone(), repo).await
@@ -2193,7 +2201,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_repository(&name).await.unwrap();
+        let fetched = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched.item, config);
         assert_eq!(fetched.version, 1);
 
@@ -2212,7 +2220,7 @@ mod tests {
         assert_eq!(list[0].0, name);
         assert_versioned(&list[0].1, &updated, 2);
 
-        let fetched_again = store.get_repository(&name).await.unwrap();
+        let fetched_again = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
         assert!(fetched_again.timestamp >= fetched.timestamp);

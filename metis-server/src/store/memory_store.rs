@@ -328,11 +328,20 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
-        self.repositories
+    async fn get_repository(
+        &self,
+        name: &RepoName,
+        include_deleted: bool,
+    ) -> Result<Versioned<Repository>, StoreError> {
+        let versioned = self
+            .repositories
             .get(name)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))
+            .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::RepositoryNotFound(name.clone()));
+        }
+        Ok(versioned)
     }
 
     async fn update_repository(
@@ -372,7 +381,8 @@ impl Store for MemoryStore {
     }
 
     async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
-        let current = self.get_repository(name).await?;
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
         repo.deleted = true;
         self.update_repository(name.clone(), repo).await
@@ -1253,7 +1263,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_repository(&name).await.unwrap();
+        let fetched = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched.item, config);
         assert_eq!(fetched.version, 1);
 
@@ -1272,7 +1282,7 @@ mod tests {
         assert_eq!(list[0].0, name);
         assert_versioned(&list[0].1, &updated, 2);
 
-        let fetched_again = store.get_repository(&name).await.unwrap();
+        let fetched_again = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched_again.item, updated);
         assert_eq!(fetched_again.version, 2);
         assert!(fetched_again.timestamp >= fetched.timestamp);
@@ -1296,7 +1306,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store.get_repository(&name).await.unwrap();
+        let fetched = store.get_repository(&name, false).await.unwrap();
         assert_eq!(fetched.item, updated);
         assert_eq!(fetched.version, 2);
 
@@ -1349,8 +1359,12 @@ mod tests {
         // Delete the repository
         store.delete_repository(&name).await.unwrap();
 
-        // Repository is still retrievable via get_repository
-        let fetched = store.get_repository(&name).await.unwrap();
+        // With include_deleted=false, deleted repository returns RepositoryNotFound
+        let err = store.get_repository(&name, false).await.unwrap_err();
+        assert!(matches!(err, StoreError::RepositoryNotFound(_)));
+
+        // With include_deleted=true, repository is still retrievable
+        let fetched = store.get_repository(&name, true).await.unwrap();
         assert!(fetched.item.deleted);
         assert_eq!(fetched.version, 2);
 
@@ -1391,7 +1405,7 @@ mod tests {
             .unwrap();
 
         // Repository should be active again
-        let fetched = store.get_repository(&name).await.unwrap();
+        let fetched = store.get_repository(&name, false).await.unwrap();
         assert!(!fetched.item.deleted);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
@@ -1428,7 +1442,8 @@ mod tests {
             .unwrap();
 
         // Repository should still be deleted (caller's choice)
-        let fetched = store.get_repository(&name).await.unwrap();
+        // Use include_deleted=true to retrieve the deleted repository
+        let fetched = store.get_repository(&name, true).await.unwrap();
         assert!(fetched.item.deleted);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
