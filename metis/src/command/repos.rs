@@ -6,7 +6,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use metis_common::repositories::{
-    CreateRepositoryRequest, Repository, RepositoryRecord, UpdateRepositoryRequest,
+    CreateRepositoryRequest, Repository, RepositoryRecord, SearchRepositoriesQuery,
+    UpdateRepositoryRequest,
 };
 use metis_common::RepoName;
 use std::io;
@@ -15,13 +16,29 @@ use std::path::PathBuf;
 #[derive(Debug, Subcommand)]
 pub enum ReposCommand {
     /// List configured repositories.
-    List,
+    List(ListRepositoryArgs),
     /// Create a new repository configuration.
     Create(CreateRepositoryArgs),
     /// Update an existing repository configuration.
     Update(UpdateRepositoryArgs),
+    /// Delete (soft-delete) a repository configuration.
+    Delete(DeleteRepositoryArgs),
     /// Clone a repository to a local directory.
     Clone(CloneRepositoryArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ListRepositoryArgs {
+    /// Include deleted repositories in the list.
+    #[arg(long = "include-deleted")]
+    pub include_deleted: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DeleteRepositoryArgs {
+    /// Repository name in the form org/repo.
+    #[arg(value_name = "NAME")]
+    pub name: RepoName,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -116,8 +133,8 @@ pub async fn run(
 ) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match command {
-        ReposCommand::List => {
-            let repositories = fetch_repositories(client).await?;
+        ReposCommand::List(args) => {
+            let repositories = fetch_repositories(client, args.include_deleted).await?;
             render_repository_records(context.output_format, &repositories, &mut stdout)?;
         }
         ReposCommand::Create(args) => {
@@ -128,6 +145,10 @@ pub async fn run(
             let repository = update_repository(client, args).await?;
             render_repository_records(context.output_format, &[repository], &mut stdout)?;
         }
+        ReposCommand::Delete(args) => {
+            let repository = delete_repository(client, args).await?;
+            render_repository_records(context.output_format, &[repository], &mut stdout)?;
+        }
         ReposCommand::Clone(args) => {
             clone_repository(client, args).await?;
         }
@@ -136,12 +157,27 @@ pub async fn run(
     Ok(())
 }
 
-async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<RepositoryRecord>> {
+async fn fetch_repositories(
+    client: &dyn MetisClientInterface,
+    include_deleted: bool,
+) -> Result<Vec<RepositoryRecord>> {
+    let query = SearchRepositoriesQuery::new(if include_deleted { Some(true) } else { None });
     let response = client
-        .list_repositories()
+        .list_repositories(&query)
         .await
         .context("failed to list repositories")?;
     Ok(response.repositories)
+}
+
+async fn delete_repository(
+    client: &dyn MetisClientInterface,
+    args: DeleteRepositoryArgs,
+) -> Result<RepositoryRecord> {
+    let deleted = client
+        .delete_repository(&args.name)
+        .await
+        .context("failed to delete repository")?;
+    Ok(deleted)
 }
 
 async fn create_repository(
@@ -172,7 +208,7 @@ async fn clone_repository(
     client: &dyn MetisClientInterface,
     args: CloneRepositoryArgs,
 ) -> Result<()> {
-    let repositories = fetch_repositories(client).await?;
+    let repositories = fetch_repositories(client, false).await?;
     let repository = repositories
         .into_iter()
         .find(|r| r.name == args.name)
@@ -266,7 +302,7 @@ async fn resolve_remote_url(
         return parse_required(remote_url, "remote URL");
     }
 
-    let repositories = fetch_repositories(client).await?;
+    let repositories = fetch_repositories(client, false).await?;
     let repository = repositories
         .into_iter()
         .find(|repository| repository.name == args.name)
@@ -380,7 +416,7 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let repositories = fetch_repositories(&client).await.unwrap();
+        let repositories = fetch_repositories(&client, false).await.unwrap();
         let mut output = Vec::new();
         render_repository_records(ResolvedOutputFormat::Pretty, &repositories, &mut output)
             .unwrap();
@@ -404,7 +440,7 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let error = fetch_repositories(&client).await.unwrap_err();
+        let error = fetch_repositories(&client, false).await.unwrap_err();
         assert!(
             error.to_string().contains("failed to list repositories"),
             "error should include context: {error:?}"

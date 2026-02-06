@@ -18,6 +18,7 @@ use metis_common::{
     },
     jobs::{JobRecord, SearchJobsQuery},
     patches::{GithubPr, PatchRecord},
+    repositories::SearchRepositoriesQuery,
     task_status::{Status, TaskError, TaskStatusLog},
     users::Username,
     whoami::ActorIdentity,
@@ -2761,7 +2762,7 @@ async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueReco
 
 async fn fetch_repositories(client: &dyn MetisClientInterface) -> Result<Vec<RepositoryRecord>> {
     let response = client
-        .list_repositories()
+        .list_repositories(&SearchRepositoriesQuery::default())
         .await
         .context("failed to fetch repositories")?;
     Ok(response.repositories)

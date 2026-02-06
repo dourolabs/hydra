@@ -13,7 +13,8 @@ use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned,
+    repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::HashSet;
 
@@ -142,9 +143,21 @@ pub trait Store: Send + Sync {
     async fn update_repository(&self, name: RepoName, config: Repository)
     -> Result<(), StoreError>;
 
-    /// Lists all repository configurations keyed by name.
-    async fn list_repositories(&self)
-    -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
+    /// Lists repository configurations keyed by name.
+    ///
+    /// By default, deleted repositories are filtered out unless `include_deleted: true`
+    /// is set in the query.
+    async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
+
+    /// Soft-deletes a repository by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the repository with `deleted: true`.
+    /// The repository can still be retrieved via `get_repository` but will be filtered
+    /// from `list_repositories` by default.
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError>;
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///

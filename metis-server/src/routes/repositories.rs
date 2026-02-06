@@ -4,15 +4,15 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
 use metis_common::{
     RepoName,
     api::v1::{
         ApiError,
         repositories::{
-            CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
-            UpsertRepositoryResponse,
+            CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse,
+            SearchRepositoriesQuery, UpdateRepositoryRequest, UpsertRepositoryResponse,
         },
     },
 };
@@ -20,10 +20,11 @@ use tracing::{error, info};
 
 pub async fn list_repositories(
     State(state): State<AppState>,
+    Query(query): Query<SearchRepositoriesQuery>,
 ) -> Result<Json<ListRepositoriesResponse>, ApiError> {
     info!("list_repositories invoked");
     let repositories = state
-        .list_repositories()
+        .list_repositories(&query)
         .await
         .map_err(map_repository_error)?;
     let response = ListRepositoriesResponse::new(repositories);
@@ -66,6 +67,23 @@ pub async fn update_repository(
 
     info!(repository = %name, "update_repository completed");
     Ok(Json(UpsertRepositoryResponse::new(updated)))
+}
+
+pub async fn delete_repository(
+    State(state): State<AppState>,
+    Path((organization, repo)): Path<(String, String)>,
+) -> Result<Json<DeleteRepositoryResponse>, ApiError> {
+    let name =
+        RepoName::new(organization, repo).map_err(|err| ApiError::bad_request(err.to_string()))?;
+    info!(repository = %name, "delete_repository invoked");
+
+    let deleted = state
+        .delete_repository(&name)
+        .await
+        .map_err(map_repository_error)?;
+
+    info!(repository = %name, "delete_repository completed");
+    Ok(Json(DeleteRepositoryResponse::new(deleted)))
 }
 
 fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {

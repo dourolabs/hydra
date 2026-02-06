@@ -20,6 +20,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::repositories::SearchRepositoriesQuery;
 use metis_common::{
     DocumentId, PatchId, RepoName, TaskId, Versioned,
     api::v1 as api,
@@ -733,10 +734,13 @@ impl AppState {
             })
     }
 
-    pub async fn list_repositories(&self) -> Result<Vec<RepositoryRecord>, RepositoryError> {
+    pub async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<Vec<RepositoryRecord>, RepositoryError> {
         let store = self.store.as_ref();
         let repositories = store
-            .list_repositories()
+            .list_repositories(query)
             .await
             .map_err(|source| RepositoryError::Store { source })?;
 
@@ -744,6 +748,36 @@ impl AppState {
             .into_iter()
             .map(|(name, repository)| RepositoryRecord::from((name, repository.item)))
             .collect())
+    }
+
+    pub async fn delete_repository(
+        &self,
+        name: &RepoName,
+    ) -> Result<RepositoryRecord, RepositoryError> {
+        let store = self.store.as_ref();
+
+        // Get the repository before deleting to return it
+        let current = store
+            .get_repository(name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                other => RepositoryError::Store { source: other },
+            })?;
+
+        store
+            .delete_repository(name)
+            .await
+            .map_err(|source| match source {
+                StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
+                other => RepositoryError::Store { source: other },
+            })?;
+
+        self.service_state.clear_cache(name).await;
+
+        let mut deleted_repo = current.item;
+        deleted_repo.deleted = true;
+        Ok(RepositoryRecord::from((name.clone(), deleted_repo)))
     }
 
     pub async fn create_repository(

@@ -134,7 +134,8 @@ pub async fn run_with_state(
         )
         .route(
             "/v1/repositories/:organization/:repo",
-            put(routes::repositories::update_repository),
+            put(routes::repositories::update_repository)
+                .delete(routes::repositories::delete_repository),
         )
         .route(
             "/v1/merge-queues/:organization/:repo/:branch/patches",

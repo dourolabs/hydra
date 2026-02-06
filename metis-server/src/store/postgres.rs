@@ -18,7 +18,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
-    repositories::Repository,
+    repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -915,27 +915,44 @@ fn ensure_schema_version(
 impl Store for PostgresStore {
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
         let name_str = name.as_str();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_REPOSITORIES} WHERE id = $1"
-        ))
-        .bind(name_str.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
 
-        if exists > 0 {
-            return Err(StoreError::RepositoryAlreadyExists(name));
+        // Check if repository exists (including deleted)
+        let existing = self
+            .fetch_versioned_payload::<Repository>(
+                TABLE_REPOSITORIES,
+                "repository",
+                name_str.as_str(),
+                REPOSITORY_SCHEMA_VERSION,
+            )
+            .await?;
+
+        match existing {
+            Some(repo) if repo.item.deleted => {
+                // Undelete: re-create by updating with deleted=false
+                let mut undeleted = config;
+                undeleted.deleted = false;
+                self.update_payload(
+                    TABLE_REPOSITORIES,
+                    "repository",
+                    name_str.as_str(),
+                    REPOSITORY_SCHEMA_VERSION,
+                    &undeleted,
+                )
+                .await
+            }
+            Some(_) => Err(StoreError::RepositoryAlreadyExists(name)),
+            None => {
+                self.insert_payload(
+                    TABLE_REPOSITORIES,
+                    "repository",
+                    name_str.as_str(),
+                    REPOSITORY_SCHEMA_VERSION,
+                    1,
+                    &config,
+                )
+                .await
+            }
         }
-
-        self.insert_payload(
-            TABLE_REPOSITORIES,
-            "repository",
-            name_str.as_str(),
-            REPOSITORY_SCHEMA_VERSION,
-            1,
-            &config,
-        )
-        .await
     }
 
     async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
@@ -970,7 +987,9 @@ impl Store for PostgresStore {
 
     async fn list_repositories(
         &self,
+        query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
         let mut rows = self
             .fetch_versioned_payloads_with_ids::<Repository>(
                 TABLE_REPOSITORIES,
@@ -979,6 +998,7 @@ impl Store for PostgresStore {
             )
             .await?
             .into_iter()
+            .filter(|(_, repo)| include_deleted || !repo.item.deleted)
             .map(|(id, repo)| {
                 RepoName::from_str(&id)
                     .map(|name| (name, repo))
@@ -992,6 +1012,13 @@ impl Store for PostgresStore {
 
         rows.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(rows)
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        let current = self.get_repository(name).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
     }
 
     async fn add_issue(&self, issue: Issue) -> Result<IssueId, StoreError> {
@@ -1541,7 +1568,10 @@ mod tests {
         },
         test_utils::test_state_with_store,
     };
-    use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
+    use metis_common::{
+        RepoName, TaskId, VersionNumber, Versioned,
+        repositories::{Repository, SearchRepositoriesQuery},
+    };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
@@ -1650,7 +1680,10 @@ mod tests {
         .unwrap();
         assert_eq!(versions, vec![1, 2]);
 
-        let list = store.list_repositories().await.unwrap();
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, name);
         assert_versioned(&list[0].1, &updated, 2);

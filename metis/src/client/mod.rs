@@ -29,7 +29,8 @@ use metis_common::{
         UpsertPatchResponse,
     },
     repositories::{
-        CreateRepositoryRequest, ListRepositoriesResponse, UpdateRepositoryRequest,
+        CreateRepositoryRequest, DeleteRepositoryResponse, ListRepositoriesResponse,
+        RepositoryRecord, SearchRepositoriesQuery, UpdateRepositoryRequest,
         UpsertRepositoryResponse,
     },
     users::UserSummary,
@@ -185,7 +186,10 @@ pub trait MetisClientInterface: Send + Sync {
         version: &VersionNumber,
     ) -> Result<DocumentVersionRecord>;
     async fn create_patch_asset(&self, patch_id: &PatchId, file_path: &Path) -> Result<String>;
-    async fn list_repositories(&self) -> Result<ListRepositoriesResponse>;
+    async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<ListRepositoriesResponse>;
     async fn create_repository(
         &self,
         request: &CreateRepositoryRequest,
@@ -195,6 +199,7 @@ pub trait MetisClientInterface: Send + Sync {
         repo_name: &RepoName,
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
+    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
     async fn get_github_token(&self) -> Result<String>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn get_user_info(&self, username: &str) -> Result<UserSummary>;
@@ -1017,10 +1022,14 @@ impl MetisClient {
     }
 
     /// Call `GET /v1/repositories` to list configured repositories.
-    pub async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
+    pub async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<ListRepositoriesResponse> {
         let url = self.endpoint("/v1/repositories")?;
         let response = self
             .authed(self.http.get(url))
+            .query(query)
             .send()
             .await
             .context("failed to fetch repositories list")?
@@ -1078,6 +1087,29 @@ impl MetisClient {
             .json::<UpsertRepositoryResponse>()
             .await
             .context("failed to decode update repository response")
+    }
+
+    /// Call `DELETE /v1/repositories/:organization/:repo` to soft-delete a repository.
+    pub async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+        let path = format!(
+            "/v1/repositories/{}/{}",
+            repo_name.organization, repo_name.repo
+        );
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete repository request")?
+            .error_for_status_with_body("metis-server returned an error while deleting repository")
+            .await?;
+
+        let delete_response = response
+            .json::<DeleteRepositoryResponse>()
+            .await
+            .context("failed to decode delete repository response")?;
+
+        Ok(delete_response.repository)
     }
 
     /// Call `GET /v1/github/token` to fetch the authenticated user's GitHub token.
@@ -1603,8 +1635,11 @@ impl MetisClientInterface for MetisClient {
         MetisClient::create_patch_asset(self, patch_id, file_path).await
     }
 
-    async fn list_repositories(&self) -> Result<ListRepositoriesResponse> {
-        MetisClient::list_repositories(self).await
+    async fn list_repositories(
+        &self,
+        query: &SearchRepositoriesQuery,
+    ) -> Result<ListRepositoriesResponse> {
+        MetisClient::list_repositories(self, query).await
     }
 
     async fn create_repository(
@@ -1620,6 +1655,10 @@ impl MetisClientInterface for MetisClient {
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse> {
         MetisClient::update_repository(self, repo_name, request).await
+    }
+
+    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+        MetisClient::delete_repository(self, repo_name).await
     }
 
     async fn get_github_token(&self) -> Result<String> {
@@ -1727,7 +1766,9 @@ mod tests {
         let client =
             MetisClient::with_http_client(server.base_url(), TEST_METIS_TOKEN, HttpClient::new())?;
 
-        let response = client.list_repositories().await?;
+        let response = client
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await?;
 
         mock.assert();
         assert_eq!(response, payload);

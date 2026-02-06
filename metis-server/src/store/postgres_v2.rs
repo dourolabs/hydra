@@ -26,7 +26,7 @@ use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
-    repositories::Repository,
+    repositories::{Repository, SearchRepositoriesQuery},
 };
 use serde_json::Value;
 use std::{collections::HashMap, collections::HashSet, str::FromStr};
@@ -504,8 +504,8 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image)
-             VALUES ($1, $2, $3, $4, $5)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted)
+             VALUES ($1, $2, $3, $4, $5, $6)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -513,6 +513,7 @@ impl PostgresStoreV2 {
             .bind(&repo.remote_url)
             .bind(repo.default_branch.as_deref())
             .bind(repo.default_image.as_deref())
+            .bind(repo.deleted)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -521,11 +522,13 @@ impl PostgresStoreV2 {
     }
 
     fn row_to_repository(&self, row: &RepositoryRow) -> Repository {
-        Repository::new(
+        let mut repo = Repository::new(
             row.remote_url.clone(),
             row.default_branch.clone(),
             row.default_image.clone(),
-        )
+        );
+        repo.deleted = row.deleted;
+        repo
     }
 
     // -------------------------------------------------------------------------
@@ -703,6 +706,7 @@ struct RepositoryRow {
     remote_url: String,
     default_branch: Option<String>,
     default_image: Option<String>,
+    deleted: bool,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -745,25 +749,29 @@ impl Store for PostgresStoreV2 {
 
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError> {
         let name_str = name.as_str();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_REPOSITORIES_V2} WHERE id = $1"
-        ))
-        .bind(name_str.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
 
-        if exists > 0 {
-            return Err(StoreError::RepositoryAlreadyExists(name));
+        // Check if repository exists (including deleted)
+        let existing = self.get_repository(&name).await;
+
+        match existing {
+            Ok(repo) if repo.item.deleted => {
+                // Undelete: re-create by updating with deleted=false
+                let mut undeleted = config;
+                undeleted.deleted = false;
+                self.update_repository(name, undeleted).await
+            }
+            Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
+            Err(StoreError::RepositoryNotFound(_)) => {
+                self.insert_repository(name_str.as_str(), 1, &config).await
+            }
+            Err(e) => Err(e),
         }
-
-        self.insert_repository(name_str.as_str(), 1, &config).await
     }
 
     async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -812,19 +820,26 @@ impl Store for PostgresStoreV2 {
 
     async fn list_repositories(
         &self,
+        query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
-        let query = format!(
-            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, created_at, updated_at
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let sql = format!(
+            "SELECT DISTINCT ON (id) id, version_number, remote_url, default_branch, default_image, deleted, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              ORDER BY id, version_number DESC"
         );
-        let rows = sqlx::query_as::<_, RepositoryRow>(&query)
+        let rows = sqlx::query_as::<_, RepositoryRow>(&sql)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
+            // Skip deleted repositories unless include_deleted is true
+            if !include_deleted && row.deleted {
+                continue;
+            }
+
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
                 StoreError::Internal(format!(
                     "invalid version number stored for repository '{}'",
@@ -840,6 +855,13 @@ impl Store for PostgresStoreV2 {
 
         results.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(results)
+    }
+
+    async fn delete_repository(&self, name: &RepoName) -> Result<(), StoreError> {
+        let current = self.get_repository(name).await?;
+        let mut repo = current.item;
+        repo.deleted = true;
+        self.update_repository(name.clone(), repo).await
     }
 
     // -------------------------------------------------------------------------
@@ -1968,7 +1990,10 @@ mod tests {
         },
         test_utils::test_state_with_store,
     };
-    use metis_common::{RepoName, TaskId, VersionNumber, Versioned, repositories::Repository};
+    use metis_common::{
+        RepoName, TaskId, VersionNumber, Versioned,
+        repositories::{Repository, SearchRepositoriesQuery},
+    };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     fn assert_versioned<T: std::fmt::Debug + PartialEq>(
@@ -2068,7 +2093,10 @@ mod tests {
             .await
             .unwrap();
 
-        let list = store.list_repositories().await.unwrap();
+        let list = store
+            .list_repositories(&SearchRepositoriesQuery::default())
+            .await
+            .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, name);
         assert_versioned(&list[0].1, &updated, 2);

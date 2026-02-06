@@ -15,7 +15,8 @@ use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
 use metis_common::{
-    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
+    DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned,
+    repositories::{Repository, SearchRepositoriesQuery},
 };
 use std::collections::HashSet;
 
@@ -47,7 +48,12 @@ impl Store for FailingStore {
 
     async fn list_repositories(
         &self,
+        _query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_repository(&self, _name: &RepoName) -> Result<(), StoreError> {
         fail()
     }
 
