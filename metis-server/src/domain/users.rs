@@ -55,6 +55,8 @@ pub struct User {
     pub github_user_id: u64,
     pub github_token: String,
     pub github_refresh_token: String,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl User {
@@ -69,11 +71,17 @@ impl User {
             github_user_id,
             github_token,
             github_refresh_token,
+            deleted: false,
         }
     }
 
     pub fn with_github_refresh_token(mut self, github_refresh_token: String) -> Self {
         self.github_refresh_token = github_refresh_token;
+        self
+    }
+
+    pub fn with_deleted(mut self, deleted: bool) -> Self {
+        self.deleted = deleted;
         self
     }
 }
@@ -121,6 +129,7 @@ impl From<api::users::User> for User {
             github_user_id: value.github_user_id,
             github_token: value.github_token,
             github_refresh_token: value.github_refresh_token,
+            deleted: value.deleted,
         }
     }
 }
@@ -133,6 +142,7 @@ impl From<User> for api::users::User {
             value.github_token,
             value.github_refresh_token,
         )
+        .with_deleted(value.deleted)
     }
 }
 

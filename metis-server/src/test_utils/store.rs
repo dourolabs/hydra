@@ -14,6 +14,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -247,6 +248,17 @@ impl Store for FailingStore {
     }
 
     async fn get_user(&self, _username: &Username) -> Result<Versioned<User>, StoreError> {
+        fail()
+    }
+
+    async fn list_users(
+        &self,
+        _query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        fail()
+    }
+
+    async fn delete_user(&self, _username: &Username) -> Result<(), StoreError> {
         fail()
     }
 }

@@ -16,6 +16,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -808,6 +809,87 @@ impl PostgresStore {
         Ok(patches)
     }
 
+    async fn fetch_latest_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        #[derive(sqlx::FromRow)]
+        struct UserRow {
+            id: String,
+            schema_version: i32,
+            payload: Value,
+            version_number: i64,
+            created_at: DateTime<Utc>,
+        }
+
+        // Use a subquery to get the latest version of each user first,
+        // then apply filters. This ensures we filter on the current state
+        // of each user, not historical versions.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, schema_version, payload, version_number, created_at \
+             FROM {TABLE_USERS} ORDER BY id, version_number DESC"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let mut predicates = Vec::new();
+        let mut bindings = Vec::new();
+
+        // Filter deleted users by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("COALESCE((payload->>'deleted')::boolean, false) = false".to_string());
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            // Search across multiple fields: id, username
+            let idx_start = bindings.len() + 1;
+            predicates.push(format!(
+                "(LOWER(id) LIKE ${idx_id} \
+                 OR LOWER(payload->>'username') LIKE ${idx_username})",
+                idx_id = idx_start,
+                idx_username = idx_start + 1,
+            ));
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone());
+            bindings.push(pattern);
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, UserRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut users = Vec::with_capacity(rows.len());
+        for row in rows {
+            ensure_schema_version("user", row.schema_version, USER_SCHEMA_VERSION)?;
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for user '{}'",
+                    row.id
+                ))
+            })?;
+            let user: User =
+                serde_json::from_value(row.payload).map_err(map_serde_error("user"))?;
+            let username = Username::from(row.id);
+            users.push((username, Versioned::new(user, version, row.created_at)));
+        }
+
+        Ok(users)
+    }
+
     async fn insert_payload<T: Serialize>(
         &self,
         table: &str,
@@ -1458,27 +1540,41 @@ impl Store for PostgresStore {
     }
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_USERS} WHERE id = $1"
-        ))
-        .bind(user.username.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
+        // Check if user already exists
+        let existing = self
+            .fetch_versioned_payload::<User>(
+                TABLE_USERS,
+                "user",
+                user.username.as_str(),
+                USER_SCHEMA_VERSION,
+            )
+            .await?;
 
-        if exists > 0 {
-            return Err(StoreError::UserAlreadyExists(user.username.clone()));
+        match existing {
+            Some(versioned) => {
+                // If user exists but is deleted, undelete them
+                if versioned.item.deleted {
+                    let mut undeleted_user = user;
+                    undeleted_user.deleted = false;
+                    self.update_user(undeleted_user).await?;
+                    Ok(())
+                } else {
+                    Err(StoreError::UserAlreadyExists(user.username.clone()))
+                }
+            }
+            None => {
+                // User doesn't exist, insert new
+                self.insert_payload(
+                    TABLE_USERS,
+                    "user",
+                    user.username.as_str(),
+                    USER_SCHEMA_VERSION,
+                    1,
+                    &user,
+                )
+                .await
+            }
         }
-
-        self.insert_payload(
-            TABLE_USERS,
-            "user",
-            user.username.as_str(),
-            USER_SCHEMA_VERSION,
-            1,
-            &user,
-        )
-        .await
     }
 
     async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
@@ -1523,6 +1619,21 @@ impl Store for PostgresStore {
         self.fetch_versioned_payload(TABLE_USERS, "user", username.as_str(), USER_SCHEMA_VERSION)
             .await?
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
+
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        self.fetch_latest_users(query).await
+    }
+
+    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
+        let current = self.get_user(username).await?;
+        let mut user = current.item;
+        user.deleted = true;
+        self.update_user(user).await?;
+        Ok(())
     }
 }
 
@@ -2053,6 +2164,7 @@ mod tests {
             github_user_id: 101,
             github_token: "token".to_string(),
             github_refresh_token: "refresh-token".to_string(),
+            deleted: false,
         };
         store.add_user(user.clone()).await.unwrap();
 
@@ -2066,6 +2178,7 @@ mod tests {
                 github_user_id: 202,
                 github_token: "new-token".to_string(),
                 github_refresh_token: "new-refresh".to_string(),
+                deleted: false,
             })
             .await
             .unwrap();

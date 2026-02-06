@@ -24,6 +24,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -543,8 +544,8 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, github_token, github_refresh_token)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, github_token, github_refresh_token, deleted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id)
@@ -553,6 +554,7 @@ impl PostgresStoreV2 {
             .bind(user.github_user_id as i64)
             .bind(&user.github_token)
             .bind(&user.github_refresh_token)
+            .bind(user.deleted)
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -567,6 +569,75 @@ impl PostgresStoreV2 {
             row.github_token.clone(),
             row.github_refresh_token.clone(),
         )
+        .with_deleted(row.deleted)
+    }
+
+    async fn fetch_latest_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        // Build query with filtering on latest version of each user
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+             FROM {TABLE_USERS_V2}
+             ORDER BY id, version_number DESC"
+        );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
+        let mut predicates = Vec::new();
+        let mut bindings: Vec<String> = Vec::new();
+
+        // Filter deleted users by default
+        if !query.include_deleted.unwrap_or(false) {
+            predicates.push("NOT deleted".to_string());
+        }
+
+        if let Some(term) = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
+        {
+            // Search across id (username) field
+            let idx_start = bindings.len() + 1;
+            predicates.push(format!(
+                "(LOWER(id) LIKE ${idx_id} OR LOWER(username) LIKE ${idx_username})",
+                idx_id = idx_start,
+                idx_username = idx_start + 1,
+            ));
+            let pattern = format!("%{term}%");
+            bindings.push(pattern.clone());
+            bindings.push(pattern);
+        }
+
+        if !predicates.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&predicates.join(" AND "));
+        }
+
+        let mut query_builder = sqlx::query_as::<_, UserRow>(&sql);
+        for value in bindings {
+            query_builder = query_builder.bind(value);
+        }
+
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut users = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for user '{}'",
+                    row.id
+                ))
+            })?;
+            let user = self.row_to_user(&row);
+            let username = Username::from(row.id);
+            users.push((username, Versioned::new(user, version, row.created_at)));
+        }
+
+        Ok(users)
     }
 
     // -------------------------------------------------------------------------
@@ -716,6 +787,7 @@ struct UserRow {
     github_user_id: i64,
     github_token: String,
     github_refresh_token: String,
+    deleted: bool,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
@@ -1852,19 +1924,37 @@ impl Store for PostgresStoreV2 {
     // -------------------------------------------------------------------------
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_USERS_V2} WHERE id = $1"
-        ))
-        .bind(user.username.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
+        // Check if user already exists by fetching the latest version
+        let query = format!(
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
+             FROM {TABLE_USERS_V2}
+             WHERE id = $1
+             ORDER BY version_number DESC
+             LIMIT 1"
+        );
+        let existing = sqlx::query_as::<_, UserRow>(&query)
+            .bind(user.username.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
 
-        if exists > 0 {
-            return Err(StoreError::UserAlreadyExists(user.username.clone()));
+        match existing {
+            Some(row) => {
+                // If user exists but is deleted, undelete them
+                if row.deleted {
+                    let mut undeleted_user = user;
+                    undeleted_user.deleted = false;
+                    self.update_user(undeleted_user).await?;
+                    Ok(())
+                } else {
+                    Err(StoreError::UserAlreadyExists(user.username.clone()))
+                }
+            }
+            None => {
+                // User doesn't exist, insert new
+                self.insert_user(user.username.as_str(), 1, &user).await
+            }
         }
-
-        self.insert_user(user.username.as_str(), 1, &user).await
     }
 
     async fn update_user(&self, user: User) -> Result<Versioned<User>, StoreError> {
@@ -1902,7 +1992,7 @@ impl Store for PostgresStoreV2 {
 
         // Fetch and return the updated user
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1929,7 +2019,7 @@ impl Store for PostgresStoreV2 {
 
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, github_token, github_refresh_token, deleted, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY version_number DESC
@@ -1950,6 +2040,21 @@ impl Store for PostgresStoreV2 {
         })?;
         let user = self.row_to_user(&row);
         Ok(Versioned::new(user, version, row.created_at))
+    }
+
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        self.fetch_latest_users(query).await
+    }
+
+    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
+        let current = self.get_user(username).await?;
+        let mut user = current.item;
+        user.deleted = true;
+        self.update_user(user).await?;
+        Ok(())
     }
 }
 
@@ -2250,6 +2355,7 @@ mod tests {
             github_user_id: 101,
             github_token: "token".to_string(),
             github_refresh_token: "refresh-token".to_string(),
+            deleted: false,
         };
         store.add_user(user.clone()).await.unwrap();
 
@@ -2263,6 +2369,7 @@ mod tests {
                 github_user_id: 202,
                 github_token: "new-token".to_string(),
                 github_refresh_token: "new-refresh".to_string(),
+                deleted: false,
             })
             .await
             .unwrap();

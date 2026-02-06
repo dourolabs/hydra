@@ -18,6 +18,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, VersionNumber, Versioned,
     repositories::Repository,
@@ -974,7 +975,19 @@ impl Store for MemoryStore {
     }
 
     async fn add_user(&self, user: User) -> Result<(), StoreError> {
-        if self.users.contains_key(&user.username) {
+        if let Some(mut versions) = self.users.get_mut(&user.username) {
+            // Check if the user is deleted
+            if let Some(latest) = Self::latest_versioned(versions.value()) {
+                if latest.item.deleted {
+                    // Undelete: create a new version with deleted=false
+                    let mut undeleted_user = user;
+                    undeleted_user.deleted = false;
+                    let next_version = Self::next_version(&versions);
+                    let versioned = Self::versioned_now(undeleted_user, next_version);
+                    versions.push(versioned);
+                    return Ok(());
+                }
+            }
             return Err(StoreError::UserAlreadyExists(user.username.clone()));
         }
 
@@ -999,6 +1012,49 @@ impl Store for MemoryStore {
             .get(username)
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))
+    }
+
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
+        let include_deleted = query.include_deleted.unwrap_or(false);
+        let search_term = query
+            .q
+            .as_ref()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty());
+
+        let mut users = Vec::new();
+        for entry in self.users.iter() {
+            if let Some(versioned) = Self::latest_versioned(entry.value()) {
+                // Filter deleted users by default
+                if !include_deleted && versioned.item.deleted {
+                    continue;
+                }
+
+                // Apply search filter
+                if let Some(ref term) = search_term {
+                    let username_lower = entry.key().as_str().to_lowercase();
+                    if !username_lower.contains(term) {
+                        continue;
+                    }
+                }
+
+                users.push((entry.key().clone(), versioned));
+            }
+        }
+
+        users.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+        Ok(users)
+    }
+
+    async fn delete_user(&self, username: &Username) -> Result<(), StoreError> {
+        let current = self.get_user(username).await?;
+        let mut user = current.item;
+        user.deleted = true;
+        self.update_user(user).await?;
+        Ok(())
     }
 }
 
@@ -2168,6 +2224,7 @@ mod tests {
                 github_user_id: 101,
                 github_token: "old-token".to_string(),
                 github_refresh_token: "old-refresh".to_string(),
+                deleted: false,
             })
             .await
             .unwrap();
@@ -2178,6 +2235,7 @@ mod tests {
                 github_user_id: 202,
                 github_token: "new-token".to_string(),
                 github_refresh_token: "new-refresh".to_string(),
+                deleted: false,
             })
             .await
             .unwrap();

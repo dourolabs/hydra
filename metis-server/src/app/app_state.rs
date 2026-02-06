@@ -383,6 +383,7 @@ impl AppState {
             github_user_id: github_user.id.into_inner(),
             github_token,
             github_refresh_token,
+            deleted: false,
         };
 
         let (actor, auth_token) = Actor::new_for_user(username);
