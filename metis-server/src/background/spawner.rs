@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         record_completed_task(&handles, tasks.remove(0)).await?;
 
-        let updated_patch = handles.store.get_patch(&patch_id).await?;
+        let updated_patch = handles.store.get_patch(&patch_id, false).await?;
         let mut updated_patch = updated_patch.item;
         updated_patch.status = PatchStatus::ChangesRequested;
         updated_patch.diff = "diff --git a/file b/file\n+change\n".to_string();

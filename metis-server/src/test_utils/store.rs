@@ -100,7 +100,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_patch(&self, _id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
+    async fn get_patch(
+        &self,
+        _id: &PatchId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
         fail()
     }
 

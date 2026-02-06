@@ -100,7 +100,7 @@ pub async fn get_patch(
 ) -> Result<Json<v1::patches::PatchRecord>, ApiError> {
     info!(patch_id = %patch_id, "get_patch invoked");
     let patch = state
-        .get_patch(&patch_id)
+        .get_patch(&patch_id, false)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
@@ -207,7 +207,7 @@ pub async fn create_patch_asset(
     }
 
     let patch = state
-        .get_patch(&patch_id)
+        .get_patch(&patch_id, false)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
     let github = patch
@@ -571,7 +571,7 @@ pub async fn delete_patch(
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
     let patch = state
-        .get_patch(&patch_id)
+        .get_patch(&patch_id, true)
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 

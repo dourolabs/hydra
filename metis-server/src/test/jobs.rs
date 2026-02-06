@@ -1074,7 +1074,7 @@ async fn set_job_status_persists_result_for_spawn_tasks() -> anyhow::Result<()> 
     assert_eq!(status, Status::Complete);
     let status_log = check_state.get_status_log(&job_id).await?;
     assert!(matches!(status_log.result(), Some(Ok(()))));
-    let patch = check_state.get_patch(&patch_id).await?;
+    let patch = check_state.get_patch(&patch_id, false).await?;
     assert_eq!(patch.item.created_by, Some(job_id));
 
     Ok(())

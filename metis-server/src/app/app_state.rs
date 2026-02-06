@@ -449,9 +449,13 @@ impl AppState {
         store.search_issue_graph(filters).await
     }
 
-    pub async fn get_patch(&self, patch_id: &PatchId) -> Result<Versioned<Patch>, StoreError> {
+    pub async fn get_patch(
+        &self,
+        patch_id: &PatchId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Patch>, StoreError> {
         let store = self.store.as_ref();
-        store.get_patch(patch_id).await
+        store.get_patch(patch_id, include_deleted).await
     }
 
     pub async fn get_patch_versions(
@@ -1380,13 +1384,17 @@ impl AppState {
         let store = self.store.as_ref();
         let patch_id = match patch_id {
             Some(id) => {
-                let existing_patch = store.get_patch(&id).await.map_err(|source| match source {
-                    StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
-                        patch_id: id.clone(),
-                        source,
-                    },
-                    other => UpsertPatchError::Store { source: other },
-                })?;
+                let existing_patch =
+                    store
+                        .get_patch(&id, false)
+                        .await
+                        .map_err(|source| match source {
+                            StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
+                                patch_id: id.clone(),
+                                source,
+                            },
+                            other => UpsertPatchError::Store { source: other },
+                        })?;
                 let new_status = patch.status;
                 let status_changed_to_changes_requested = new_status
                     == PatchStatus::ChangesRequested
@@ -1538,7 +1546,7 @@ impl AppState {
     ) -> Result<Option<IssueId>, UpsertPatchError> {
         let store = self.store.as_ref();
         let patch = store
-            .get_patch(patch_id)
+            .get_patch(patch_id, false)
             .await
             .map_err(|source| match source {
                 StoreError::PatchNotFound(_) => UpsertPatchError::PatchNotFound {
@@ -2125,7 +2133,7 @@ impl AppState {
 
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {
         let store = self.store.as_ref();
-        match store.get_patch(&patch_id).await {
+        match store.get_patch(&patch_id, false).await {
             Ok(patch) => Ok(patch.item),
             Err(StoreError::PatchNotFound(_)) => Err(MergeQueueError::PatchNotFound { patch_id }),
             Err(source) => Err(MergeQueueError::PatchLookup { patch_id, source }),
@@ -2583,7 +2591,7 @@ mod tests {
             .upsert_patch(Some(&actor), Some(patch_id.clone()), request)
             .await?;
 
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id).await?;
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
         let github = stored_patch
             .item
             .github
@@ -2677,7 +2685,7 @@ mod tests {
             .state
             .upsert_patch(Some(&actor), None, request)
             .await?;
-        let stored_patch = handles.store.as_ref().get_patch(&patch_id).await?;
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
         let github = stored_patch
             .item
             .github
