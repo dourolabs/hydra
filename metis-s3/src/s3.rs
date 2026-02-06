@@ -5,13 +5,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, head, post, put},
 };
-use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
-    borrow::Cow,
-    fmt::Write as _,
     path::{Path as StdPath, PathBuf},
     sync::Arc,
-    time::SystemTime,
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
@@ -21,8 +17,10 @@ use walkdir::WalkDir;
 
 use crate::util::{
     ByteRange, DEFAULT_MAX_KEYS, ListObjectsQuery, ListResult, MultipartQuery,
-    MultipartUploadMetadata, ObjectEntry, PartInfo, S3_XML_NAMESPACE, S3Error, s3_error,
-    sanitize_key, sanitize_prefix, validate_bucket,
+    MultipartUploadMetadata, ObjectEntry, S3_XML_NAMESPACE, S3Error,
+    parse_complete_multipart_request, range_not_satisfiable_response, render_list_response,
+    response_with_body, s3_error, sanitize_key, sanitize_prefix, streaming_partial_response,
+    streaming_response, validate_bucket, xml_escape,
 };
 
 #[derive(Clone, Debug)]
@@ -1061,57 +1059,6 @@ async fn abort_multipart_upload(
     response
 }
 
-/// Parse CompleteMultipartUpload XML request body
-fn parse_complete_multipart_request(body: &[u8]) -> Result<Vec<PartInfo>, S3Error> {
-    let body_str = std::str::from_utf8(body)
-        .map_err(|_| S3Error::bad_request("MalformedXML", "Request body is not valid UTF-8"))?;
-
-    let mut parts = Vec::new();
-
-    // Simple XML parsing for <Part><PartNumber>N</PartNumber><ETag>X</ETag></Part>
-    for part_match in body_str.split("<Part>").skip(1) {
-        let part_end = part_match.find("</Part>").unwrap_or(part_match.len());
-        let part_content = &part_match[..part_end];
-
-        let part_number = extract_xml_value(part_content, "PartNumber")
-            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing PartNumber"))?
-            .parse::<u32>()
-            .map_err(|_| S3Error::bad_request("MalformedXML", "Invalid PartNumber"))?;
-
-        let etag_raw = extract_xml_value(part_content, "ETag")
-            .ok_or_else(|| S3Error::bad_request("MalformedXML", "Part missing ETag"))?;
-        let etag = xml_unescape(etag_raw);
-
-        parts.push(PartInfo { part_number, etag });
-    }
-
-    Ok(parts)
-}
-
-/// Extract value from simple XML tag
-fn extract_xml_value<'a>(content: &'a str, tag: &str) -> Option<&'a str> {
-    let start_tag = format!("<{tag}>");
-    let end_tag = format!("</{tag}>");
-
-    let start = content.find(&start_tag)? + start_tag.len();
-    let end = content.find(&end_tag)?;
-
-    if start <= end {
-        Some(&content[start..end])
-    } else {
-        None
-    }
-}
-
-/// Unescape common XML entities
-fn xml_unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-}
-
 async fn delete_object(
     State(state): State<Arc<S3State>>,
     Path((bucket, key)): Path<(String, String)>,
@@ -1189,136 +1136,6 @@ async fn delete_object(
     response
 }
 
-fn response_with_body(
-    body: Vec<u8>,
-    last_modified: Option<SystemTime>,
-    content_len: u64,
-    etag: String,
-) -> Response {
-    let mut response = Response::new(axum::body::Body::from(body));
-    *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_LENGTH,
-        HeaderValue::from_str(&content_len.to_string())
-            .unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ETAG,
-        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ACCEPT_RANGES,
-        HeaderValue::from_static("bytes"),
-    );
-    if let Some(modified) = last_modified {
-        let header_value = httpdate::fmt_http_date(modified);
-        if let Ok(value) = HeaderValue::from_str(&header_value) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::LAST_MODIFIED, value);
-        }
-    }
-    response
-}
-
-fn streaming_response(
-    body: axum::body::Body,
-    last_modified: Option<SystemTime>,
-    content_len: u64,
-    etag: String,
-) -> Response {
-    let mut response = Response::new(body);
-    *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_LENGTH,
-        HeaderValue::from_str(&content_len.to_string())
-            .unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ETAG,
-        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ACCEPT_RANGES,
-        HeaderValue::from_static("bytes"),
-    );
-    if let Some(modified) = last_modified {
-        let header_value = httpdate::fmt_http_date(modified);
-        if let Ok(value) = HeaderValue::from_str(&header_value) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::LAST_MODIFIED, value);
-        }
-    }
-    response
-}
-
-fn streaming_partial_response(
-    body: axum::body::Body,
-    last_modified: Option<SystemTime>,
-    total_len: u64,
-    etag: String,
-    range: ByteRange,
-) -> Response {
-    let content_len = range.end - range.start + 1;
-    let mut response = Response::new(body);
-    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_LENGTH,
-        HeaderValue::from_str(&content_len.to_string())
-            .unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ETAG,
-        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
-    );
-    response.headers_mut().insert(
-        axum::http::header::ACCEPT_RANGES,
-        HeaderValue::from_static("bytes"),
-    );
-    // Content-Range: bytes start-end/total
-    let content_range = format!("bytes {}-{}/{}", range.start, range.end, total_len);
-    if let Ok(value) = HeaderValue::from_str(&content_range) {
-        response
-            .headers_mut()
-            .insert(axum::http::header::CONTENT_RANGE, value);
-    }
-    if let Some(modified) = last_modified {
-        let header_value = httpdate::fmt_http_date(modified);
-        if let Ok(value) = HeaderValue::from_str(&header_value) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::LAST_MODIFIED, value);
-        }
-    }
-    response
-}
-
-fn range_not_satisfiable_response(total_len: u64) -> Response {
-    let mut response = Response::new(axum::body::Body::empty());
-    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
-    // Content-Range: bytes */total
-    let content_range = format!("bytes */{total_len}");
-    if let Ok(value) = HeaderValue::from_str(&content_range) {
-        response
-            .headers_mut()
-            .insert(axum::http::header::CONTENT_RANGE, value);
-    }
-    response
-}
-
 async fn write_file(path: &StdPath, body: &Bytes) -> Result<(), std::io::Error> {
     let mut file = tokio::fs::File::create(path).await?;
     file.write_all(body).await?;
@@ -1377,84 +1194,6 @@ fn read_etag_with_fallback_sync(metadata_path: &StdPath, object_path: &StdPath) 
     compute_etag_from_path(object_path).ok()
 }
 
-fn render_list_response(
-    bucket: &str,
-    prefix: &str,
-    query: &ListObjectsQuery,
-    max_keys: usize,
-    result: &ListResult,
-) -> String {
-    let mut xml = String::new();
-    let _ = writeln!(
-        xml,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"{S3_XML_NAMESPACE}\">"
-    );
-    push_xml(&mut xml, "Name", bucket);
-    push_xml(&mut xml, "Prefix", prefix);
-    if let Some(token) = query.continuation_token.as_deref() {
-        push_xml(&mut xml, "ContinuationToken", token);
-    }
-    if let Some(start_after) = query.start_after.as_deref() {
-        push_xml(&mut xml, "StartAfter", start_after);
-    }
-    push_xml(&mut xml, "KeyCount", &result.entries.len().to_string());
-    push_xml(&mut xml, "MaxKeys", &max_keys.to_string());
-    push_xml(
-        &mut xml,
-        "IsTruncated",
-        if result.is_truncated { "true" } else { "false" },
-    );
-
-    for entry in &result.entries {
-        xml.push_str("  <Contents>\n");
-        push_xml(&mut xml, "Key", &entry.key);
-        if let Some(last_modified) = entry.last_modified {
-            let date: DateTime<Utc> = last_modified.into();
-            push_xml(
-                &mut xml,
-                "LastModified",
-                &date.to_rfc3339_opts(SecondsFormat::Millis, true),
-            );
-        }
-        if let Some(etag) = entry.etag.as_deref() {
-            push_xml(&mut xml, "ETag", etag);
-        }
-        push_xml(&mut xml, "Size", &entry.size.to_string());
-        xml.push_str("  </Contents>\n");
-    }
-
-    if let Some(token) = result.next_token.as_deref() {
-        push_xml(&mut xml, "NextContinuationToken", token);
-    }
-
-    xml.push_str("</ListBucketResult>\n");
-    xml
-}
-
-fn push_xml(xml: &mut String, tag: &str, value: &str) {
-    let escaped = xml_escape(value);
-    let _ = writeln!(xml, "  <{tag}>{escaped}</{tag}>");
-}
-
-fn xml_escape(value: &str) -> Cow<'_, str> {
-    if !value.contains(['&', '<', '>', '\'', '"']) {
-        return Cow::Borrowed(value);
-    }
-
-    let mut escaped = String::with_capacity(value.len() + 8);
-    for ch in value.chars() {
-        match ch {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '\'' => escaped.push_str("&apos;"),
-            '"' => escaped.push_str("&quot;"),
-            _ => escaped.push(ch),
-        }
-    }
-    Cow::Owned(escaped)
-}
-
 fn compute_etag(bytes: &[u8]) -> String {
     format!("\"{:x}\"", md5::compute(bytes))
 }
@@ -1482,6 +1221,7 @@ fn compute_etag_from_path(path: &StdPath) -> Result<String, std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::extract_xml_value;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tempfile::tempdir;
