@@ -762,8 +762,9 @@ impl AppState {
         let store = self.store.as_ref();
 
         // Get the repository before deleting to return it
+        // Use include_deleted: true since we need to access the repository to mark it as deleted
         let current = store
-            .get_repository(name)
+            .get_repository(name, true)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -2114,7 +2115,11 @@ impl AppState {
 
     pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let store = self.store.as_ref();
-        store.get_repository(name).await.map(|repo| repo.item)
+        // Use include_deleted: false since API callers should not see deleted repositories
+        store
+            .get_repository(name, false)
+            .await
+            .map(|repo| repo.item)
     }
 
     async fn load_patch(&self, patch_id: PatchId) -> Result<Patch, MergeQueueError> {

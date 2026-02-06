@@ -35,7 +35,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn get_repository(&self, _name: &RepoName) -> Result<Versioned<Repository>, StoreError> {
+    async fn get_repository(
+        &self,
+        _name: &RepoName,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Repository>, StoreError> {
         fail()
     }
 

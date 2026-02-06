@@ -136,7 +136,16 @@ pub trait Store: Send + Sync {
     async fn add_repository(&self, name: RepoName, config: Repository) -> Result<(), StoreError>;
 
     /// Retrieves a repository configuration by name.
-    async fn get_repository(&self, name: &RepoName) -> Result<Versioned<Repository>, StoreError>;
+    ///
+    /// # Arguments
+    /// * `name` - The RepoName to look up
+    /// * `include_deleted` - If true, returns the repository even if it has been soft-deleted.
+    ///   If false, returns `StoreError::RepositoryNotFound` for deleted repositories.
+    async fn get_repository(
+        &self,
+        name: &RepoName,
+        include_deleted: bool,
+    ) -> Result<Versioned<Repository>, StoreError>;
 
     /// Updates an existing repository configuration.
     ///
