@@ -933,10 +933,14 @@ impl Store for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        let mut sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at
-             FROM {TABLE_ISSUES_V2}"
+        // Use a subquery to get the latest version of each issue first,
+        // then apply filters. This ensures we filter on the current state
+        // of each issue, not historical versions.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, issue_type, description, creator, progress, status, assignee, job_settings, todo_list, dependencies, patches, deleted, created_at, updated_at \
+             FROM {TABLE_ISSUES_V2} ORDER BY id, version_number DESC"
         );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let mut predicates = Vec::new();
         let mut bindings: Vec<String> = Vec::new();
 
@@ -1005,8 +1009,6 @@ impl Store for PostgresStoreV2 {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
         }
-
-        sql.push_str(" ORDER BY id, version_number DESC");
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in bindings {
@@ -1143,10 +1145,14 @@ impl Store for PostgresStoreV2 {
         &self,
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
-        let mut sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at
-             FROM {TABLE_PATCHES_V2}"
+        // Use a subquery to get the latest version of each patch first,
+        // then apply filters. This ensures we filter on the current state
+        // of each patch, not historical versions.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, title, description, diff, status, is_automatic_backup, created_by, reviews, service_repo_name, github, deleted, created_at, updated_at \
+             FROM {TABLE_PATCHES_V2} ORDER BY id, version_number DESC"
         );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let mut predicates = Vec::new();
         let mut bindings = Vec::new();
 
@@ -1197,8 +1203,6 @@ impl Store for PostgresStoreV2 {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
         }
-
-        sql.push_str(" ORDER BY id, version_number DESC");
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
         for value in bindings {
@@ -1343,10 +1347,14 @@ impl Store for PostgresStoreV2 {
         &self,
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
-        let mut sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at
-             FROM {TABLE_DOCUMENTS_V2}"
+        // Use a subquery to get the latest version of each document first,
+        // then apply filters. This ensures we filter on the current state
+        // of each document, not historical versions.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, title, body_markdown, path, created_by, deleted, created_at, updated_at \
+             FROM {TABLE_DOCUMENTS_V2} ORDER BY id, version_number DESC"
         );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let mut predicates = Vec::new();
         let mut bindings = Vec::new();
 
@@ -1394,8 +1402,6 @@ impl Store for PostgresStoreV2 {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
         }
-
-        sql.push_str(" ORDER BY id, version_number DESC");
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
         for value in bindings {
@@ -1619,10 +1625,14 @@ impl Store for PostgresStoreV2 {
         &self,
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
-        let mut sql = format!(
-            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
-             FROM {TABLE_TASKS_V2}"
+        // Use a subquery to get the latest version of each task first,
+        // then apply filters. This ensures we filter on the current state
+        // of each task, not historical versions.
+        let subquery = format!(
+            "SELECT DISTINCT ON (id) id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at \
+             FROM {TABLE_TASKS_V2} ORDER BY id, version_number DESC"
         );
+        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let mut predicates = Vec::new();
         let mut bindings: Vec<String> = Vec::new();
 
@@ -1662,8 +1672,6 @@ impl Store for PostgresStoreV2 {
             sql.push_str(" WHERE ");
             sql.push_str(&predicates.join(" AND "));
         }
-
-        sql.push_str(" ORDER BY id, version_number DESC");
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
         for value in bindings {
@@ -2261,5 +2269,176 @@ mod tests {
         assert_eq!(updated.item.github_token, "new-token");
         assert_eq!(updated.item.github_user_id, 202);
         assert_eq!(updated.version, 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn document_search_only_matches_latest_version_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a document with title "original_title"
+        let doc = Document {
+            title: "original_title".to_string(),
+            body_markdown: "Body content".to_string(),
+            path: Some("docs/test.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+        let doc_id = store.add_document(doc).await.unwrap();
+
+        // Update the document to change the title to "changed_title"
+        let updated_doc = Document {
+            title: "changed_title".to_string(),
+            body_markdown: "Body content".to_string(),
+            path: Some("docs/test.md".to_string()),
+            created_by: None,
+            deleted: false,
+        };
+        store.update_document(&doc_id, updated_doc).await.unwrap();
+
+        // Search for the old title - should return NO results
+        let old_query =
+            SearchDocumentsQuery::new(Some("original_title".to_string()), None, None, None, None);
+        let old_results = store.list_documents(&old_query).await.unwrap();
+        assert!(
+            old_results.is_empty(),
+            "Search for old title should return no results, but got {:?}",
+            old_results.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        );
+
+        // Search for the new title - should return the document
+        let new_query =
+            SearchDocumentsQuery::new(Some("changed_title".to_string()), None, None, None, None);
+        let new_results = store.list_documents(&new_query).await.unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].0, doc_id);
+        assert_eq!(new_results[0].1.item.title, "changed_title");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_search_only_matches_latest_version_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create an issue with a unique description
+        let issue = Issue::new(
+            IssueType::Task,
+            "original_unique_description_abc123".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+        );
+        let issue_id = store.add_issue(issue).await.unwrap();
+
+        // Update the issue to change the description
+        let updated_issue = Issue::new(
+            IssueType::Task,
+            "changed_unique_description_xyz789".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+        );
+        store.update_issue(&issue_id, updated_issue).await.unwrap();
+
+        // Search for the old description - should return NO results
+        let old_query = SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            Some("original_unique_description_abc123".to_string()),
+            Vec::new(),
+            None,
+        );
+        let old_results = store.list_issues(&old_query).await.unwrap();
+        assert!(
+            old_results.is_empty(),
+            "Search for old description should return no results, but got {:?}",
+            old_results.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        );
+
+        // Search for the new description - should return the issue
+        let new_query = SearchIssuesQuery::new(
+            None,
+            None,
+            None,
+            Some("changed_unique_description_xyz789".to_string()),
+            Vec::new(),
+            None,
+        );
+        let new_results = store.list_issues(&new_query).await.unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].0, issue_id);
+        assert!(
+            new_results[0]
+                .1
+                .item
+                .description
+                .contains("changed_unique_description_xyz789")
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn patch_search_only_matches_latest_version_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        // Create a patch with a unique title
+        let patch = Patch::new(
+            "original_unique_patch_title_abc123".to_string(),
+            "desc".to_string(),
+            "diff content".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            vec![],
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+        );
+        let patch_id = store.add_patch(patch).await.unwrap();
+
+        // Update the patch to change the title
+        let updated_patch = Patch::new(
+            "changed_unique_patch_title_xyz789".to_string(),
+            "desc".to_string(),
+            "diff content".to_string(),
+            PatchStatus::Open,
+            false,
+            None,
+            vec![],
+            RepoName::from_str("dourolabs/sample").unwrap(),
+            None,
+        );
+        store.update_patch(&patch_id, updated_patch).await.unwrap();
+
+        // Search for the old title - should return NO results
+        let old_query =
+            SearchPatchesQuery::new(Some("original_unique_patch_title_abc123".to_string()), None);
+        let old_results = store.list_patches(&old_query).await.unwrap();
+        assert!(
+            old_results.is_empty(),
+            "Search for old title should return no results, but got {:?}",
+            old_results.iter().map(|(id, _)| id).collect::<Vec<_>>()
+        );
+
+        // Search for the new title - should return the patch
+        let new_query =
+            SearchPatchesQuery::new(Some("changed_unique_patch_title_xyz789".to_string()), None);
+        let new_results = store.list_patches(&new_query).await.unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].0, patch_id);
+        assert_eq!(
+            new_results[0].1.item.title,
+            "changed_unique_patch_title_xyz789"
+        );
     }
 }
