@@ -968,6 +968,11 @@ impl Store for PostgresStoreV2 {
             ))
         })?;
         let issue = self.row_to_issue(&row)?;
+
+        if issue.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
         Ok(Versioned::new(issue, version, row.created_at))
     }
 
@@ -1131,8 +1136,17 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        let current = self.get_issue(id).await?;
-        let mut issue = current.item;
+        let versions = self.get_issue_versions(id).await?;
+        let current = versions
+            .last()
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+
+        // If already deleted, this is idempotent - return success
+        if current.item.deleted {
+            return Ok(());
+        }
+
+        let mut issue = current.item.clone();
         issue.deleted = true;
         self.update_issue(id, issue).await
     }

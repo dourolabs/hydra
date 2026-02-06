@@ -450,12 +450,17 @@ pub async fn delete_issue(
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
-    let issue = state
-        .get_issue(&issue_id)
+    // Use get_issue_versions since get_issue returns NotFound for deleted issues
+    let versions = state
+        .get_issue_versions(&issue_id)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
+    let issue = versions.last().ok_or_else(|| {
+        map_issue_error(StoreError::IssueNotFound(issue_id.clone()), Some(&issue_id))
+    })?;
+
     info!(issue_id = %issue_id, "delete_issue completed");
-    let response = api_issues::IssueRecord::new(issue_id, issue.item.into());
+    let response = api_issues::IssueRecord::new(issue_id, issue.item.clone().into());
     Ok(Json(response))
 }

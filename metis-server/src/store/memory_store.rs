@@ -397,10 +397,17 @@ impl Store for MemoryStore {
     }
 
     async fn get_issue(&self, id: &IssueId) -> Result<Versioned<Issue>, StoreError> {
-        self.issues
+        let versioned = self
+            .issues
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
-            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+
+        if versioned.item.deleted {
+            return Err(StoreError::IssueNotFound(id.clone()));
+        }
+
+        Ok(versioned)
     }
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
@@ -482,8 +489,17 @@ impl Store for MemoryStore {
     }
 
     async fn delete_issue(&self, id: &IssueId) -> Result<(), StoreError> {
-        let current = self.get_issue(id).await?;
-        let mut issue = current.item;
+        let versions = self.get_issue_versions(id).await?;
+        let current = versions
+            .last()
+            .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
+
+        // If already deleted, this is idempotent - return success
+        if current.item.deleted {
+            return Ok(());
+        }
+
+        let mut issue = current.item.clone();
         issue.deleted = true;
         self.update_issue(id, issue).await
     }
@@ -2588,9 +2604,14 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert!(issues[0].1.item.deleted);
 
-        // get_issue should still return the deleted issue
-        let issue = store.get_issue(&issue_id).await.unwrap();
-        assert!(issue.item.deleted);
+        // get_issue should return IssueNotFound for deleted issues
+        let result = store.get_issue(&issue_id).await;
+        assert!(matches!(result, Err(StoreError::IssueNotFound(_))));
+
+        // get_issue_versions should still return all versions including deleted
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert!(versions.last().unwrap().item.deleted);
     }
 
     #[tokio::test]
@@ -2950,7 +2971,10 @@ mod tests {
 
         let version_before = store.get_issue(&issue_id).await.unwrap().version;
         store.delete_issue(&issue_id).await.unwrap();
-        let version_after = store.get_issue(&issue_id).await.unwrap().version;
+
+        // get_issue returns IssueNotFound for deleted issues, use get_issue_versions instead
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        let version_after = versions.last().unwrap().version;
 
         assert_eq!(version_after, version_before + 1);
     }

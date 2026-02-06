@@ -1287,10 +1287,22 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should still return it
-    let fetched: IssueRecord = client
+    // GET by ID should return 404 for deleted issues
+    let response = client
         .get(format!(
             "{}/v1/issues/{}",
+            server.base_url(),
+            created.issue_id
+        ))
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // But get_issue_versions should still return all versions including deleted
+    let versions: ListIssueVersionsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/versions",
             server.base_url(),
             created.issue_id
         ))
@@ -1299,8 +1311,8 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // Verify deleted=true in response
-    assert!(fetched.issue.deleted);
+    assert_eq!(versions.versions.len(), 2);
+    assert!(versions.versions.last().unwrap().issue.deleted);
 
     Ok(())
 }
