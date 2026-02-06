@@ -980,7 +980,12 @@ async fn migrate_documents_internal(pool: &PgStorePool) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::postgres::PgStorePool;
+    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::users::Username;
+    use crate::store::Store;
+    use crate::store::postgres::{PgStorePool, PostgresStore};
+    use crate::store::postgres_v2::PostgresStoreV2;
+    use metis_common::api::v1::issues::SearchIssuesQuery;
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
@@ -1004,5 +1009,77 @@ mod tests {
         // Empty database should complete without errors
         let result = migrate_v1_to_v2(&pool).await.unwrap();
         assert_eq!(result.total(), 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn migration_transfers_data_from_v1_to_v2(pool: PgStorePool) {
+        // Create data in v1 store
+        let v1_store = PostgresStore::new(pool.clone());
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "Test issue for migration".to_string(),
+            creator: Username::from("test-user"),
+            progress: "In progress".to_string(),
+            status: IssueStatus::Open,
+            assignee: Some("assignee".to_string()),
+            job_settings: Default::default(),
+            todo_list: vec![],
+            dependencies: vec![],
+            patches: vec![],
+            deleted: false,
+        };
+        let issue_id = v1_store.add_issue(issue.clone()).await.unwrap();
+
+        // Run migration
+        let result = migrate_v1_to_v2(&pool).await.unwrap();
+        assert_eq!(result.issues_migrated, 1);
+        assert!(result.total() >= 1);
+
+        // Verify data is readable from v2 store
+        let v2_store = PostgresStoreV2::new(pool.clone());
+        let migrated_issue = v2_store.get_issue(&issue_id).await.unwrap();
+        assert_eq!(migrated_issue.item.description, issue.description);
+        assert_eq!(migrated_issue.item.creator, issue.creator);
+        assert_eq!(migrated_issue.item.progress, issue.progress);
+        assert_eq!(migrated_issue.item.status, issue.status);
+        assert_eq!(migrated_issue.item.assignee, issue.assignee);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn v2_store_works_after_migration(pool: PgStorePool) {
+        // Run migration on empty database
+        let _ = migrate_v1_to_v2(&pool).await.unwrap();
+
+        // Create new data directly in v2 store
+        let v2_store = PostgresStoreV2::new(pool.clone());
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            description: "New issue created in v2".to_string(),
+            creator: Username::from("v2-user"),
+            progress: "".to_string(),
+            status: IssueStatus::Open,
+            assignee: None,
+            job_settings: Default::default(),
+            todo_list: vec![],
+            dependencies: vec![],
+            patches: vec![],
+            deleted: false,
+        };
+        let issue_id = v2_store.add_issue(issue.clone()).await.unwrap();
+
+        // Verify data can be read back
+        let retrieved = v2_store.get_issue(&issue_id).await.unwrap();
+        assert_eq!(retrieved.item.description, issue.description);
+        assert_eq!(retrieved.item.creator, issue.creator);
+
+        // Verify listing works
+        let issues = v2_store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, issue_id);
     }
 }
