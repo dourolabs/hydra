@@ -979,11 +979,9 @@ impl Store for MemoryStore {
             // Check if the user is deleted
             if let Some(latest) = Self::latest_versioned(versions.value()) {
                 if latest.item.deleted {
-                    // Undelete: create a new version with deleted=false
-                    let mut undeleted_user = user;
-                    undeleted_user.deleted = false;
+                    // Allow re-creation with the provided user
                     let next_version = Self::next_version(&versions);
-                    let versioned = Self::versioned_now(undeleted_user, next_version);
+                    let versioned = Self::versioned_now(user, next_version);
                     versions.push(versioned);
                     return Ok(());
                 }

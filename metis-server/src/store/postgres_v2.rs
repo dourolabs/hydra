@@ -1940,11 +1940,9 @@ impl Store for PostgresStoreV2 {
 
         match existing {
             Some(row) => {
-                // If user exists but is deleted, undelete them
+                // If user exists but is deleted, allow re-creation with the provided user
                 if row.deleted {
-                    let mut undeleted_user = user;
-                    undeleted_user.deleted = false;
-                    self.update_user(undeleted_user).await?;
+                    self.update_user(user).await?;
                     Ok(())
                 } else {
                     Err(StoreError::UserAlreadyExists(user.username.clone()))
