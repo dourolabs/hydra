@@ -56,6 +56,8 @@ pub struct User {
     pub github_user_id: u64,
     pub github_token: String,
     pub github_refresh_token: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 impl User {
@@ -70,11 +72,17 @@ impl User {
             github_user_id,
             github_token,
             github_refresh_token,
+            deleted: false,
         }
     }
 
     pub fn with_github_refresh_token(mut self, github_refresh_token: String) -> Self {
         self.github_refresh_token = github_refresh_token;
+        self
+    }
+
+    pub fn with_deleted(mut self, deleted: bool) -> Self {
+        self.deleted = deleted;
         self
     }
 }
@@ -101,5 +109,20 @@ impl UserSummary {
             username,
             github_user_id,
         }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SearchUsersQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+}
+
+impl SearchUsersQuery {
+    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
+        Self { q, include_deleted }
     }
 }

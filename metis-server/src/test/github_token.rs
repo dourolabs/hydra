@@ -190,6 +190,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
         github_user_id: 101,
         github_token: "expired-token".to_string(),
         github_refresh_token: "refresh-token".to_string(),
+        deleted: false,
     };
 
     handles.store.add_user(user).await?;
@@ -276,6 +277,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
         github_user_id: 101,
         github_token: "expired-token".to_string(),
         github_refresh_token: "bad-refresh".to_string(),
+        deleted: false,
     };
 
     handles.store.add_user(user).await?;

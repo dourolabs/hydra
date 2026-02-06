@@ -12,6 +12,7 @@ use metis_common::api::v1::documents::SearchDocumentsQuery;
 use metis_common::api::v1::issues::SearchIssuesQuery;
 use metis_common::api::v1::jobs::SearchJobsQuery;
 use metis_common::api::v1::patches::SearchPatchesQuery;
+use metis_common::api::v1::users::SearchUsersQuery;
 use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned, repositories::Repository,
 };
@@ -390,6 +391,9 @@ pub trait Store: Send + Sync {
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
 
     /// Adds a new user to the store.
+    ///
+    /// If a user with the same username exists but is deleted, this will
+    /// undelete the user by creating a new version with `deleted: false`.
     async fn add_user(&self, user: User) -> Result<(), StoreError>;
 
     /// Updates an existing user in the store.
@@ -397,6 +401,22 @@ pub trait Store: Send + Sync {
 
     /// Gets a user by their username.
     async fn get_user(&self, username: &Username) -> Result<Versioned<User>, StoreError>;
+
+    /// Lists users that match the provided search query.
+    ///
+    /// By default, deleted users are filtered out unless `include_deleted: true`
+    /// is set in the query.
+    async fn list_users(
+        &self,
+        query: &SearchUsersQuery,
+    ) -> Result<Vec<(Username, Versioned<User>)>, StoreError>;
+
+    /// Soft-deletes a user by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the user with `deleted: true`.
+    /// The user can still be retrieved via `get_user` but will be filtered
+    /// from `list_users` by default.
+    async fn delete_user(&self, username: &Username) -> Result<(), StoreError>;
 }
 
 pub use memory_store::MemoryStore;
