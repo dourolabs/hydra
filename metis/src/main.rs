@@ -152,7 +152,27 @@ async fn main() -> Result<()> {
     let output_format = resolve_output_format(&client, cli.output_format).await?;
     let context = CommandContext::new(output_format);
 
-    dispatch(cli, &client, &server_url, &context).await
+    let result = dispatch(cli, &client, &server_url, &context).await;
+    if let Err(ref err) = result {
+        if is_broken_pipe(err) {
+            std::process::exit(0);
+        }
+    }
+    result
+}
+
+/// Check whether any error in the `anyhow` chain is an `io::ErrorKind::BrokenPipe`.
+/// We walk the full chain because serialization layers (e.g. `serde_json::Error`)
+/// may wrap the underlying I/O error.
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 async fn resolve_client(
@@ -266,8 +286,8 @@ fn read_token_from_path(token_path: &Path) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_app_config, read_token_from_path, resolve_command, resolve_server_url, Cli, Commands,
-        OutputFormat,
+        is_broken_pipe, load_app_config, read_token_from_path, resolve_command, resolve_server_url,
+        Cli, Commands, OutputFormat,
     };
     use crate::constants::{DEFAULT_AUTH_TOKEN_PATH, DEFAULT_SERVER_URL};
     use clap::Parser;
@@ -370,5 +390,32 @@ mod tests {
             Commands::Dashboard => {}
             _ => panic!("expected dashboard default"),
         }
+    }
+
+    #[test]
+    fn is_broken_pipe_detects_direct_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        let err: anyhow::Error = io_err.into();
+        assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_detects_wrapped_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        let err = anyhow::Error::new(io_err).context("writing output");
+        assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_returns_false_for_other_errors() {
+        let err = anyhow::anyhow!("some other error");
+        assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_returns_false_for_other_io_errors() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let err: anyhow::Error = io_err.into();
+        assert!(!is_broken_pipe(&err));
     }
 }
