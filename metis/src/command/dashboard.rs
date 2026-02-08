@@ -2698,8 +2698,8 @@ async fn refresh_records(
     client: &dyn MetisClientInterface,
     state: &mut DashboardState,
 ) -> Result<bool> {
-    let issues = fetch_issues(client).await?;
-    let repositories = fetch_repositories(client).await?;
+    let (issues, repositories) =
+        tokio::try_join!(fetch_issues(client), fetch_repositories(client))?;
 
     let issues_changed = issues != state.issues;
     if issues_changed {
