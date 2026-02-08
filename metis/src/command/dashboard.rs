@@ -1039,11 +1039,7 @@ fn toggle_selected_issue_children(state: &mut DashboardState) -> bool {
         return false;
     };
 
-    let nodes = build_issue_nodes(&state.issues, &state.jobs);
-    let Some(node) = nodes.get(&issue_id) else {
-        return false;
-    };
-    if node.children.is_empty() {
+    if !selected_issue_has_children(state, selected_panel, &issue_id) {
         return false;
     }
 
@@ -1058,6 +1054,39 @@ fn toggle_selected_issue_children(state: &mut DashboardState) -> bool {
         scroll_selected_issue_into_view(state);
     }
     true
+}
+
+fn selected_issue_has_children(
+    state: &DashboardState,
+    panel: PanelFocus,
+    issue_id: &IssueId,
+) -> bool {
+    let id_str = issue_id.to_string();
+    let rows: &[IssueLine] = match panel {
+        PanelFocus::Running => &state.issue_lines.rows,
+        PanelFocus::UserOwned => &state.user_unowned_issue_lines.rows,
+        PanelFocus::Completed => {
+            // Check both roots and descendants for completed issues.
+            if let Some(line) = state
+                .completed_issue_lines
+                .roots
+                .iter()
+                .find(|l| l.id == id_str)
+            {
+                return line.has_children;
+            }
+            for lines in state.completed_issue_lines.descendants.values() {
+                if let Some(line) = lines.iter().find(|l| l.id == id_str) {
+                    return line.has_children;
+                }
+            }
+            return false;
+        }
+        PanelFocus::NewIssue => return false,
+    };
+    rows.iter()
+        .find(|l| l.id == id_str)
+        .is_some_and(|l| l.has_children)
 }
 
 fn selected_issue_id(state: &DashboardState, panel: PanelFocus) -> Option<IssueId> {
@@ -2773,21 +2802,15 @@ fn update_views(state: &mut DashboardState) -> bool {
         state.username.as_str(),
         state.issue_list_filter,
     );
-    seed_completed_issue_collapses(state, &filtered_issues);
+    let filtered_nodes = build_issue_nodes(&filtered_issues, &state.jobs);
+    seed_completed_issue_collapses(state, &filtered_nodes);
 
-    let issue_lines = build_issue_lines_with_collapsed(
-        &filtered_issues,
-        &state.jobs,
-        true,
-        &state.collapsed_issue_ids,
-    );
+    let issue_lines =
+        build_issue_lines_with_collapsed(&filtered_nodes, true, &state.collapsed_issue_ids);
     let user_unowned_issue_lines =
         build_user_unowned_issue_lines(state.username.as_str(), &state.issues, &state.jobs);
-    let completed_issue_lines = build_completed_issue_lines_with_collapsed(
-        &filtered_issues,
-        &state.jobs,
-        &state.collapsed_issue_ids,
-    );
+    let completed_issue_lines =
+        build_completed_issue_lines_with_collapsed(&filtered_nodes, &state.collapsed_issue_ids);
     update_assignee_options(state);
     update_repo_options(state);
 
@@ -2824,14 +2847,13 @@ fn reconcile_issue_details(state: &mut DashboardState) {
     }
 }
 
-fn seed_completed_issue_collapses(state: &mut DashboardState, issues: &[IssueRecord]) {
-    let nodes = build_issue_nodes(issues, &state.jobs);
+fn seed_completed_issue_collapses(state: &mut DashboardState, nodes: &HashMap<IssueId, IssueNode>) {
     if nodes.is_empty() {
         state.known_completed_issue_ids.clear();
         return;
     }
 
-    let completed_issue_ids = completed_issue_tree_ids(&nodes);
+    let completed_issue_ids = completed_issue_tree_ids(nodes);
     for issue_id in &completed_issue_ids {
         if state.known_completed_issue_ids.contains(issue_id) {
             continue;
@@ -2989,8 +3011,9 @@ fn build_user_unowned_issue_lines(
         .cloned()
         .collect();
 
+    let nodes = build_issue_nodes(&assigned, jobs);
     let collapsed_issue_ids = HashSet::new();
-    let mut lines = build_issue_lines_with_collapsed(&assigned, jobs, false, &collapsed_issue_ids);
+    let mut lines = build_issue_lines_with_collapsed(&nodes, false, &collapsed_issue_ids);
     for row in &mut lines.rows {
         row.depth = 0;
     }
@@ -3003,24 +3026,22 @@ fn build_issue_lines(
     jobs: &[JobDetails],
     exclude_inactive_roots: bool,
 ) -> IssueLines {
+    let nodes = build_issue_nodes(issues, jobs);
     let collapsed_issue_ids = HashSet::new();
-    build_issue_lines_with_collapsed(issues, jobs, exclude_inactive_roots, &collapsed_issue_ids)
+    build_issue_lines_with_collapsed(&nodes, exclude_inactive_roots, &collapsed_issue_ids)
 }
 
 fn build_issue_lines_with_collapsed(
-    issues: &[IssueRecord],
-    jobs: &[JobDetails],
+    nodes: &HashMap<IssueId, IssueNode>,
     exclude_inactive_roots: bool,
     collapsed_issue_ids: &HashSet<IssueId>,
 ) -> IssueLines {
-    let nodes = build_issue_nodes(issues, jobs);
-
     let mut roots: Vec<IssueId> = nodes
         .iter()
         .filter(|(_, node)| node.parent.is_none())
         .map(|(id, _)| id.clone())
         .collect();
-    roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
+    roots.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
 
     let mut rows = Vec::new();
     let mut visited: HashSet<IssueId> = HashSet::new();
@@ -3040,7 +3061,7 @@ fn build_issue_lines_with_collapsed(
             0,
             &mut rows,
             &mut visited,
-            &nodes,
+            nodes,
             collapsed_issue_ids,
         );
     }
@@ -3140,16 +3161,15 @@ fn collect_issue_ids(
 
 #[cfg(test)]
 fn build_completed_issue_lines(issues: &[IssueRecord], jobs: &[JobDetails]) -> CompletedIssueLines {
+    let nodes = build_issue_nodes(issues, jobs);
     let collapsed_issue_ids = HashSet::new();
-    build_completed_issue_lines_with_collapsed(issues, jobs, &collapsed_issue_ids)
+    build_completed_issue_lines_with_collapsed(&nodes, &collapsed_issue_ids)
 }
 
 fn build_completed_issue_lines_with_collapsed(
-    issues: &[IssueRecord],
-    jobs: &[JobDetails],
+    nodes: &HashMap<IssueId, IssueNode>,
     collapsed_issue_ids: &HashSet<IssueId>,
 ) -> CompletedIssueLines {
-    let nodes = build_issue_nodes(issues, jobs);
     if nodes.is_empty() {
         return CompletedIssueLines::default();
     }
@@ -3159,24 +3179,24 @@ fn build_completed_issue_lines_with_collapsed(
         .filter(|(_, node)| node.parent.is_none())
         .map(|(id, _)| id.clone())
         .collect();
-    roots.sort_by(|a, b| compare_issue_nodes(&nodes, a, b));
+    roots.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
 
     let mut completed_roots = Vec::new();
     let mut completed_descendants = HashMap::new();
 
     for root in roots {
-        if !is_completed_tree(&root, &nodes, &mut HashSet::new()) {
+        if !is_completed_tree(&root, nodes, &mut HashSet::new()) {
             continue;
         }
 
         let mut lines = Vec::new();
         let mut visited = HashSet::new();
-        collect_issue_lines(
+        append_issue(
             &root,
             0,
             &mut lines,
             &mut visited,
-            &nodes,
+            nodes,
             collapsed_issue_ids,
         );
         if let Some(root_line) = lines.first().cloned() {
@@ -3235,49 +3255,6 @@ fn append_issue(
     children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
     for child in children {
         append_issue(&child, depth + 1, rows, visited, nodes, collapsed_issue_ids);
-    }
-}
-
-fn collect_issue_lines(
-    id: &IssueId,
-    depth: usize,
-    rows: &mut Vec<IssueLine>,
-    visited: &mut HashSet<IssueId>,
-    nodes: &HashMap<IssueId, IssueNode>,
-    collapsed_issue_ids: &HashSet<IssueId>,
-) {
-    if !visited.insert(id.clone()) {
-        return;
-    }
-
-    let Some(node) = nodes.get(id) else {
-        return;
-    };
-
-    let readiness = issue_readiness(node, nodes);
-    let issue_summary = issue_summary(&node.record.description, &node.record.progress);
-    rows.push(IssueLine {
-        id: node.record.id.to_string(),
-        summary: issue_summary.summary,
-        progress: issue_summary.progress,
-        status: node.record.status,
-        readiness,
-        creator: node.record.creator.clone(),
-        assignee: node.record.assignee.clone(),
-        task: node.task.clone(),
-        depth,
-        has_children: !node.children.is_empty(),
-        collapsed: collapsed_issue_ids.contains(id),
-    });
-
-    if collapsed_issue_ids.contains(id) {
-        return;
-    }
-
-    let mut children = node.children.clone();
-    children.sort_by(|a, b| compare_issue_nodes(nodes, a, b));
-    for child in children {
-        collect_issue_lines(&child, depth + 1, rows, visited, nodes, collapsed_issue_ids);
     }
 }
 
@@ -3887,7 +3864,8 @@ mod tests {
         let mut collapsed_issue_ids = HashSet::new();
         collapsed_issue_ids.insert(issue_id("i-root"));
 
-        let lines = build_issue_lines_with_collapsed(&issues, &[], false, &collapsed_issue_ids);
+        let nodes = build_issue_nodes(&issues, &[]);
+        let lines = build_issue_lines_with_collapsed(&nodes, false, &collapsed_issue_ids);
 
         assert_eq!(lines.rows.len(), 1);
         assert_eq!(lines.rows[0].id, issue_id("i-root").to_string());
@@ -4900,7 +4878,8 @@ mod tests {
         let mut collapsed = HashSet::new();
         collapsed.insert(issue_id("i-root"));
 
-        let lines = build_issue_lines_with_collapsed(&issues, &[], false, &collapsed);
+        let nodes = build_issue_nodes(&issues, &[]);
+        let lines = build_issue_lines_with_collapsed(&nodes, false, &collapsed);
         let rendered = issue_line_lines(&lines.rows, "No issues found", true, "alice", None, false);
 
         assert!(line_text(&rendered[0]).starts_with("|+ "));
