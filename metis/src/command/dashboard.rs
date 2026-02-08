@@ -1645,7 +1645,12 @@ fn completed_issue_rows(completed_issue_lines: &CompletedIssueLines) -> Vec<Issu
     let mut rows = Vec::new();
     for root in &completed_issue_lines.roots {
         rows.push(root.clone());
-        if let Some(descendants) = completed_issue_descendants(completed_issue_lines, &root.id) {
+        if let Some(descendants) = root
+            .id
+            .parse::<IssueId>()
+            .ok()
+            .and_then(|id| completed_issue_descendants(completed_issue_lines, &id))
+        {
             rows.extend(descendants.iter().cloned());
         }
     }
@@ -1999,18 +2004,9 @@ fn scroll_selected_issue_into_view(state: &mut DashboardState) -> bool {
 
 fn completed_issue_descendants<'a>(
     completed_issue_lines: &'a CompletedIssueLines,
-    root_id: &str,
+    root_id: &IssueId,
 ) -> Option<&'a Vec<IssueLine>> {
-    completed_issue_lines
-        .descendants
-        .iter()
-        .find_map(|(id, descendants)| {
-            if id.to_string() == root_id {
-                Some(descendants)
-            } else {
-                None
-            }
-        })
+    completed_issue_lines.descendants.get(root_id)
 }
 
 fn issue_line_lines(
