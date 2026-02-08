@@ -48,7 +48,6 @@ use panel::{keybinding_line_from_labels, wrapped_content_len, Panel, PanelEvent,
 const JOB_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const RECORD_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MESSAGE_WIDTH: usize = 90;
-const ISSUE_ID_VAR: &str = "METIS_ISSUE_ID";
 const USER_ISSUES_PANEL_CONTENT_HEIGHT: u16 = 5;
 const USER_ISSUES_PANEL_HEIGHT: u16 = USER_ISSUES_PANEL_CONTENT_HEIGHT + 2;
 const ISSUE_CREATOR_PANEL_INNER_HEIGHT: u16 = 10;
@@ -2679,13 +2678,9 @@ async fn refresh_jobs(
     let response = client.list_jobs(&SearchJobsQuery::default()).await?;
     let now = Utc::now();
 
-    let previous_jobs = state.jobs.clone();
     let mut jobs = Vec::new();
     for summary in response.jobs {
-        let issue_id = match cached_issue_id(&previous_jobs, &summary.id) {
-            Some(id) => id,
-            None => fetch_issue_id(client, &summary.id).await?,
-        };
+        let issue_id = summary.task.spawned_from.clone();
         let display = summarize_job(summary, now);
         jobs.push(JobDetails { display, issue_id });
     }
@@ -2717,32 +2712,6 @@ async fn refresh_records(
 
     let derived_changed = update_views(state);
     Ok(issues_changed || repositories_changed || derived_changed)
-}
-
-fn cached_issue_id(previous_jobs: &[JobDetails], job_id: &TaskId) -> Option<Option<IssueId>> {
-    previous_jobs
-        .iter()
-        .find(|job| job.display.id == *job_id)
-        .map(|job| job.issue_id.clone())
-}
-
-async fn fetch_issue_id(
-    client: &dyn MetisClientInterface,
-    job_id: &TaskId,
-) -> Result<Option<IssueId>> {
-    let context = client
-        .get_job_context(job_id)
-        .await
-        .with_context(|| format!("failed to fetch job context for '{job_id}'"))?;
-
-    let issue_id = context
-        .variables
-        .get(ISSUE_ID_VAR)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<IssueId>().ok());
-
-    Ok(issue_id)
 }
 
 async fn fetch_issues(client: &dyn MetisClientInterface) -> Result<Vec<IssueRecord>> {
