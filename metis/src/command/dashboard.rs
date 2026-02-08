@@ -2753,13 +2753,6 @@ fn issue_to_record(record: ApiIssueRecord) -> Option<IssueRecord> {
 }
 
 fn update_views(state: &mut DashboardState) -> bool {
-    let previous_issue_lines = state.issue_lines.clone();
-    let previous_user_unowned_issue_lines = state.user_unowned_issue_lines.clone();
-    let previous_completed_issue_lines = state.completed_issue_lines.clone();
-    let previous_assignee_options = state.issue_draft.assignees.clone();
-    let previous_assignee_index = state.issue_draft.assignee_index;
-    let previous_repo_options = state.issue_draft.repos.clone();
-    let previous_repo_index = state.issue_draft.repo_index;
     let issue_details_open = state.issue_details.is_open;
 
     let known_issue_ids: HashSet<IssueId> =
@@ -2775,38 +2768,37 @@ fn update_views(state: &mut DashboardState) -> bool {
     );
     seed_completed_issue_collapses(state, &filtered_issues);
 
-    let issue_lines = build_issue_lines_with_collapsed(
+    let new_issue_lines = build_issue_lines_with_collapsed(
         &filtered_issues,
         &state.jobs,
         true,
         &state.collapsed_issue_ids,
     );
-    let user_unowned_issue_lines =
+    let new_user_unowned_issue_lines =
         build_user_unowned_issue_lines(state.username.as_str(), &state.issues, &state.jobs);
-    let completed_issue_lines = build_completed_issue_lines_with_collapsed(
+    let new_completed_issue_lines = build_completed_issue_lines_with_collapsed(
         &filtered_issues,
         &state.jobs,
         &state.collapsed_issue_ids,
     );
-    update_assignee_options(state);
-    update_repo_options(state);
 
-    state.issue_lines = issue_lines;
-    state.user_unowned_issue_lines = user_unowned_issue_lines;
-    state.completed_issue_lines = completed_issue_lines;
+    let mut changed = new_issue_lines != state.issue_lines
+        || new_user_unowned_issue_lines != state.user_unowned_issue_lines
+        || new_completed_issue_lines != state.completed_issue_lines;
+
+    state.issue_lines = new_issue_lines;
+    state.user_unowned_issue_lines = new_user_unowned_issue_lines;
+    state.completed_issue_lines = new_completed_issue_lines;
+
+    changed |= update_assignee_options(state);
+    changed |= update_repo_options(state);
+
     clamp_issue_selections(state);
     update_panel_focus(state);
     clamp_issue_scrolls(state);
     reconcile_issue_details(state);
 
-    previous_issue_lines != state.issue_lines
-        || previous_user_unowned_issue_lines != state.user_unowned_issue_lines
-        || previous_completed_issue_lines != state.completed_issue_lines
-        || previous_assignee_options != state.issue_draft.assignees
-        || previous_assignee_index != state.issue_draft.assignee_index
-        || previous_repo_options != state.issue_draft.repos
-        || previous_repo_index != state.issue_draft.repo_index
-        || issue_details_open != state.issue_details.is_open
+    changed || issue_details_open != state.issue_details.is_open
 }
 
 fn reconcile_issue_details(state: &mut DashboardState) {
@@ -2899,16 +2891,17 @@ fn clamp_issue_selections(state: &mut DashboardState) {
     }
 }
 
-fn update_assignee_options(state: &mut DashboardState) {
+fn update_assignee_options(state: &mut DashboardState) -> bool {
     let fallback = "pm";
     let preferred = state
         .issue_draft
         .selected_assignee()
         .unwrap_or(fallback)
         .to_string();
-    let options = build_assignee_options(&state.issues);
-    if options != state.issue_draft.assignees {
-        state.issue_draft.assignees = options;
+    let new_options = build_assignee_options(&state.issues);
+    let options_changed = new_options != state.issue_draft.assignees;
+    if options_changed {
+        state.issue_draft.assignees = new_options;
     }
 
     let next_index = state
@@ -2924,7 +2917,9 @@ fn update_assignee_options(state: &mut DashboardState) {
                 .position(|assignee| assignee == fallback)
         })
         .unwrap_or(0);
+    let index_changed = next_index != state.issue_draft.assignee_index;
     state.issue_draft.assignee_index = next_index;
+    options_changed || index_changed
 }
 
 fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
@@ -2943,11 +2938,12 @@ fn build_assignee_options(issues: &[IssueRecord]) -> Vec<String> {
     options.into_iter().collect()
 }
 
-fn update_repo_options(state: &mut DashboardState) {
+fn update_repo_options(state: &mut DashboardState) -> bool {
     let preferred = state.issue_draft.selected_repo().cloned();
-    let options = build_repo_options(&state.repositories);
-    if options != state.issue_draft.repos {
-        state.issue_draft.repos = options;
+    let new_options = build_repo_options(&state.repositories);
+    let options_changed = new_options != state.issue_draft.repos;
+    if options_changed {
+        state.issue_draft.repos = new_options;
     }
 
     let fallback_index = if state.issue_draft.repos.is_empty() {
@@ -2965,7 +2961,9 @@ fn update_repo_options(state: &mut DashboardState) {
         })
         .or(fallback_index)
         .unwrap_or(0);
+    let index_changed = next_index != state.issue_draft.repo_index;
     state.issue_draft.repo_index = next_index;
+    options_changed || index_changed
 }
 
 fn build_repo_options(repositories: &[RepositoryRecord]) -> Vec<RepoName> {
