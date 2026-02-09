@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -89,6 +89,7 @@ pub async fn run(
         if let (Some(build_cache), Some(service_repo_name)) =
             (build_cache.as_ref(), service_repo_name.as_ref())
         {
+            let cache_apply_start = Instant::now();
             match build_cache_client(build_cache) {
                 Ok(client) => match client
                     .apply_nearest_cache(
@@ -99,12 +100,31 @@ pub async fn run(
                     .await
                 {
                     Ok(Some(key)) => {
-                        log_status(format!("Applied build cache entry '{}'.", key.object_key()))
+                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Build cache download/apply completed in {elapsed:.2}s (applied entry '{}').",
+                            key.object_key()
+                        ))
                     }
-                    Ok(None) => log_status("No build cache entry found to apply.".to_string()),
-                    Err(err) => log_status(format!("Skipping build cache apply: {err}")),
+                    Ok(None) => {
+                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Build cache download/apply completed in {elapsed:.2}s (no entry found)."
+                        ))
+                    }
+                    Err(err) => {
+                        let elapsed = cache_apply_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Build cache download/apply completed in {elapsed:.2}s (skipped: {err})."
+                        ))
+                    }
                 },
-                Err(err) => log_status(format!("Skipping build cache apply: {err}")),
+                Err(err) => {
+                    let elapsed = cache_apply_start.elapsed().as_secs_f64();
+                    log_status(format!(
+                        "Build cache download/apply completed in {elapsed:.2}s (skipped: {err})."
+                    ))
+                }
             }
         }
     }
@@ -154,6 +174,7 @@ pub async fn run(
         if let (Some(build_cache), Some(service_repo_name)) =
             (build_cache.as_ref(), service_repo_name.as_ref())
         {
+            let cache_upload_start = Instant::now();
             match build_cache_client(build_cache) {
                 Ok(client) => match resolve_head_oid(&dest) {
                     Ok(Some(head_oid)) => {
@@ -174,8 +195,9 @@ pub async fn run(
                                 .await
                             {
                                 Ok(key) => {
+                                    let elapsed = cache_upload_start.elapsed().as_secs_f64();
                                     log_status(format!(
-                                        "Uploaded build cache entry '{}'.",
+                                        "Build cache create/upload completed in {elapsed:.2}s (uploaded entry '{}').",
                                         key.object_key()
                                     ));
                                     last_error = None;
@@ -194,17 +216,31 @@ pub async fn run(
                             }
                         }
                         if let Some(err) = last_error {
+                            let elapsed = cache_upload_start.elapsed().as_secs_f64();
                             log_status(format!(
-                                "Skipping build cache upload after {MAX_ATTEMPTS} attempts: {err}"
+                                "Build cache create/upload completed in {elapsed:.2}s (skipped after {MAX_ATTEMPTS} attempts: {err})."
                             ));
                         }
                     }
-                    Ok(None) => log_status("Skipping build cache upload; HEAD is unavailable."),
-                    Err(err) => log_status(format!(
-                        "Skipping build cache upload; failed to resolve HEAD: {err}"
-                    )),
+                    Ok(None) => {
+                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Build cache create/upload completed in {elapsed:.2}s (skipped: HEAD is unavailable)."
+                        ))
+                    }
+                    Err(err) => {
+                        let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                        log_status(format!(
+                            "Build cache create/upload completed in {elapsed:.2}s (skipped: failed to resolve HEAD: {err})."
+                        ))
+                    }
                 },
-                Err(err) => log_status(format!("Skipping build cache upload: {err}")),
+                Err(err) => {
+                    let elapsed = cache_upload_start.elapsed().as_secs_f64();
+                    log_status(format!(
+                        "Build cache create/upload completed in {elapsed:.2}s (skipped: {err})."
+                    ))
+                }
             }
         }
     }
