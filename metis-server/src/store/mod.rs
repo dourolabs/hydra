@@ -17,7 +17,7 @@ use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 mod issue_graph;
 mod memory_store;
@@ -433,6 +433,15 @@ pub trait Store: Send + Sync {
     /// # Returns
     /// The TaskStatusLog if found, or an error if not found
     async fn get_status_log(&self, id: &TaskId) -> Result<TaskStatusLog, StoreError>;
+
+    /// Gets the status logs for multiple tasks in a single batch operation.
+    ///
+    /// Returns a map from TaskId to TaskStatusLog. Tasks that are not found
+    /// are silently omitted from the result.
+    async fn get_status_logs(
+        &self,
+        ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError>;
 
     /// Adds a new actor to the store.
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError>;

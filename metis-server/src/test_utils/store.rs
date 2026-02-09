@@ -19,7 +19,7 @@ use metis_common::{
     DocumentId, IssueId, PatchId, RepoName, TaskId, Versioned,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Store implementation that always fails; useful for exercising error paths in tests.
 #[derive(Default)]
@@ -245,6 +245,13 @@ impl Store for FailingStore {
     }
 
     async fn get_status_log(&self, _id: &TaskId) -> Result<TaskStatusLog, StoreError> {
+        fail()
+    }
+
+    async fn get_status_logs(
+        &self,
+        _ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
         fail()
     }
 

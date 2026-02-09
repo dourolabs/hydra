@@ -1000,6 +1000,21 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
+    async fn get_status_logs(
+        &self,
+        ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        let mut result = HashMap::new();
+        for id in ids {
+            if let Some(entry) = self.tasks.get(id) {
+                if let Some(log) = super::task_status_log_from_versions(entry.value()) {
+                    result.insert(id.clone(), log);
+                }
+            }
+        }
+        Ok(result)
+    }
+
     async fn add_actor(&self, actor: Actor) -> Result<(), StoreError> {
         let name = actor.name();
         if self.actors.contains_key(&name) {
@@ -3449,6 +3464,72 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(tasks, vec![task_id]);
+    }
+
+    #[tokio::test]
+    async fn batch_get_status_logs_returns_logs_for_multiple_tasks() {
+        let store = Arc::new(MemoryStore::new());
+        let state = test_state_with_store(store.clone()).state;
+
+        // Create three tasks and transition them to different states
+        let task1_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        state.transition_task_to_pending(&task1_id).await.unwrap();
+        state.transition_task_to_running(&task1_id).await.unwrap();
+
+        let task2_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        state.transition_task_to_pending(&task2_id).await.unwrap();
+        state.transition_task_to_running(&task2_id).await.unwrap();
+        state
+            .transition_task_to_completion(&task2_id, Ok(()), Some("done".to_string()))
+            .await
+            .unwrap();
+
+        let task3_id = store.add_task(spawn_task(), Utc::now()).await.unwrap();
+        state.transition_task_to_pending(&task3_id).await.unwrap();
+        state.transition_task_to_running(&task3_id).await.unwrap();
+        state
+            .transition_task_to_completion(
+                &task3_id,
+                Err(TaskError::JobEngineError {
+                    reason: "test failure".to_string(),
+                }),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Batch fetch all status logs
+        let logs = store
+            .get_status_logs(&[task1_id.clone(), task2_id.clone(), task3_id.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(logs.len(), 3);
+
+        // Task 1: running
+        let log1 = logs.get(&task1_id).unwrap();
+        assert_eq!(log1.current_status(), Status::Running);
+
+        // Task 2: complete
+        let log2 = logs.get(&task2_id).unwrap();
+        assert_eq!(log2.current_status(), Status::Complete);
+
+        // Task 3: failed
+        let log3 = logs.get(&task3_id).unwrap();
+        assert_eq!(log3.current_status(), Status::Failed);
+
+        // Empty batch returns empty map
+        let empty = store.get_status_logs(&[]).await.unwrap();
+        assert!(empty.is_empty());
+
+        // Non-existent task is silently omitted
+        let missing_id = TaskId::new();
+        let partial = store
+            .get_status_logs(&[task1_id.clone(), missing_id])
+            .await
+            .unwrap();
+        assert_eq!(partial.len(), 1);
+        assert!(partial.contains_key(&task1_id));
     }
 
     #[tokio::test]

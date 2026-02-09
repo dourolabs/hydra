@@ -31,7 +31,7 @@ use metis_common::{
 };
 use octocrab::Octocrab;
 use serde::Deserialize;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -611,6 +611,14 @@ impl AppState {
     pub async fn get_status_log(&self, task_id: &TaskId) -> Result<TaskStatusLog, StoreError> {
         let store = self.store.as_ref();
         store.get_status_log(task_id).await
+    }
+
+    pub async fn get_status_logs(
+        &self,
+        task_ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        let store = self.store.as_ref();
+        store.get_status_logs(task_ids).await
     }
 
     pub async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {

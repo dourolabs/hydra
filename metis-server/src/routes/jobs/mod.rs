@@ -71,22 +71,28 @@ pub async fn list_jobs(
         ApiError::internal(format!("Failed to list tasks: {err}"))
     })?;
 
-    // Collect all summaries with their reference times for sorting
+    // Batch-fetch all status logs in a single query instead of N individual queries
+    let task_ids: Vec<TaskId> = tasks.iter().map(|(id, _)| id.clone()).collect();
+    let status_logs = state.get_status_logs(&task_ids).await.map_err(|err| {
+        error!(error = %err, "failed to batch-fetch status logs");
+        ApiError::internal(format!("Failed to fetch status logs: {err}"))
+    })?;
+
+    // Build job records using already-fetched task data and batch status logs
     let mut summaries_with_times: Vec<(v1::jobs::JobRecord, Option<DateTime<Utc>>)> = Vec::new();
-    for (task_id, _task) in tasks {
-        match job_record_with_time_from_state(&state, &task_id).await {
-            Ok(summary) => {
-                summaries_with_times.push(summary);
-            }
-            Err(err) => {
-                error!(
-                    job_id = %task_id,
-                    error = %err,
-                    "failed to build summary while listing jobs"
-                );
-                continue;
-            }
-        }
+    for (task_id, versioned_task) in tasks {
+        let Some(status_log) = status_logs.get(&task_id) else {
+            error!(
+                job_id = %task_id,
+                "status log not found while listing jobs"
+            );
+            continue;
+        };
+        summaries_with_times.push(job_record_with_time(
+            &task_id,
+            versioned_task.item,
+            status_log.clone(),
+        ));
     }
 
     // Sort by reference time, most recent first
