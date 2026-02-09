@@ -646,6 +646,52 @@ impl AppState {
         store.update_user(user).await.map(|user| user.item)
     }
 
+    /// Resolve the GitHub branch name and actor for auto-creating a PR from a patch.
+    ///
+    /// For task-created patches: traces `created_by` (TaskId) → Task.spawned_from (IssueId) →
+    /// uses `metis/{issue_id}/head` as the branch, and resolves the issue creator's actor.
+    /// For human-created patches (no `created_by`): uses the authenticated actor directly.
+    async fn resolve_github_branch_and_actor_for_patch(
+        &self,
+        patch: &Patch,
+    ) -> Result<(String, Actor), String> {
+        let store = self.store.as_ref();
+
+        match patch.created_by {
+            Some(ref task_id) => {
+                let task = store
+                    .get_task(task_id, false)
+                    .await
+                    .map_err(|e| format!("failed to load task '{task_id}': {e}"))?
+                    .item;
+
+                let issue_id = task
+                    .spawned_from
+                    .ok_or_else(|| format!("task '{task_id}' has no spawned_from issue"))?;
+
+                let branch = format!("metis/{issue_id}/head");
+
+                let issue = store
+                    .get_issue(&issue_id, false)
+                    .await
+                    .map_err(|e| format!("failed to load issue '{issue_id}': {e}"))?
+                    .item;
+
+                let actor_name = format!("u-{}", issue.creator);
+                let actor = store
+                    .get_actor(&actor_name)
+                    .await
+                    .map_err(|e| format!("failed to load actor '{actor_name}': {e}"))?
+                    .item;
+
+                Ok((branch, actor))
+            }
+            None => {
+                Err("cannot determine GitHub branch for patch without created_by task".to_string())
+            }
+        }
+    }
+
     async fn sync_patch_with_github(
         &self,
         actor: &Actor,
@@ -1476,6 +1522,28 @@ impl AppState {
                     let actor = actor.ok_or(UpsertPatchError::GithubActorMissing)?;
                     self.sync_patch_with_github(actor, &mut patch, &sync_github_branch)
                         .await?;
+                } else if !patch.is_automatic_backup && patch.github.is_none() {
+                    // Auto-create a GitHub PR for non-backup patches that don't
+                    // already have sync_github_branch set.
+                    match self.resolve_github_branch_and_actor_for_patch(&patch).await {
+                        Ok((branch, resolved_actor)) => {
+                            if let Err(err) = self
+                                .sync_patch_with_github(&resolved_actor, &mut patch, &branch)
+                                .await
+                            {
+                                warn!(
+                                    error = %err,
+                                    "auto GitHub PR creation failed; patch will be created without a PR"
+                                );
+                            }
+                        }
+                        Err(reason) => {
+                            info!(
+                                reason = %reason,
+                                "skipping auto GitHub PR creation"
+                            );
+                        }
+                    }
                 }
 
                 store
@@ -3461,5 +3529,362 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, UpsertIssueError::MissingCreator));
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_auto_creates_github_pr_for_task_created_patch() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let username = Username::from("octo");
+        let user = User::new(
+            username.clone(),
+            42,
+            "token-auto".to_string(),
+            "refresh-auto".to_string(),
+        );
+        handles.store.as_ref().add_user(user).await?;
+        let (actor, _auth_token) = Actor::new_for_user(username.clone());
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+
+        let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
+
+        // Create an issue owned by the user.
+        let issue = Issue::new(
+            IssueType::Task,
+            "test issue".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::InProgress,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let issue_id = handles.store.as_ref().add_issue(issue).await?;
+        let expected_branch = format!("metis/{issue_id}/head");
+
+        // Set up GitHub mocks after we know the issue_id.
+        let user_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+        let expected_branch_clone = expected_branch.clone();
+        let create_mock = github_server.mock(|when, then| {
+            when.method(POST).path("/repos/octo/repo/pulls");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_pull_request_response(
+                    101,
+                    &expected_branch_clone,
+                    "main",
+                    "https://example.com/pr/101",
+                ));
+        });
+
+        // Create a task linked to the issue.
+        let task_id = TaskId::new();
+        let mut task = task_for_issue(&issue_id);
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+
+        // Create a non-backup patch WITHOUT sync_github_branch.
+        let patch = Patch::new(
+            "Auto PR test".to_string(),
+            "Test description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into());
+
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be auto-created");
+        assert_eq!(github.number, 101);
+        assert_eq!(github.owner, "octo");
+        assert_eq!(github.repo, "repo");
+        assert_eq!(github.head_ref.as_deref(), Some(expected_branch.as_str()));
+        assert_eq!(github.base_ref.as_deref(), Some("main"));
+        assert_eq!(github.url.as_deref(), Some("https://example.com/pr/101"));
+
+        user_mock.assert_async().await;
+        create_mock.assert_async().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_skips_auto_pr_for_backup_patches() -> anyhow::Result<()> {
+        let handles = test_state_with_github_api_base_url("https://unused.example.com".to_string());
+        let username = Username::from("octo");
+        let user = User::new(
+            username.clone(),
+            42,
+            "token-backup".to_string(),
+            "refresh-backup".to_string(),
+        );
+        handles.store.as_ref().add_user(user).await?;
+        let (actor, _auth_token) = Actor::new_for_user(username.clone());
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        // Create an issue and task.
+        let issue = Issue::new(
+            IssueType::Task,
+            "test issue".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::InProgress,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let issue_id = handles.store.as_ref().add_issue(issue).await?;
+
+        let task_id = TaskId::new();
+        let mut task = task_for_issue(&issue_id);
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+
+        // Create a backup patch WITHOUT sync_github_branch.
+        let patch = Patch::new(
+            "Backup patch".to_string(),
+            "Backup description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            true, // is_automatic_backup = true
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into());
+
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+
+        // Verify no GitHub PR was created.
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        assert!(
+            stored_patch.item.github.is_none(),
+            "backup patches should not auto-create GitHub PRs"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_auto_pr_graceful_failure_on_missing_github_token() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        // Return 401 for /user to simulate an invalid/missing GitHub token.
+        let _user_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(401)
+                .header("content-type", "application/json")
+                .json_body(json!({"message": "Bad credentials"}));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let username = Username::from("octo");
+        let user = User::new(
+            username.clone(),
+            42,
+            "expired-token".to_string(),
+            "bad-refresh".to_string(),
+        );
+        handles.store.as_ref().add_user(user).await?;
+        let (actor, _auth_token) = Actor::new_for_user(username.clone());
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+
+        let repo_name = RepoName::new("octo", "repo")?;
+
+        // Create issue and task.
+        let issue = Issue::new(
+            IssueType::Task,
+            "test issue".to_string(),
+            username.clone(),
+            String::new(),
+            IssueStatus::InProgress,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let issue_id = handles.store.as_ref().add_issue(issue).await?;
+
+        let task_id = TaskId::new();
+        let mut task = task_for_issue(&issue_id);
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+
+        // Create a non-backup patch WITHOUT sync_github_branch.
+        let patch = Patch::new(
+            "PR fail test".to_string(),
+            "Test description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into());
+
+        // The patch should be created successfully even though GitHub PR creation fails.
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        // The patch was stored but without GitHub metadata since PR creation failed.
+        assert!(
+            stored_patch.item.github.is_none(),
+            "patch should be created without GitHub PR when token is invalid"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn upsert_patch_sync_github_branch_overrides_auto_pr() -> anyhow::Result<()> {
+        let github_server = MockServer::start_async().await;
+        let user_mock = github_server.mock(|when, then| {
+            when.method(GET).path("/user");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_user_response("octo", 42));
+        });
+        let create_mock = github_server.mock(|when, then| {
+            when.method(POST)
+                .path("/repos/octo/repo/pulls")
+                .json_body_partial(r#"{"head":"custom-branch"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(github_pull_request_response(
+                    200,
+                    "custom-branch",
+                    "main",
+                    "https://example.com/pr/200",
+                ));
+        });
+
+        let handles = test_state_with_github_api_base_url(github_server.base_url());
+        let username = Username::from("octo");
+        let user = User::new(
+            username.clone(),
+            42,
+            "token-override".to_string(),
+            "refresh-override".to_string(),
+        );
+        handles.store.as_ref().add_user(user).await?;
+        let (actor, _auth_token) = Actor::new_for_user(username.clone());
+        handles.store.as_ref().add_actor(actor.clone()).await?;
+
+        let repo_name = RepoName::new("octo", "repo")?;
+        add_repository(
+            &handles.state,
+            repo_name.clone(),
+            crate::app::Repository::new(
+                "https://example.com/repo.git".to_string(),
+                Some("main".to_string()),
+                None,
+            ),
+        )
+        .await?;
+
+        let task_id = TaskId::try_from("t-override".to_string())?;
+        let mut task = sample_task();
+        let created_at = Utc::now();
+        handles
+            .store
+            .as_ref()
+            .add_task_with_id(task_id.clone(), task.clone(), created_at)
+            .await?;
+        task.status = Status::Running;
+        handles.store.as_ref().update_task(&task_id, task).await?;
+
+        // Create a non-backup patch WITH sync_github_branch set explicitly.
+        let patch = Patch::new(
+            "Override test".to_string(),
+            "Override description".to_string(),
+            "diff".to_string(),
+            PatchStatus::Open,
+            false,
+            Some(task_id),
+            Vec::new(),
+            repo_name,
+            None,
+        );
+        let request = api::patches::UpsertPatchRequest::new(patch.into())
+            .with_sync_github_branch("custom-branch");
+
+        let patch_id = handles
+            .state
+            .upsert_patch(Some(&actor), None, request)
+            .await?;
+
+        let stored_patch = handles.store.as_ref().get_patch(&patch_id, false).await?;
+        let github = stored_patch
+            .item
+            .github
+            .expect("github metadata should be created via explicit sync_github_branch");
+        // Verify the explicit branch was used, not the auto-resolved one.
+        assert_eq!(github.head_ref.as_deref(), Some("custom-branch"));
+        assert_eq!(github.number, 200);
+
+        user_mock.assert_async().await;
+        create_mock.assert_async().await;
+
+        Ok(())
     }
 }
