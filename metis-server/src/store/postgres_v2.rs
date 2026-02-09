@@ -757,6 +757,18 @@ struct TaskRow {
     updated_at: DateTime<Utc>,
 }
 
+/// Lightweight row for get_status_logs — only the columns needed for status log construction.
+#[derive(sqlx::FromRow)]
+struct TaskStatusLogRow {
+    id: String,
+    #[allow(dead_code)]
+    version_number: i64,
+    status: String,
+    last_message: Option<String>,
+    error: Option<Value>,
+    created_at: DateTime<Utc>,
+}
+
 #[derive(sqlx::FromRow)]
 struct DocumentRow {
     id: String,
@@ -1887,38 +1899,57 @@ impl Store for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
+            "SELECT id, version_number, status, last_message, error, created_at
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
         );
-        let rows = sqlx::query_as::<_, TaskRow>(&query)
+        let rows = sqlx::query_as::<_, TaskStatusLogRow>(&query)
             .bind(&id_strings)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
-        let mut grouped: HashMap<TaskId, Vec<Versioned<Task>>> = HashMap::new();
+        let mut grouped: HashMap<TaskId, Vec<super::TaskStatusRow>> = HashMap::new();
         for row in rows {
-            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(format!(
-                    "invalid version number stored for task '{}'",
-                    row.id
-                ))
-            })?;
-            let task = self.row_to_task(&row)?;
+            let status = match row.status.as_str() {
+                "created" => Status::Created,
+                "pending" => Status::Pending,
+                "running" => Status::Running,
+                "complete" => Status::Complete,
+                "failed" => Status::Failed,
+                other => {
+                    return Err(StoreError::Internal(format!(
+                        "invalid task status: {other}"
+                    )));
+                }
+            };
+            let error: Option<TaskError> = row
+                .error
+                .as_ref()
+                .map(|e| {
+                    serde_json::from_value(e.clone()).map_err(|err| {
+                        StoreError::Internal(format!("failed to deserialize error: {err}"))
+                    })
+                })
+                .transpose()?;
             let task_id = row.id.parse::<TaskId>().map_err(|err| {
                 StoreError::Internal(format!("invalid task id stored in database: {err}"))
             })?;
             grouped
                 .entry(task_id)
                 .or_default()
-                .push(Versioned::new(task, version, row.created_at));
+                .push(super::TaskStatusRow {
+                    status,
+                    last_message: row.last_message,
+                    error,
+                    created_at: row.created_at,
+                });
         }
 
         let mut result = HashMap::new();
-        for (task_id, versions) in grouped {
-            if let Some(log) = super::task_status_log_from_versions(&versions) {
+        for (task_id, rows) in grouped {
+            if let Some(log) = super::task_status_log_from_status_rows(&rows) {
                 result.insert(task_id, log);
             }
         }

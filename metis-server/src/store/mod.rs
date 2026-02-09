@@ -81,6 +81,54 @@ pub(crate) fn task_status_log_from_versions(versions: &[Versioned<Task>]) -> Opt
     Some(log)
 }
 
+/// Lightweight row containing only the columns needed for status log construction.
+pub(crate) struct TaskStatusRow {
+    pub status: Status,
+    pub last_message: Option<String>,
+    pub error: Option<TaskError>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Builds a `TaskStatusLog` from lightweight status rows (ordered by version_number).
+pub(crate) fn task_status_log_from_status_rows(rows: &[TaskStatusRow]) -> Option<TaskStatusLog> {
+    let (first, rest) = rows.split_first()?;
+    let mut log = TaskStatusLog::new(first.status, first.created_at);
+    let mut last_status = first.status;
+
+    for row in rest {
+        if row.status == last_status {
+            continue;
+        }
+
+        let event = match row.status {
+            Status::Created => Event::Created {
+                at: row.created_at,
+                status: row.status,
+            },
+            Status::Pending => Event::Created {
+                at: row.created_at,
+                status: row.status,
+            },
+            Status::Running => Event::Started { at: row.created_at },
+            Status::Complete => Event::Completed {
+                at: row.created_at,
+                last_message: row.last_message.clone(),
+            },
+            Status::Failed => Event::Failed {
+                at: row.created_at,
+                error: row.error.clone().unwrap_or(TaskError::JobEngineError {
+                    reason: "missing failure reason".to_string(),
+                }),
+            },
+        };
+
+        log.events.push(event);
+        last_status = row.status;
+    }
+
+    Some(log)
+}
+
 /// Error type for store operations.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

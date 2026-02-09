@@ -7,7 +7,7 @@ use crate::{
         patches::Patch,
         users::{User, Username},
     },
-    store::{Status, Store, StoreError, Task, TaskStatusLog},
+    store::{Status, Store, StoreError, Task, TaskError, TaskStatusLog},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -1565,47 +1565,72 @@ impl Store for PostgresStore {
         }
 
         #[derive(sqlx::FromRow)]
-        struct VersionedPayloadWithId {
+        struct StatusLogRow {
             id: String,
             schema_version: i32,
-            payload: Value,
+            status: Option<String>,
+            last_message: Option<String>,
+            error: Option<Value>,
+            #[allow(dead_code)]
             version_number: i64,
             created_at: DateTime<Utc>,
         }
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, schema_version, payload, version_number, created_at FROM {TABLE_TASKS} WHERE id = ANY($1) ORDER BY id, version_number"
+            "SELECT id, schema_version, payload->>'status' AS status, payload->>'last_message' AS last_message, payload->'error' AS error, version_number, created_at FROM {TABLE_TASKS} WHERE id = ANY($1) ORDER BY id, version_number"
         );
-        let rows = sqlx::query_as::<_, VersionedPayloadWithId>(&query)
+        let rows = sqlx::query_as::<_, StatusLogRow>(&query)
             .bind(&id_strings)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
-        let mut grouped: HashMap<TaskId, Vec<Versioned<Task>>> = HashMap::new();
+        let mut grouped: HashMap<TaskId, Vec<super::TaskStatusRow>> = HashMap::new();
         for row in rows {
             ensure_schema_version("task", row.schema_version, TASK_SCHEMA_VERSION)?;
-            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(format!(
-                    "invalid version number stored for task '{}'",
-                    row.id
-                ))
+            let status_str = row.status.ok_or_else(|| {
+                StoreError::Internal(format!("missing status in task payload for '{}'", row.id))
             })?;
-            let item: Task =
-                serde_json::from_value(row.payload).map_err(map_serde_error("task"))?;
+            let status = match status_str.as_str() {
+                "created" => Status::Created,
+                "pending" => Status::Pending,
+                "running" => Status::Running,
+                "complete" => Status::Complete,
+                "failed" => Status::Failed,
+                other => {
+                    return Err(StoreError::Internal(format!(
+                        "invalid task status: {other}"
+                    )));
+                }
+            };
+            let error: Option<TaskError> = row
+                .error
+                .as_ref()
+                .filter(|v| !v.is_null())
+                .map(|e| {
+                    serde_json::from_value(e.clone()).map_err(|err| {
+                        StoreError::Internal(format!("failed to deserialize error: {err}"))
+                    })
+                })
+                .transpose()?;
             let task_id = row.id.parse::<TaskId>().map_err(|err| {
                 StoreError::Internal(format!("invalid task id stored in database: {err}"))
             })?;
             grouped
                 .entry(task_id)
                 .or_default()
-                .push(Versioned::new(item, version, row.created_at));
+                .push(super::TaskStatusRow {
+                    status,
+                    last_message: row.last_message,
+                    error,
+                    created_at: row.created_at,
+                });
         }
 
         let mut result = HashMap::new();
-        for (task_id, versions) in grouped {
-            if let Some(log) = super::task_status_log_from_versions(&versions) {
+        for (task_id, rows) in grouped {
+            if let Some(log) = super::task_status_log_from_status_rows(&rows) {
                 result.insert(task_id, log);
             }
         }
