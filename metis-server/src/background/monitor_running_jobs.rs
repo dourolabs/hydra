@@ -30,6 +30,9 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
         // Kill any jobs that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
+        // Clean up tasks whose spawned_from issue has been deleted
+        self.state.cleanup_orphaned_tasks().await;
+
         let mut active_ids = Vec::new();
         for status in [Status::Pending, Status::Running] {
             match self.state.list_tasks_with_status(status).await {
@@ -81,9 +84,13 @@ impl ScheduledWorker for MonitorRunningJobsWorker {
 mod tests {
     use super::*;
     use crate::{
-        domain::jobs::BundleSpec,
+        domain::{
+            issues::{Issue, IssueStatus, IssueType},
+            jobs::BundleSpec,
+            users::Username,
+        },
         job_engine::JobStatus,
-        store::{Status, Task},
+        store::{Status, StoreError, Task},
         test_utils::{
             FailingStore, MockJobEngine, test_state_handles, test_state_with_engine_handles,
             test_state_with_store,
@@ -160,5 +167,49 @@ mod tests {
         let outcome = worker.run_iteration().await;
 
         assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
+    }
+
+    #[tokio::test]
+    async fn run_iteration_cleans_up_orphaned_tasks() {
+        let engine = Arc::new(MockJobEngine::new());
+        let handles = test_state_with_engine_handles(engine.clone());
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "parent issue".to_string(),
+            Username::from("creator"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let issue_id = handles.store.add_issue(issue).await.unwrap();
+
+        let task = Task::new(
+            "spawned task".to_string(),
+            BundleSpec::None,
+            Some(issue_id.clone()),
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+        );
+        let task_id = handles.store.add_task(task, Utc::now()).await.unwrap();
+
+        handles.store.delete_issue(&issue_id).await.unwrap();
+
+        let worker = MonitorRunningJobsWorker::new(handles.state);
+        worker.run_iteration().await;
+
+        let result = handles.store.get_task(&task_id, false).await;
+        assert!(
+            matches!(result, Err(StoreError::TaskNotFound(_))),
+            "orphaned task should be cleaned up during worker iteration"
+        );
     }
 }
