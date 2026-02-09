@@ -17,8 +17,8 @@ pub use activity_log::{
     activity_log_for_job_versions, activity_log_for_patch_versions, activity_log_from_versions,
 };
 pub use api::v1::{
-    agents, documents, issues, job_status, jobs, login, logs, merge_queues, patches, repositories,
-    task_status, users, whoami,
+    agents, documents, events, issues, job_status, jobs, login, logs, merge_queues, patches,
+    repositories, task_status, users, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use ids::{DocumentId, IssueId, MetisId, MetisIdError, PatchId, TaskId};

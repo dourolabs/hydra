@@ -125,6 +125,11 @@ impl EventBus {
         self.sender.subscribe()
     }
 
+    /// Returns the current sequence number (the next seq that will be assigned).
+    pub fn current_seq(&self) -> u64 {
+        self.next_seq.load(Ordering::Relaxed)
+    }
+
     /// Allocates the next monotonic sequence number.
     fn next_seq(&self) -> u64 {
         self.next_seq.fetch_add(1, Ordering::Relaxed)

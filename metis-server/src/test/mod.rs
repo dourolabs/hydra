@@ -2,6 +2,7 @@ pub(crate) mod agents;
 mod auth;
 pub(crate) mod common;
 mod documents;
+mod events;
 mod github_app;
 mod github_token;
 mod health;
