@@ -104,7 +104,10 @@ pub async fn list_jobs(
 
     let summaries: Vec<v1::jobs::JobRecord> = summaries_with_times
         .into_iter()
-        .map(|(record, _)| record)
+        .map(|(mut record, _)| {
+            record.strip_large_fields();
+            record
+        })
         .collect();
 
     info!(
