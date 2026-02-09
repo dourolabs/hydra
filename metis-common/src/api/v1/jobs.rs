@@ -1,6 +1,6 @@
 use crate::{
     BuildCacheContext, IssueId, RepoName, TaskId, VersionNumber,
-    task_status::{Status, TaskError, TaskStatusLog},
+    task_status::{Status, TaskError},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -316,23 +316,17 @@ impl ListJobsResponse {
 pub struct JobRecord {
     pub id: TaskId,
     pub task: Task,
-    pub status_log: TaskStatusLog,
 }
 
 impl JobRecord {
-    pub fn new(id: TaskId, task: Task, status_log: TaskStatusLog) -> Self {
-        Self {
-            id,
-            task,
-            status_log,
-        }
+    pub fn new(id: TaskId, task: Task) -> Self {
+        Self { id, task }
     }
 
     /// Clears large fields that are unnecessary for list responses.
     ///
-    /// Specifically: truncates `task.prompt` to the first 100 characters,
-    /// sets `task.last_message` to `None`, and clears `last_message` from
-    /// any `Completed` events in the status log.
+    /// Specifically: truncates `task.prompt` to the first 100 characters
+    /// and sets `task.last_message` to `None`.
     pub fn strip_large_fields(&mut self) {
         // Truncate prompt to first 100 chars
         if self.task.prompt.len() > 100 {
@@ -342,13 +336,6 @@ impl JobRecord {
 
         // Clear last_message from task
         self.task.last_message = None;
-
-        // Clear last_message from Completed events in the status log
-        for event in &mut self.status_log.events {
-            if let crate::task_status::Event::Completed { last_message, .. } = event {
-                *last_message = None;
-            }
-        }
     }
 }
 
@@ -430,9 +417,7 @@ impl KillJobResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_status::{Event, Status, TaskStatusLog};
     use crate::{IssueId, test_helpers::serialize_query_params};
-    use chrono::Utc;
     use std::collections::HashMap;
 
     #[test]
@@ -466,8 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_large_fields_clears_prompt_last_message_and_completed_events() {
-        let now = Utc::now();
+    fn strip_large_fields_clears_prompt_and_last_message() {
         let long_prompt = "x".repeat(500);
         let task = Task::new_with_status(
             long_prompt,
@@ -485,20 +469,8 @@ mod tests {
             false,
         );
 
-        let status_log = TaskStatusLog::from_events(vec![
-            Event::Created {
-                at: now,
-                status: Status::Created,
-            },
-            Event::Started { at: now },
-            Event::Completed {
-                at: now,
-                last_message: Some("large completion message".to_string()),
-            },
-        ]);
-
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task, status_log);
+        let mut record = JobRecord::new(task_id, task);
 
         record.strip_large_fields();
 
@@ -508,18 +480,10 @@ mod tests {
 
         // last_message on task should be cleared
         assert_eq!(record.task.last_message, None);
-
-        // last_message on Completed event should be cleared
-        for event in &record.status_log.events {
-            if let Event::Completed { last_message, .. } = event {
-                assert_eq!(*last_message, None);
-            }
-        }
     }
 
     #[test]
     fn strip_large_fields_preserves_short_prompt() {
-        let now = Utc::now();
         let short_prompt = "short prompt".to_string();
         let task = Task::new_with_status(
             short_prompt.clone(),
@@ -537,13 +501,8 @@ mod tests {
             false,
         );
 
-        let status_log = TaskStatusLog::from_events(vec![Event::Created {
-            at: now,
-            status: Status::Created,
-        }]);
-
         let task_id = crate::TaskId::new();
-        let mut record = JobRecord::new(task_id, task, status_log);
+        let mut record = JobRecord::new(task_id, task);
 
         record.strip_large_fields();
 

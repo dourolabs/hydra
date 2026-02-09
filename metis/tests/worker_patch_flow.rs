@@ -62,7 +62,7 @@ async fn worker_run_creates_patch_via_override_command() -> Result<()> {
     let status = jobs
         .iter()
         .find(|job| job.id == job_id_clone)
-        .map(|job| job.status_log.current_status())
+        .map(|job| job.task.status)
         .ok_or_else(|| anyhow!("job should still exist after worker run"))?;
     assert_eq!(status, Status::Complete);
 

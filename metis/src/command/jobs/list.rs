@@ -51,10 +51,8 @@ mod tests {
         command::output::{CommandContext, ResolvedOutputFormat},
         test_utils::ids::{issue_id, task_id},
     };
-    use chrono::Utc;
     use httpmock::prelude::*;
     use metis_common::jobs::{BundleSpec, ListJobsResponse, Task};
-    use metis_common::task_status::{Status, TaskStatusLog};
     use std::collections::HashMap;
 
     const TEST_METIS_TOKEN: &str = "test-metis-token";
@@ -81,7 +79,6 @@ mod tests {
                 None,
                 false,
             ),
-            TaskStatusLog::new(Status::Created, Utc::now()),
         )
     }
 

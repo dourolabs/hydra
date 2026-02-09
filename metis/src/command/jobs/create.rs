@@ -119,7 +119,7 @@ async fn wait_for_job_completion_via_server(
             .iter()
             .find(|job| job.id.as_ref() == job_id.as_ref())
         {
-            match job.status_log.current_status() {
+            match job.task.status {
                 Status::Complete => {
                     if output_format == ResolvedOutputFormat::Pretty {
                         eprintln!("Job '{job_id}' completed successfully.");
@@ -134,14 +134,6 @@ async fn wait_for_job_completion_via_server(
                         .map(|e| match e {
                             TaskError::JobEngineError { reason } => reason.clone(),
                             other => format!("{other:?}"),
-                        })
-                        .or_else(|| {
-                            job.status_log.result().and_then(|r| {
-                                r.err().map(|e| match e {
-                                    TaskError::JobEngineError { reason } => reason,
-                                    other => format!("{other:?}"),
-                                })
-                            })
                         })
                         .unwrap_or_else(|| "job failed without an error message".to_string());
                     bail!("Job '{job_id}' failed: {reason}");
@@ -253,12 +245,11 @@ mod tests {
         client::MetisClient,
         command::output::{CommandContext, ResolvedOutputFormat},
     };
-    use chrono::{Duration as ChronoDuration, Utc};
     use httpmock::prelude::*;
     use httpmock::Mock;
     use metis_common::{
         jobs::{BundleSpec, CreateJobResponse, JobRecord, ListJobsResponse, Task},
-        task_status::{Event, Status, TaskStatusLog},
+        task_status::{Status, TaskError},
     };
     use reqwest::Client as HttpClient;
     use std::collections::HashMap;
@@ -273,10 +264,10 @@ mod tests {
         ids::task_id(value)
     }
 
-    fn job_record(id: &str, status_log: TaskStatusLog) -> JobRecord {
+    fn job_record_with_status(id: &str, status: Status, error: Option<TaskError>) -> JobRecord {
         JobRecord::new(
             task_id(id),
-            Task::new(
+            Task::new_with_status(
                 "0".to_string(),
                 BundleSpec::None,
                 None,
@@ -286,10 +277,16 @@ mod tests {
                 None,
                 None,
                 None,
+                status,
+                None,
+                error,
                 false,
             ),
-            status_log,
         )
+    }
+
+    fn job_record(id: &str) -> JobRecord {
+        job_record_with_status(id, Status::Created, None)
     }
 
     fn mock_get_job(server: &MockServer, job: JobRecord) -> Mock {
@@ -330,28 +327,12 @@ mod tests {
                 .header("content-type", "text/event-stream")
                 .body("data: first log line\n\ndata: second log line\n\n");
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
-        let start_time = Utc::now();
-        let completed_jobs = ListJobsResponse::new(vec![job_record(
+        let completed_jobs = ListJobsResponse::new(vec![job_record_with_status(
             job_id.as_ref(),
-            TaskStatusLog::from_events(vec![
-                Event::Created {
-                    at: start_time,
-                    status: Status::Created,
-                },
-                Event::Started { at: start_time },
-                Event::Completed {
-                    at: start_time + ChronoDuration::seconds(1),
-                    last_message: None,
-                },
-            ]),
+            Status::Complete,
+            None,
         )]);
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/jobs/");
@@ -402,13 +383,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -452,13 +427,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -502,13 +471,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -552,13 +515,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -599,13 +556,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
@@ -647,13 +598,7 @@ mod tests {
             then.status(200)
                 .json_body_obj(&CreateJobResponse::new(job_id.clone()));
         });
-        let job_mock = mock_get_job(
-            &server,
-            job_record(
-                job_id.as_ref(),
-                TaskStatusLog::new(Status::Created, Utc::now()),
-            ),
-        );
+        let job_mock = mock_get_job(&server, job_record(job_id.as_ref()));
 
         let context = test_context();
         run(
