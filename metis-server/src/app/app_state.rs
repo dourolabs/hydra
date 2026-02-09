@@ -34,7 +34,10 @@ use serde::Deserialize;
 use std::{collections::HashMap, collections::HashSet, sync::Arc};
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 use tracing::{error, info, warn};
+
+use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 
 use super::{
     MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
@@ -47,7 +50,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
-    store: Arc<dyn Store>,
+    store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
 }
@@ -309,14 +312,25 @@ impl AppState {
         job_engine: Arc<dyn JobEngine>,
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
+        let event_bus = Arc::new(EventBus::new());
         Self {
             config,
             github_app,
             service_state,
-            store,
+            store: Arc::new(StoreWithEvents::new(store, event_bus)),
             job_engine,
             agents,
         }
+    }
+
+    /// Returns a new broadcast receiver for server events.
+    pub fn subscribe(&self) -> broadcast::Receiver<ServerEvent> {
+        self.store.event_bus().subscribe()
+    }
+
+    /// Returns a reference to the event bus.
+    pub fn event_bus(&self) -> &EventBus {
+        self.store.event_bus()
     }
 
     pub async fn login_with_github_token(
@@ -1949,7 +1963,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-
         Ok(todo_list)
     }
 
@@ -1975,7 +1988,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-
         Ok(todo_list)
     }
 
@@ -2019,7 +2031,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-
         Ok(todo_list)
     }
 
@@ -2445,7 +2456,7 @@ fn merge_request_issue_title(patch: &Patch) -> String {
 mod tests {
     use super::{LoginError, UpsertIssueError};
     use crate::{
-        app::{AppState, ServiceState},
+        app::{AppState, ServerEvent, ServiceState},
         domain::{
             actors::Actor,
             issues::{
@@ -2457,7 +2468,7 @@ mod tests {
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
-        store::{MemoryStore, Status, StoreError, TaskError},
+        store::{MemoryStore, Status, Store, StoreError, TaskError},
         test_utils::{
             MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
             test_state_with_engine, test_state_with_github_api_base_url,
@@ -3643,5 +3654,87 @@ mod tests {
             JobStatus::Failed,
             "running job for orphaned task should be killed"
         );
+    }
+
+    #[tokio::test]
+    async fn event_bus_emits_issue_created_and_updated() {
+        let state = test_state();
+        let mut rx = state.subscribe();
+
+        let issue = issue_with_status("test issue", IssueStatus::Open, Vec::new());
+        let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
+        let issue_id = state
+            .upsert_issue(None, request)
+            .await
+            .expect("create should succeed");
+
+        let event = rx.recv().await.expect("should receive IssueCreated");
+        assert!(
+            matches!(&event, ServerEvent::IssueCreated { issue_id: id, .. } if *id == issue_id)
+        );
+        let first_seq = event.seq();
+        assert!(first_seq > 0);
+
+        let updated_issue = issue_with_status("updated issue", IssueStatus::InProgress, Vec::new());
+        let update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
+        state
+            .upsert_issue(Some(issue_id.clone()), update_request)
+            .await
+            .expect("update should succeed");
+
+        let event = rx.recv().await.expect("should receive IssueUpdated");
+        assert!(
+            matches!(&event, ServerEvent::IssueUpdated { issue_id: id, .. } if *id == issue_id)
+        );
+        assert!(event.seq() > first_seq);
+    }
+
+    #[tokio::test]
+    async fn event_bus_emits_issue_deleted() {
+        let state = test_state();
+
+        let issue = issue_with_status("doomed issue", IssueStatus::Open, Vec::new());
+        let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
+        let issue_id = state
+            .upsert_issue(None, request)
+            .await
+            .expect("create should succeed");
+
+        let mut rx = state.subscribe();
+
+        state
+            .delete_issue(&issue_id)
+            .await
+            .expect("delete should succeed");
+
+        let event = rx.recv().await.expect("should receive IssueDeleted");
+        assert!(
+            matches!(&event, ServerEvent::IssueDeleted { issue_id: id, .. } if *id == issue_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn event_bus_seq_is_monotonically_increasing() {
+        let state = test_state();
+        let mut rx = state.subscribe();
+
+        let mut seqs = Vec::new();
+        for i in 0..5 {
+            let issue = issue_with_status(&format!("issue {i}"), IssueStatus::Open, Vec::new());
+            let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
+            state
+                .upsert_issue(None, request)
+                .await
+                .expect("create should succeed");
+            let event = rx.recv().await.expect("should receive event");
+            seqs.push(event.seq());
+        }
+
+        for window in seqs.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "seq numbers should be strictly increasing: {seqs:?}"
+            );
+        }
     }
 }

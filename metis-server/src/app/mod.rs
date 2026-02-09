@@ -1,4 +1,5 @@
 mod app_state;
+pub mod event_bus;
 mod resolved_task;
 
 use crate::{
@@ -15,6 +16,7 @@ pub use app_state::{
     AgentError, AppState, CreateJobError, LoginError, SetJobStatusError, UpdateTodoListError,
     UpsertDocumentError, UpsertIssueError, UpsertPatchError,
 };
+pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use metis_common::repositories::{Repository, RepositoryRecord};
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 
