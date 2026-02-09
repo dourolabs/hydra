@@ -345,7 +345,8 @@ pub async fn run(
             max_retries,
             secrets,
         } => {
-            let creator = resolve_creator_username(client, &dependencies).await?;
+            let creator =
+                resolve_creator_username(client, &dependencies, current_issue_id.as_ref()).await?;
             create_issue(
                 client,
                 r#type,
@@ -1533,7 +1534,20 @@ async fn update_issue(
 async fn resolve_creator_username(
     client: &dyn MetisClientInterface,
     dependencies: &[IssueDependency],
+    current_issue_id: Option<&IssueId>,
 ) -> Result<Username> {
+    let resolve_from_current_issue = || async {
+        if let Some(issue_id) = current_issue_id {
+            let issue = client
+                .get_issue(issue_id)
+                .await
+                .with_context(|| format!("failed to fetch current issue '{issue_id}'"))?;
+            Ok(issue.issue.creator)
+        } else {
+            bail!("No current issue id available to resolve creator");
+        }
+    };
+
     let resolve_from_parent = || async {
         if let Some(parent_id) = dependencies
             .iter()
@@ -1550,6 +1564,13 @@ async fn resolve_creator_username(
         }
     };
 
+    let resolve_for_task = || async {
+        match resolve_from_current_issue().await {
+            Ok(username) => Ok(username),
+            Err(_) => resolve_from_parent().await,
+        }
+    };
+
     match client
         .whoami()
         .await
@@ -1557,10 +1578,10 @@ async fn resolve_creator_username(
     {
         Ok(response) => match response.actor {
             ActorIdentity::User { username } => Ok(username),
-            ActorIdentity::Task { .. } => resolve_from_parent().await,
-            _ => resolve_from_parent().await,
+            ActorIdentity::Task { .. } => resolve_for_task().await,
+            _ => resolve_for_task().await,
         },
-        Err(_) => resolve_from_parent().await,
+        Err(_) => resolve_for_task().await,
     }
 }
 
@@ -3483,7 +3504,7 @@ mod tests {
             then.status(200).json_body_obj(&whoami_response);
         });
 
-        let username = resolve_creator_username(&client, &[]).await.unwrap();
+        let username = resolve_creator_username(&client, &[], None).await.unwrap();
 
         assert_eq!(username, Username::from("creator-a"));
         whoami_mock.assert();
@@ -3528,7 +3549,7 @@ mod tests {
             IssueDependencyType::ChildOf,
             parent_id,
         )];
-        let username = resolve_creator_username(&client, &dependencies)
+        let username = resolve_creator_username(&client, &dependencies, None)
             .await
             .unwrap();
 
@@ -3537,6 +3558,51 @@ mod tests {
         parent_mock.assert();
         assert_eq!(whoami_mock.hits(), 1);
         assert_eq!(parent_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_creator_username_resolves_from_current_issue_for_task() {
+        let server = MockServer::start();
+        let client = metis_client(&server);
+        let current_id = issue_id("i-current");
+        let whoami_response = WhoAmIResponse::new(ActorIdentity::Task {
+            task_id: TaskId::from_str("t-abcd").unwrap(),
+        });
+        let whoami_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/whoami");
+            then.status(200).json_body_obj(&whoami_response);
+        });
+        let current_issue = IssueRecord::new(
+            current_id.clone(),
+            Issue::new(
+                IssueType::Task,
+                "Current issue".into(),
+                Username::from("current-creator"),
+                String::new(),
+                IssueStatus::InProgress,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+        );
+        let current_issue_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{current_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+
+        let username = resolve_creator_username(&client, &[], Some(&current_id))
+            .await
+            .unwrap();
+
+        assert_eq!(username, Username::from("current-creator"));
+        whoami_mock.assert();
+        current_issue_mock.assert();
+        assert_eq!(whoami_mock.hits(), 1);
+        assert_eq!(current_issue_mock.hits(), 1);
     }
 
     #[tokio::test]
