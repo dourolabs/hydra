@@ -2114,7 +2114,66 @@ impl AppState {
         query: &SearchJobsQuery,
     ) -> Result<Vec<(TaskId, Versioned<Task>)>, StoreError> {
         let store = self.store.as_ref();
-        store.list_tasks(query).await
+        let tasks = store.list_tasks(query).await?;
+
+        // Identify tasks whose spawned_from issue has been deleted so we can
+        // filter them out of the response and schedule background cleanup.
+        let mut orphaned_ids: Vec<(TaskId, Status)> = Vec::new();
+        let mut retained = Vec::with_capacity(tasks.len());
+
+        for (task_id, versioned_task) in tasks {
+            let issue_id = match &versioned_task.item.spawned_from {
+                Some(id) => id,
+                None => {
+                    retained.push((task_id, versioned_task));
+                    continue;
+                }
+            };
+
+            let issue_deleted = match store.get_issue(issue_id, false).await {
+                Ok(_) => false,
+                Err(StoreError::IssueNotFound(_)) => true,
+                Err(_) => false, // on error, keep the task visible
+            };
+
+            if issue_deleted {
+                orphaned_ids.push((task_id, versioned_task.item.status));
+            } else {
+                retained.push((task_id, versioned_task));
+            }
+        }
+
+        // Spawn background deletion so the API response is not blocked on cleanup.
+        if !orphaned_ids.is_empty() {
+            let state = self.clone();
+            tokio::spawn(async move {
+                for (task_id, status) in orphaned_ids {
+                    info!(
+                        metis_id = %task_id,
+                        "soft-deleting orphaned task discovered during API list"
+                    );
+                    if let Err(err) = state.store.delete_task(&task_id).await {
+                        warn!(
+                            metis_id = %task_id,
+                            error = %err,
+                            "failed to soft-delete orphaned task during API list cleanup"
+                        );
+                        continue;
+                    }
+                    if matches!(status, Status::Pending | Status::Running) {
+                        if let Err(err) = state.job_engine.kill_job(&task_id).await {
+                            warn!(
+                                metis_id = %task_id,
+                                error = %err,
+                                "failed to kill job for orphaned task during API list cleanup"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(retained)
     }
 
     pub async fn transition_task_to_running(
@@ -2467,6 +2526,7 @@ mod tests {
     use httpmock::Method::PATCH;
     use httpmock::prelude::*;
     use metis_common::{IssueId, RepoName, TaskId, api::v1 as api};
+    use metis_common::api::v1::jobs::SearchJobsQuery;
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::RwLock;
@@ -3642,6 +3702,98 @@ mod tests {
             job.status,
             JobStatus::Failed,
             "running job for orphaned task should be killed"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_with_query_filters_orphaned_tasks() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let issue_id = store
+            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let orphaned_task_id = store
+            .add_task(task_for_issue(&issue_id), Utc::now())
+            .await
+            .unwrap();
+
+        // Also add a normal task (no spawned_from) to confirm it still appears.
+        let normal_task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+
+        // Delete the issue so the task becomes orphaned.
+        store.delete_issue(&issue_id).await.unwrap();
+
+        let results = state
+            .list_tasks_with_query(&SearchJobsQuery::default())
+            .await
+            .unwrap();
+
+        let returned_ids: Vec<TaskId> = results.into_iter().map(|(id, _)| id).collect();
+        assert!(
+            !returned_ids.contains(&orphaned_task_id),
+            "orphaned task should be filtered from list results"
+        );
+        assert!(
+            returned_ids.contains(&normal_task_id),
+            "normal task should still appear in list results"
+        );
+
+        // Give the background deletion a moment to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let result = store.get_task(&orphaned_task_id, false).await;
+        assert!(
+            matches!(result, Err(StoreError::TaskNotFound(_))),
+            "orphaned task should be soft-deleted by background cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_with_query_retains_tasks_with_existing_issue() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let issue_id = store
+            .add_issue(issue_with_status("parent", IssueStatus::Open, vec![]))
+            .await
+            .unwrap();
+        let task_id = store
+            .add_task(task_for_issue(&issue_id), Utc::now())
+            .await
+            .unwrap();
+
+        let results = state
+            .list_tasks_with_query(&SearchJobsQuery::default())
+            .await
+            .unwrap();
+
+        let returned_ids: Vec<TaskId> = results.into_iter().map(|(id, _)| id).collect();
+        assert!(
+            returned_ids.contains(&task_id),
+            "task with existing issue should appear in list results"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_with_query_retains_tasks_with_no_spawned_from() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine);
+        let store = state.store.as_ref();
+
+        let task_id = store.add_task(sample_task(), Utc::now()).await.unwrap();
+
+        let results = state
+            .list_tasks_with_query(&SearchJobsQuery::default())
+            .await
+            .unwrap();
+
+        let returned_ids: Vec<TaskId> = results.into_iter().map(|(id, _)| id).collect();
+        assert!(
+            returned_ids.contains(&task_id),
+            "task with no spawned_from should appear in list results"
         );
     }
 }
