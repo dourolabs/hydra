@@ -330,6 +330,29 @@ impl JobRecord {
             status_log,
         }
     }
+
+    /// Clears large fields that are unnecessary for list responses.
+    ///
+    /// Specifically: truncates `task.prompt` to the first 100 characters,
+    /// sets `task.last_message` to `None`, and clears `last_message` from
+    /// any `Completed` events in the status log.
+    pub fn strip_large_fields(&mut self) {
+        // Truncate prompt to first 100 chars
+        if self.task.prompt.len() > 100 {
+            let truncated: String = self.task.prompt.chars().take(100).collect();
+            self.task.prompt = truncated;
+        }
+
+        // Clear last_message from task
+        self.task.last_message = None;
+
+        // Clear last_message from Completed events in the status log
+        for event in &mut self.status_log.events {
+            if let crate::task_status::Event::Completed { last_message, .. } = event {
+                *last_message = None;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -409,8 +432,10 @@ impl KillJobResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchJobsQuery;
+    use super::*;
+    use crate::task_status::{Event, Status, TaskStatusLog};
     use crate::{IssueId, test_helpers::serialize_query_params};
+    use chrono::Utc;
     use std::collections::HashMap;
 
     #[test]
@@ -441,5 +466,94 @@ mod tests {
             params.is_empty(),
             "expected no query params for empty SearchJobsQuery"
         );
+    }
+
+    #[test]
+    fn strip_large_fields_clears_prompt_last_message_and_completed_events() {
+        let now = Utc::now();
+        let long_prompt = "x".repeat(500);
+        let task = Task::new_with_status(
+            long_prompt,
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Status::Complete,
+            Some("very large output".to_string()),
+            None,
+            false,
+        );
+
+        let status_log = TaskStatusLog::from_events(vec![
+            Event::Created {
+                at: now,
+                status: Status::Created,
+            },
+            Event::Started { at: now },
+            Event::Completed {
+                at: now,
+                last_message: Some("large completion message".to_string()),
+            },
+        ]);
+
+        let task_id = crate::TaskId::new();
+        let mut record = JobRecord::new(task_id, task, Some("note".to_string()), status_log);
+
+        record.strip_large_fields();
+
+        // Prompt should be truncated to 100 chars
+        assert_eq!(record.task.prompt.len(), 100);
+        assert!(record.task.prompt.chars().all(|c| c == 'x'));
+
+        // last_message on task should be cleared
+        assert_eq!(record.task.last_message, None);
+
+        // last_message on Completed event should be cleared
+        for event in &record.status_log.events {
+            if let Event::Completed { last_message, .. } = event {
+                assert_eq!(*last_message, None);
+            }
+        }
+
+        // Notes should be preserved
+        assert_eq!(record.notes, Some("note".to_string()));
+    }
+
+    #[test]
+    fn strip_large_fields_preserves_short_prompt() {
+        let now = Utc::now();
+        let short_prompt = "short prompt".to_string();
+        let task = Task::new_with_status(
+            short_prompt.clone(),
+            BundleSpec::None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            Status::Created,
+            None,
+            None,
+            false,
+        );
+
+        let status_log = TaskStatusLog::from_events(vec![Event::Created {
+            at: now,
+            status: Status::Created,
+        }]);
+
+        let task_id = crate::TaskId::new();
+        let mut record = JobRecord::new(task_id, task, None, status_log);
+
+        record.strip_large_fields();
+
+        // Short prompt should be preserved as-is
+        assert_eq!(record.task.prompt, short_prompt);
     }
 }
