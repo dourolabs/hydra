@@ -1877,6 +1877,55 @@ impl Store for PostgresStoreV2 {
             .ok_or_else(|| StoreError::TaskNotFound(id.clone()))
     }
 
+    async fn get_status_logs(
+        &self,
+        ids: &[TaskId],
+    ) -> Result<HashMap<TaskId, TaskStatusLog>, StoreError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
+        let query = format!(
+            "SELECT id, version_number, prompt, context, spawned_from, image, model, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, created_at, updated_at
+             FROM {TABLE_TASKS_V2}
+             WHERE id = ANY($1)
+             ORDER BY id, version_number"
+        );
+        let rows = sqlx::query_as::<_, TaskRow>(&query)
+            .bind(&id_strings)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut grouped: HashMap<TaskId, Vec<Versioned<Task>>> = HashMap::new();
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for task '{}'",
+                    row.id
+                ))
+            })?;
+            let task = self.row_to_task(&row)?;
+            let task_id = row.id.parse::<TaskId>().map_err(|err| {
+                StoreError::Internal(format!("invalid task id stored in database: {err}"))
+            })?;
+            grouped
+                .entry(task_id)
+                .or_default()
+                .push(Versioned::new(task, version, row.created_at));
+        }
+
+        let mut result = HashMap::new();
+        for (task_id, versions) in grouped {
+            if let Some(log) = super::task_status_log_from_versions(&versions) {
+                result.insert(task_id, log);
+            }
+        }
+
+        Ok(result)
+    }
+
     // -------------------------------------------------------------------------
     // Actor methods
     // -------------------------------------------------------------------------
