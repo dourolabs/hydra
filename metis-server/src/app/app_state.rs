@@ -37,7 +37,7 @@ use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use super::event_bus::{EventBus, ServerEvent};
+use super::event_bus::{EventBus, ServerEvent, StoreWithEvents};
 
 use super::{
     MergeQueueError, Repository, RepositoryError, RepositoryRecord, ServiceState,
@@ -50,10 +50,9 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub github_app: Option<Octocrab>,
     pub service_state: Arc<ServiceState>,
-    store: Arc<dyn Store>,
+    store: Arc<StoreWithEvents>,
     pub job_engine: Arc<dyn JobEngine>,
     agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
-    event_bus: Arc<EventBus>,
 }
 
 #[derive(Debug, Error)]
@@ -313,25 +312,25 @@ impl AppState {
         job_engine: Arc<dyn JobEngine>,
         agents: Arc<RwLock<Vec<Arc<AgentQueue>>>>,
     ) -> Self {
+        let event_bus = Arc::new(EventBus::new());
         Self {
             config,
             github_app,
             service_state,
-            store,
+            store: Arc::new(StoreWithEvents::new(store, event_bus)),
             job_engine,
             agents,
-            event_bus: Arc::new(EventBus::new()),
         }
     }
 
     /// Returns a new broadcast receiver for server events.
     pub fn subscribe(&self) -> broadcast::Receiver<ServerEvent> {
-        self.event_bus.subscribe()
+        self.store.event_bus().subscribe()
     }
 
     /// Returns a reference to the event bus.
     pub fn event_bus(&self) -> &EventBus {
-        &self.event_bus
+        self.store.event_bus()
     }
 
     pub async fn login_with_github_token(
@@ -500,9 +499,7 @@ impl AppState {
 
     pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_patch(patch_id).await?;
-        self.event_bus.emit_patch_deleted(patch_id.clone());
-        Ok(())
+        store.delete_patch(patch_id).await
     }
 
     pub async fn upsert_document(
@@ -542,7 +539,6 @@ impl AppState {
                     })?;
 
                 info!(document_id = %id, "document updated");
-                self.event_bus.emit_document_updated(id.clone());
                 Ok(id)
             }
             None => {
@@ -583,7 +579,6 @@ impl AppState {
                     created_by = ?created_by,
                     "document created"
                 );
-                self.event_bus.emit_document_created(document_id.clone());
                 Ok(document_id)
             }
         }
@@ -616,9 +611,7 @@ impl AppState {
 
     pub async fn delete_document(&self, document_id: &DocumentId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_document(document_id).await?;
-        self.event_bus.emit_document_deleted(document_id.clone());
-        Ok(())
+        store.delete_document(document_id).await
     }
 
     pub async fn get_documents_by_path(
@@ -903,9 +896,7 @@ impl AppState {
         created_at: DateTime<Utc>,
     ) -> Result<TaskId, StoreError> {
         let store = self.store.as_ref();
-        let task_id = store.add_task(task, created_at).await?;
-        self.event_bus.emit_job_created(task_id.clone());
-        Ok(task_id)
+        store.add_task(task, created_at).await
     }
 
     pub async fn create_agent(
@@ -1057,8 +1048,6 @@ impl AppState {
                 job_id: job_id.clone(),
             })?;
 
-        self.event_bus.emit_job_created(job_id.clone());
-
         Ok(job_id)
     }
 
@@ -1102,8 +1091,6 @@ impl AppState {
                 job_id: job_id.clone(),
             })?;
         }
-
-        self.event_bus.emit_job_updated(job_id.clone());
 
         Ok(SetJobStatusResponse::new(job_id, status.as_status()))
     }
@@ -1488,7 +1475,6 @@ impl AppState {
             ..
         } = request;
         let mut patch: Patch = patch.into();
-        let is_create = patch_id.is_none();
 
         let mut should_close_merge_requests = false;
         let mut should_create_merge_request = false;
@@ -1648,12 +1634,6 @@ impl AppState {
 
         tracing::info!(patch_id = %patch_id, "patch stored successfully");
 
-        if is_create {
-            self.event_bus.emit_patch_created(patch_id.clone());
-        } else {
-            self.event_bus.emit_patch_updated(patch_id.clone());
-        }
-
         Ok(patch_id)
     }
 
@@ -1775,7 +1755,6 @@ impl AppState {
         let api::issues::UpsertIssueRequest { issue, job_id, .. } = request;
         let mut issue: Issue = issue.into();
         let mut tasks_to_kill = Vec::new();
-        let is_create = issue_id.is_none();
 
         let store = self.store.as_ref();
 
@@ -1958,12 +1937,6 @@ impl AppState {
 
         info!(issue_id = %issue_id, "issue stored successfully");
 
-        if is_create {
-            self.event_bus.emit_issue_created(issue_id.clone());
-        } else {
-            self.event_bus.emit_issue_updated(issue_id.clone());
-        }
-
         Ok(issue_id)
     }
 
@@ -1990,8 +1963,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-        self.event_bus.emit_issue_updated(issue_id);
-
         Ok(todo_list)
     }
 
@@ -2017,8 +1988,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-        self.event_bus.emit_issue_updated(issue_id);
-
         Ok(todo_list)
     }
 
@@ -2062,8 +2031,6 @@ impl AppState {
                 source,
                 issue_id: issue_id.clone(),
             })?;
-        self.event_bus.emit_issue_updated(issue_id);
-
         Ok(todo_list)
     }
 
@@ -2142,9 +2109,7 @@ impl AppState {
 
     pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<(), StoreError> {
         let store = self.store.as_ref();
-        store.delete_issue(issue_id).await?;
-        self.event_bus.emit_issue_deleted(issue_id.clone());
-        Ok(())
+        store.delete_issue(issue_id).await
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskId>, StoreError> {
@@ -2178,9 +2143,7 @@ impl AppState {
         updated.last_message = None;
         updated.error = None;
 
-        let result = store.update_task(task_id, updated).await?;
-        self.event_bus.emit_job_updated(task_id.clone());
-        Ok(result)
+        store.update_task(task_id, updated).await
     }
 
     pub async fn transition_task_to_completion(
@@ -2214,9 +2177,7 @@ impl AppState {
             }
         }
 
-        let versioned = store.update_task(task_id, updated).await?;
-        self.event_bus.emit_job_updated(task_id.clone());
-        Ok(versioned)
+        store.update_task(task_id, updated).await
     }
 
     pub async fn transition_task_to_pending(
@@ -2234,9 +2195,7 @@ impl AppState {
         updated.last_message = None;
         updated.error = None;
 
-        let result = store.update_task(task_id, updated).await?;
-        self.event_bus.emit_job_updated(task_id.clone());
-        Ok(result)
+        store.update_task(task_id, updated).await
     }
 
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Task, StoreError> {
@@ -2509,7 +2468,7 @@ mod tests {
             users::{User, Username},
         },
         job_engine::{JobEngine, JobStatus},
-        store::{MemoryStore, Status, StoreError, TaskError},
+        store::{MemoryStore, Status, Store, StoreError, TaskError},
         test_utils::{
             MockJobEngine, add_repository, github_user_response, test_app_config, test_state,
             test_state_with_engine, test_state_with_github_api_base_url,
