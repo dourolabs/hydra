@@ -1,6 +1,6 @@
 use crate::{
     app::{AppState, BundleResolutionError, CreateJobError, TaskResolutionError},
-    store::{StoreError, Task, TaskError, TaskStatusLog},
+    store::{StoreError, Task, TaskStatusLog},
 };
 use axum::{
     Json, async_trait,
@@ -297,35 +297,10 @@ fn job_record_with_time(
     task: Task,
     status_log: TaskStatusLog,
 ) -> (v1::jobs::JobRecord, Option<DateTime<Utc>>) {
-    let notes = job_notes_from_status_log(&status_log);
     let reference_time = status_log.start_time().or(status_log.creation_time());
 
     (
-        v1::jobs::JobRecord::new(job_id.clone(), task.into(), notes, status_log.into()),
+        v1::jobs::JobRecord::new(job_id.clone(), task.into(), status_log.into()),
         reference_time,
     )
-}
-
-fn job_notes_from_status_log(status_log: &TaskStatusLog) -> Option<String> {
-    status_log
-        .result()
-        .and_then(Result::err)
-        .and_then(format_error_note)
-}
-
-pub(crate) fn sanitize_note(note: &str) -> Option<String> {
-    let collapsed = note.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        None
-    } else {
-        Some(collapsed)
-    }
-}
-
-fn format_error_note(error: TaskError) -> Option<String> {
-    match error {
-        TaskError::JobEngineError { reason } => {
-            sanitize_note(&reason).map(|msg| format!("error: {msg}"))
-        }
-    }
 }

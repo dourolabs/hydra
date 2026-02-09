@@ -7,7 +7,7 @@ use futures::StreamExt;
 use metis_common::{
     jobs::{BundleSpec, CreateJobRequest, SearchJobsQuery},
     logs::LogsQuery,
-    task_status::Status,
+    task_status::{Status, TaskError},
     IssueId, RepoName, TaskId,
 };
 use std::{
@@ -128,9 +128,22 @@ async fn wait_for_job_completion_via_server(
                 }
                 Status::Failed => {
                     let reason = job
-                        .notes
-                        .as_deref()
-                        .unwrap_or("job failed without an error message");
+                        .task
+                        .error
+                        .as_ref()
+                        .map(|e| match e {
+                            TaskError::JobEngineError { reason } => reason.clone(),
+                            other => format!("{other:?}"),
+                        })
+                        .or_else(|| {
+                            job.status_log.result().and_then(|r| {
+                                r.err().map(|e| match e {
+                                    TaskError::JobEngineError { reason } => reason,
+                                    other => format!("{other:?}"),
+                                })
+                            })
+                        })
+                        .unwrap_or_else(|| "job failed without an error message".to_string());
                     bail!("Job '{job_id}' failed: {reason}");
                 }
                 _ => {}
@@ -275,7 +288,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             status_log,
         )
     }

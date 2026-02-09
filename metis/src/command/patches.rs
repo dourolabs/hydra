@@ -1147,7 +1147,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let patch_title = "custom patch title".to_string();
@@ -1236,7 +1235,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
 
@@ -1363,7 +1361,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let job_mock = mock_get_job(&server, job_record);
@@ -1455,7 +1452,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let created_patch_id = patch_id("p-merge");
@@ -1572,7 +1568,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let issue_id = issue_id("i-review");
@@ -1721,7 +1716,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let commit_range = Some(format!("{base_commit}..{head_commit}"));
@@ -1825,7 +1819,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(Vec::new()),
         );
         let job_mock = mock_get_job(&server, job_record.clone());

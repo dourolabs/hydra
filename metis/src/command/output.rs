@@ -10,7 +10,7 @@ use metis_common::{
     jobs::JobRecord,
     patches::{PatchRecord, PatchStatus},
     repositories::RepositoryRecord,
-    task_status::{Status, TaskStatusLog},
+    task_status::{Status, TaskError, TaskStatusLog},
     whoami::ActorIdentity,
 };
 use owo_colors::OwoColorize;
@@ -577,7 +577,17 @@ fn format_duration(duration: ChronoDuration) -> String {
 }
 
 fn job_note(job: &JobRecord) -> Option<String> {
-    job.notes.clone()
+    if let Some(Err(error)) = job.status_log.result() {
+        return Some(format_task_error(&error));
+    }
+    job.task.error.as_ref().map(format_task_error)
+}
+
+fn format_task_error(error: &TaskError) -> String {
+    match error {
+        TaskError::JobEngineError { reason } => format!("error: {reason}"),
+        other => format!("error: {other:?}"),
+    }
 }
 
 fn current_terminal_width() -> usize {

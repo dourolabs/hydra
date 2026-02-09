@@ -3451,13 +3451,6 @@ fn note_or_error(job: &JobRecord) -> String {
         return format_task_error(&error);
     }
 
-    if let Some(notes) = &job.notes {
-        let trimmed = notes.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
     "-".into()
 }
 
@@ -3649,7 +3642,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             log,
         )
     }
@@ -3795,14 +3787,12 @@ mod tests {
     }
 
     #[test]
-    fn note_or_error_prefers_error_reason() {
-        let mut job = job_with_status("t-job-failed", Status::Failed, 0);
-        job.notes = Some("note that should be ignored".into());
+    fn note_or_error_shows_error_reason() {
+        let job = job_with_status("t-job-failed", Status::Failed, 0);
 
         let message = note_or_error(&job);
 
         assert!(message.contains("boom"));
-        assert!(!message.contains("note that should be ignored"));
     }
 
     #[test]

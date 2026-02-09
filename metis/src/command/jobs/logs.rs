@@ -117,7 +117,6 @@ mod tests {
                 None,
                 false,
             ),
-            None,
             TaskStatusLog::from_events(vec![Event::Created {
                 at: chrono::Utc::now() + chrono::Duration::seconds(created_at_secs),
                 status: Status::Created,
