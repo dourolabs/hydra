@@ -303,7 +303,16 @@ pub fn push_branch(
     };
     remote
         .push(&[refspec.as_str()], Some(&mut push_options))
-        .with_context(|| format!("failed to push branch '{branch}' to origin"))?;
+        .map_err(|err| {
+            if !force && err.code() == ErrorCode::NotFastForward {
+                anyhow!(
+                    "failed to push branch '{branch}' to origin: {err}\n\
+                     Hint: pass --force to force push and overwrite the remote branch."
+                )
+            } else {
+                anyhow!(err).context(format!("failed to push branch '{branch}' to origin"))
+            }
+        })?;
 
     if let Ok(mut local_branch) = repo.find_branch(branch, BranchType::Local) {
         let _ = local_branch.set_upstream(Some(&format!("origin/{branch}")));
